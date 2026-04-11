@@ -4,7 +4,7 @@
         Title="Install Components"
         Icon="/Assets/DwemerDistro.ico"
         Width="720"
-        Height="880"
+        Height="800"
         ResizeMode="NoResize"
         Background="#2C2C2C">
     <Window.Resources>
@@ -17,6 +17,8 @@
             <Setter Property="FontFamily" Value="Trebuchet MS" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
+            <EventSetter Event="MouseEnter" Handler="ComponentButton_MouseEnter" />
+            <EventSetter Event="MouseLeave" Handler="ComponentButton_MouseLeave" />
         </Style>
         <Style x:Key="SectionHeader" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#FFD700" />
@@ -92,10 +94,13 @@
                   BorderBrush="#565656"
                   Padding="10"
                   Margin="0,0,0,8">
-            <TextBlock Foreground="White"
+            <TextBlock x:Name="DescriptionTextBlock"
+                       Foreground="White"
                        FontFamily="Trebuchet MS"
                        TextWrapping="Wrap"
-                       Text="Hover over a component below to see its description." />
+                       Text="Hover over a component below to see its description."
+                       MinHeight="22"
+                       MaxHeight="22" />
         </GroupBox>
 
         <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -156,28 +161,6 @@
                             ToolTip="Offline speech-to-text based on Whisper."
                             Style="{StaticResource ComponentButton}" />
                 </UniformGrid>
-
-                <GroupBox Header="Installation Notes"
-                          Foreground="White"
-                          BorderBrush="#565656"
-                          Padding="10"
-                          Margin="10,15,10,10">
-                    <StackPanel>
-                        <TextBlock Text="NVIDIA GPU Users:"
-                                   Foreground="White"
-                                   FontWeight="Bold" />
-                        <TextBlock Text="Install CUDA first. Then install the components you want."
-                                   Foreground="White"
-                                   TextWrapping="Wrap"
-                                   Margin="0,0,0,10" />
-                        <TextBlock Text="AMD/Intel GPU Users:"
-                                   Foreground="White"
-                                   FontWeight="Bold" />
-                        <TextBlock Text="Install components that support CPU mode. They are slower but functional."
-                                   Foreground="White"
-                                   TextWrapping="Wrap" />
-                    </StackPanel>
-                </GroupBox>
             </StackPanel>
         </ScrollViewer>
     </DockPanel>
