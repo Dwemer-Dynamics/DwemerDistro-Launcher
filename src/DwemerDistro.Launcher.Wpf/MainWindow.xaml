@@ -6,11 +6,13 @@
         mc:Ignorable="d"
         Title="Dwemer Distro"
         Icon="Assets/DwemerDistro.ico"
-        Width="880"
+        Width="850"
         Height="980"
-        MinWidth="880"
-        MinHeight="980"
-        ResizeMode="NoResize"
+        MinWidth="850"
+        MinHeight="820"
+        MaxWidth="1440"
+        MaxHeight="1400"
+        ResizeMode="CanResize"
         Background="#2C2C2C"
         Loaded="Window_Loaded"
         Closing="Window_Closing">
@@ -70,7 +72,7 @@
 
     <Grid Margin="10">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="350" />
+            <ColumnDefinition Width="370" />
             <ColumnDefinition Width="10" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
@@ -195,38 +197,64 @@
                 </GroupBox>
 
                 <GroupBox Header="External Links">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Button Content="Wiki"
+                    <Grid HorizontalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Button Grid.Row="0"
+                                Grid.Column="0"
+                                Content="CHIM"
+                                Command="{Binding OpenChimCommand}"
+                                Style="{StaticResource DistroButton}"
+                                Width="100"
+                                Background="#F27C11"
+                                Margin="5" />
+                        <Button Grid.Row="0"
+                                Grid.Column="1"
+                                Content="STOBE"
+                                Command="{Binding OpenStobeCommand}"
+                                Style="{StaticResource DistroButton}"
+                                Width="100"
+                                Background="#E6B76C"
+                                Margin="5" />
+                        <Button Grid.Row="1"
+                                Grid.Column="0"
+                                Content="Wiki"
                                 Command="{Binding OpenWikiCommand}"
                                 Style="{StaticResource DistroButton}"
                                 Width="100"
                                 Background="#808080"
                                 Margin="5" />
-                        <Button Content="Discord"
+                        <Button Grid.Row="1"
+                                Grid.Column="1"
+                                Content="Discord"
                                 Command="{Binding OpenDiscordCommand}"
                                 Style="{StaticResource DistroButton}"
                                 Width="100"
                                 Background="#5865F2"
                                 Margin="5" />
-                    </StackPanel>
+                    </Grid>
                 </GroupBox>
             </StackPanel>
         </ScrollViewer>
 
         <Border Grid.Column="2" Background="#1E1E1E">
-            <TextBox x:Name="OutputTextBox"
-                     Text="{Binding OutputText, Mode=OneWay}"
-                     TextChanged="OutputTextBox_TextChanged"
-                     Background="#1E1E1E"
-                     Foreground="White"
-                     BorderThickness="0"
-                     FontFamily="Consolas"
-                     FontSize="10"
-                     AcceptsReturn="True"
-                     TextWrapping="Wrap"
-                     VerticalScrollBarVisibility="Auto"
-                     HorizontalScrollBarVisibility="Disabled"
-                     IsReadOnly="True" />
+            <RichTextBox x:Name="OutputRichTextBox"
+                         Background="#1E1E1E"
+                         Foreground="White"
+                         BorderThickness="0"
+                         FontFamily="Consolas"
+                         FontSize="10"
+                         IsReadOnly="True"
+                         IsDocumentEnabled="True"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Disabled" />
         </Border>
     </Grid>
 </Window>

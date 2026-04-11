@@ -73,6 +73,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OpenDebuggingCommand = new RelayCommand(OpenDebuggingWindow);
         SaveMcpEnabledCommand = new AsyncRelayCommand(SaveMcpEnabledAsync);
         SaveUpdateIncludeCommand = new AsyncRelayCommand(SaveUpdateIncludeSettingsAsync);
+        OpenChimCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.ChimNexusUrl));
+        OpenStobeCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.StobeNexusUrl));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
@@ -252,6 +254,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand OpenDebuggingCommand { get; }
     public AsyncRelayCommand SaveMcpEnabledCommand { get; }
     public AsyncRelayCommand SaveUpdateIncludeCommand { get; }
+    public RelayCommand OpenChimCommand { get; }
+    public RelayCommand OpenStobeCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
     public RelayCommand InstallCudaCommand { get; }
@@ -466,16 +470,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            if (includeHerika && !await SwitchHerikaServerBranchAsync(targetHerika).ConfigureAwait(false))
-            {
-                return;
-            }
-
-            if (includeStobe && !await SwitchStobeServerBranchAsync(targetStobe).ConfigureAwait(false))
-            {
-                return;
-            }
-
             SetHerikaStatus("Updating...", "White");
             if (includeStobe)
             {
@@ -489,8 +483,32 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     : includeStobe
                         ? "Starting core system update + StobeServer update..." + Environment.NewLine
                         : "Starting core system update (HerikaServer and StobeServer skipped)..." + Environment.NewLine);
-            AppendLog(Environment.NewLine + "STEP 1: Core System Update" + Environment.NewLine, "green");
+            AppendLog("Preparing update steps..." + Environment.NewLine);
+            await FlushUpdateUiAsync().ConfigureAwait(true);
+
+            if (includeHerika)
+            {
+                AppendLog(Environment.NewLine + "STEP 1: Prepare HerikaServer branch" + Environment.NewLine, "green");
+                if (!await SwitchHerikaServerBranchAsync(targetHerika).ConfigureAwait(false))
+                {
+                    return;
+                }
+            }
+
+            if (includeStobe)
+            {
+                AppendLog(Environment.NewLine + (includeHerika ? "STEP 2: Prepare StobeServer branch" : "STEP 1: Prepare StobeServer branch") + Environment.NewLine, "green");
+                if (!await SwitchStobeServerBranchAsync(targetStobe).ConfigureAwait(false))
+                {
+                    return;
+                }
+            }
+
+            AppendLog(Environment.NewLine + (includeHerika || includeStobe
+                ? "STEP 3: Run DwemerDistro core update and component update"
+                : "STEP 1: Run DwemerDistro core update") + Environment.NewLine, "green");
             AppendLog("Executing update script..." + Environment.NewLine);
+            await FlushUpdateUiAsync().ConfigureAwait(true);
 
             var serverUpdateRequested = includeHerika || includeStobe;
             var gwsFlags = new List<string>();
@@ -527,7 +545,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 {
                     distroUpdateComplete = true;
                     serverUpdateStarted = true;
-                    AppendLog(Environment.NewLine + "STEP 2: Dwemer Distro Server & Components Update" + Environment.NewLine, "green");
+                    AppendLog(Environment.NewLine + "STEP 4: Dwemer Distro Server & Components Update" + Environment.NewLine, "green");
                     return;
                 }
 
@@ -613,7 +631,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             "cd /var/www/html/HerikaServer && " +
             "git stash save 'Auto-stash before switching branch' && " +
             "git fetch origin && " +
-            $"git checkout -B {targetBranch} origin/{targetBranch}").ConfigureAwait(false);
+            $"git checkout -B {targetBranch} origin/{targetBranch}",
+            line => AppendLog(line),
+            loginShell: false,
+            lineBuffered: true).ConfigureAwait(false);
 
         if (!result.Succeeded)
         {
@@ -651,7 +672,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             "cd /var/www/html/StobeServer && " +
             "git stash save 'Auto-stash before switching branch' && " +
             "git fetch origin && " +
-            $"git checkout -B {targetBranch} origin/{targetBranch}").ConfigureAwait(false);
+            $"git checkout -B {targetBranch} origin/{targetBranch}",
+            line => AppendLog(line),
+            loginShell: false,
+            lineBuffered: true).ConfigureAwait(false);
 
         if (!result.Succeeded)
         {
@@ -666,6 +690,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task<bool> EnsureStobeServerRepoExistsAsync(string targetBranch)
     {
+        AppendLog("Checking StobeServer repository state..." + Environment.NewLine);
         var result = await _wsl.RunBashAsync(
             "base_dir=/var/www/html; repo_path=/var/www/html/StobeServer; state=EXISTS; " +
             "mkdir -p \"$base_dir\" || { echo ERROR:BASE_DIR_CREATE_FAILED >&2; exit 1; }; " +
@@ -677,7 +702,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             "if [ ! -d \"$repo_path/.git\" ]; then rm -rf \"$repo_path\" && " +
             $"git clone -b {targetBranch} https://github.com/Dwemer-Dynamics/StobeServer.git \"$repo_path\" 1>&2 && state=CLONED:{targetBranch}; " +
             "fi; fi; " +
-            "mkdir -p \"$repo_path/log\"; : > \"$repo_path/log/stobe_import.log\"; : > \"$repo_path/log/stobeserver.log\"; echo \"$state\"").ConfigureAwait(false);
+            "mkdir -p \"$repo_path/log\"; : > \"$repo_path/log/stobe_import.log\"; : > \"$repo_path/log/stobeserver.log\"; echo \"$state\"",
+            line => AppendLog(line),
+            loginShell: false,
+            lineBuffered: true).ConfigureAwait(false);
 
         if (!result.Succeeded)
         {
@@ -1495,6 +1523,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return $"'{value.Replace("'", "'\"'\"'")}'";
     }
 
+    private async Task FlushUpdateUiAsync()
+    {
+        await _dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+        await Task.Delay(75).ConfigureAwait(true);
+    }
+
     private void SetHerikaStatus(string text, string color)
     {
         RunOnUi(() =>
@@ -1526,7 +1560,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void AppendLog(string text, string? tag = null)
     {
-        var sanitized = RemoveAnsiEscapeSequences(text);
+        var sanitized = SanitizeLogText(text);
+        if (string.IsNullOrEmpty(sanitized))
+        {
+            return;
+        }
+
         if (_dispatcher.CheckAccess())
         {
             OutputText += sanitized;
@@ -1646,6 +1685,43 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         return 0;
+    }
+
+    private static string SanitizeLogText(string text)
+    {
+        var withoutAnsi = RemoveAnsiEscapeSequences(text);
+        var normalized = withoutAnsi.Replace("\r\n", "\n");
+        var lines = normalized.Split('\n');
+        var kept = new List<string>(lines.Length);
+
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length > 0 && IsDecorativeSeparatorLine(trimmed))
+            {
+                continue;
+            }
+
+            kept.Add(line);
+        }
+
+        var joined = string.Join(Environment.NewLine, kept);
+        return string.IsNullOrWhiteSpace(joined) ? string.Empty : joined;
+    }
+
+    private static bool IsDecorativeSeparatorLine(string value)
+    {
+        if (value.Length < 20)
+        {
+            return false;
+        }
+
+        return value.All(ch =>
+            ch == '_' ||
+            ch == '¯' ||
+            ch == '-' ||
+            ch == '=' ||
+            ch == ' ');
     }
 
     private static string RemoveAnsiEscapeSequences(string text)
