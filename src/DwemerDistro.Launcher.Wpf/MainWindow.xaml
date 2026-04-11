@@ -175,23 +175,6 @@
                     </StackPanel>
                 </GroupBox>
 
-                <GroupBox Header="External Links">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Button Content="Wiki"
-                                Command="{Binding OpenWikiCommand}"
-                                Style="{StaticResource DistroButton}"
-                                Width="100"
-                                Background="#808080"
-                                Margin="5" />
-                        <Button Content="Discord"
-                                Command="{Binding OpenDiscordCommand}"
-                                Style="{StaticResource DistroButton}"
-                                Width="100"
-                                Background="#5865F2"
-                                Margin="5" />
-                    </StackPanel>
-                </GroupBox>
-
                 <GroupBox Header="Launcher Updates">
                     <StackPanel>
                         <TextBlock Text="{Binding LauncherVersionText}"
@@ -208,6 +191,23 @@
                                 Command="{Binding UpdateLauncherCommand}"
                                 Style="{StaticResource DistroButton}"
                                 IsEnabled="{Binding CanUpdateLauncher}" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="External Links">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button Content="Wiki"
+                                Command="{Binding OpenWikiCommand}"
+                                Style="{StaticResource DistroButton}"
+                                Width="100"
+                                Background="#808080"
+                                Margin="5" />
+                        <Button Content="Discord"
+                                Command="{Binding OpenDiscordCommand}"
+                                Style="{StaticResource DistroButton}"
+                                Width="100"
+                                Background="#5865F2"
+                                Margin="5" />
                     </StackPanel>
                 </GroupBox>
             </StackPanel>
