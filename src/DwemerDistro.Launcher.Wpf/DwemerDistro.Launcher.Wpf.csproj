@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>DwemerDistro</AssemblyName>
+    <Version>2.5.1</Version>
+    <FileVersion>2.5.1.0</FileVersion>
+    <AssemblyVersion>2.5.1.0</AssemblyVersion>
+    <ApplicationIcon>Assets\DwemerDistro.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="Assets\*.png" />
+    <None Remove="Assets\*.gif" />
+    <None Remove="Assets\*.ico" />
+    <Resource Include="Assets\*.png" />
+    <Resource Include="Assets\*.gif" />
+    <Resource Include="Assets\*.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Velopack" Version="0.0.1298" />
+  </ItemGroup>
+
+</Project>

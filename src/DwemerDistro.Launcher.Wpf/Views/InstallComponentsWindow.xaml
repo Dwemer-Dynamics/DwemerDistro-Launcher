@@ -1,0 +1,184 @@
+<Window x:Class="DwemerDistro.Launcher.Wpf.Views.InstallComponentsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Install Components"
+        Icon="/Assets/DwemerDistro.ico"
+        Width="720"
+        Height="880"
+        ResizeMode="NoResize"
+        Background="#2C2C2C">
+    <Window.Resources>
+        <Style x:Key="ComponentButton" TargetType="Button">
+            <Setter Property="Background" Value="#5E0505" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="Margin" Value="5" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style x:Key="SectionHeader" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFD700" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="10,15,10,5" />
+        </Style>
+    </Window.Resources>
+
+    <DockPanel Margin="10">
+        <Border DockPanel.Dock="Top"
+                Margin="0,0,0,8"
+                Padding="12"
+                Background="#1E1E1E"
+                BorderBrush="#565656"
+                BorderThickness="1">
+            <StackPanel>
+                <Image Source="/Assets/dd_title.png"
+                       Width="260"
+                       Stretch="Uniform"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,10" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            Padding="10">
+                        <StackPanel>
+                            <Image Source="/Assets/nvidia.png"
+                                   Width="96"
+                                   Height="36"
+                                   Stretch="Uniform"
+                                   HorizontalAlignment="Left"
+                                   Margin="0,0,0,6" />
+                            <TextBlock Text="Use CUDA first, then install GPU-backed services like XTTS, Chatterbox, or Parakeet."
+                                       Foreground="White"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="2"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            Padding="10">
+                        <StackPanel>
+                            <Image Source="/Assets/amd.png"
+                                   Width="96"
+                                   Height="36"
+                                   Stretch="Uniform"
+                                   HorizontalAlignment="Left"
+                                   Margin="0,0,0,6" />
+                            <TextBlock Text="Use CPU-capable components like MeloTTS, Pocket-TTS, Piper-TTS, Mimic3, and CPU-friendly speech tools."
+                                       Foreground="White"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <GroupBox DockPanel.Dock="Top"
+                  Header="Component Description"
+                  Foreground="White"
+                  BorderBrush="#565656"
+                  Padding="10"
+                  Margin="0,0,0,8">
+            <TextBlock Foreground="White"
+                       FontFamily="Trebuchet MS"
+                       TextWrapping="Wrap"
+                       Text="Hover over a component below to see its description." />
+        </GroupBox>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Style="{StaticResource SectionHeader}" Text="NVIDIA USERS MUST INSTALL THIS FIRST!" />
+                <Button Content="CUDA"
+                        Command="{Binding InstallCudaCommand}"
+                        ToolTip="Nvidia's special software that lets AI tools work with their graphics cards. Install this first if you have a Nvidia GPU."
+                        Style="{StaticResource ComponentButton}" />
+
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Recommended Extensions" />
+                <Button Content="Minime and TXT2VEC"
+                        Command="{Binding InstallMinimeT5Command}"
+                        ToolTip="Tiny helper LLM and vector service used to improve AI NPC responses."
+                        Style="{StaticResource ComponentButton}" />
+
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Text-to-Speech Engines" />
+                <UniformGrid Columns="2">
+                    <Button Content="Chatterbox"
+                            Command="{Binding InstallChatterboxCommand}"
+                            ToolTip="High-quality multilingual TTS with voice cloning. Requires Nvidia GPU with CUDA. Uses the same port as XTTS."
+                            Style="{StaticResource ComponentButton}" />
+                    <Button Content="Pocket-TTS"
+                            Command="{Binding InstallPocketTtsCommand}"
+                            ToolTip="CPU-based TTS. Uses the same port as XTTS and Chatterbox."
+                            Style="{StaticResource ComponentButton}" />
+                    <Button Content="Dwemer Distro XTTS"
+                            Command="{Binding InstallXttsCommand}"
+                            ToolTip="High-quality TTS. Requires Nvidia GPU and CUDA. Uses the same port as Chatterbox."
+                            Style="{StaticResource ComponentButton}" />
+                    <Button Content="MeloTTS"
+                            Command="{Binding InstallMeloTtsCommand}"
+                            ToolTip="Fast CPU-friendly TTS recommended for low-end systems."
+                            Style="{StaticResource ComponentButton}" />
+                    <Button Content="Piper-TTS"
+                            Command="{Binding InstallPiperTtsCommand}"
+                            ToolTip="Fast CPU-friendly TTS. Voices must be installed separately."
+                            Style="{StaticResource ComponentButton}" />
+                    <Button Content="Mimic3"
+                            Command="{Binding InstallMimic3Command}"
+                            ToolTip="Older but fast TTS service."
+                            Style="{StaticResource ComponentButton}" />
+                </UniformGrid>
+
+                <Button Content="Piper Voice Folder"
+                        Command="{Binding OpenPiperVoicesFolderCommand}"
+                        Background="#404040"
+                        Style="{StaticResource ComponentButton}" />
+
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Speech-to-Text Engines" />
+                <UniformGrid Columns="2">
+                    <Button Content="Parakeet STT"
+                            Command="{Binding InstallParakeetCommand}"
+                            ToolTip="Offline speech-to-text using NVIDIA Parakeet TDT. Supports GPU and CPU modes."
+                            Style="{StaticResource ComponentButton}" />
+                    <Button Content="LocalWhisper"
+                            Command="{Binding InstallLocalWhisperCommand}"
+                            ToolTip="Offline speech-to-text based on Whisper."
+                            Style="{StaticResource ComponentButton}" />
+                </UniformGrid>
+
+                <GroupBox Header="Installation Notes"
+                          Foreground="White"
+                          BorderBrush="#565656"
+                          Padding="10"
+                          Margin="10,15,10,10">
+                    <StackPanel>
+                        <TextBlock Text="NVIDIA GPU Users:"
+                                   Foreground="White"
+                                   FontWeight="Bold" />
+                        <TextBlock Text="Install CUDA first. Then install the components you want."
+                                   Foreground="White"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,10" />
+                        <TextBlock Text="AMD/Intel GPU Users:"
+                                   Foreground="White"
+                                   FontWeight="Bold" />
+                        <TextBlock Text="Install components that support CPU mode. They are slower but functional."
+                                   Foreground="White"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </GroupBox>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

@@ -1,0 +1,133 @@
+<Window x:Class="DwemerDistro.Launcher.Wpf.Views.CudaConfigWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CUDA GPU Configuration"
+        Icon="/Assets/DwemerDistro.ico"
+        Width="450"
+        Height="420"
+        ResizeMode="NoResize"
+        Background="#2C2C2C"
+        WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <Style x:Key="ActionButton" TargetType="Button">
+            <Setter Property="Background" Value="#5E0505" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="Margin" Value="5,0" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Width" Value="110" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#4A0404" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+        </Style>
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,3,0,3" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="#2C2C2C" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Select CUDA GPU Device"
+                   FontSize="14"
+                   FontWeight="Bold"
+                   HorizontalAlignment="Center"
+                   Margin="0,0,0,10" />
+
+        <TextBlock Grid.Row="1"
+                   Text="Choose which GPU to use for AI services.&#10;This setting persists across updates."
+                   Foreground="#CCCCCC"
+                   FontSize="9"
+                   TextAlignment="Center"
+                   Margin="0,0,0,10" />
+
+        <StackPanel Grid.Row="2"
+                    Margin="0,0,0,15">
+            <TextBlock x:Name="CurrentSettingTextBlock"
+                       Foreground="#90EE90"
+                       FontSize="10"
+                       FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,10" />
+            <TextBlock x:Name="SelectedSettingTextBlock"
+                       Foreground="#FFD700"
+                       FontSize="9"
+                       FontStyle="Italic"
+                       HorizontalAlignment="Center" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="3">
+            <RadioButton x:Name="AllGpuRadioButton"
+                         Content="All GPUs (default)"
+                         GroupName="GpuSelection"
+                         Tag="all"
+                         Checked="GpuOption_Checked" />
+            <RadioButton x:Name="Gpu0RadioButton"
+                         Content="GPU 0 (Primary)"
+                         GroupName="GpuSelection"
+                         Tag="0"
+                         Checked="GpuOption_Checked" />
+            <RadioButton x:Name="Gpu1RadioButton"
+                         Content="GPU 1 (Secondary)"
+                         GroupName="GpuSelection"
+                         Tag="1"
+                         Checked="GpuOption_Checked" />
+            <RadioButton x:Name="Gpu2RadioButton"
+                         Content="GPU 2"
+                         GroupName="GpuSelection"
+                         Tag="2"
+                         Checked="GpuOption_Checked" />
+            <RadioButton x:Name="Gpu3RadioButton"
+                         Content="GPU 3"
+                         GroupName="GpuSelection"
+                         Tag="3"
+                         Checked="GpuOption_Checked" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Center"
+                    Margin="0,20,0,0">
+            <Button Content="Save"
+                    Click="SaveButton_Click"
+                    Style="{StaticResource ActionButton}" />
+            <Button Content="Cancel"
+                    Click="CancelButton_Click"
+                    Style="{StaticResource ActionButton}" />
+        </StackPanel>
+    </Grid>
+</Window>
