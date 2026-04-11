@@ -91,6 +91,23 @@ public sealed class ProcessRunner
         Process.Start(startInfo);
     }
 
+    public void StartDetached(string fileName, IEnumerable<string> arguments)
+    {
+        var startInfo = new ProcessStartInfo(fileName)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = Path.GetDirectoryName(fileName) ?? Environment.CurrentDirectory
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        Process.Start(startInfo);
+    }
+
     public void TryKill(Process? process)
     {
         if (process is null)

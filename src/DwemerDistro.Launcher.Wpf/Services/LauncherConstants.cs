@@ -2,8 +2,12 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public static class LauncherConstants
 {
-    public const string LauncherVersion = "2.5.2";
+    public const string LauncherVersion = "2.5.3";
     public const string LauncherRepoUrl = "https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher";
+    public const string LauncherLatestReleaseApiUrl = "https://api.github.com/repos/Dwemer-Dynamics/DwemerDistro-Launcher/releases/latest";
+    public const string LauncherExeName = "DwemerDistro.exe";
+    public const string LauncherUpdaterExeName = "DwemerDistroUpdater.exe";
+    public const string LauncherPackageAssetName = "DwemerDistro-win-x64.zip";
     public const string DistroName = "DwemerAI4Skyrim3";
     public const string DistroUser = "dwemer";
     public const int SkyrimProxyPort = 7513;

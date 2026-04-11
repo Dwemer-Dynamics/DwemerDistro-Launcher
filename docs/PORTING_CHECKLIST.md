@@ -78,11 +78,10 @@ This checklist tracks the Python launcher features as they move into the WPF lau
   - local Windows file probes
   - structured save location prompt
 - Python launcher's exact Nexus scraping fallbacks. Current WPF pass uses a simple version regex.
-- Launcher self-update via Velopack:
-  - package metadata
-  - feed URL
-  - startup check
-  - download/apply/restart flow
+- Launcher self-update:
+  - GitHub release detection
+  - updater helper EXE
+  - zip download/apply/restart flow
 - Installer integration:
   - WSL2 feature checks
   - WSL import of `DwemerAI4Skyrim3.tar`
@@ -94,4 +93,3 @@ This checklist tracks the Python launcher features as they move into the WPF lau
 - Build currently validates the WPF code compiles.
 - Runtime validation still needs to be done against an installed `DwemerAI4Skyrim3` distro.
 - The WPF launcher must not replace the Python launcher until proxy, discovery, start/stop, update, and component install paths have been tested against the game/plugin clients.
-

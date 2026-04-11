@@ -114,5 +114,4 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 
 ## Launcher Auto-Update Gap
 
-The Python launcher has a launcher version constant but no full self-update flow for replacing `DwemerDistro.exe`. The WPF rewrite should add this as a first-class launcher-only update channel using Velopack.
-
+The Python launcher has a launcher version constant but no full self-update flow for replacing `DwemerDistro.exe`. The WPF rewrite should add this as a first-class launcher-only update channel using a helper updater executable.

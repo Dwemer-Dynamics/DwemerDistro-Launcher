@@ -10,8 +10,6 @@ using System.Windows.Threading;
 using DwemerDistro.Launcher.Wpf.Models;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.Views;
-using Velopack;
-using Velopack.Sources;
 
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
@@ -22,6 +20,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly ProcessRunner _processRunner = new();
     private readonly WslService _wsl;
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private readonly LauncherUpdateService _launcherUpdateService;
 
     private TcpProxyService? _tcpProxyService;
     private DiscoveryService? _discoveryService;
@@ -48,12 +47,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string _targetHerikaBranch = "aiagent";
     private string _targetStobeBranch = "stobe";
     private int _startAnimationDots;
-    private UpdateInfo? _pendingLauncherUpdate;
+    private LauncherReleaseInfo? _pendingLauncherUpdate;
 
     public MainWindowViewModel()
     {
         _dispatcher = Application.Current.Dispatcher;
         _wsl = new WslService(_processRunner);
+        _launcherUpdateService = new LauncherUpdateService(_httpClient, _processRunner);
         _startAnimationTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(500)
@@ -802,22 +802,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             SetLauncherUpdateState("Launcher update: checking...", "White", false, "Check Launcher Update");
 
-            var manager = CreateLauncherUpdateManager();
-            var currentVersion = manager.CurrentVersion?.ToFullString() ?? LauncherConstants.LauncherVersion;
+            var currentVersion = _launcherUpdateService.GetCurrentVersion().ToString(3);
             RunOnUi(() => LauncherVersionText = $"Launcher Version: {currentVersion}");
 
-            if (!manager.IsInstalled)
-            {
-                _pendingLauncherUpdate = null;
-                SetLauncherUpdateState(
-                    "Launcher self-update is available after install from a packaged release.",
-                    "Yellow",
-                    false,
-                    "Packaged Install Required");
-                return;
-            }
-
-            var update = await manager.CheckForUpdatesAsync().ConfigureAwait(false);
+            var update = await _launcherUpdateService.CheckForUpdatesAsync().ConfigureAwait(false);
             _pendingLauncherUpdate = update;
 
             if (update is null)
@@ -830,7 +818,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 return;
             }
 
-            var targetVersion = update.TargetFullRelease.Version.ToFullString();
+            var targetVersion = update.Version.ToString(3);
             SetLauncherUpdateState(
                 $"Launcher update available [{currentVersion} -> {targetVersion}]",
                 "Red",
@@ -862,33 +850,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 }
             }
 
-            var manager = CreateLauncherUpdateManager();
-            if (!manager.IsInstalled)
-            {
-                MessageBox.Show(
-                    "Launcher self-update only works from a packaged Velopack install.",
-                    "Launcher Update",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
-                return;
-            }
-
             CanUpdateLauncher = false;
             RunOnUi(() => LauncherUpdateButtonText = "Downloading Launcher Update...");
             AppendLog("Downloading launcher update..." + Environment.NewLine);
 
-            await manager.DownloadUpdatesAsync(_pendingLauncherUpdate, progress =>
+            var packagePath = await _launcherUpdateService.DownloadUpdatePackageAsync(_pendingLauncherUpdate, progress =>
             {
                 var text = $"Downloading launcher update... {progress}%";
                 SetLauncherUpdateState(text, "White", false, text);
             }).ConfigureAwait(false);
 
-            AppendLog("Launcher update downloaded. Restarting to apply update..." + Environment.NewLine, "green");
-            RunOnUi(() => LauncherUpdateButtonText = "Restarting...");
-            await manager.WaitExitThenApplyUpdatesAsync(_pendingLauncherUpdate.TargetFullRelease, false, true, Array.Empty<string>())
-                .ConfigureAwait(false);
-
-            RunOnUi(() => Application.Current.Shutdown());
+            AppendLog("Launcher update downloaded. Closing launcher to apply update..." + Environment.NewLine, "green");
+            _launcherUpdateService.StartUpdaterAndExit(packagePath);
+            RunOnUi(() =>
+            {
+                LauncherUpdateButtonText = "Applying Launcher Update...";
+                Application.Current.Shutdown();
+            });
         }
         catch (Exception ex)
         {
@@ -1574,14 +1552,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         StartServerCommand.RaiseCanExecuteChanged();
         StopServerCommand.RaiseCanExecuteChanged();
-    }
-
-    private static UpdateManager CreateLauncherUpdateManager()
-    {
-        return new UpdateManager(
-            new GithubSource(LauncherConstants.LauncherRepoUrl, string.Empty, false, null),
-            null,
-            null);
     }
 
     private void StartStartAnimation()

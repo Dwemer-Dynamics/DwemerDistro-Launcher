@@ -1,4 +1,4 @@
-# WPF + Velopack Migration Plan
+# WPF Launcher Migration Plan
 
 ## Product Boundary
 
@@ -32,7 +32,7 @@ There are two release/update channels:
   - TCP proxy and discovery service.
 
 - Future `packaging/`
-  - Velopack packaging scripts.
+  - launcher zip/update scripts.
   - First-install bootstrap installer scripts.
   - Release manifest/build notes.
 
@@ -123,15 +123,15 @@ There are two release/update channels:
 
 ## Phase 5 - Launcher Self-Update
 
-- Add Velopack packaging after parity shell is stable.
+- Add a custom updater helper after parity shell is stable.
 - Use launcher version from the .NET assembly version.
 - On startup:
-  - initialize Velopack early in app startup.
-  - check the launcher update feed if enabled.
-  - show an update prompt or background download status.
+  - check the latest GitHub release if enabled.
+  - show update status in the launcher UI.
 - On update:
-  - download launcher package only.
-  - apply via Velopack.
+  - download launcher zip only.
+  - launch `DwemerDistroUpdater.exe` from a temp path.
+  - replace launcher files after the main EXE exits.
   - restart launcher.
 - Keep WSL distro/server update in the existing "Update" UI flow.
 
@@ -160,4 +160,3 @@ There are two release/update channels:
 - Produces useful diagnostics.
 - Can self-update the launcher from a hosted test feed.
 - Does not require redistributing the 3.7GB WSL tar for launcher-only changes.
-
