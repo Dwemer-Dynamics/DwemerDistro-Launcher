@@ -45,7 +45,7 @@ Published output:
 
 ## Release Updates
 
-Push a git tag like `v2.5.1`.
+Push a git tag like `v2.5.2`.
 
 The GitHub Actions workflow in `.github/workflows/release.yml` will:
 

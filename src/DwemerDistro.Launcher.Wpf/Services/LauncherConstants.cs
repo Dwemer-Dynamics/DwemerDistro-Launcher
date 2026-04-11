@@ -2,7 +2,7 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public static class LauncherConstants
 {
-    public const string LauncherVersion = "2.5.1";
+    public const string LauncherVersion = "2.5.2";
     public const string LauncherRepoUrl = "https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher";
     public const string DistroName = "DwemerAI4Skyrim3";
     public const string DistroUser = "dwemer";

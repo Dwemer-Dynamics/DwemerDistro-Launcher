@@ -30,8 +30,8 @@ The WPF app checks that repo for new Velopack releases and can download/apply la
 Push a tag like:
 
 ```powershell
-git tag v2.5.1
-git push origin v2.5.1
+git tag v2.5.2
+git push origin v2.5.2
 ```
 
 The GitHub Actions workflow will:
