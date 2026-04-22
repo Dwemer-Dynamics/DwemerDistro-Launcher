@@ -10,6 +10,11 @@ using System.Windows.Threading;
 using DwemerDistro.Launcher.Wpf.Models;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.Views;
+using Application = System.Windows.Application;
+using MessageBox = System.Windows.MessageBox;
+using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
+using Forms = System.Windows.Forms;
 
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
@@ -17,6 +22,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 {
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _startAnimationTimer;
+    private readonly DispatcherTimer _serverStatusRetryTimer;
     private readonly ProcessRunner _processRunner = new();
     private readonly WslService _wsl;
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
@@ -47,6 +53,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string _targetHerikaBranch = "aiagent";
     private string _targetStobeBranch = "stobe";
     private int _startAnimationDots;
+    private bool _isServerStatusRefreshInProgress;
     private LauncherReleaseInfo? _pendingLauncherUpdate;
 
     public MainWindowViewModel()
@@ -59,6 +66,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
             Interval = TimeSpan.FromMilliseconds(500)
         };
         _startAnimationTimer.Tick += (_, _) => UpdateStartAnimation();
+        _serverStatusRetryTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(15)
+        };
+        _serverStatusRetryTimer.Tick += async (_, _) => await RetryServerStatusChecksAsync().ConfigureAwait(true);
 
         HerikaBranches = new ObservableCollection<string>(new[] { "aiagent", "dev" });
         StobeBranches = new ObservableCollection<string>(new[] { "stobe", "dev" });
@@ -92,6 +104,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"));
         ViewMemoryUsageCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- htop"));
+        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync);
+        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync);
         OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"));
         OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"));
         ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"));
@@ -271,6 +285,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand ViewMemoryUsageCommand { get; }
+    public AsyncRelayCommand ExportDistroCommand { get; }
+    public AsyncRelayCommand ImportDistroCommand { get; }
     public RelayCommand OpenHerikaRollbackCommand { get; }
     public RelayCommand OpenStobeRollbackCommand { get; }
     public RelayCommand ViewXttsLogsCommand { get; }
@@ -296,11 +312,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _ = Task.Run(CheckStobeServerUpdatesAsync);
         _ = Task.Run(CheckNexusVersionsAsync);
         _ = Task.Run(CheckLauncherUpdatesAsync);
+        QueueServerStatusRefresh();
     }
 
     public async Task ShutdownAsync()
     {
         _startAnimationTimer.Stop();
+        _serverStatusRetryTimer.Stop();
         await (_tcpProxyService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         await (_discoveryService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         _processRunner.TryKill(_serverProcess);
@@ -743,7 +761,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task CheckForUpdatesAsync()
     {
-        SetHerikaStatus("HerikaServer: Checking...", "White");
+        SetHerikaStatus(BuildServerStatusText("HerikaServer", null, "Checking..."), "White");
         var currentBranch = await GetCurrentBranchAsync().ConfigureAwait(false);
         if (currentBranch is "aiagent" or "dev")
         {
@@ -756,31 +774,27 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/abeiro/HerikaServer/{currentBranch}/.version.txt").ConfigureAwait(false);
 
-        var branchText = string.IsNullOrWhiteSpace(currentBranch) ? "" : $" ({currentBranch})";
         var versionDisplay = $"{FormatDateVersion(currentVersion) ?? "N/A"} | {semanticVersion ?? "N/A"}";
+        var statusText = BuildServerStatusText("HerikaServer", currentBranch, $"[{versionDisplay}]");
 
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
             var comparison = CompareVersions(currentVersion, gitVersion);
-            SetHerikaStatus(
-                comparison < 0
-                    ? $"HerikaServer{branchText}: Update Available [{versionDisplay}]"
-                    : $"HerikaServer{branchText}: Fully Updated [{versionDisplay}]",
-                comparison < 0 ? "Red" : "LimeGreen");
+            SetHerikaStatus(statusText, comparison < 0 ? "Red" : "LimeGreen");
         }
-        else if (!string.IsNullOrWhiteSpace(currentVersion))
+        else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
-            SetHerikaStatus($"HerikaServer{branchText}: [{versionDisplay}]", "LimeGreen");
+            SetHerikaStatus(statusText, "LimeGreen");
         }
         else
         {
-            SetHerikaStatus($"HerikaServer{branchText}: [N/A]", "Yellow");
+            SetHerikaStatus(BuildServerStatusText("HerikaServer", currentBranch, "[N/A]"), "Yellow");
         }
     }
 
     private async Task CheckStobeServerUpdatesAsync()
     {
-        SetStobeStatus("StobeServer: Checking...", "White");
+        SetStobeStatus(BuildServerStatusText("StobeServer", null, "Checking..."), "White");
         var currentBranch = await GetStobeServerCurrentBranchAsync().ConfigureAwait(false);
         if (currentBranch is "stobe" or "dev")
         {
@@ -795,25 +809,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/StobeServer/{currentBranch}/.version.txt").ConfigureAwait(false);
 
-        var branchText = string.IsNullOrWhiteSpace(currentBranch) ? "" : $" ({currentBranch})";
         var versionDisplay = $"{FormatDateVersion(currentVersion) ?? "N/A"} | {semanticVersion ?? "N/A"}";
+        var statusText = BuildServerStatusText("StobeServer", currentBranch, $"[{versionDisplay}]");
 
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
             var comparison = CompareVersions(currentVersion, gitVersion);
-            SetStobeStatus(
-                comparison < 0
-                    ? $"StobeServer{branchText}: Update Available [{versionDisplay}]"
-                    : $"StobeServer{branchText}: Fully Updated [{versionDisplay}]",
-                comparison < 0 ? "Red" : "LimeGreen");
+            SetStobeStatus(statusText, comparison < 0 ? "Red" : "LimeGreen");
         }
-        else if (!string.IsNullOrWhiteSpace(currentVersion))
+        else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
-            SetStobeStatus($"StobeServer{branchText}: [{versionDisplay}]", "LimeGreen");
+            SetStobeStatus(statusText, "LimeGreen");
         }
         else
         {
-            SetStobeStatus($"StobeServer{branchText}: [N/A]", "Yellow");
+            SetStobeStatus(BuildServerStatusText("StobeServer", currentBranch, "[N/A]"), "Yellow");
         }
     }
 
@@ -1086,6 +1096,301 @@ public sealed partial class MainWindowViewModel : ObservableObject
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
     }
 
+    private async Task ExportDistroAsync()
+    {
+        if (!await _wsl.DistroExistsAsync().ConfigureAwait(false))
+        {
+            MessageBox.Show(
+                $"{LauncherConstants.DistroName} is not currently installed.",
+                "Export Full Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var archivePath = GetExportArchivePath();
+        if (string.IsNullOrWhiteSpace(archivePath))
+        {
+            AppendLog("Full distro export canceled." + Environment.NewLine);
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            $"This will stop {LauncherConstants.DistroName} and export the full distro to:\n\n{archivePath}\n\n" +
+            $"Close any open \\\\wsl.localhost\\{LauncherConstants.DistroName} Explorer windows first.\n\nContinue?",
+            "Export Full Distro",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (confirmed != MessageBoxResult.Yes)
+        {
+            AppendLog("Full distro export canceled." + Environment.NewLine);
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
+
+            AppendLog($"Preparing full distro export: {archivePath}{Environment.NewLine}");
+            await StopDistroForMaintenanceAsync().ConfigureAwait(true);
+
+            AppendLog("Running WSL export. This can take several minutes..." + Environment.NewLine);
+            var result = await RunArchiveOperationWithProgressAsync(
+                    callback => _wsl.ExportDistroAsync(archivePath, callback),
+                    archivePath,
+                    "Export progress")
+                .ConfigureAwait(true);
+            if (!result.Succeeded)
+            {
+                var error = GetCommandError(result);
+                AppendLog($"Full distro export failed: {error}{Environment.NewLine}", "red");
+                MessageBox.Show(
+                    $"Full distro export failed.\n\n{error}",
+                    "Export Failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            AppendLog($"Full distro export completed: {archivePath}{Environment.NewLine}", "green");
+            MessageBox.Show(
+                $"Full distro export completed.\n\nArchive:\n{archivePath}",
+                "Export Complete",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Full distro export error: {ex.Message}{Environment.NewLine}", "red");
+            MessageBox.Show(
+                $"Full distro export failed.\n\n{ex.Message}",
+                "Export Failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            QueueServerStatusRefresh(immediate: true);
+        }
+    }
+
+    private async Task ImportDistroAsync()
+    {
+        var archivePath = GetImportArchivePath();
+        if (string.IsNullOrWhiteSpace(archivePath))
+        {
+            AppendLog("Full distro import canceled." + Environment.NewLine);
+            return;
+        }
+
+        var installPath = GetImportInstallPath(archivePath);
+        if (string.IsNullOrWhiteSpace(installPath))
+        {
+            AppendLog("Full distro import canceled." + Environment.NewLine);
+            return;
+        }
+
+        AppendLog($"Selected import location: {installPath}{Environment.NewLine}");
+
+        if (!File.Exists(archivePath))
+        {
+            MessageBox.Show(
+                $"The selected archive was not found:\n\n{archivePath}",
+                "Import Full Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            return;
+        }
+
+        if (Directory.Exists(installPath) && Directory.EnumerateFileSystemEntries(installPath).Any())
+        {
+            var continueNonEmpty = MessageBox.Show(
+                $"The selected install folder is not empty:\n\n{installPath}\n\n" +
+                "WSL can import into an existing folder, but this is safest with a dedicated distro folder.\n\nContinue anyway?",
+                "Import Full Distro",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (continueNonEmpty != MessageBoxResult.Yes)
+            {
+                AppendLog("Full distro import canceled." + Environment.NewLine);
+                return;
+            }
+        }
+
+        var distroExists = await _wsl.DistroExistsAsync().ConfigureAwait(false);
+        string? backupPath = null;
+
+        if (distroExists)
+        {
+            var replaceDecision = MessageBox.Show(
+                $"{LauncherConstants.DistroName} is already installed.\n\n" +
+                $"Selected archive:\n{archivePath}\n\n" +
+                $"Selected install folder:\n{installPath}\n\n" +
+                "Yes: create a backup export first\n" +
+                "No: replace it without making a backup\n" +
+                "Cancel: abort import",
+                "Import Full Distro",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Warning);
+
+            if (replaceDecision == MessageBoxResult.Cancel)
+            {
+                AppendLog("Full distro import canceled." + Environment.NewLine);
+                return;
+            }
+
+            if (replaceDecision == MessageBoxResult.Yes)
+            {
+                backupPath = GetPreImportBackupPath();
+                if (string.IsNullOrWhiteSpace(backupPath))
+                {
+                    AppendLog("Full distro import canceled." + Environment.NewLine);
+                    return;
+                }
+
+                if (string.Equals(
+                        Path.GetFullPath(backupPath),
+                        Path.GetFullPath(archivePath),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show(
+                        "The pre-import backup path cannot be the same file as the archive you are importing.",
+                        "Import Full Distro",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+            }
+            else
+            {
+                var destructiveConfirm = MessageBox.Show(
+                    $"This will unregister the current {LauncherConstants.DistroName} distro and replace it.\n\n" +
+                    $"Selected archive:\n{archivePath}\n\n" +
+                    $"Selected install folder:\n{installPath}\n\nContinue?",
+                    "Confirm Distro Replace",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (destructiveConfirm != MessageBoxResult.Yes)
+                {
+                    AppendLog("Full distro import canceled." + Environment.NewLine);
+                    return;
+                }
+            }
+        }
+        else
+        {
+            var importConfirm = MessageBox.Show(
+                $"Import {LauncherConstants.DistroName}.\n\n" +
+                $"Selected archive:\n{archivePath}\n\n" +
+                $"Selected install folder:\n{installPath}\n\nContinue?",
+                "Import Full Distro",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (importConfirm != MessageBoxResult.Yes)
+            {
+                AppendLog("Full distro import canceled." + Environment.NewLine);
+                return;
+            }
+        }
+
+        try
+        {
+            Directory.CreateDirectory(installPath);
+            await StopDistroForMaintenanceAsync().ConfigureAwait(true);
+
+            if (!string.IsNullOrWhiteSpace(backupPath))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
+                AppendLog($"Creating pre-import backup: {backupPath}{Environment.NewLine}");
+                AppendLog("Running WSL export for backup. This can take several minutes..." + Environment.NewLine);
+
+                var backupResult = await RunArchiveOperationWithProgressAsync(
+                        callback => _wsl.ExportDistroAsync(backupPath, callback),
+                        backupPath,
+                        "Backup export progress")
+                    .ConfigureAwait(true);
+                if (!backupResult.Succeeded)
+                {
+                    var backupError = GetCommandError(backupResult);
+                    AppendLog($"Pre-import backup failed: {backupError}{Environment.NewLine}", "red");
+                    MessageBox.Show(
+                        $"Pre-import backup failed.\n\n{backupError}",
+                        "Import Failed",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                    return;
+                }
+
+                AppendLog($"Pre-import backup completed: {backupPath}{Environment.NewLine}", "green");
+            }
+
+            if (distroExists)
+            {
+                AppendLog($"Unregistering existing {LauncherConstants.DistroName} distro..." + Environment.NewLine);
+                var unregisterResult = await _wsl.UnregisterDistroAsync(text => AppendLog(text)).ConfigureAwait(true);
+                if (!unregisterResult.Succeeded)
+                {
+                    var unregisterError = GetCommandError(unregisterResult);
+                    AppendLog($"Failed to unregister existing distro: {unregisterError}{Environment.NewLine}", "red");
+                    MessageBox.Show(
+                        $"Failed to unregister the existing distro.\n\n{unregisterError}",
+                        "Import Failed",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                    return;
+                }
+            }
+
+            AppendLog($"Importing full distro from: {archivePath}{Environment.NewLine}");
+            AppendLog("Running WSL import. This can take several minutes..." + Environment.NewLine);
+            var importResult = await RunPathOperationWithProgressAsync(
+                    callback => _wsl.ImportDistroAsync(installPath, archivePath, callback),
+                    installPath,
+                    "Import progress",
+                    "waiting for install files...")
+                .ConfigureAwait(true);
+            if (!importResult.Succeeded)
+            {
+                var importError = GetCommandError(importResult);
+                AppendLog($"Full distro import failed: {importError}{Environment.NewLine}", "red");
+                MessageBox.Show(
+                    $"Full distro import failed.\n\n{importError}" +
+                    (!string.IsNullOrWhiteSpace(backupPath) ? $"\n\nBackup archive:\n{backupPath}" : string.Empty),
+                    "Import Failed",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            _wslIp = null;
+            AppendLog($"Full distro import completed. Install location: {installPath}{Environment.NewLine}", "green");
+            MessageBox.Show(
+                $"Full distro import completed.\n\nInstall location:\n{installPath}" +
+                (!string.IsNullOrWhiteSpace(backupPath) ? $"\n\nBackup archive:\n{backupPath}" : string.Empty) +
+                "\n\nStart the server again when you're ready.",
+                "Import Complete",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Full distro import error: {ex.Message}{Environment.NewLine}", "red");
+            MessageBox.Show(
+                $"Full distro import failed.\n\n{ex.Message}",
+                "Import Failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            QueueServerStatusRefresh(immediate: true);
+        }
+    }
+
     public async Task RequestRollbackAsync(string serverKey, string displayName, RollbackTarget? selectedTarget, Window rollbackWindow)
     {
         if (selectedTarget is null)
@@ -1197,6 +1502,364 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return result.Succeeded && !string.IsNullOrWhiteSpace(result.StandardOutput)
             ? result.StandardOutput.Trim()
             : null;
+    }
+
+    private async Task StopDistroForMaintenanceAsync()
+    {
+        _processRunner.TryKill(_serverProcess);
+        _serverProcess = null;
+
+        var terminateResult = await _wsl.TerminateDistroAsync().ConfigureAwait(false);
+        if (!terminateResult.Succeeded)
+        {
+            var note = GetCommandError(terminateResult);
+            if (!string.IsNullOrWhiteSpace(note))
+            {
+                AppendLog($"WSL stop note: {note}{Environment.NewLine}", "yellow");
+            }
+        }
+
+        RunOnUi(() =>
+        {
+            StopStartAnimation();
+            IsServerRunning = false;
+            IsServerStarting = false;
+            StartButtonText = "Start Server";
+        });
+    }
+
+    private void QueueServerStatusRefresh(bool immediate = false)
+    {
+        RunOnUi(() =>
+        {
+            if (!_serverStatusRetryTimer.IsEnabled)
+            {
+                _serverStatusRetryTimer.Start();
+            }
+        });
+
+        if (immediate)
+        {
+            _ = Task.Run(RetryServerStatusChecksAsync);
+        }
+    }
+
+    private async Task RetryServerStatusChecksAsync()
+    {
+        if (_isServerStatusRefreshInProgress)
+        {
+            return;
+        }
+
+        if (!NeedsServerStatusRefresh())
+        {
+            RunOnUi(() => _serverStatusRetryTimer.Stop());
+            return;
+        }
+
+        _isServerStatusRefreshInProgress = true;
+        try
+        {
+            await CheckForUpdatesAsync().ConfigureAwait(false);
+            await CheckStobeServerUpdatesAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Version status refresh failed: {ex.Message}{Environment.NewLine}", "yellow");
+        }
+        finally
+        {
+            _isServerStatusRefreshInProgress = false;
+        }
+
+        if (!NeedsServerStatusRefresh())
+        {
+            RunOnUi(() => _serverStatusRetryTimer.Stop());
+        }
+    }
+
+    private async Task<CommandResult> RunArchiveOperationWithProgressAsync(
+        Func<Action<string>, Task<CommandResult>> operation,
+        string archivePath,
+        string progressLabel,
+        TimeSpan? pollInterval = null)
+    {
+        return await RunPathOperationWithProgressAsync(
+                operation,
+                archivePath,
+                progressLabel,
+                "waiting for archive file...",
+                pollInterval)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<CommandResult> RunPathOperationWithProgressAsync(
+        Func<Action<string>, Task<CommandResult>> operation,
+        string progressPath,
+        string progressLabel,
+        string waitingMessage,
+        TimeSpan? pollInterval = null)
+    {
+        var interval = pollInterval ?? TimeSpan.FromSeconds(5);
+        using var monitorCts = new CancellationTokenSource();
+        var monitorTask = MonitorPathProgressAsync(progressPath, progressLabel, waitingMessage, interval, monitorCts.Token);
+
+        try
+        {
+            return await operation(text => AppendLog(text)).ConfigureAwait(false);
+        }
+        finally
+        {
+            monitorCts.Cancel();
+            try
+            {
+                await monitorTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the archive operation completes and stops the monitor.
+            }
+        }
+    }
+
+    private async Task MonitorPathProgressAsync(
+        string progressPath,
+        string progressLabel,
+        string waitingMessage,
+        TimeSpan interval,
+        CancellationToken cancellationToken)
+    {
+        long? previousLength = null;
+        DateTime? previousWriteUtc = null;
+        AppendLog($"{progressLabel}: {waitingMessage}{Environment.NewLine}");
+
+        while (true)
+        {
+            await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+
+            var snapshot = TryGetPathProgressSnapshot(progressPath);
+            if (snapshot is null)
+            {
+                AppendLog($"{progressLabel}: {waitingMessage}{Environment.NewLine}");
+                continue;
+            }
+
+            if (previousLength is null ||
+                snapshot.Value.Length != previousLength.Value ||
+                snapshot.Value.LastWriteUtc != previousWriteUtc)
+            {
+                var deltaText = previousLength is null
+                    ? string.Empty
+                    : $" ({FormatSignedByteDelta(snapshot.Value.Length - previousLength.Value)})";
+                AppendLog($"{progressLabel}: {FormatByteSize(snapshot.Value.Length)}{deltaText}{Environment.NewLine}");
+            }
+            else
+            {
+                AppendLog($"{progressLabel}: still running at {FormatByteSize(snapshot.Value.Length)}{Environment.NewLine}");
+            }
+
+            previousLength = snapshot.Value.Length;
+            previousWriteUtc = snapshot.Value.LastWriteUtc;
+        }
+    }
+
+    private string? GetExportArchivePath()
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        var dialog = new SaveFileDialog
+        {
+            Title = "Export Full Dwemer Distro",
+            Filter = "Tar Archive (*.tar)|*.tar|All Files (*.*)|*.*",
+            DefaultExt = ".tar",
+            AddExtension = true,
+            OverwritePrompt = true,
+            InitialDirectory = desktop,
+            FileName = $"{LauncherConstants.DistroName}-{DateTime.Now:yyyyMMdd-HHmmss}.tar"
+        };
+
+        return dialog.ShowDialog() == true ? Path.GetFullPath(dialog.FileName) : null;
+    }
+
+    private string? GetPreImportBackupPath()
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        var dialog = new SaveFileDialog
+        {
+            Title = "Choose Pre-Import Backup Export",
+            Filter = "Tar Archive (*.tar)|*.tar|All Files (*.*)|*.*",
+            DefaultExt = ".tar",
+            AddExtension = true,
+            OverwritePrompt = true,
+            InitialDirectory = desktop,
+            FileName = $"{LauncherConstants.DistroName}-preimport-{DateTime.Now:yyyyMMdd-HHmmss}.tar"
+        };
+
+        return dialog.ShowDialog() == true ? Path.GetFullPath(dialog.FileName) : null;
+    }
+
+    private string? GetImportArchivePath()
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        var dialog = new OpenFileDialog
+        {
+            Title = "Import Full Dwemer Distro",
+            Filter = "Tar Archive (*.tar)|*.tar|All Files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+            InitialDirectory = desktop
+        };
+
+        return dialog.ShowDialog() == true ? Path.GetFullPath(dialog.FileName) : null;
+    }
+
+    private string? GetImportInstallPath(string archivePath)
+    {
+        var initialDirectory = Path.GetDirectoryName(Path.GetFullPath(archivePath)) ??
+                               Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            Description = "Choose the folder where WSL should store the imported Dwemer distro.",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true,
+            InitialDirectory = initialDirectory
+        };
+
+        return dialog.ShowDialog() == Forms.DialogResult.OK
+            ? Path.GetFullPath(dialog.SelectedPath)
+            : null;
+    }
+
+    private static string GetCommandError(CommandResult result)
+    {
+        var error = string.IsNullOrWhiteSpace(result.StandardError)
+            ? result.StandardOutput
+            : result.StandardError;
+        var trimmed = error?.Trim();
+        return string.IsNullOrWhiteSpace(trimmed)
+            ? $"WSL command failed with exit code {result.ExitCode}."
+            : trimmed;
+    }
+
+    private bool NeedsServerStatusRefresh()
+    {
+        return StatusNeedsRefresh(_herikaStatusText) || StatusNeedsRefresh(_stobeStatusText);
+    }
+
+    private static bool StatusNeedsRefresh(string text)
+    {
+        return text.Contains("Checking...", StringComparison.OrdinalIgnoreCase) ||
+               text.Contains("[N/A]", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildServerStatusText(string serverName, string? branch, string detail)
+    {
+        var header = string.IsNullOrWhiteSpace(branch)
+            ? serverName
+            : $"{serverName} ({branch.Trim()})";
+        return $"{header}{Environment.NewLine}{detail}";
+    }
+
+    private static FileProgressSnapshot? TryGetFileProgressSnapshot(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var fileInfo = new FileInfo(path);
+            fileInfo.Refresh();
+            return fileInfo.Exists
+                ? new FileProgressSnapshot(fileInfo.Length, fileInfo.LastWriteTimeUtc)
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static FileProgressSnapshot? TryGetPathProgressSnapshot(string path)
+    {
+        var fileSnapshot = TryGetFileProgressSnapshot(path);
+        if (fileSnapshot is not null)
+        {
+            return fileSnapshot;
+        }
+
+        try
+        {
+            if (!Directory.Exists(path))
+            {
+                return null;
+            }
+
+            var vhdxPath = Path.Combine(path, "ext4.vhdx");
+            var vhdxSnapshot = TryGetFileProgressSnapshot(vhdxPath);
+            if (vhdxSnapshot is not null)
+            {
+                return vhdxSnapshot;
+            }
+
+            var directoryInfo = new DirectoryInfo(path);
+            directoryInfo.Refresh();
+            if (!directoryInfo.Exists)
+            {
+                return null;
+            }
+
+            long totalLength = 0;
+            DateTime latestWriteUtc = directoryInfo.LastWriteTimeUtc;
+
+            foreach (var file in directoryInfo.EnumerateFiles("*", SearchOption.AllDirectories))
+            {
+                totalLength += file.Length;
+                if (file.LastWriteTimeUtc > latestWriteUtc)
+                {
+                    latestWriteUtc = file.LastWriteTimeUtc;
+                }
+            }
+
+            return new FileProgressSnapshot(totalLength, latestWriteUtc);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatSignedByteDelta(long bytes)
+    {
+        if (bytes > 0)
+        {
+            return $"+{FormatByteSize(bytes)}";
+        }
+
+        if (bytes < 0)
+        {
+            return $"-{FormatByteSize(Math.Abs(bytes))}";
+        }
+
+        return "0 B";
+    }
+
+    private static string FormatByteSize(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double value = bytes;
+        var unitIndex = 0;
+
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return unitIndex == 0
+            ? $"{bytes} {units[unitIndex]}"
+            : $"{value:0.0} {units[unitIndex]}";
     }
 
     private async Task<string?> GetTextOrNullAsync(string url)
@@ -1741,4 +2404,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         string RepoPath,
         string[] VersionNumberFiles,
         string[] VersionTextFiles);
+
+    private readonly record struct FileProgressSnapshot(long Length, DateTime LastWriteUtc);
 }

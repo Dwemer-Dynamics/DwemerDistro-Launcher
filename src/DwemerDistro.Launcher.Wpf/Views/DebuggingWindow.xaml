@@ -65,6 +65,12 @@
             <Button Content="View Memory Usage"
                     Command="{Binding ViewMemoryUsageCommand}"
                     Style="{StaticResource DebugButton}" />
+            <Button Content="Export Distro Backup"
+                    Command="{Binding ExportDistroCommand}"
+                    Style="{StaticResource DebugButton}" />
+            <Button Content="Import Distro Backup"
+                    Command="{Binding ImportDistroCommand}"
+                    Style="{StaticResource DebugButton}" />
             <Button Content="Rollback HerikaServer"
                     Command="{Binding OpenHerikaRollbackCommand}"
                     Style="{StaticResource DebugButton}" />

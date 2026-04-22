@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
 using DwemerDistro.Launcher.Wpf.ViewModels;
+using Brushes = System.Windows.Media.Brushes;
 
 namespace DwemerDistro.Launcher.Wpf;
 

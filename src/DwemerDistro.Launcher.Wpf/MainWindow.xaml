@@ -250,7 +250,7 @@
                          Foreground="White"
                          BorderThickness="0"
                          FontFamily="Consolas"
-                         FontSize="10"
+                         FontSize="13"
                          IsReadOnly="True"
                          IsDocumentEnabled="True"
                          VerticalScrollBarVisibility="Auto"

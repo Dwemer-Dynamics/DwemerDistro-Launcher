@@ -53,6 +53,53 @@ public sealed class WslService(ProcessRunner processRunner)
         return RunDistroAsUserAsync(user, shellArgs, output, cancellationToken);
     }
 
+    public Task<CommandResult> TerminateDistroAsync(
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        return RunWslAsync(new[] { "-t", LauncherConstants.DistroName }, output, cancellationToken);
+    }
+
+    public Task<CommandResult> UnregisterDistroAsync(
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        return RunWslAsync(new[] { "--unregister", LauncherConstants.DistroName }, output, cancellationToken);
+    }
+
+    public Task<CommandResult> ExportDistroAsync(
+        string archivePath,
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        return RunWslAsync(new[] { "--export", LauncherConstants.DistroName, archivePath }, output, cancellationToken);
+    }
+
+    public Task<CommandResult> ImportDistroAsync(
+        string installPath,
+        string archivePath,
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        return RunWslAsync(new[] { "--import", LauncherConstants.DistroName, installPath, archivePath }, output, cancellationToken);
+    }
+
+    public async Task<bool> DistroExistsAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunWslAsync(new[] { "-l", "-q" }, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!result.Succeeded)
+        {
+            return false;
+        }
+
+        var normalizedOutput = result.StandardOutput.Replace("\0", string.Empty);
+        return normalizedOutput
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Any(line => string.Equals(line.Trim(), LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase));
+    }
+
     public async Task<string?> GetWslIpAsync(CancellationToken cancellationToken = default)
     {
         var result = await RunDistroAsync(new[] { "hostname", "-I" }, cancellationToken: cancellationToken)
