@@ -46,6 +46,38 @@ public sealed class ProcessRunner
         return new CommandResult(process.ExitCode, stdout.ToString(), stderr.ToString());
     }
 
+    public async Task<CommandResult> RunElevatedAsync(
+        string fileName,
+        IEnumerable<string> arguments,
+        CancellationToken cancellationToken = default)
+    {
+        var startInfo = new ProcessStartInfo(fileName)
+        {
+            UseShellExecute = true,
+            Verb = "runas",
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException($"Failed to start {fileName}.");
+
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            throw;
+        }
+
+        return new CommandResult(process.ExitCode, string.Empty, string.Empty);
+    }
+
     public Process StartHiddenProcess(
         string fileName,
         IEnumerable<string> arguments,
@@ -163,7 +195,7 @@ public sealed class ProcessRunner
             var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
             if (line is not null)
             {
-                onLine(line);
+                onLine(line.Replace("\0", string.Empty));
             }
         }
     }

@@ -71,6 +71,9 @@
             <Button Content="Import Distro Backup"
                     Command="{Binding ImportDistroCommand}"
                     Style="{StaticResource DebugButton}" />
+            <Button Content="Reclaim Distro Disk Space"
+                    Command="{Binding ReclaimDistroDiskSpaceCommand}"
+                    Style="{StaticResource DebugButton}" />
             <Button Content="Rollback HerikaServer"
                     Command="{Binding OpenHerikaRollbackCommand}"
                     Style="{StaticResource DebugButton}" />

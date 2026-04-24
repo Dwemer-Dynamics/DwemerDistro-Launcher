@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -117,6 +118,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"));
         ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"));
         FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync);
+        ReclaimDistroDiskSpaceCommand = new AsyncRelayCommand(ReclaimDistroDiskSpaceAsync);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync());
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher);
         CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync);
@@ -298,6 +300,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand ViewParakeetLogsCommand { get; }
     public RelayCommand ViewApacheLogsCommand { get; }
     public AsyncRelayCommand FixWslDnsCommand { get; }
+    public AsyncRelayCommand ReclaimDistroDiskSpaceCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
     public AsyncRelayCommand CleanLogsCommand { get; }
@@ -405,18 +408,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             if (_serverProcess is { HasExited: false })
             {
-                await _serverProcess.StandardInput.WriteLineAsync().ConfigureAwait(false);
-                await _serverProcess.StandardInput.FlushAsync().ConfigureAwait(false);
-                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                try
-                {
-                    await _serverProcess.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    _processRunner.TryKill(_serverProcess);
-                    AppendLog("DwemerDistro process killed after timeout." + Environment.NewLine, "yellow");
-                }
+                await TryStopTrackedServerProcessAsync(
+                        TimeSpan.FromSeconds(5),
+                        killOnTimeout: true,
+                        timeoutMessage: "DwemerDistro server process did not exit within 5 seconds.")
+                    .ConfigureAwait(false);
             }
             else
             {
@@ -1096,6 +1092,167 @@ public sealed partial class MainWindowViewModel : ObservableObject
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
     }
 
+    private async Task ReclaimDistroDiskSpaceAsync()
+    {
+        if (!await _wsl.DistroExistsAsync().ConfigureAwait(false))
+        {
+            MessageBox.Show(
+                $"{LauncherConstants.DistroName} is not currently installed.",
+                "Reclaim Distro Disk Space",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            $"This will run fstrim inside {LauncherConstants.DistroName}, request a clean server stop, flush filesystem buffers, shut down WSL, and attempt to compact ext4.vhdx using an elevated Windows prompt.\n\n" +
+            $"Close any open \\\\wsl.localhost\\{LauncherConstants.DistroName} Explorer windows first.\n\n" +
+            "This will also stop any other running WSL distros.\n\n" +
+            "This may take a few minutes.\n\nContinue?",
+            "Reclaim Distro Disk Space",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (confirmed != MessageBoxResult.Yes)
+        {
+            AppendLog("Distro disk reclaim canceled." + Environment.NewLine);
+            return;
+        }
+
+        try
+        {
+            var vhdxPath = _wsl.GetDistroVhdxPath();
+            var beforeSnapshot = vhdxPath is not null ? TryGetFileProgressSnapshot(vhdxPath) : null;
+
+            if (!string.IsNullOrWhiteSpace(vhdxPath))
+            {
+                AppendLog($"Detected distro VHDX: {vhdxPath}{Environment.NewLine}");
+            }
+
+            if (beforeSnapshot is not null)
+            {
+                AppendLog($"Current VHDX size: {FormatByteSize(beforeSnapshot.Value.Length)}{Environment.NewLine}");
+            }
+
+            AppendLog("Running fstrim inside Dwemer Distro..." + Environment.NewLine);
+            var trimResult = await _wsl.RunBashAsync("fstrim -av", text => AppendLog(text), user: "root").ConfigureAwait(true);
+            if (trimResult.Succeeded)
+            {
+                AppendLog("Filesystem trim completed." + Environment.NewLine, "green");
+            }
+            else
+            {
+                AppendLog($"Filesystem trim note: {GetCommandError(trimResult)}{Environment.NewLine}", "yellow");
+            }
+
+            await PrepareDistroForSafeCompactionAsync().ConfigureAwait(true);
+
+            if (string.IsNullOrWhiteSpace(vhdxPath))
+            {
+                AppendLog("Could not locate ext4.vhdx automatically. Immediate Windows compaction was skipped." + Environment.NewLine, "yellow");
+                MessageBox.Show(
+                    "Filesystem trim and WSL shutdown completed, but the launcher could not locate ext4.vhdx for an immediate compact pass.\n\n" +
+                    "Start the server again when you're ready.",
+                    "Disk Reclaim Partial",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            AppendLog("Running elevated Windows VHDX compact..." + Environment.NewLine);
+            var compactResult = await CompactVhdxAsync(vhdxPath).ConfigureAwait(true);
+            if (!compactResult.Succeeded)
+            {
+                var compactError = GetCommandError(compactResult);
+                var compactTag = compactResult.ExitCode == 1223 ? "yellow" : "red";
+                AppendLog($"Disk compaction failed: {compactError}{Environment.NewLine}", compactTag);
+                if (!string.IsNullOrWhiteSpace(compactResult.StandardOutput))
+                {
+                    AppendLog(compactResult.StandardOutput.Trim() + Environment.NewLine, compactTag);
+                }
+
+                MessageBox.Show(
+                    $"Disk compaction did not complete.\n\n{compactError}\n\nStart the server again when you're ready.",
+                    compactResult.ExitCode == 1223 ? "Disk Reclaim Canceled" : "Disk Reclaim Failed",
+                    MessageBoxButton.OK,
+                    compactResult.ExitCode == 1223 ? MessageBoxImage.Warning : MessageBoxImage.Error);
+                return;
+            }
+
+            var afterSnapshot = TryGetFileProgressSnapshot(vhdxPath);
+            var summary = BuildDiskReclaimSummary(vhdxPath, beforeSnapshot, afterSnapshot);
+            AppendLog(summary + Environment.NewLine, "green");
+
+            MessageBox.Show(
+                $"Distro disk reclaim completed.\n\n{summary}\n\nStart the server again when you're ready.",
+                "Disk Reclaim Complete",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Disk reclaim error: {ex.Message}{Environment.NewLine}", "red");
+            MessageBox.Show(
+                $"Failed to reclaim distro disk space.\n\n{ex.Message}",
+                "Disk Reclaim Failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private async Task PrepareDistroForSafeCompactionAsync()
+    {
+        AppendLog("Stopping Dwemer Distro for disk maintenance..." + Environment.NewLine);
+
+        if (_serverProcess is { HasExited: false })
+        {
+            AppendLog("Requesting Dwemer Distro server process to stop cleanly..." + Environment.NewLine);
+        }
+
+        await TryStopTrackedServerProcessAsync(
+                TimeSpan.FromSeconds(10),
+                killOnTimeout: false,
+                timeoutMessage: "DwemerDistro server process did not exit within 10 seconds. Continuing with WSL shutdown.")
+            .ConfigureAwait(true);
+
+        AppendLog("Flushing filesystem buffers..." + Environment.NewLine);
+        var syncResult = await _wsl.RunDistroAsUserAsync("root", new[] { "sync" }).ConfigureAwait(true);
+        if (!syncResult.Succeeded)
+        {
+            AppendLog($"Filesystem sync note: {GetCommandError(syncResult)}{Environment.NewLine}", "yellow");
+        }
+
+        AppendLog("Shutting down WSL..." + Environment.NewLine);
+        var shutdownResult = await _wsl.ShutdownAsync(text => AppendLog(text)).ConfigureAwait(true);
+        if (!shutdownResult.Succeeded)
+        {
+            AppendLog($"WSL shutdown note: {GetCommandError(shutdownResult)}{Environment.NewLine}", "yellow");
+        }
+
+        if (await _wsl.DistroRunningAsync().ConfigureAwait(false))
+        {
+            AppendLog("WSL shutdown did not stop Dwemer Distro cleanly. Falling back to terminate." + Environment.NewLine, "yellow");
+            var terminateResult = await _wsl.TerminateDistroAsync().ConfigureAwait(false);
+            if (!terminateResult.Succeeded)
+            {
+                var note = GetCommandError(terminateResult);
+                if (!string.IsNullOrWhiteSpace(note))
+                {
+                    AppendLog($"WSL stop note: {note}{Environment.NewLine}", "yellow");
+                }
+            }
+        }
+
+        _serverProcess = null;
+        RunOnUi(() =>
+        {
+            StopStartAnimation();
+            IsServerRunning = false;
+            IsServerStarting = false;
+            StartButtonText = "Start Server";
+        });
+    }
+
     private async Task ExportDistroAsync()
     {
         if (!await _wsl.DistroExistsAsync().ConfigureAwait(false))
@@ -1528,6 +1685,51 @@ public sealed partial class MainWindowViewModel : ObservableObject
         });
     }
 
+    private async Task<bool> TryStopTrackedServerProcessAsync(
+        TimeSpan timeout,
+        bool killOnTimeout,
+        string timeoutMessage)
+    {
+        if (_serverProcess is not { HasExited: false } process)
+        {
+            return true;
+        }
+
+        try
+        {
+            await process.StandardInput.WriteLineAsync().ConfigureAwait(false);
+            await process.StandardInput.FlushAsync().ConfigureAwait(false);
+
+            using var timeoutCts = new CancellationTokenSource(timeout);
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
+                _serverProcess = null;
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                if (killOnTimeout)
+                {
+                    _processRunner.TryKill(process);
+                    _serverProcess = null;
+                    AppendLog("DwemerDistro process killed after timeout." + Environment.NewLine, "yellow");
+                }
+                else
+                {
+                    AppendLog(timeoutMessage + Environment.NewLine, "yellow");
+                }
+
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Server shutdown note: {ex.Message}{Environment.NewLine}", "yellow");
+            return false;
+        }
+    }
+
     private void QueueServerStatusRefresh(bool immediate = false)
     {
         RunOnUi(() =>
@@ -1728,6 +1930,100 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return dialog.ShowDialog() == Forms.DialogResult.OK
             ? Path.GetFullPath(dialog.SelectedPath)
             : null;
+    }
+
+    private async Task<CommandResult> CompactVhdxAsync(string vhdxPath)
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"dwemerdistro-compact-{Guid.NewGuid():N}.ps1");
+        var logPath = Path.Combine(Path.GetTempPath(), $"dwemerdistro-compact-{Guid.NewGuid():N}.log");
+        var script = """
+                     param(
+                         [Parameter(Mandatory = $true)][string]$VhdxPath,
+                         [Parameter(Mandatory = $true)][string]$LogPath
+                     )
+
+                     $diskpartScript = Join-Path $env:TEMP ('dwemerdistro-diskpart-' + [guid]::NewGuid().ToString('N') + '.txt')
+                     try {
+                         @(
+                             ('select vdisk file="{0}"' -f $VhdxPath)
+                             'attach vdisk readonly'
+                             'compact vdisk'
+                             'detach vdisk'
+                             'exit'
+                         ) | Set-Content -LiteralPath $diskpartScript -Encoding Ascii
+                         $output = & diskpart.exe /s $diskpartScript 2>&1 | Out-String
+                         Set-Content -LiteralPath $LogPath -Value $output -Encoding UTF8
+                         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                         if ($output -match 'Virtual Disk Service error') { exit 1 }
+                         exit 0
+                     }
+                     catch {
+                         ($_ | Out-String) | Set-Content -LiteralPath $LogPath -Encoding UTF8
+                         exit 1
+                     }
+                     finally {
+                         Remove-Item -LiteralPath $diskpartScript -ErrorAction SilentlyContinue
+                     }
+                     """;
+
+        await File.WriteAllTextAsync(scriptPath, script).ConfigureAwait(false);
+
+        try
+        {
+            var result = await _processRunner.RunElevatedAsync(
+                    "powershell.exe",
+                    new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-VhdxPath", vhdxPath, "-LogPath", logPath })
+                .ConfigureAwait(false);
+
+            var log = File.Exists(logPath)
+                ? await File.ReadAllTextAsync(logPath).ConfigureAwait(false)
+                : string.Empty;
+            return new CommandResult(result.ExitCode, log, string.Empty);
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            return new CommandResult(1223, string.Empty, "The Windows UAC prompt was canceled.");
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(scriptPath))
+                {
+                    File.Delete(scriptPath);
+                }
+
+                if (File.Exists(logPath))
+                {
+                    File.Delete(logPath);
+                }
+            }
+            catch
+            {
+                // Best-effort temp cleanup.
+            }
+        }
+    }
+
+    private static string BuildDiskReclaimSummary(
+        string vhdxPath,
+        FileProgressSnapshot? beforeSnapshot,
+        FileProgressSnapshot? afterSnapshot)
+    {
+        if (beforeSnapshot is not null && afterSnapshot is not null)
+        {
+            var reclaimedBytes = beforeSnapshot.Value.Length - afterSnapshot.Value.Length;
+            return reclaimedBytes > 0
+                ? $"Reclaimed {FormatByteSize(reclaimedBytes)} from {vhdxPath}.{Environment.NewLine}Before: {FormatByteSize(beforeSnapshot.Value.Length)} | After: {FormatByteSize(afterSnapshot.Value.Length)}"
+                : $"Compaction completed for {vhdxPath}.{Environment.NewLine}Size is now {FormatByteSize(afterSnapshot.Value.Length)}.";
+        }
+
+        if (afterSnapshot is not null)
+        {
+            return $"Compaction completed for {vhdxPath}.{Environment.NewLine}Current size: {FormatByteSize(afterSnapshot.Value.Length)}.";
+        }
+
+        return $"Compaction completed for {vhdxPath}.";
     }
 
     private static string GetCommandError(CommandResult result)

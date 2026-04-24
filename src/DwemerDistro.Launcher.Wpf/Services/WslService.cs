@@ -1,4 +1,6 @@
 using DwemerDistro.Launcher.Wpf.Models;
+using Microsoft.Win32;
+using System.IO;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
 
@@ -53,6 +55,13 @@ public sealed class WslService(ProcessRunner processRunner)
         return RunDistroAsUserAsync(user, shellArgs, output, cancellationToken);
     }
 
+    public Task<CommandResult> ShutdownAsync(
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        return RunWslAsync(new[] { "--shutdown" }, output, cancellationToken);
+    }
+
     public Task<CommandResult> TerminateDistroAsync(
         Action<string>? output = null,
         CancellationToken cancellationToken = default)
@@ -100,6 +109,22 @@ public sealed class WslService(ProcessRunner processRunner)
             .Any(line => string.Equals(line.Trim(), LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase));
     }
 
+    public async Task<bool> DistroRunningAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await RunWslAsync(new[] { "-l", "-q", "--running" }, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!result.Succeeded)
+        {
+            return false;
+        }
+
+        var normalizedOutput = result.StandardOutput.Replace("\0", string.Empty);
+        return normalizedOutput
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Any(line => string.Equals(line.Trim(), LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase));
+    }
+
     public async Task<string?> GetWslIpAsync(CancellationToken cancellationToken = default)
     {
         var result = await RunDistroAsync(new[] { "hostname", "-I" }, cancellationToken: cancellationToken)
@@ -113,5 +138,56 @@ public sealed class WslService(ProcessRunner processRunner)
         return result.StandardOutput
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .FirstOrDefault();
+    }
+
+    public string? GetDistroBasePath()
+    {
+        using var lxssKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Lxss");
+        if (lxssKey is null)
+        {
+            return null;
+        }
+
+        foreach (var subKeyName in lxssKey.GetSubKeyNames())
+        {
+            using var distroKey = lxssKey.OpenSubKey(subKeyName);
+            if (distroKey is null)
+            {
+                continue;
+            }
+
+            var distributionName = distroKey.GetValue("DistributionName") as string;
+            if (!string.Equals(distributionName, LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return distroKey.GetValue("BasePath") as string;
+        }
+
+        return null;
+    }
+
+    public string? GetDistroVhdxPath()
+    {
+        var basePath = GetDistroBasePath();
+        if (string.IsNullOrWhiteSpace(basePath))
+        {
+            return null;
+        }
+
+        foreach (var candidate in new[]
+                 {
+                     Path.Combine(basePath, "ext4.vhdx"),
+                     Path.Combine(basePath, "LocalState", "ext4.vhdx")
+                 })
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 }
