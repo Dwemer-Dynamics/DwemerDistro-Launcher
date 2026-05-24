@@ -3,165 +3,285 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Install Components"
         Icon="/Assets/DwemerDistro.ico"
-        Width="720"
-        Height="800"
-        ResizeMode="NoResize"
+        Width="840"
+        Height="880"
+        MinWidth="760"
+        MinHeight="680"
+        WindowStartupLocation="CenterOwner"
         Background="#2C2C2C">
     <Window.Resources>
-        <Style x:Key="ComponentButton" TargetType="Button">
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+
+        <Style x:Key="PrimaryActionButton" TargetType="Button">
             <Setter Property="Background" Value="#5E0505" />
             <Setter Property="Foreground" Value="White" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Padding" Value="12,8" />
-            <Setter Property="Margin" Value="5" />
+            <Setter Property="Margin" Value="0,0,10,0" />
             <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
-            <EventSetter Event="MouseEnter" Handler="ComponentButton_MouseEnter" />
-            <EventSetter Event="MouseLeave" Handler="ComponentButton_MouseLeave" />
+            <Setter Property="MinWidth" Value="110" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#4A0404" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
+
+        <Style x:Key="InstallActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
+            <Setter Property="Background" Value="#2F8F3A" />
+            <Setter Property="MinWidth" Value="128" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="18">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Content" Value="Reinstall">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#5E0505" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#256F2E" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="Content" Value="Reinstall" />
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#4A0404" />
+                            </MultiTrigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
+            <Setter Property="Background" Value="#404040" />
+            <Setter Property="Margin" Value="0,8,0,0" />
+        </Style>
+
         <Style x:Key="SectionHeader" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#FFD700" />
             <Setter Property="FontFamily" Value="Trebuchet MS" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Margin" Value="10,15,10,5" />
+            <Setter Property="Margin" Value="0,18,0,8" />
         </Style>
     </Window.Resources>
 
-    <DockPanel Margin="10">
+    <DockPanel Margin="14">
         <Border DockPanel.Dock="Top"
-                Margin="0,0,0,8"
-                Padding="12"
+                Margin="0,0,0,12"
+                Padding="14"
                 Background="#1E1E1E"
                 BorderBrush="#565656"
-                BorderThickness="1">
-            <StackPanel>
-                <Image Source="/Assets/dd_title.png"
-                       Width="260"
-                       Stretch="Uniform"
-                       HorizontalAlignment="Center"
-                       Margin="0,0,0,10" />
+                BorderThickness="1"
+                CornerRadius="6">
+            <Border Background="#252525"
+                    BorderBrush="#565656"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="0">
                 <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="12" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Grid.Column="0"
-                            Background="#262626"
+                    <Border Grid.Row="0"
+                            Grid.Column="0"
+                            Background="#263827"
                             BorderBrush="#565656"
-                            BorderThickness="1"
-                            Padding="10">
-                        <StackPanel>
+                            BorderThickness="0,0,1,1"
+                            Padding="10,8">
+                        <StackPanel Orientation="Horizontal"
+                                    VerticalAlignment="Center">
                             <Image Source="/Assets/nvidia.png"
-                                   Width="96"
-                                   Height="36"
+                                   Width="18"
+                                   Height="18"
                                    Stretch="Uniform"
-                                   HorizontalAlignment="Left"
-                                   Margin="0,0,0,6" />
-                            <TextBlock Text="Use CUDA first, then install GPU-backed services like XTTS, Chatterbox, or Parakeet."
-                                       Foreground="White"
-                                       TextWrapping="Wrap" />
+                                   Margin="0,0,8,0" />
+                            <TextBlock Text="NVIDIA / CUDA"
+                                       Foreground="#CFEFCF"
+                                       FontFamily="Trebuchet MS"
+                                       FontSize="11"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="2"
-                            Background="#262626"
+                    <Border Grid.Row="0"
+                            Grid.Column="1"
+                            Background="#3A3224"
                             BorderBrush="#565656"
-                            BorderThickness="1"
-                            Padding="10">
-                        <StackPanel>
+                            BorderThickness="0,0,0,1"
+                            Padding="10,8">
+                        <StackPanel Orientation="Horizontal"
+                                    VerticalAlignment="Center">
                             <Image Source="/Assets/amd.png"
-                                   Width="96"
-                                   Height="36"
+                                   Width="18"
+                                   Height="18"
                                    Stretch="Uniform"
-                                   HorizontalAlignment="Left"
-                                   Margin="0,0,0,6" />
-                            <TextBlock Text="Use CPU-capable components like MeloTTS, Pocket-TTS, Piper-TTS, Mimic3, and CPU-friendly speech tools."
-                                       Foreground="White"
-                                       TextWrapping="Wrap" />
+                                   Margin="0,0,8,0" />
+                            <TextBlock Text="AMD / CPU"
+                                       Foreground="#F4D8A6"
+                                       FontFamily="Trebuchet MS"
+                                       FontSize="11"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center" />
                         </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="1"
+                            Grid.Column="0"
+                            BorderBrush="#565656"
+                            BorderThickness="0,0,1,0"
+                            Padding="10,8">
+                        <TextBlock Text="Install CUDA before enabling GPU-backed services."
+                                   Foreground="#DDDDDD"
+                                   FontFamily="Trebuchet MS"
+                                   TextWrapping="Wrap" />
+                    </Border>
+
+                    <Border Grid.Row="1"
+                            Grid.Column="1"
+                            BorderBrush="#565656"
+                            BorderThickness="0,0,0,0"
+                            Padding="10,8">
+                        <TextBlock Text="Skip CUDA and use CPU mode where the service offers it."
+                                   Foreground="#DDDDDD"
+                                   FontFamily="Trebuchet MS"
+                                   TextWrapping="Wrap" />
                     </Border>
                 </Grid>
-            </StackPanel>
+            </Border>
         </Border>
 
-        <GroupBox DockPanel.Dock="Top"
-                  Header="Component Description"
-                  Foreground="White"
-                  BorderBrush="#565656"
-                  Padding="10"
-                  Margin="0,0,0,8">
-            <TextBlock x:Name="DescriptionTextBlock"
-                       Foreground="White"
-                       FontFamily="Trebuchet MS"
-                       TextWrapping="Wrap"
-                       Text="Hover over a component below to see its description."
-                       MinHeight="22"
-                       MaxHeight="22" />
-        </GroupBox>
-
         <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-                <TextBlock Style="{StaticResource SectionHeader}" Text="NVIDIA USERS MUST INSTALL THIS FIRST!" />
-                <Button Content="CUDA"
-                        Command="{Binding InstallCudaCommand}"
-                        ToolTip="Nvidia's special software that lets AI tools work with their graphics cards. Install this first if you have a Nvidia GPU."
-                        Style="{StaticResource ComponentButton}" />
+            <ItemsControl ItemsSource="{Binding Sections}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel>
+                            <TextBlock Text="{Binding Title}"
+                                       Style="{StaticResource SectionHeader}" />
 
-                <TextBlock Style="{StaticResource SectionHeader}" Text="Recommended Extensions" />
-                <Button Content="Minime and TXT2VEC"
-                        Command="{Binding InstallMinimeT5Command}"
-                        ToolTip="Tiny helper LLM and vector service used to improve AI NPC responses."
-                        Style="{StaticResource ComponentButton}" />
+                            <ItemsControl ItemsSource="{Binding Items}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,12"
+                                                Padding="14"
+                                                Background="#262626"
+                                                BorderBrush="#565656"
+                                                BorderThickness="1"
+                                                CornerRadius="6">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
 
-                <TextBlock Style="{StaticResource SectionHeader}" Text="Text-to-Speech Engines" />
-                <UniformGrid Columns="2">
-                    <Button Content="Chatterbox"
-                            Command="{Binding InstallChatterboxCommand}"
-                            ToolTip="High-quality multilingual TTS with voice cloning. Requires Nvidia GPU with CUDA. Uses the same port as XTTS."
-                            Style="{StaticResource ComponentButton}" />
-                    <Button Content="Pocket-TTS"
-                            Command="{Binding InstallPocketTtsCommand}"
-                            ToolTip="CPU-based TTS. Uses the same port as XTTS and Chatterbox."
-                            Style="{StaticResource ComponentButton}" />
-                    <Button Content="Dwemer Distro XTTS"
-                            Command="{Binding InstallXttsCommand}"
-                            ToolTip="High-quality TTS. Requires Nvidia GPU and CUDA. Uses the same port as Chatterbox."
-                            Style="{StaticResource ComponentButton}" />
-                    <Button Content="MeloTTS"
-                            Command="{Binding InstallMeloTtsCommand}"
-                            ToolTip="Fast CPU-friendly TTS recommended for low-end systems."
-                            Style="{StaticResource ComponentButton}" />
-                    <Button Content="Piper-TTS"
-                            Command="{Binding InstallPiperTtsCommand}"
-                            ToolTip="Fast CPU-friendly TTS. Voices must be installed separately."
-                            Style="{StaticResource ComponentButton}" />
-                    <Button Content="Mimic3"
-                            Command="{Binding InstallMimic3Command}"
-                            ToolTip="Older but fast TTS service."
-                            Style="{StaticResource ComponentButton}" />
-                </UniformGrid>
+                                                <Grid Grid.Row="0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
 
-                <Button Content="Piper Voice Folder"
-                        Command="{Binding OpenPiperVoicesFolderCommand}"
-                        Background="#404040"
-                        Style="{StaticResource ComponentButton}" />
+                                                    <StackPanel Grid.Column="0"
+                                                                Margin="0,0,16,0">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding Title}"
+                                                                       Foreground="White"
+                                                                       FontFamily="Trebuchet MS"
+                                                                       FontSize="15"
+                                                                       FontWeight="Bold"
+                                                                       VerticalAlignment="Center" />
+                                                            <Image Source="/Assets/nvidia.png"
+                                                                   Width="14"
+                                                                   Height="14"
+                                                                   Stretch="Uniform"
+                                                                   Margin="8,0,0,0"
+                                                                   VerticalAlignment="Center"
+                                                                   Visibility="{Binding SupportsNvidiaCuda, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                            <Image Source="/Assets/amd.png"
+                                                                   Width="14"
+                                                                   Height="14"
+                                                                   Stretch="Uniform"
+                                                                   Margin="6,0,0,0"
+                                                                   VerticalAlignment="Center"
+                                                                   Visibility="{Binding SupportsAmdCpu, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                        </StackPanel>
+                                                        <TextBlock Text="{Binding Description}"
+                                                                   Foreground="#DDDDDD"
+                                                                   FontFamily="Trebuchet MS"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,6,0,0" />
+                                                    </StackPanel>
 
-                <TextBlock Style="{StaticResource SectionHeader}" Text="Speech-to-Text Engines" />
-                <UniformGrid Columns="2">
-                    <Button Content="Parakeet STT"
-                            Command="{Binding InstallParakeetCommand}"
-                            ToolTip="Offline speech-to-text using NVIDIA Parakeet TDT. Supports GPU and CPU modes."
-                            Style="{StaticResource ComponentButton}" />
-                    <Button Content="LocalWhisper"
-                            Command="{Binding InstallLocalWhisperCommand}"
-                            ToolTip="Offline speech-to-text based on Whisper."
-                            Style="{StaticResource ComponentButton}" />
-                </UniformGrid>
-            </StackPanel>
+                                                    <Border Grid.Column="1"
+                                                            Background="{Binding StatusBackground}"
+                                                            CornerRadius="12"
+                                                            Padding="10,4"
+                                                            VerticalAlignment="Top">
+                                                        <TextBlock Text="{Binding StatusText}"
+                                                                   Foreground="{Binding StatusForeground}"
+                                                                   FontFamily="Trebuchet MS"
+                                                                   FontSize="11"
+                                                                   FontWeight="Bold" />
+                                                    </Border>
+                                                </Grid>
+
+                                                <StackPanel Grid.Row="1"
+                                                            Margin="0,14,0,0">
+                                                    <Button Content="{Binding PrimaryButtonText}"
+                                                            Command="{Binding PrimaryCommand}"
+                                                            Style="{StaticResource InstallActionButton}"
+                                                            HorizontalAlignment="Left" />
+                                                    <Button Content="{Binding SecondaryActionText}"
+                                                            Command="{Binding SecondaryActionCommand}"
+                                                            Style="{StaticResource SecondaryActionButton}"
+                                                            HorizontalAlignment="Left"
+                                                            Visibility="{Binding HasSecondaryAction, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
         </ScrollViewer>
     </DockPanel>
 </Window>

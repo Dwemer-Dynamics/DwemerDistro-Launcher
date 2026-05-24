@@ -1,28 +1,23 @@
 using System.Windows;
-using System.Windows.Controls;
-using Button = System.Windows.Controls.Button;
+using DwemerDistro.Launcher.Wpf.ViewModels;
 
 namespace DwemerDistro.Launcher.Wpf.Views;
 
 public partial class InstallComponentsWindow : Window
 {
-    private const string DefaultDescriptionText = "Hover over a component below to see its description.";
+    private readonly InstallComponentsWindowViewModel _viewModel;
 
-    public InstallComponentsWindow()
+    public InstallComponentsWindow(MainWindowViewModel mainWindowViewModel)
     {
         InitializeComponent();
+        _viewModel = new InstallComponentsWindowViewModel(mainWindowViewModel);
+        DataContext = _viewModel;
+        Loaded += InstallComponentsWindow_Loaded;
     }
 
-    private void ComponentButton_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    private async void InstallComponentsWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { ToolTip: string description } && !string.IsNullOrWhiteSpace(description))
-        {
-            DescriptionTextBlock.Text = description;
-        }
-    }
-
-    private void ComponentButton_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
-    {
-        DescriptionTextBlock.Text = DefaultDescriptionText;
+        Loaded -= InstallComponentsWindow_Loaded;
+        await _viewModel.InitializeAsync().ConfigureAwait(true);
     }
 }

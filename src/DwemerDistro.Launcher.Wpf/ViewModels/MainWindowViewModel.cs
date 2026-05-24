@@ -2189,10 +2189,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void OpenInstallComponentsWindow()
     {
-        var window = new InstallComponentsWindow
+        var window = new InstallComponentsWindow(this)
         {
-            Owner = Application.Current.MainWindow,
-            DataContext = this
+            Owner = Application.Current.MainWindow
         };
         window.Show();
     }
