@@ -3,27 +3,29 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Debugging"
         Icon="/Assets/DwemerDistro.ico"
-        Width="440"
-        Height="900"
-        ResizeMode="NoResize"
+        Width="880"
+        Height="920"
+        MinWidth="780"
+        MinHeight="680"
+        WindowStartupLocation="CenterOwner"
         Background="#2C2C2C">
     <Window.Resources>
-        <Style x:Key="DebugButton" TargetType="Button">
+        <Style x:Key="PrimaryActionButton" TargetType="Button">
             <Setter Property="Background" Value="#5E0505" />
             <Setter Property="Foreground" Value="White" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Padding" Value="10,7" />
-            <Setter Property="Margin" Value="0,5" />
+            <Setter Property="Padding" Value="12,8" />
             <Setter Property="FontFamily" Value="Trebuchet MS" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Width" Value="300" />
+            <Setter Property="MinWidth" Value="120" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="ButtonBorder"
-                                Background="{TemplateBinding Background}">
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="18">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center"
                                               Margin="{TemplateBinding Padding}" />
@@ -32,90 +34,588 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="ButtonBorder" Property="Background" Value="#4A0404" />
                             </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.55" />
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="DebugHeader" TargetType="TextBlock">
+
+        <Style x:Key="WarningActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
+            <Setter Property="Background" Value="#7B4B14" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="18">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#5F390F" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SectionHeader" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFD700" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,18,0,8" />
+        </Style>
+
+        <Style x:Key="ActionCardTitle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="White" />
             <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="15" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="HorizontalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="0,8,0,5" />
+        </Style>
+
+        <Style x:Key="ActionCardDescription" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#DDDDDD" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,6,0,0" />
         </Style>
     </Window.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="20" HorizontalAlignment="Center">
-            <Image Source="/Assets/dd_title.png"
-                   Width="240"
-                   Stretch="Uniform"
-                   Margin="0,0,0,12" />
-            <TextBlock Style="{StaticResource DebugHeader}" Text="--- Diagnostics ---" />
-            <Button Content="Create Diagnostic File"
-                    Command="{Binding GenerateDiagnosticsCommand}"
-                    Style="{StaticResource DebugButton}" />
+    <DockPanel Margin="14">
+        <Border DockPanel.Dock="Top"
+                Margin="0,0,0,12"
+                Padding="14"
+                Background="#1E1E1E"
+                BorderBrush="#565656"
+                BorderThickness="1"
+                CornerRadius="6">
+            <StackPanel>
+                <TextBlock Text="Debugging Tools"
+                           Foreground="White"
+                           FontFamily="Trebuchet MS"
+                           FontSize="18"
+                           FontWeight="Bold" />
+                <TextBlock Text="Inspect logs, troubleshoot services, manage backups, and run maintenance tasks for the distro."
+                           Foreground="#DDDDDD"
+                           FontFamily="Trebuchet MS"
+                           TextWrapping="Wrap"
+                           Margin="0,6,0,0" />
+            </StackPanel>
+        </Border>
 
-            <Separator Margin="0,10" />
-            <TextBlock Style="{StaticResource DebugHeader}" Text="--- Distro Actions ---" />
-            <Button Content="Open Terminal"
-                    Command="{Binding OpenTerminalCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="View Memory Usage"
-                    Command="{Binding ViewMemoryUsageCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="Export Distro Backup"
-                    Command="{Binding ExportDistroCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="Import Distro Backup"
-                    Command="{Binding ImportDistroCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="Reclaim Distro Disk Space"
-                    Command="{Binding ReclaimDistroDiskSpaceCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="Rollback HerikaServer"
-                    Command="{Binding OpenHerikaRollbackCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="Rollback StobeServer"
-                    Command="{Binding OpenStobeRollbackCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="Fix WSL DNS (GitHub)"
-                    Command="{Binding FixWslDnsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="Configure CUDA GPU"
-                    Command="{Binding OpenCudaConfigCommand}"
-                    Style="{StaticResource DebugButton}" />
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="Diagnostics"
+                           Style="{StaticResource SectionHeader}" />
 
-            <Separator Margin="0,10" />
-            <TextBlock Style="{StaticResource DebugHeader}" Text="--- View Logs ---" />
-            <Button Content="View Dwemer Distro XTTS Logs"
-                    Command="{Binding ViewXttsLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="View Chatterbox Logs"
-                    Command="{Binding ViewChatterboxLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="View PocketTTS Logs"
-                    Command="{Binding ViewPocketTtsLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="View MeloTTS Logs"
-                    Command="{Binding ViewMeloTtsLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="View Piper Logs"
-                    Command="{Binding ViewPiperLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="View LocalWhisper Logs"
-                    Command="{Binding ViewLocalWhisperLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="View Parakeet Logs"
-                    Command="{Binding ViewParakeetLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="View Apache Logs"
-                    Command="{Binding ViewApacheLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-            <Button Content="Clean All Logs"
-                    Command="{Binding CleanLogsCommand}"
-                    Style="{StaticResource DebugButton}" />
-        </StackPanel>
-    </ScrollViewer>
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#565656"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Create Diagnostic File"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Collect launcher, distro, and service troubleshooting data into a single diagnostic output."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Run"
+                                Command="{Binding GenerateDiagnosticsCommand}"
+                                Style="{StaticResource PrimaryActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <TextBlock Text="Distro Maintenance"
+                           Style="{StaticResource SectionHeader}" />
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#565656"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Open Terminal"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Launch a shell inside the distro for manual inspection, package checks, or direct commands."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Open"
+                                Command="{Binding OpenTerminalCommand}"
+                                Style="{StaticResource PrimaryActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#565656"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="View Memory Usage"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Open live resource usage inside WSL to inspect RAM, CPU, and process pressure."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Open"
+                                Command="{Binding ViewMemoryUsageCommand}"
+                                Style="{StaticResource PrimaryActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#565656"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Fix WSL DNS (GitHub)"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Repair common WSL DNS issues that block GitHub downloads, updates, or package installs."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Repair"
+                                Command="{Binding FixWslDnsCommand}"
+                                Style="{StaticResource PrimaryActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#565656"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Configure CUDA GPU"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Open CUDA setup and repair tools when NVIDIA GPU support needs to be installed or fixed."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Open"
+                                Command="{Binding OpenCudaConfigCommand}"
+                                Style="{StaticResource PrimaryActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <TextBlock Text="Backups and Recovery"
+                           Style="{StaticResource SectionHeader}" />
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#565656"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Export Distro Backup"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Create a backup of the distro before major updates, installs, or configuration changes."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Export"
+                                Command="{Binding ExportDistroCommand}"
+                                Style="{StaticResource PrimaryActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#7B4B14"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Import Distro Backup"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Restore a previously exported distro backup. Use this when you need to roll the full distro state back."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Import"
+                                Command="{Binding ImportDistroCommand}"
+                                Style="{StaticResource WarningActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#7B4B14"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Rollback HerikaServer"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Open rollback controls for HerikaServer when a recent change needs to be reverted."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Open"
+                                Command="{Binding OpenHerikaRollbackCommand}"
+                                Style="{StaticResource WarningActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#7B4B14"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Rollback StobeServer"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Open rollback controls for StobeServer when you need to revert a recent server change."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Open"
+                                Command="{Binding OpenStobeRollbackCommand}"
+                                Style="{StaticResource WarningActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#7B4B14"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Reclaim Distro Disk Space"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Compact and recover unused WSL disk space after large installs, updates, or cleanup work."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Run"
+                                Command="{Binding ReclaimDistroDiskSpaceCommand}"
+                                Style="{StaticResource WarningActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#7B4B14"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Clean All Logs"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Clear accumulated service and Apache logs so fresh troubleshooting runs start with clean output."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Clean"
+                                Command="{Binding CleanLogsCommand}"
+                                Style="{StaticResource WarningActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <TextBlock Text="View Logs"
+                           Style="{StaticResource SectionHeader}" />
+
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0"
+                            Grid.Column="0"
+                            Margin="0,0,8,12"
+                            Padding="14"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="Dwemer Distro XTTS"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Tail the live XTTS runtime log."
+                                       Style="{StaticResource ActionCardDescription}" />
+                            <Button Content="Open Log"
+                                    Command="{Binding ViewXttsLogsCommand}"
+                                    Style="{StaticResource PrimaryActionButton}"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="0"
+                            Grid.Column="1"
+                            Margin="8,0,0,12"
+                            Padding="14"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="Chatterbox"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Tail the live Chatterbox runtime log."
+                                       Style="{StaticResource ActionCardDescription}" />
+                            <Button Content="Open Log"
+                                    Command="{Binding ViewChatterboxLogsCommand}"
+                                    Style="{StaticResource PrimaryActionButton}"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="1"
+                            Grid.Column="0"
+                            Margin="0,0,8,12"
+                            Padding="14"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="PocketTTS"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Tail the live PocketTTS runtime log."
+                                       Style="{StaticResource ActionCardDescription}" />
+                            <Button Content="Open Log"
+                                    Command="{Binding ViewPocketTtsLogsCommand}"
+                                    Style="{StaticResource PrimaryActionButton}"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="1"
+                            Grid.Column="1"
+                            Margin="8,0,0,12"
+                            Padding="14"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="MeloTTS"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Tail the live MeloTTS runtime log."
+                                       Style="{StaticResource ActionCardDescription}" />
+                            <Button Content="Open Log"
+                                    Command="{Binding ViewMeloTtsLogsCommand}"
+                                    Style="{StaticResource PrimaryActionButton}"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="2"
+                            Grid.Column="0"
+                            Margin="0,0,8,12"
+                            Padding="14"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="Piper"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Tail the live Piper runtime log."
+                                       Style="{StaticResource ActionCardDescription}" />
+                            <Button Content="Open Log"
+                                    Command="{Binding ViewPiperLogsCommand}"
+                                    Style="{StaticResource PrimaryActionButton}"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="2"
+                            Grid.Column="1"
+                            Margin="8,0,0,12"
+                            Padding="14"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="LocalWhisper"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Tail the live LocalWhisper runtime log."
+                                       Style="{StaticResource ActionCardDescription}" />
+                            <Button Content="Open Log"
+                                    Command="{Binding ViewLocalWhisperLogsCommand}"
+                                    Style="{StaticResource PrimaryActionButton}"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="3"
+                            Grid.Column="0"
+                            Margin="0,0,8,0"
+                            Padding="14"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="Parakeet"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Tail the live Parakeet runtime log."
+                                       Style="{StaticResource ActionCardDescription}" />
+                            <Button Content="Open Log"
+                                    Command="{Binding ViewParakeetLogsCommand}"
+                                    Style="{StaticResource PrimaryActionButton}"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="3"
+                            Grid.Column="1"
+                            Margin="8,0,0,0"
+                            Padding="14"
+                            Background="#262626"
+                            BorderBrush="#565656"
+                            BorderThickness="1"
+                            CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock Text="Apache"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Tail the web server error log inside the distro."
+                                       Style="{StaticResource ActionCardDescription}" />
+                            <Button Content="Open Log"
+                                    Command="{Binding ViewApacheLogsCommand}"
+                                    Style="{StaticResource PrimaryActionButton}"
+                                    HorizontalAlignment="Left"
+                                    Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
 </Window>
