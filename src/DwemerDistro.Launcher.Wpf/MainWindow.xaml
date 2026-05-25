@@ -250,7 +250,7 @@
 
                             <StackPanel Grid.Column="0"
                                         Margin="0,0,10,0">
-                                <TextBlock Text="Updater"
+                                <TextBlock Text="Mod Updates"
                                            Style="{StaticResource SectionTitle}" />
                             </StackPanel>
 

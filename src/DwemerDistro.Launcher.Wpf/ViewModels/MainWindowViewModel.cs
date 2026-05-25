@@ -474,7 +474,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
               (includeHerika ? $"HerikaServer target branch: {targetHerika}\n" : "HerikaServer update: disabled\n") +
               (includeStobe ? $"StobeServer target branch: {targetStobe}\n" : "StobeServer update: disabled\n") +
               "\nAre you sure?"
-            : "This will update Dwemer Distro only.\n\nHerikaServer and StobeServer updates are disabled in the Updater section.\n\nAre you sure?";
+            : "This will update Dwemer Distro only.\n\nHerikaServer and StobeServer updates are disabled in the Mod Updates section.\n\nAre you sure?";
 
         if (MessageBox.Show(confirmText, "Update System", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {

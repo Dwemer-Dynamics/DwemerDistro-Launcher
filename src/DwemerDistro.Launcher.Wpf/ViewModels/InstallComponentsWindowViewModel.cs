@@ -112,7 +112,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 key: "cuda",
                 title: "CUDA",
                 description: "Install the NVIDIA CUDA stack used by GPU-backed services. Run this first on NVIDIA systems.",
-                installCheckExpression: "shutil.which('nvidia-smi') is not None or shutil.which('nvcc') is not None",
+                installCheckExpression: "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
                 primaryCommand: mainWindowViewModel.InstallCudaCommand,
                 supportsNvidiaCuda: true)));
 
