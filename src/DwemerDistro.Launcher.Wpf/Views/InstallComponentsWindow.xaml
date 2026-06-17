@@ -87,6 +87,13 @@
             <Setter Property="Margin" Value="0,8,0,0" />
         </Style>
 
+        <Style x:Key="CompactActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
+            <Setter Property="Background" Value="#404040" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="Margin" Value="8,0,0,0" />
+            <Setter Property="MinWidth" Value="86" />
+        </Style>
+
         <Style x:Key="SectionHeader" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#FFD700" />
             <Setter Property="FontFamily" Value="Trebuchet MS" />
@@ -104,6 +111,7 @@
                 BorderBrush="#565656"
                 BorderThickness="1"
                 CornerRadius="6">
+            <StackPanel>
             <Border Background="#252525"
                     BorderBrush="#565656"
                     BorderThickness="1"
@@ -186,6 +194,68 @@
                     </Border>
                 </Grid>
             </Border>
+
+            <Border Margin="0,10,0,0"
+                    Padding="12"
+                    Background="#252525"
+                    BorderBrush="#565656"
+                    BorderThickness="1"
+                    CornerRadius="6">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0"
+                                Margin="0,0,14,0">
+                        <StackPanel Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                            <Image Source="/Assets/huggingface.png"
+                                   Width="18"
+                                   Height="18"
+                                   Stretch="Uniform"
+                                   Margin="0,0,8,0"
+                                   VerticalAlignment="Center" />
+                            <TextBlock Text="Hugging Face Token"
+                                       Foreground="White"
+                                       FontFamily="Trebuchet MS"
+                                       FontSize="13"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                            <Border Background="{Binding HuggingFaceTokenStatusBackground}"
+                                    CornerRadius="12"
+                                    Padding="10,4"
+                                    Margin="10,0,0,0"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="{Binding HuggingFaceTokenStatusText}"
+                                           Foreground="{Binding HuggingFaceTokenStatusForeground}"
+                                           FontFamily="Trebuchet MS"
+                                           FontSize="11"
+                                           FontWeight="Bold" />
+                            </Border>
+                        </StackPanel>
+                        <TextBlock Text="{Binding HuggingFaceTokenDetailText}"
+                                   Foreground="#DDDDDD"
+                                   FontFamily="Trebuchet MS"
+                                   TextWrapping="Wrap"
+                                   Margin="0,7,0,0" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center">
+                        <Button Content="Refresh"
+                                Command="{Binding RefreshHuggingFaceTokenCommand}"
+                                Style="{StaticResource CompactActionButton}" />
+                        <Button Content="Edit Token"
+                                Click="EditHuggingFaceTokenButton_Click"
+                                Style="{StaticResource CompactActionButton}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            </StackPanel>
         </Border>
 
         <ScrollViewer VerticalScrollBarVisibility="Auto">

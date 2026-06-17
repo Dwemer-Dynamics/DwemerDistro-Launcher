@@ -14,6 +14,15 @@ public sealed class WslService(ProcessRunner processRunner)
         return processRunner.RunHiddenAsync("wsl.exe", arguments, output, cancellationToken);
     }
 
+    public Task<CommandResult> RunWslWithInputAsync(
+        IEnumerable<string> arguments,
+        string input,
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        return processRunner.RunHiddenWithInputAsync("wsl.exe", arguments, input, output, cancellationToken);
+    }
+
     public Task<CommandResult> RunDistroAsync(
         IEnumerable<string> arguments,
         Action<string>? output = null,
@@ -33,6 +42,20 @@ public sealed class WslService(ProcessRunner processRunner)
     {
         return RunWslAsync(
             new[] { "-d", LauncherConstants.DistroName, "-u", user, "--" }.Concat(arguments),
+            output,
+            cancellationToken);
+    }
+
+    public Task<CommandResult> RunDistroAsUserWithInputAsync(
+        string user,
+        IEnumerable<string> arguments,
+        string input,
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        return RunWslWithInputAsync(
+            new[] { "-d", LauncherConstants.DistroName, "-u", user, "--" }.Concat(arguments),
+            input,
             output,
             cancellationToken);
     }

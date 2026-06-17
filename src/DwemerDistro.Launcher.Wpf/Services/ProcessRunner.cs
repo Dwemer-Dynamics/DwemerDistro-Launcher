@@ -46,6 +46,50 @@ public sealed class ProcessRunner
         return new CommandResult(process.ExitCode, stdout.ToString(), stderr.ToString());
     }
 
+    public async Task<CommandResult> RunHiddenWithInputAsync(
+        string fileName,
+        IEnumerable<string> arguments,
+        string input,
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
+
+        using var process = CreateHiddenProcess(fileName, arguments, redirectInput: true);
+
+        process.Start();
+
+        var stdoutTask = ReadLinesAsync(process.StandardOutput, line =>
+        {
+            stdout.AppendLine(line);
+            output?.Invoke(line + Environment.NewLine);
+        }, cancellationToken);
+
+        var stderrTask = ReadLinesAsync(process.StandardError, line =>
+        {
+            stderr.AppendLine(line);
+            output?.Invoke(line + Environment.NewLine);
+        }, cancellationToken);
+
+        try
+        {
+            await process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            process.StandardInput.Close();
+
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            throw;
+        }
+
+        return new CommandResult(process.ExitCode, stdout.ToString(), stderr.ToString());
+    }
+
     public async Task<CommandResult> RunElevatedAsync(
         string fileName,
         IEnumerable<string> arguments,

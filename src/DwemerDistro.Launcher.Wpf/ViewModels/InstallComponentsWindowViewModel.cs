@@ -9,19 +9,132 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 public sealed class InstallComponentsWindowViewModel : ObservableObject
 {
     private readonly WslService _wsl = new(new ProcessRunner());
+    private readonly HuggingFaceTokenService _huggingFaceToken;
     private readonly List<InstallComponentItemViewModel> _allItems = [];
+    private string _huggingFaceTokenStatusText = "Checking";
+    private string _huggingFaceTokenDetailText = "Checking Hugging Face token...";
+    private string _huggingFaceTokenStatusBackground = "#555555";
+    private string _huggingFaceTokenStatusForeground = "White";
 
     public InstallComponentsWindowViewModel(MainWindowViewModel mainWindowViewModel)
     {
+        _huggingFaceToken = new HuggingFaceTokenService(_wsl);
+        RefreshHuggingFaceTokenCommand = new AsyncRelayCommand(RefreshHuggingFaceTokenStatusAsync);
         Sections = new ObservableCollection<InstallComponentSectionViewModel>(
             BuildSections(mainWindowViewModel, _allItems));
     }
 
     public ObservableCollection<InstallComponentSectionViewModel> Sections { get; }
 
+    public AsyncRelayCommand RefreshHuggingFaceTokenCommand { get; }
+
+    public string HuggingFaceTokenStatusText
+    {
+        get => _huggingFaceTokenStatusText;
+        private set => SetProperty(ref _huggingFaceTokenStatusText, value);
+    }
+
+    public string HuggingFaceTokenDetailText
+    {
+        get => _huggingFaceTokenDetailText;
+        private set => SetProperty(ref _huggingFaceTokenDetailText, value);
+    }
+
+    public string HuggingFaceTokenStatusBackground
+    {
+        get => _huggingFaceTokenStatusBackground;
+        private set => SetProperty(ref _huggingFaceTokenStatusBackground, value);
+    }
+
+    public string HuggingFaceTokenStatusForeground
+    {
+        get => _huggingFaceTokenStatusForeground;
+        private set => SetProperty(ref _huggingFaceTokenStatusForeground, value);
+    }
+
     public Task InitializeAsync()
     {
-        return RefreshInstalledStatesAsync();
+        return Task.WhenAll(RefreshInstalledStatesAsync(), RefreshHuggingFaceTokenStatusAsync());
+    }
+
+    public async Task RefreshHuggingFaceTokenStatusAsync()
+    {
+        SetHuggingFaceTokenCheckingState();
+
+        var status = await _huggingFaceToken.GetStatusAsync().ConfigureAwait(true);
+        ApplyHuggingFaceTokenStatus(status);
+    }
+
+    public Task<string?> ReadHuggingFaceTokenAsync()
+    {
+        return _huggingFaceToken.ReadTokenAsync();
+    }
+
+    public async Task<string?> SaveHuggingFaceTokenAsync(string token)
+    {
+        var result = await _huggingFaceToken.SaveTokenAsync(token).ConfigureAwait(true);
+        return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
+    }
+
+    public async Task<string?> ClearHuggingFaceTokenAsync()
+    {
+        var result = await _huggingFaceToken.ClearTokenAsync().ConfigureAwait(true);
+        return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
+    }
+
+    private void SetHuggingFaceTokenCheckingState()
+    {
+        HuggingFaceTokenStatusText = "Checking";
+        HuggingFaceTokenDetailText = "Checking /home/dwemer/.cache/huggingface/token...";
+        HuggingFaceTokenStatusBackground = "#555555";
+        HuggingFaceTokenStatusForeground = "White";
+    }
+
+    private void ApplyHuggingFaceTokenStatus(HuggingFaceTokenStatus status)
+    {
+        if (!status.IsConfigured && string.IsNullOrWhiteSpace(status.Error))
+        {
+            HuggingFaceTokenStatusText = "Not configured";
+            HuggingFaceTokenDetailText = "No token detected. Chatterbox and Pocket-TTS may ask for one during model downloads.";
+            HuggingFaceTokenStatusBackground = "#6A3A12";
+            HuggingFaceTokenStatusForeground = "White";
+            return;
+        }
+
+        if (status.IsValid == true)
+        {
+            var userSuffix = string.IsNullOrWhiteSpace(status.UserName) ? string.Empty : $": {status.UserName}";
+            HuggingFaceTokenStatusText = $"Valid{userSuffix}";
+            HuggingFaceTokenDetailText = $"Token detected at {status.TokenSource} and verified with Hugging Face.";
+            HuggingFaceTokenStatusBackground = "#285A2D";
+            HuggingFaceTokenStatusForeground = "White";
+            return;
+        }
+
+        if (status.IsValid == false)
+        {
+            HuggingFaceTokenStatusText = "Invalid token";
+            HuggingFaceTokenDetailText = status.Error ?? "Hugging Face rejected the configured token.";
+            HuggingFaceTokenStatusBackground = "#7A2828";
+            HuggingFaceTokenStatusForeground = "White";
+            return;
+        }
+
+        if (status.IsConfigured)
+        {
+            HuggingFaceTokenStatusText = "Detected, not verified";
+            HuggingFaceTokenDetailText = string.IsNullOrWhiteSpace(status.Error)
+                ? $"Token detected at {status.TokenSource}, but validation did not complete."
+                : $"Token detected at {status.TokenSource}, but validation did not complete: {status.Error}";
+            HuggingFaceTokenStatusBackground = "#4F3C7A";
+            HuggingFaceTokenStatusForeground = "White";
+            return;
+        }
+
+        HuggingFaceTokenStatusText = "Unknown";
+        HuggingFaceTokenDetailText = status.Error ?? "Unable to check Hugging Face token status.";
+        HuggingFaceTokenStatusBackground = "#4F3C7A";
+        HuggingFaceTokenStatusForeground = "White";
     }
 
     private async Task RefreshInstalledStatesAsync()
