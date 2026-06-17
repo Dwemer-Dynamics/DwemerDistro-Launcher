@@ -1052,6 +1052,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task GenerateDiagnosticsAsync()
     {
+        var confirmed = MessageBox.Show(
+            "The diagnostic file will include recent launcher output, service logs, LLM request/response logs, and local game plugin logs when available.\n\nContinue?",
+            "Create Diagnostic File",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (confirmed != MessageBoxResult.Yes)
+        {
+            AppendLog("Diagnostic file creation canceled." + Environment.NewLine);
+            return;
+        }
+
         AppendLog("Generating diagnostic summary..." + Environment.NewLine);
         var lines = new List<string>
         {
@@ -1085,11 +1097,273 @@ public sealed partial class MainWindowViewModel : ObservableObject
             lines.Add("");
         }
 
+        await AddLogDiagnosticsAsync(lines).ConfigureAwait(false);
+
         var outputDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "DwemerDistro-Diagnostics");
         Directory.CreateDirectory(outputDir);
         var outputPath = Path.Combine(outputDir, $"diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
+        OpenFolder(outputDir);
+    }
+
+    private async Task AddLogDiagnosticsAsync(List<string> lines)
+    {
+        const int maxLogLines = 3000;
+
+        lines.Add("Log Diagnostics");
+        lines.Add($"Each log section contains up to the last {maxLogLines} lines.");
+        lines.Add("Missing or unreadable logs are noted inline instead of failing diagnostic creation.");
+        lines.Add("");
+
+        AddLauncherSessionOutputDiagnostics(lines, maxLogLines);
+        await AddWslLogDiagnosticsAsync(lines, maxLogLines).ConfigureAwait(false);
+        AddLocalGameLogDiagnostics(lines, maxLogLines);
+    }
+
+    private void AddLauncherSessionOutputDiagnostics(List<string> lines, int maxLogLines)
+    {
+        lines.Add($"--- Start of Launcher Session Output (last {maxLogLines} lines) ---");
+        if (string.IsNullOrWhiteSpace(OutputText))
+        {
+            lines.Add("[empty]");
+        }
+        else
+        {
+            lines.Add(SanitizeDiagnosticText(TakeLastLines(OutputText, maxLogLines)));
+        }
+
+        lines.Add("--- End of Launcher Session Output ---");
+        lines.Add("");
+    }
+
+    private async Task AddWslLogDiagnosticsAsync(List<string> lines, int maxLogLines)
+    {
+        var logFiles = new (string Name, string Path)[]
+        {
+            ("HerikaServer output_from_llm", "/var/www/html/HerikaServer/log/output_from_llm.log"),
+            ("HerikaServer chim", "/var/www/html/HerikaServer/log/chim.log"),
+            ("HerikaServer output_to_plugin", "/var/www/html/HerikaServer/log/output_to_plugin.log"),
+            ("HerikaServer context_sent_to_llm", "/var/www/html/HerikaServer/log/context_sent_to_llm.log"),
+            ("HerikaServer debugStream", "/var/www/html/HerikaServer/log/debugStream.log"),
+            ("HerikaServer minai", "/var/www/html/HerikaServer/log/minai.log"),
+            ("HerikaServer vision", "/var/www/html/HerikaServer/log/vision.log"),
+            ("StobeServer stobe", "/var/www/html/StobeServer/log/stobe.log"),
+            ("StobeServer stobeserver", "/var/www/html/StobeServer/log/stobeserver.log"),
+            ("StobeServer stobe_import", "/var/www/html/StobeServer/log/stobe_import.log"),
+            ("StobeServer output_from_llm", "/var/www/html/StobeServer/log/output_from_llm.log"),
+            ("StobeServer context_sent_to_llm", "/var/www/html/StobeServer/log/context_sent_to_llm.log"),
+            ("Apache error", "/var/log/apache2/error.log"),
+            ("Apache vhost access", "/var/log/apache2/other_vhosts_access.log"),
+            ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
+            ("Chatterbox", "/home/dwemer/chatterbox/log.txt"),
+            ("Pocket-TTS", "/home/dwemer/pocket-tts/log.txt"),
+            ("Minime and TXT2VEC", "/home/dwemer/minime-t5/log.txt"),
+            ("MeloTTS", "/home/dwemer/MeloTTS/melo/log.txt"),
+            ("Piper", "/home/dwemer/piper/log.txt"),
+            ("Mimic3", "/home/dwemer/mimic3/log.txt"),
+            ("LocalWhisper", "/home/dwemer/remote-faster-whisper/log.txt"),
+            ("Parakeet", "/home/dwemer/parakeet-api-server/log.txt")
+        };
+
+        foreach (var (name, path) in logFiles)
+        {
+            lines.Add($"--- Start of {name} ({path}) ---");
+            var escapedPath = EscapeForSingleQuotedBash(path);
+            var command =
+                $"if [ -f {escapedPath} ]; then tail -n {maxLogLines} {escapedPath}; else echo '[missing] {path}'; fi";
+
+            try
+            {
+                var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+                {
+                    lines.Add(SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
+                }
+
+                if (!string.IsNullOrWhiteSpace(result.StandardError))
+                {
+                    lines.Add("[stderr]");
+                    lines.Add(SanitizeDiagnosticText(result.StandardError.TrimEnd()));
+                }
+
+                if (!result.Succeeded)
+                {
+                    lines.Add($"[exit code {result.ExitCode}]");
+                }
+            }
+            catch (Exception ex)
+            {
+                lines.Add(ex.ToString());
+            }
+
+            lines.Add($"--- End of {name} ---");
+            lines.Add("");
+        }
+    }
+
+    private static void AddLocalGameLogDiagnostics(List<string> lines, int maxLogLines)
+    {
+        var localLogGroups = new List<(string Name, string[] Paths)>
+        {
+            ("AIAgent.log",
+            [
+                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\AIAgent.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\AIAgent.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\AIAgent.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\Plugins\AIAgent.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\Plugins\AIAgent.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\Plugins\AIAgent.log"
+            ]),
+            ("Papyrus.0.log",
+            [
+                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\Logs\Script\Papyrus.0.log"
+            ]),
+            ("STOBE Mod Log",
+                BuildStobeModLogCandidates())
+        };
+
+        foreach (var (name, paths) in localLogGroups)
+        {
+            var selectedTemplate = paths.FirstOrDefault(path => File.Exists(Environment.ExpandEnvironmentVariables(path)));
+            if (selectedTemplate is null)
+            {
+                lines.Add($"--- Start of {name} ---");
+                lines.Add("[missing]");
+                lines.Add("Attempted paths:");
+                lines.AddRange(paths);
+                lines.Add($"--- End of {name} ---");
+                lines.Add("");
+                continue;
+            }
+
+            var selectedPath = Environment.ExpandEnvironmentVariables(selectedTemplate);
+            lines.Add($"--- Start of {selectedTemplate} ---");
+            lines.Add($"# Resolved path: {selectedPath}");
+            try
+            {
+                lines.Add(SanitizeDiagnosticText(ReadTextFileTail(selectedPath, maxLogLines)));
+            }
+            catch (Exception ex)
+            {
+                lines.Add(ex.ToString());
+            }
+
+            lines.Add($"--- End of {selectedTemplate} ---");
+            lines.Add("");
+        }
+    }
+
+    private static string[] BuildStobeModLogCandidates()
+    {
+        var candidates = new List<string>
+        {
+            @"%ProgramFiles(x86)%\Steam\steamapps\common\Kenshi\mods\Stobe\Stobe.log",
+            @"%ProgramFiles%\Steam\steamapps\common\Kenshi\mods\Stobe\Stobe.log",
+            Path.GetFullPath(@"Kenshi\mods\Stobe\Stobe.log")
+        };
+
+        foreach (var steamLibrary in GetSteamLibraryPaths())
+        {
+            candidates.Add(Path.Combine(steamLibrary, "steamapps", "common", "Kenshi", "mods", "Stobe", "Stobe.log"));
+        }
+
+        foreach (var drive in DriveInfo.GetDrives().Where(drive => drive.DriveType == DriveType.Fixed))
+        {
+            var root = drive.RootDirectory.FullName;
+            candidates.Add(Path.Combine(root, "SteamLibrary", "steamapps", "common", "Kenshi", "mods", "Stobe", "Stobe.log"));
+            candidates.Add(Path.Combine(root, "Games", "SteamLibrary", "steamapps", "common", "Kenshi", "mods", "Stobe", "Stobe.log"));
+            candidates.Add(Path.Combine(root, "Program Files (x86)", "Steam", "steamapps", "common", "Kenshi", "mods", "Stobe", "Stobe.log"));
+        }
+
+        return candidates
+            .Select(Environment.ExpandEnvironmentVariables)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IEnumerable<string> GetSteamLibraryPaths()
+    {
+        foreach (var steamRoot in new[]
+                 {
+                     Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Steam"),
+                     Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\Steam")
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(steamRoot))
+            {
+                continue;
+            }
+
+            if (Directory.Exists(steamRoot))
+            {
+                yield return steamRoot;
+            }
+
+            var libraryFoldersPath = Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf");
+            if (!File.Exists(libraryFoldersPath))
+            {
+                continue;
+            }
+
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(libraryFoldersPath);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (var line in lines)
+            {
+                var match = Regex.Match(line, "\"path\"\\s+\"(?<path>[^\"]+)\"");
+                if (match.Success)
+                {
+                    yield return match.Groups["path"].Value.Replace(@"\\", @"\");
+                }
+            }
+        }
+    }
+
+    private static string ReadTextFileTail(string path, int maxLines)
+    {
+        var tail = new Queue<string>();
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+
+        while (reader.ReadLine() is { } line)
+        {
+            tail.Enqueue(line);
+            if (tail.Count > maxLines)
+            {
+                tail.Dequeue();
+            }
+        }
+
+        return string.Join(Environment.NewLine, tail);
+    }
+
+    private static string TakeLastLines(string text, int maxLines)
+    {
+        var tail = new Queue<string>();
+        foreach (var line in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            tail.Enqueue(line);
+            if (tail.Count > maxLines)
+            {
+                tail.Dequeue();
+            }
+        }
+
+        return string.Join(Environment.NewLine, tail);
+    }
+
+    private static string SanitizeDiagnosticText(string text)
+    {
+        return Regex.Replace(text ?? string.Empty, @"hf_[A-Za-z0-9_-]{20,}", "hf_[redacted]");
     }
 
     private async Task ReclaimDistroDiskSpaceAsync()
