@@ -17,6 +17,9 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private string _huggingFaceTokenDetailText = "Checking Hugging Face token...";
     private string _huggingFaceTokenStatusBackground = "#555555";
     private string _huggingFaceTokenStatusForeground = "White";
+    private static readonly TimeSpan HuggingFaceTokenReadTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan HuggingFaceTokenWriteTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan HuggingFaceTokenStatusTimeout = TimeSpan.FromSeconds(30);
 
     public InstallComponentsWindowViewModel(MainWindowViewModel mainWindowViewModel)
     {
@@ -75,25 +78,93 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     {
         SetHuggingFaceTokenCheckingState();
 
-        var status = await _huggingFaceToken.GetStatusAsync().ConfigureAwait(true);
-        ApplyHuggingFaceTokenStatus(status);
+        try
+        {
+            using var timeout = new CancellationTokenSource(HuggingFaceTokenStatusTimeout);
+            var status = await _huggingFaceToken.GetStatusAsync(timeout.Token).ConfigureAwait(true);
+            ApplyHuggingFaceTokenStatus(status);
+        }
+        catch (OperationCanceledException)
+        {
+            ApplyHuggingFaceTokenStatus(HuggingFaceTokenStatus.Unknown("Hugging Face token check timed out. Click Refresh to try again."));
+        }
+        catch (Exception ex)
+        {
+            ApplyHuggingFaceTokenStatus(HuggingFaceTokenStatus.Unknown($"Hugging Face token check failed: {ex.Message}"));
+        }
     }
 
-    public Task<string?> ReadHuggingFaceTokenAsync()
+    public async Task<string?> ReadHuggingFaceTokenAsync()
     {
-        return _huggingFaceToken.ReadTokenAsync();
+        try
+        {
+            using var timeout = new CancellationTokenSource(HuggingFaceTokenReadTimeout);
+            return await _huggingFaceToken.ReadTokenAsync(timeout.Token).ConfigureAwait(true);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public async Task<string?> SaveHuggingFaceTokenAsync(string token)
     {
-        var result = await _huggingFaceToken.SaveTokenAsync(token).ConfigureAwait(true);
-        return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
+        try
+        {
+            using var timeout = new CancellationTokenSource(HuggingFaceTokenWriteTimeout);
+            var result = await _huggingFaceToken.SaveTokenAsync(token, timeout.Token).ConfigureAwait(true);
+            return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
+        }
+        catch (OperationCanceledException)
+        {
+            return "Timed out while writing the Hugging Face token to WSL.";
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
     }
 
     public async Task<string?> ClearHuggingFaceTokenAsync()
     {
-        var result = await _huggingFaceToken.ClearTokenAsync().ConfigureAwait(true);
-        return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
+        try
+        {
+            using var timeout = new CancellationTokenSource(HuggingFaceTokenWriteTimeout);
+            var result = await _huggingFaceToken.ClearTokenAsync(timeout.Token).ConfigureAwait(true);
+            return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
+        }
+        catch (OperationCanceledException)
+        {
+            return "Timed out while clearing the Hugging Face token from WSL.";
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    public void SetHuggingFaceTokenReplacedState()
+    {
+        HuggingFaceTokenStatusText = "Replaced, not verified";
+        HuggingFaceTokenDetailText = "Token was replaced in WSL. Click Refresh to verify Hugging Face and model access.";
+        HuggingFaceTokenStatusBackground = "#4F3C7A";
+        HuggingFaceTokenStatusForeground = "White";
+        foreach (var model in HuggingFaceModelAccessItems)
+        {
+            model.SetUnknownState();
+        }
+    }
+
+    public void SetHuggingFaceTokenClearedState()
+    {
+        HuggingFaceTokenStatusText = "Not configured";
+        HuggingFaceTokenDetailText = "Token was cleared from WSL. Pocket-TTS needs a token and accepted model access for voice cloning.";
+        HuggingFaceTokenStatusBackground = "#6A3A12";
+        HuggingFaceTokenStatusForeground = "White";
+        foreach (var model in HuggingFaceModelAccessItems)
+        {
+            model.SetUnknownState();
+        }
     }
 
     private void SetHuggingFaceTokenCheckingState()

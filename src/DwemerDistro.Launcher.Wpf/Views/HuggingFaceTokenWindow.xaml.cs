@@ -5,11 +5,9 @@ namespace DwemerDistro.Launcher.Wpf.Views;
 
 public partial class HuggingFaceTokenWindow : Window
 {
-    public HuggingFaceTokenWindow(string? currentToken)
+    public HuggingFaceTokenWindow()
     {
         InitializeComponent();
-        TokenPasswordBox.Password = currentToken ?? string.Empty;
-        TokenTextBox.Text = currentToken ?? string.Empty;
     }
 
     public string TokenValue { get; private set; } = string.Empty;
@@ -19,6 +17,16 @@ public partial class HuggingFaceTokenWindow : Window
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         TokenValue = GetCurrentTokenText();
+        if (string.IsNullOrWhiteSpace(TokenValue))
+        {
+            MessageBox.Show(
+                "Enter a Hugging Face token, or use Clear to remove the stored token.",
+                "Hugging Face Token",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
         ShouldClearToken = false;
         DialogResult = true;
         Close();

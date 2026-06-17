@@ -84,7 +84,7 @@
         </StackPanel>
 
         <TextBlock Grid.Row="1"
-                   Text="Stored for the WSL dwemer user at ~/.cache/huggingface/token."
+                   Text="Paste a Hugging Face token to replace the value stored for the WSL dwemer user."
                    Foreground="#CCCCCC"
                    FontSize="11"
                    TextAlignment="Center"
@@ -129,7 +129,7 @@
                     Orientation="Horizontal"
                     HorizontalAlignment="Center"
                     Margin="0,20,0,0">
-            <Button Content="Save"
+            <Button Content="Replace Token"
                     Click="SaveButton_Click"
                     Style="{StaticResource ActionButton}" />
             <Button Content="Clear"

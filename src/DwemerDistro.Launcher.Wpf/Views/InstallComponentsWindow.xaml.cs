@@ -26,8 +26,7 @@ public partial class InstallComponentsWindow : Window
     {
         try
         {
-            var currentToken = await _viewModel.ReadHuggingFaceTokenAsync().ConfigureAwait(true);
-            var window = new HuggingFaceTokenWindow(currentToken)
+            var window = new HuggingFaceTokenWindow()
             {
                 Owner = this
             };
@@ -51,7 +50,15 @@ public partial class InstallComponentsWindow : Window
                 return;
             }
 
-            await _viewModel.RefreshHuggingFaceTokenStatusAsync().ConfigureAwait(true);
+            if (window.ShouldClearToken)
+            {
+                _viewModel.SetHuggingFaceTokenClearedState();
+            }
+            else
+            {
+                _viewModel.SetHuggingFaceTokenReplacedState();
+                await _viewModel.RefreshHuggingFaceTokenStatusAsync().ConfigureAwait(true);
+            }
         }
         catch (Exception ex)
         {

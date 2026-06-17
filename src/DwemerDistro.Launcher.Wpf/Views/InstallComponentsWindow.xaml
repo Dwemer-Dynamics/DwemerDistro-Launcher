@@ -306,7 +306,7 @@
                         <Button Content="Refresh"
                                 Command="{Binding RefreshHuggingFaceTokenCommand}"
                                 Style="{StaticResource CompactActionButton}" />
-                        <Button Content="Edit Token"
+                        <Button Content="Replace Token"
                                 Click="EditHuggingFaceTokenButton_Click"
                                 Style="{StaticResource CompactActionButton}" />
                     </StackPanel>

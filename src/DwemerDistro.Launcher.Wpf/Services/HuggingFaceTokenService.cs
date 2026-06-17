@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using DwemerDistro.Launcher.Wpf.Models;
 
@@ -91,10 +92,10 @@ public sealed class HuggingFaceTokenService(WslService wsl)
             return ClearTokenAsync(cancellationToken);
         }
 
-        return wsl.RunDistroAsUserWithInputAsync(
+        var encodedToken = Convert.ToBase64String(Encoding.UTF8.GetBytes(normalizedToken));
+        return wsl.RunDistroAsUserAsync(
             LauncherConstants.DistroUser,
-            new[] { "python3", "-c", SaveTokenScript },
-            normalizedToken + "\n",
+            new[] { "python3", "-c", SaveTokenScript, encodedToken },
             cancellationToken: cancellationToken);
     }
 
@@ -122,10 +123,11 @@ if path.exists():
 
     private const string SaveTokenScript = """
 from pathlib import Path
+import base64
 import os
 import sys
 
-token = sys.stdin.read().strip()
+token = base64.b64decode(sys.argv[1]).decode("utf-8").strip()
 path = Path.home() / ".cache" / "huggingface" / "token"
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(token + "\n", encoding="utf-8")
