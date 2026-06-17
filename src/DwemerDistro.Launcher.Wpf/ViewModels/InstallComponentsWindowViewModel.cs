@@ -8,9 +8,11 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 public sealed class InstallComponentsWindowViewModel : ObservableObject
 {
-    private readonly WslService _wsl = new(new ProcessRunner());
+    private readonly ProcessRunner _processRunner = new();
+    private readonly WslService _wsl;
     private readonly HuggingFaceTokenService _huggingFaceToken;
     private readonly List<InstallComponentItemViewModel> _allItems = [];
+    private readonly Dictionary<string, HuggingFaceModelAccessViewModel> _modelAccessItemsByKey;
     private string _huggingFaceTokenStatusText = "Checking";
     private string _huggingFaceTokenDetailText = "Checking Hugging Face token...";
     private string _huggingFaceTokenStatusBackground = "#555555";
@@ -18,13 +20,25 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
     public InstallComponentsWindowViewModel(MainWindowViewModel mainWindowViewModel)
     {
+        _wsl = new WslService(_processRunner);
         _huggingFaceToken = new HuggingFaceTokenService(_wsl);
         RefreshHuggingFaceTokenCommand = new AsyncRelayCommand(RefreshHuggingFaceTokenStatusAsync);
+        HuggingFaceModelAccessItems = new ObservableCollection<HuggingFaceModelAccessViewModel>(
+            HuggingFaceTokenService.RequiredModelAccess.Select(definition =>
+                new HuggingFaceModelAccessViewModel(
+                    definition.Key,
+                    definition.DisplayName,
+                    definition.RepositoryId,
+                    definition.AccessUrl,
+                    () => _processRunner.OpenExternalUrl(definition.AccessUrl))));
+        _modelAccessItemsByKey = HuggingFaceModelAccessItems.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
         Sections = new ObservableCollection<InstallComponentSectionViewModel>(
             BuildSections(mainWindowViewModel, _allItems));
     }
 
     public ObservableCollection<InstallComponentSectionViewModel> Sections { get; }
+
+    public ObservableCollection<HuggingFaceModelAccessViewModel> HuggingFaceModelAccessItems { get; }
 
     public AsyncRelayCommand RefreshHuggingFaceTokenCommand { get; }
 
@@ -88,14 +102,20 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         HuggingFaceTokenDetailText = "Checking /home/dwemer/.cache/huggingface/token...";
         HuggingFaceTokenStatusBackground = "#555555";
         HuggingFaceTokenStatusForeground = "White";
+        foreach (var model in HuggingFaceModelAccessItems)
+        {
+            model.SetCheckingState();
+        }
     }
 
     private void ApplyHuggingFaceTokenStatus(HuggingFaceTokenStatus status)
     {
+        ApplyHuggingFaceModelAccess(status.ModelAccess);
+
         if (!status.IsConfigured && string.IsNullOrWhiteSpace(status.Error))
         {
             HuggingFaceTokenStatusText = "Not configured";
-            HuggingFaceTokenDetailText = "No token detected. Chatterbox and Pocket-TTS may ask for one during model downloads.";
+            HuggingFaceTokenDetailText = "No token detected. Pocket-TTS needs a token and accepted model access for voice cloning.";
             HuggingFaceTokenStatusBackground = "#6A3A12";
             HuggingFaceTokenStatusForeground = "White";
             return;
@@ -135,6 +155,27 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         HuggingFaceTokenDetailText = status.Error ?? "Unable to check Hugging Face token status.";
         HuggingFaceTokenStatusBackground = "#4F3C7A";
         HuggingFaceTokenStatusForeground = "White";
+    }
+
+    private void ApplyHuggingFaceModelAccess(IReadOnlyList<HuggingFaceModelAccessStatus> modelAccess)
+    {
+        var updatedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var access in modelAccess)
+        {
+            if (_modelAccessItemsByKey.TryGetValue(access.Key, out var item))
+            {
+                item.ApplyStatus(access);
+                updatedKeys.Add(access.Key);
+            }
+        }
+
+        foreach (var item in HuggingFaceModelAccessItems)
+        {
+            if (!updatedKeys.Contains(item.Key))
+            {
+                item.SetUnknownState();
+            }
+        }
     }
 
     private async Task RefreshInstalledStatesAsync()
@@ -345,5 +386,135 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             supportsAmdCpu,
             secondaryActionText,
             secondaryActionCommand);
+    }
+}
+
+public sealed class HuggingFaceModelAccessViewModel : ObservableObject
+{
+    private string _statusText = "Checking";
+    private string _statusBackground = "#555555";
+    private string _statusForeground = "White";
+    private string _detailText = string.Empty;
+    private bool _hasAccessAction;
+
+    public HuggingFaceModelAccessViewModel(
+        string key,
+        string title,
+        string repositoryId,
+        string accessUrl,
+        Action openAccessPage)
+    {
+        Key = key;
+        Title = title;
+        RepositoryId = repositoryId;
+        AccessUrl = accessUrl;
+        DetailText = $"Checking {repositoryId}...";
+        OpenAccessPageCommand = new RelayCommand(openAccessPage);
+    }
+
+    public string Key { get; }
+
+    public string Title { get; }
+
+    public string RepositoryId { get; }
+
+    public string AccessUrl { get; }
+
+    public RelayCommand OpenAccessPageCommand { get; }
+
+    public string StatusText
+    {
+        get => _statusText;
+        private set => SetProperty(ref _statusText, value);
+    }
+
+    public string StatusBackground
+    {
+        get => _statusBackground;
+        private set => SetProperty(ref _statusBackground, value);
+    }
+
+    public string StatusForeground
+    {
+        get => _statusForeground;
+        private set => SetProperty(ref _statusForeground, value);
+    }
+
+    public string DetailText
+    {
+        get => _detailText;
+        private set => SetProperty(ref _detailText, value);
+    }
+
+    public bool HasAccessAction
+    {
+        get => _hasAccessAction;
+        private set => SetProperty(ref _hasAccessAction, value);
+    }
+
+    public void SetCheckingState()
+    {
+        StatusText = "Checking";
+        DetailText = $"Checking {RepositoryId}...";
+        StatusBackground = "#555555";
+        StatusForeground = "White";
+        HasAccessAction = false;
+    }
+
+    public void SetUnknownState()
+    {
+        StatusText = "Unknown";
+        DetailText = $"Unable to check {RepositoryId}.";
+        StatusBackground = "#4F3C7A";
+        StatusForeground = "White";
+        HasAccessAction = true;
+    }
+
+    public void ApplyStatus(HuggingFaceModelAccessStatus status)
+    {
+        DetailText = string.IsNullOrWhiteSpace(status.Error)
+            ? $"Checked {status.RepositoryId}."
+            : $"{status.RepositoryId}: {status.Error}";
+
+        switch (status.AccessStatus)
+        {
+            case "granted":
+                StatusText = "Access granted";
+                DetailText = $"Model download is reachable: {status.RepositoryId}.";
+                StatusBackground = "#285A2D";
+                StatusForeground = "White";
+                HasAccessAction = false;
+                break;
+            case "token_required":
+                StatusText = "Token required";
+                StatusBackground = "#6A3A12";
+                StatusForeground = "White";
+                HasAccessAction = true;
+                break;
+            case "needs_approval":
+                StatusText = "Needs approval";
+                StatusBackground = "#6A3A12";
+                StatusForeground = "White";
+                HasAccessAction = true;
+                break;
+            case "invalid_token":
+                StatusText = "Invalid token";
+                StatusBackground = "#7A2828";
+                StatusForeground = "White";
+                HasAccessAction = false;
+                break;
+            case "not_found":
+                StatusText = "Unavailable";
+                StatusBackground = "#4F3C7A";
+                StatusForeground = "White";
+                HasAccessAction = true;
+                break;
+            default:
+                StatusText = "Unable to verify";
+                StatusBackground = "#4F3C7A";
+                StatusForeground = "White";
+                HasAccessAction = false;
+                break;
+        }
     }
 }
