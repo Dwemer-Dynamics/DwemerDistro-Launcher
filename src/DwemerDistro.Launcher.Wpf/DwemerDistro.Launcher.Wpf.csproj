@@ -8,9 +8,9 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>DwemerDistro</AssemblyName>
-    <Version>3.0.3</Version>
-    <FileVersion>3.0.3.0</FileVersion>
-    <AssemblyVersion>3.0.3.0</AssemblyVersion>
+    <Version>3.0.4</Version>
+    <FileVersion>3.0.4.0</FileVersion>
+    <AssemblyVersion>3.0.4.0</AssemblyVersion>
     <ApplicationIcon>Assets\DwemerDistro.ico</ApplicationIcon>
   </PropertyGroup>
 
