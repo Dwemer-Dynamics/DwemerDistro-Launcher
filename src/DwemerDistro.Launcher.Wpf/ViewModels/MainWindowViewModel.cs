@@ -1073,17 +1073,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ""
         };
 
-        foreach (var command in new[]
-                 {
-                     "wsl -l -v",
-                     "wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"cd /var/www/html/HerikaServer && git status --short --branch\"",
-                     "wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"cd /var/www/html/StobeServer && git status --short --branch\""
-                 })
+        var diagnosticCommands = new (string Display, Func<Task<CommandResult>> Run)[]
         {
-            lines.Add("$ " + command);
+            ("wsl -l -v", () => _wsl.RunWslAsync(new[] { "-l", "-v" })),
+            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/HerikaServer && git status --short --branch\"",
+                () => _wsl.RunBashAsync("cd /var/www/html/HerikaServer && git status --short --branch")),
+            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/StobeServer && git status --short --branch\"",
+                () => _wsl.RunBashAsync("cd /var/www/html/StobeServer && git status --short --branch"))
+        };
+
+        foreach (var (display, run) in diagnosticCommands)
+        {
+            lines.Add("$ " + display);
             try
             {
-                var result = await _processRunner.RunHiddenAsync("cmd.exe", new[] { "/c", command }).ConfigureAwait(false);
+                var result = await run().ConfigureAwait(false);
                 lines.Add(result.StandardOutput);
                 if (!string.IsNullOrWhiteSpace(result.StandardError))
                 {
@@ -1098,6 +1102,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         await AddLogDiagnosticsAsync(lines).ConfigureAwait(false);
+        await AddDatabaseSchemaDiagnosticsAsync(lines).ConfigureAwait(false);
+        await AddConnectorDiagnosticsAsync(lines).ConfigureAwait(false);
 
         var outputDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "DwemerDistro-Diagnostics");
         Directory.CreateDirectory(outputDir);
@@ -1172,6 +1178,56 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var escapedPath = EscapeForSingleQuotedBash(path);
             var command =
                 $"if [ -f {escapedPath} ]; then tail -n {maxLogLines} {escapedPath}; else echo '[missing] {path}'; fi";
+
+            try
+            {
+                var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+                {
+                    lines.Add(SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
+                }
+
+                if (!string.IsNullOrWhiteSpace(result.StandardError))
+                {
+                    lines.Add("[stderr]");
+                    lines.Add(SanitizeDiagnosticText(result.StandardError.TrimEnd()));
+                }
+
+                if (!result.Succeeded)
+                {
+                    lines.Add($"[exit code {result.ExitCode}]");
+                }
+            }
+            catch (Exception ex)
+            {
+                lines.Add(ex.ToString());
+            }
+
+            lines.Add($"--- End of {name} ---");
+            lines.Add("");
+        }
+
+        var probes = new (string Name, string Command)[]
+        {
+            (
+                "Chatterbox voice directories",
+                "echo '/home/dwemer/chatterbox/voices'; " +
+                "ls -la /home/dwemer/chatterbox/voices 2>&1 || true; " +
+                "echo; echo '/var/www/html/HerikaServer/data/voices'; " +
+                "ls -la /var/www/html/HerikaServer/data/voices 2>&1 || true"
+            ),
+            (
+                "Chatterbox API voice inventory",
+                "if command -v curl >/dev/null 2>&1; then " +
+                "echo 'GET /health'; curl -sS --max-time 5 http://127.0.0.1:8020/health 2>&1 || true; " +
+                "echo; echo 'GET /speakers_list_extended'; curl -sS --max-time 5 http://127.0.0.1:8020/speakers_list_extended 2>&1 || true; " +
+                "else echo '[missing] curl'; fi"
+            )
+        };
+
+        foreach (var (name, command) in probes)
+        {
+            lines.Add($"--- Start of {name} ---");
 
             try
             {
@@ -1364,6 +1420,183 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static string SanitizeDiagnosticText(string text)
     {
         return Regex.Replace(text ?? string.Empty, @"hf_[A-Za-z0-9_-]{20,}", "hf_[redacted]");
+    }
+
+    private async Task AddDatabaseSchemaDiagnosticsAsync(List<string> lines)
+    {
+        lines.Add("Database Schema Diagnostics");
+        lines.Add("These checks are read-only and compare the live database_versioning table with update versions declared in HerikaServer and StobeServer.");
+        lines.Add("");
+
+        var command = """
+set +e
+export PGPASSWORD=dwemer
+echo "== PostgreSQL connection =="
+psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT current_database() AS database, current_user AS user, version() AS postgres_version;"
+echo
+echo "== Installed extensions =="
+psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT extname, extversion FROM pg_extension ORDER BY extname;"
+echo
+echo "== database_versioning live rows =="
+psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT tablename, version FROM public.database_versioning ORDER BY tablename;"
+echo
+echo "== public tables =="
+psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name;"
+echo
+echo "== public columns =="
+psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT table_name, ordinal_position, column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = 'public' ORDER BY table_name, ordinal_position;"
+echo
+echo "== public constraints =="
+psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT conrelid::regclass::text AS table_name, conname, contype, pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE connamespace = 'public'::regnamespace ORDER BY table_name, conname;"
+echo
+echo "== public indexes =="
+psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT tablename, indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' ORDER BY tablename, indexname;"
+echo
+echo "== HerikaServer expected db update versions from debug/db_updates.php =="
+if [ -f /var/www/html/HerikaServer/debug/db_updates.php ]; then
+  grep -oE 'updateVersion\("[^"]+",[[:space:]]*[0-9]+' /var/www/html/HerikaServer/debug/db_updates.php | sed -E 's/updateVersion\("([^"]+)",[[:space:]]*([0-9]+)/\1|\2/' | sort -t '|' -k1,1 -k2,2nr | sort -t '|' -k1,1 -u
+else
+  echo "HerikaServer update file missing"
+fi
+echo
+echo "== StobeServer expected db update versions from debug/db_updates.php =="
+if [ -f /var/www/html/StobeServer/debug/db_updates.php ]; then
+  grep -oE "applyPatch\('[^']+', *[0-9]+" /var/www/html/StobeServer/debug/db_updates.php | sed -E "s/applyPatch\('([^']+)', *([0-9]+)/\1|\2/" | sort -t '|' -k1,1 -k2,2nr | sort -t '|' -k1,1 -u
+else
+  echo "StobeServer update file missing"
+fi
+echo
+echo "== Common Oghma integrity checks =="
+psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'oghma') AS oghma_table_exists;"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT to_regclass('public.oghma') IS NOT NULL;" | grep -q t; then
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT c.conname, c.contype, pg_get_constraintdef(c.oid) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = 'public' AND t.relname = 'oghma' ORDER BY c.contype, c.conname;"
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT COUNT(*) AS rows, COUNT(*) FILTER (WHERE topic IS NULL OR BTRIM(topic::text) = '') AS blank_topics FROM public.oghma;"
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT COUNT(*) AS duplicate_normalized_topics FROM (SELECT LOWER(BTRIM(topic::text)) AS normalized_topic FROM public.oghma GROUP BY LOWER(BTRIM(topic::text)) HAVING COUNT(*) > 1) dup;"
+else
+  echo "Oghma table missing; detailed Oghma checks skipped."
+fi
+""";
+
+        lines.Add("$ wsl database schema diagnostics");
+        try
+        {
+            var result = await _wsl.RunBashAsync(command).ConfigureAwait(false);
+            lines.Add(result.StandardOutput);
+            if (!string.IsNullOrWhiteSpace(result.StandardError))
+            {
+                lines.Add(result.StandardError);
+            }
+
+            if (!result.Succeeded)
+            {
+                lines.Add($"Database schema diagnostics exited with code {result.ExitCode}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add(ex.ToString());
+        }
+
+        lines.Add("");
+    }
+
+    private async Task AddConnectorDiagnosticsAsync(List<string> lines)
+    {
+        lines.Add("Connector Diagnostics");
+        lines.Add("These checks are read-only and show active/profile-linked connector IDs plus non-secret connector fields.");
+        lines.Add("Secret-bearing columns such as api_key, metadata, and config are not dumped.");
+        lines.Add("");
+
+        var command = """
+set +e
+export PGPASSWORD=dwemer
+echo "== HerikaServer connectors =="
+echo "-- Herika LLM profile connectors --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT to_regclass('public.core_profiles') IS NOT NULL AND to_regclass('public.core_llm_connector') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (VALUES ('core_profiles','id'),('core_profiles','label'),('core_profiles','default_npc'),('core_profiles','default_narrator'),('core_profiles','llm_primary_id'),('core_profiles','llm_secondary_id'),('core_profiles','llm_tertiary_id'),('core_profiles','llm_quaternary_id'),('core_profiles','diary_connector_id'),('core_profiles','llm_formatter_id'),('core_profiles','llm_fallback_id'),('core_llm_connector','id'),('core_llm_connector','label'),('core_llm_connector','driver'),('core_llm_connector','provider'),('core_llm_connector','service'),('core_llm_connector','model'),('core_llm_connector','url'),('core_llm_connector','max_tokens'),('core_llm_connector','temperature')) AS required(table_name, column_name) WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name = required.table_name AND c.column_name = required.column_name));" | grep -qx t; then
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "WITH profile_scope AS (SELECT p.*, CASE WHEN COALESCE(NULLIF(p.default_npc::text, ''), '0') IN ('1','true','TRUE','t','yes','on') OR COALESCE(NULLIF(p.default_narrator::text, ''), '0') IN ('1','true','TRUE','t','yes','on') THEN 0 ELSE 1 END AS profile_priority FROM public.core_profiles p ORDER BY profile_priority, p.id LIMIT 20), slots AS (SELECT p.id AS profile_id, p.label AS profile_label, p.default_npc, p.default_narrator, p.profile_priority, s.slot_order, s.slot_name, s.connector_id FROM profile_scope p CROSS JOIN LATERAL (VALUES (1,'primary',p.llm_primary_id), (2,'secondary',p.llm_secondary_id), (3,'tertiary',p.llm_tertiary_id), (4,'quaternary',p.llm_quaternary_id), (5,'diary',p.diary_connector_id), (6,'formatter',p.llm_formatter_id), (7,'fallback',p.llm_fallback_id)) AS s(slot_order, slot_name, connector_id)) SELECT s.profile_id, s.profile_label, s.default_npc, s.default_narrator, s.slot_name, s.connector_id, c.label AS connector_label, c.driver, c.provider, c.service, c.model, c.url, c.max_tokens, c.temperature FROM slots s LEFT JOIN public.core_llm_connector c ON c.id = s.connector_id ORDER BY s.profile_priority, s.profile_id, s.slot_order;"
+else
+  echo "[missing] Herika LLM profile connector columns are not present in this database layout."
+fi
+echo
+echo "-- Herika TTS profile connectors --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT to_regclass('public.core_profiles') IS NOT NULL AND to_regclass('public.core_tts_connector') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (VALUES ('core_profiles','id'),('core_profiles','label'),('core_profiles','default_npc'),('core_profiles','default_narrator'),('core_profiles','tts_connector_id'),('core_tts_connector','id'),('core_tts_connector','label'),('core_tts_connector','driver'),('core_tts_connector','url')) AS required(table_name, column_name) WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name = required.table_name AND c.column_name = required.column_name));" | grep -qx t; then
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "WITH profile_scope AS (SELECT p.*, CASE WHEN COALESCE(NULLIF(p.default_npc::text, ''), '0') IN ('1','true','TRUE','t','yes','on') OR COALESCE(NULLIF(p.default_narrator::text, ''), '0') IN ('1','true','TRUE','t','yes','on') THEN 0 ELSE 1 END AS profile_priority FROM public.core_profiles p ORDER BY profile_priority, p.id LIMIT 20) SELECT p.id AS profile_id, p.label AS profile_label, p.default_npc, p.default_narrator, p.tts_connector_id, c.label AS connector_label, c.driver, c.url FROM profile_scope p LEFT JOIN public.core_tts_connector c ON c.id = p.tts_connector_id ORDER BY p.profile_priority, p.id;"
+else
+  echo "[missing] Herika TTS profile connector columns are not present in this database layout."
+fi
+echo
+echo "-- Herika STT global connector --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT to_regclass('public.general_settings') IS NOT NULL AND to_regclass('public.core_stt_connector') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (VALUES ('general_settings','id'),('general_settings','value'),('core_stt_connector','id'),('core_stt_connector','label'),('core_stt_connector','driver'),('core_stt_connector','url')) AS required(table_name, column_name) WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name = required.table_name AND c.column_name = required.column_name));" | grep -qx t; then
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT expected.id AS setting_id, gs.value AS setting_value, c.id AS connector_id, c.label AS connector_label, c.driver, c.url FROM (SELECT 'GLOBAL_STT_CONNECTOR_ID'::text AS id) expected LEFT JOIN public.general_settings gs ON gs.id = expected.id LEFT JOIN public.core_stt_connector c ON c.id = CASE WHEN gs.value ~ '^[0-9]+$' THEN gs.value::integer ELSE NULL END;"
+else
+  echo "[missing] Herika STT global connector columns are not present in this database layout."
+fi
+echo
+echo "-- Herika ITT global connector --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT to_regclass('public.general_settings') IS NOT NULL AND to_regclass('public.core_itt_connector') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (VALUES ('general_settings','id'),('general_settings','value'),('core_itt_connector','id'),('core_itt_connector','label'),('core_itt_connector','driver'),('core_itt_connector','url')) AS required(table_name, column_name) WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name = required.table_name AND c.column_name = required.column_name));" | grep -qx t; then
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT expected.id AS setting_id, gs.value AS setting_value, c.id AS connector_id, c.label AS connector_label, c.driver, c.url FROM (SELECT 'GLOBAL_ITT_CONNECTOR_ID'::text AS id) expected LEFT JOIN public.general_settings gs ON gs.id = expected.id LEFT JOIN public.core_itt_connector c ON c.id = CASE WHEN gs.value ~ '^[0-9]+$' THEN gs.value::integer ELSE NULL END;"
+else
+  echo "[missing] Herika ITT global connector columns are not present in this database layout."
+fi
+echo
+echo "-- Herika ITT profile connectors --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT to_regclass('public.core_profiles') IS NOT NULL AND to_regclass('public.core_itt_connector') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (VALUES ('core_profiles','id'),('core_profiles','label'),('core_profiles','default_npc'),('core_profiles','default_narrator'),('core_profiles','itt_connector_id'),('core_itt_connector','id'),('core_itt_connector','label'),('core_itt_connector','driver'),('core_itt_connector','url')) AS required(table_name, column_name) WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name = required.table_name AND c.column_name = required.column_name));" | grep -qx t; then
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "WITH profile_scope AS (SELECT p.*, CASE WHEN COALESCE(NULLIF(p.default_npc::text, ''), '0') IN ('1','true','TRUE','t','yes','on') OR COALESCE(NULLIF(p.default_narrator::text, ''), '0') IN ('1','true','TRUE','t','yes','on') THEN 0 ELSE 1 END AS profile_priority FROM public.core_profiles p ORDER BY profile_priority, p.id LIMIT 20) SELECT p.id AS profile_id, p.label AS profile_label, p.default_npc, p.default_narrator, p.itt_connector_id, c.label AS connector_label, c.driver, c.url FROM profile_scope p LEFT JOIN public.core_itt_connector c ON c.id = p.itt_connector_id ORDER BY p.profile_priority, p.id;"
+else
+  echo "[missing] Herika ITT profile connector columns are not present in this database layout."
+fi
+echo
+echo "== StobeServer connectors =="
+echo "-- Stobe LLM profile connectors --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT to_regclass('public.core_profiles') IS NOT NULL AND to_regclass('public.core_llm_connector') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (VALUES ('core_profiles','id'),('core_profiles','label'),('core_profiles','is_default_npc'),('core_profiles','is_player_faction_profile'),('core_profiles','response_connector'),('core_profiles','diary_connector'),('core_profiles','autochat_connector'),('core_profiles','middleterm_connector'),('core_profiles','backgroundlife_connector'),('core_profiles','dynamic_connector'),('core_profiles','relationship_connector'),('core_llm_connector','id'),('core_llm_connector','name'),('core_llm_connector','connector_type'),('core_llm_connector','model'),('core_llm_connector','base_url'),('core_llm_connector','max_tokens'),('core_llm_connector','temperature'),('core_llm_connector','is_default')) AS required(table_name, column_name) WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name = required.table_name AND c.column_name = required.column_name));" | grep -qx t; then
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "WITH profile_scope AS (SELECT p.*, CASE WHEN COALESCE(p.is_default_npc::text, 'false') IN ('true','t','1') OR COALESCE(p.is_player_faction_profile::text, 'false') IN ('true','t','1') THEN 0 ELSE 1 END AS profile_priority FROM public.core_profiles p ORDER BY profile_priority, p.id LIMIT 20), slots AS (SELECT p.id AS profile_id, p.label AS profile_label, p.is_default_npc, p.is_player_faction_profile, p.profile_priority, s.slot_order, s.slot_name, s.connector_id FROM profile_scope p CROSS JOIN LATERAL (VALUES (1,'response',p.response_connector), (2,'diary',p.diary_connector), (3,'autochat',p.autochat_connector), (4,'middleterm',p.middleterm_connector), (5,'backgroundlife',p.backgroundlife_connector), (6,'dynamic',p.dynamic_connector), (7,'relationship',p.relationship_connector)) AS s(slot_order, slot_name, connector_id)) SELECT s.profile_id, s.profile_label, s.is_default_npc, s.is_player_faction_profile, s.slot_name, s.connector_id, c.name AS connector_name, c.connector_type, c.model, c.base_url, c.max_tokens, c.temperature, c.is_default AS connector_is_default FROM slots s LEFT JOIN public.core_llm_connector c ON c.id = s.connector_id ORDER BY s.profile_priority, s.profile_id, s.slot_order;"
+else
+  echo "[missing] Stobe LLM profile connector columns are not present in this database layout."
+fi
+echo
+echo "-- Stobe TTS profile connectors --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT to_regclass('public.core_profiles') IS NOT NULL AND to_regclass('public.core_tts_connector') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (VALUES ('core_profiles','id'),('core_profiles','label'),('core_profiles','is_default_npc'),('core_profiles','is_player_faction_profile'),('core_profiles','tts_connector_id'),('core_tts_connector','id'),('core_tts_connector','name'),('core_tts_connector','connector_type'),('core_tts_connector','base_url'),('core_tts_connector','is_default')) AS required(table_name, column_name) WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_schema = 'public' AND c.table_name = required.table_name AND c.column_name = required.column_name));" | grep -qx t; then
+  psql -h localhost -U dwemer -d dwemer -X -v ON_ERROR_STOP=1 -P pager=off -c "WITH profile_scope AS (SELECT p.*, CASE WHEN COALESCE(p.is_default_npc::text, 'false') IN ('true','t','1') OR COALESCE(p.is_player_faction_profile::text, 'false') IN ('true','t','1') THEN 0 ELSE 1 END AS profile_priority FROM public.core_profiles p ORDER BY profile_priority, p.id LIMIT 20) SELECT p.id AS profile_id, p.label AS profile_label, p.is_default_npc, p.is_player_faction_profile, p.tts_connector_id, c.name AS connector_name, c.connector_type, c.base_url, c.is_default AS connector_is_default FROM profile_scope p LEFT JOIN public.core_tts_connector c ON c.id = p.tts_connector_id ORDER BY p.profile_priority, p.id;"
+else
+  echo "[missing] Stobe TTS profile connector columns are not present in this database layout."
+fi
+echo
+echo "-- Stobe STT connector --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'core_profiles' AND column_name = 'stt_connector_id');" | grep -qx t; then
+  echo "[present] Stobe profile STT connector column exists, but this launcher does not yet know the matching connector table shape."
+else
+  echo "[not configured] StobeServer schema has no profile STT connector column."
+fi
+echo
+echo "-- Stobe ITT connector --"
+if psql -h localhost -U dwemer -d dwemer -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'core_profiles' AND column_name = 'itt_connector_id');" | grep -qx t; then
+  echo "[present] Stobe profile ITT connector column exists, but this launcher does not yet know the matching connector table shape."
+else
+  echo "[not configured] StobeServer schema has no profile ITT connector column."
+fi
+""";
+
+        lines.Add("$ wsl connector diagnostics");
+        try
+        {
+            var result = await _wsl.RunBashAsync(command).ConfigureAwait(false);
+            lines.Add(SanitizeDiagnosticText(result.StandardOutput));
+            if (!string.IsNullOrWhiteSpace(result.StandardError))
+            {
+                lines.Add(SanitizeDiagnosticText(result.StandardError));
+            }
+
+            if (!result.Succeeded)
+            {
+                lines.Add($"Connector diagnostics exited with code {result.ExitCode}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add(ex.ToString());
+        }
+
+        lines.Add("");
     }
 
     private async Task ReclaimDistroDiskSpaceAsync()
