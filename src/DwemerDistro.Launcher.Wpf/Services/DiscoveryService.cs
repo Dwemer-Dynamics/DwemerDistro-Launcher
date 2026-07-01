@@ -146,6 +146,16 @@ public sealed class DiscoveryService
                 {
                     return LauncherConstants.StobeServerPort;
                 }
+
+                if (value is "starfield")
+                {
+                    return LauncherConstants.StarfieldServerPort;
+                }
+
+                if (value is "dialectic" or "fallout" or "fnv" or "newvegas")
+                {
+                    return LauncherConstants.DialecticServerPort;
+                }
             }
         }
 

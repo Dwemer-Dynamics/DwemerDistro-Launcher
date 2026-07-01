@@ -14,6 +14,8 @@ public static class LauncherConstants
     public const int DiscoveryPort = 7135;
     public const int SkyrimServerPort = 8081;
     public const int StobeServerPort = 8083;
+    public const int StarfieldServerPort = 8087;
+    public const int DialecticServerPort = 8088;
 
     public const string WikiUrl = "https://dwemerdynamics.hostwiki.io/";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";
