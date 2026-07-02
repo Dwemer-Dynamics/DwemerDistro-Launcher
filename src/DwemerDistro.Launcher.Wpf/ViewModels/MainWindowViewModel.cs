@@ -33,6 +33,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private DiscoveryService? _discoveryService;
     private Process? _serverProcess;
     private string? _wslIp;
+    private bool _isFirstRunSetupWindowOpen;
 
     private string _outputText = string.Empty;
     private bool _isServerRunning;
@@ -81,6 +82,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
         UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
+        OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
         InstallComponentsCommand = new RelayCommand(OpenInstallComponentsWindow);
         ConfigureInstalledComponentsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/conf_services"));
         OpenDebuggingCommand = new RelayCommand(OpenDebuggingWindow);
@@ -265,6 +267,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public AsyncRelayCommand ForceStopServerCommand { get; }
     public AsyncRelayCommand UpdateAllCommand { get; }
     public RelayCommand OpenServerFolderCommand { get; }
+    public RelayCommand OpenFirstRunSetupCommand { get; }
     public RelayCommand InstallComponentsCommand { get; }
     public RelayCommand ConfigureInstalledComponentsCommand { get; }
     public RelayCommand OpenDebuggingCommand { get; }
@@ -325,6 +328,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         await (_tcpProxyService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         await (_discoveryService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         _processRunner.TryKill(_serverProcess);
+    }
+
+    public Task<bool> ShouldShowFirstRunSetupAsync()
+    {
+        return FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync();
     }
 
     private void StartProxyAndDiscovery()
@@ -2703,6 +2711,22 @@ fi
         {
             Owner = Application.Current.MainWindow
         };
+        window.Show();
+    }
+
+    public void OpenFirstRunSetupWindow()
+    {
+        if (_isFirstRunSetupWindowOpen)
+        {
+            return;
+        }
+
+        _isFirstRunSetupWindowOpen = true;
+        var window = new FirstRunSetupWindow(this)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        window.Closed += (_, _) => _isFirstRunSetupWindowOpen = false;
         window.Show();
     }
 

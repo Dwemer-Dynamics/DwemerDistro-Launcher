@@ -32,6 +32,17 @@ public partial class MainWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         await _viewModel.InitializeAsync();
+        try
+        {
+            if (await _viewModel.ShouldShowFirstRunSetupAsync().ConfigureAwait(true))
+            {
+                _viewModel.OpenFirstRunSetupWindow();
+            }
+        }
+        catch
+        {
+            // First-run checks are best effort. The manual Quickstart button remains available.
+        }
     }
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
