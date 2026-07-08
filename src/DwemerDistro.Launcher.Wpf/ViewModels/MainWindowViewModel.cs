@@ -74,8 +74,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         };
         _serverStatusRetryTimer.Tick += async (_, _) => await RetryServerStatusChecksAsync().ConfigureAwait(true);
 
-        HerikaBranches = new ObservableCollection<string>(new[] { "aiagent", "dev" });
-        StobeBranches = new ObservableCollection<string>(new[] { "stobe", "dev" });
+        HerikaBranches = new ObservableCollection<string>(new[] { "aiagent", "dev", "unstable" });
+        StobeBranches = new ObservableCollection<string>(new[] { "stobe", "dev", "unstable" });
 
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
@@ -480,8 +480,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         var includeHerika = IncludeHerikaServerUpdate;
         var includeStobe = IncludeStobeServerUpdate;
-        var targetHerika = NormalizeBranch(TargetHerikaBranch, "aiagent", "aiagent", "dev");
-        var targetStobe = NormalizeBranch(TargetStobeBranch, "stobe", "stobe", "dev");
+        var targetHerika = NormalizeBranch(TargetHerikaBranch, "aiagent", "aiagent", "dev", "unstable");
+        var targetStobe = NormalizeBranch(TargetStobeBranch, "stobe", "stobe", "dev", "unstable");
 
         var confirmText = includeHerika || includeStobe
             ? "This will update the Dwemer Distro and selected server components.\n\n" +
@@ -641,9 +641,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task<bool> SwitchHerikaServerBranchAsync(string targetBranch)
     {
-        if (targetBranch is not ("aiagent" or "dev"))
+        if (targetBranch is not ("aiagent" or "dev" or "unstable"))
         {
-            AppendLog($"Invalid branch selection: '{targetBranch}'. Expected aiagent or dev.{Environment.NewLine}", "red");
+            AppendLog($"Invalid branch selection: '{targetBranch}'. Expected aiagent, dev, or unstable.{Environment.NewLine}", "red");
             return false;
         }
 
@@ -677,9 +677,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task<bool> SwitchStobeServerBranchAsync(string targetBranch)
     {
-        if (targetBranch is not ("stobe" or "dev"))
+        if (targetBranch is not ("stobe" or "dev" or "unstable"))
         {
-            AppendLog($"Invalid StobeServer branch selection: '{targetBranch}'. Expected stobe or dev.{Environment.NewLine}", "red");
+            AppendLog($"Invalid StobeServer branch selection: '{targetBranch}'. Expected stobe, dev, or unstable.{Environment.NewLine}", "red");
             return false;
         }
 
@@ -773,7 +773,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         SetHerikaStatus(BuildServerStatusText("HerikaServer", null, "Checking..."), "White");
         var currentBranch = await GetCurrentBranchAsync().ConfigureAwait(false);
-        if (currentBranch is "aiagent" or "dev")
+        if (currentBranch is "aiagent" or "dev" or "unstable")
         {
             RunOnUi(() => TargetHerikaBranch = currentBranch);
         }
@@ -806,7 +806,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         SetStobeStatus(BuildServerStatusText("StobeServer", null, "Checking..."), "White");
         var currentBranch = await GetStobeServerCurrentBranchAsync().ConfigureAwait(false);
-        if (currentBranch is "stobe" or "dev")
+        if (currentBranch is "stobe" or "dev" or "unstable")
         {
             RunOnUi(() => TargetStobeBranch = currentBranch);
         }
