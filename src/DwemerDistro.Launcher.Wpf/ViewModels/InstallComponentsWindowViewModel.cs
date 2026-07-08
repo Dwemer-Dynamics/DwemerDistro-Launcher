@@ -267,10 +267,12 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             return;
         }
 
-        Dictionary<string, bool>? installMap;
+        Dictionary<string, InstallComponentProbeState>? installMap;
         try
         {
-            installMap = JsonSerializer.Deserialize<Dictionary<string, bool>>(result.StandardOutput.Trim());
+            installMap = JsonSerializer.Deserialize<Dictionary<string, InstallComponentProbeState>>(
+                result.StandardOutput.Trim(),
+                JsonOptions);
         }
         catch (JsonException)
         {
@@ -287,9 +289,13 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
         foreach (var item in _allItems)
         {
-            if (installMap.TryGetValue(item.Key, out var isInstalled))
+            if (installMap.TryGetValue(item.Key, out var state))
             {
-                item.SetInstalledState(isInstalled);
+                item.SetProbeState(
+                    state.Installed,
+                    state.StatusText ?? string.Empty,
+                    state.StatusBackground ?? string.Empty,
+                    state.DetailText ?? string.Empty);
             }
             else
             {
@@ -305,6 +311,73 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("from pathlib import Path");
         builder.AppendLine("import json");
         builder.AppendLine("import shutil");
+        builder.AppendLine("import socket");
+        builder.AppendLine("import urllib.request");
+        builder.AppendLine();
+        builder.AppendLine("GOOD = '#285A2D'");
+        builder.AppendLine("WARN = '#6A3A12'");
+        builder.AppendLine("BAD = '#7A2828'");
+        builder.AppendLine("UNKNOWN = '#4F3C7A'");
+        builder.AppendLine();
+        builder.AppendLine("def make_status(installed, status_text=None, detail_text='', background=None):");
+        builder.AppendLine("    if status_text is None:");
+        builder.AppendLine("        status_text = 'Installed' if installed else 'Not installed'");
+        builder.AppendLine("    if background is None:");
+        builder.AppendLine("        background = GOOD if installed else WARN");
+        builder.AppendLine("    return {");
+        builder.AppendLine("        'installed': bool(installed),");
+        builder.AppendLine("        'statusText': status_text,");
+        builder.AppendLine("        'statusBackground': background,");
+        builder.AppendLine("        'detailText': detail_text,");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        builder.AppendLine("def is_port_open(port):");
+        builder.AppendLine("    try:");
+        builder.AppendLine("        with socket.create_connection(('127.0.0.1', port), timeout=0.5):");
+        builder.AppendLine("            return True");
+        builder.AppendLine("    except OSError:");
+        builder.AppendLine("        return False");
+        builder.AppendLine();
+        builder.AppendLine("def last_omnivoice_error(log_path):");
+        builder.AppendLine("    try:");
+        builder.AppendLine("        lines = log_path.read_text(encoding='utf-8', errors='replace').splitlines()");
+        builder.AppendLine("    except OSError:");
+        builder.AppendLine("        return ''");
+        builder.AppendLine("    for raw in reversed(lines[-200:]):");
+        builder.AppendLine("        line = ' '.join(raw.strip().split())");
+        builder.AppendLine("        lower = line.lower()");
+        builder.AppendLine("        if line and any(token in lower for token in ('error', 'traceback', 'failed', 'already in use')):");
+        builder.AppendLine("            return line[:180]");
+        builder.AppendLine("    return ''");
+        builder.AppendLine();
+        builder.AppendLine("def omnivoice_status():");
+        builder.AppendLine("    base = Path('/home/dwemer/omnivoice-tts')");
+        builder.AppendLine("    installed = (base / 'venv' / 'bin' / 'python').exists()");
+        builder.AppendLine("    log_error = last_omnivoice_error(base / 'logs' / 'server.log')");
+        builder.AppendLine("    if not installed:");
+        builder.AppendLine("        return make_status(False, 'Not installed', 'Separate optional service on 127.0.0.1:8021.', WARN)");
+        builder.AppendLine("    try:");
+        builder.AppendLine("        with urllib.request.urlopen('http://127.0.0.1:8021/health', timeout=2) as response:");
+        builder.AppendLine("            health = json.loads(response.read().decode('utf-8', errors='replace'))");
+        builder.AppendLine("        if response.status == 200 and health.get('status') == 'ok':");
+        builder.AppendLine("            language = (health.get('active_language') or {}).get('id') or 'unknown'");
+        builder.AppendLine("            voice_count = health.get('voice_count', 0)");
+        builder.AppendLine("            cuda = 'CUDA yes' if health.get('cuda') else 'CUDA no'");
+        builder.AppendLine("            gpu = health.get('gpu') or 'unknown GPU'");
+        builder.AppendLine("            default_voice = health.get('default_voice') or 'no default'");
+        builder.AppendLine("            detail = f'healthy; language {language}; {voice_count} voices; {cuda}; {gpu}; default {default_voice}'");
+        builder.AppendLine("            return make_status(True, 'Healthy', detail, GOOD)");
+        builder.AppendLine("    except Exception:");
+        builder.AppendLine("        pass");
+        builder.AppendLine("    if is_port_open(8021):");
+        builder.AppendLine("        detail = 'port 8021 is in use but /health did not return OmniVoice.'");
+        builder.AppendLine("        if log_error:");
+        builder.AppendLine("            detail += ' Last log: ' + log_error");
+        builder.AppendLine("        return make_status(True, 'Port conflict', detail, BAD)");
+        builder.AppendLine("    detail = 'installed; not running on 8021.'");
+        builder.AppendLine("    if log_error:");
+        builder.AppendLine("        detail += ' Last log: ' + log_error");
+        builder.AppendLine("    return make_status(True, 'Installed', detail, WARN)");
         builder.AppendLine();
         builder.AppendLine("status = {");
 
@@ -312,9 +385,16 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         {
             builder.Append("    ");
             builder.Append(JsonSerializer.Serialize(item.Key));
-            builder.Append(": bool(");
-            builder.Append(item.InstallCheckExpression);
-            builder.AppendLine("),");
+            if (string.Equals(item.Key, "omnivoice", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.AppendLine(": omnivoice_status(),");
+            }
+            else
+            {
+                builder.Append(": make_status(bool(");
+                builder.Append(item.InstallCheckExpression);
+                builder.AppendLine(")),");
+            }
         }
 
         builder.AppendLine("}");
@@ -323,6 +403,22 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
         return builder.ToString();
     }
+
+    private sealed class InstallComponentProbeState
+    {
+        public bool Installed { get; set; }
+
+        public string? StatusText { get; set; }
+
+        public string? StatusBackground { get; set; }
+
+        public string? DetailText { get; set; }
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     private static IEnumerable<InstallComponentSectionViewModel> BuildSections(
         MainWindowViewModel mainWindowViewModel,
@@ -372,6 +468,17 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 primaryCommand: mainWindowViewModel.InstallChatterboxCommand,
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true),
+            CreateItem(
+                key: "omnivoice",
+                title: "Multilingual OmniVoice TTS",
+                description: "Optional local OmniVoice TTS for CHIM voice libraries. Uses a separate service on port 8021.",
+                installCheckExpression: "Path('/home/dwemer/omnivoice-tts/venv').exists()",
+                primaryCommand: mainWindowViewModel.InstallOmniVoiceCommand,
+                supportsNvidiaCuda: true,
+                secondaryActionText: "Configure",
+                secondaryActionCommand: mainWindowViewModel.ConfigureOmniVoiceCommand,
+                tertiaryActionText: "View Logs",
+                tertiaryActionCommand: mainWindowViewModel.ViewOmniVoiceLogsCommand),
             CreateItem(
                 key: "xtts",
                 title: "Dwemer Distro XTTS",
@@ -445,7 +552,9 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         bool supportsNvidiaCuda = false,
         bool supportsAmdCpu = false,
         string? secondaryActionText = null,
-        ICommand? secondaryActionCommand = null)
+        ICommand? secondaryActionCommand = null,
+        string? tertiaryActionText = null,
+        ICommand? tertiaryActionCommand = null)
     {
         return new InstallComponentItemViewModel(
             key,
@@ -456,7 +565,9 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             supportsNvidiaCuda,
             supportsAmdCpu,
             secondaryActionText,
-            secondaryActionCommand);
+            secondaryActionCommand,
+            tertiaryActionText,
+            tertiaryActionCommand);
     }
 }
 

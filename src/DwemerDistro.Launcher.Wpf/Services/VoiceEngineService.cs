@@ -117,6 +117,7 @@ public sealed class VoiceEngineService(WslService wsl)
         return NormalizeEngineKey(engineKey) switch
         {
             "chatterbox" => "Chatterbox",
+            "omnivoice" => "Multilingual OmniVoice",
             "pockettts" => "Pocket-TTS",
             _ => "Cloned voice engine"
         };
@@ -127,6 +128,7 @@ public sealed class VoiceEngineService(WslService wsl)
         return (engineKey ?? string.Empty).Trim().ToLowerInvariant() switch
         {
             "chatterbox" => "chatterbox",
+            "omnivoice" or "omni_voice" or "omni-voice" => "omnivoice",
             "pocket_tts" or "pocket-tts" or "pockettts" => "pockettts",
             _ => "pockettts"
         };
@@ -134,7 +136,7 @@ public sealed class VoiceEngineService(WslService wsl)
 
     private static bool IsClonedVoiceEngine(string key)
     {
-        return NormalizeEngineKey(key) is "pockettts" or "chatterbox";
+        return NormalizeEngineKey(key) is "pockettts" or "chatterbox" or "omnivoice";
     }
 
     private async Task EnsurePostgresStartedAsync(CancellationToken cancellationToken)
@@ -167,6 +169,7 @@ import json
 
 status = {
     "chatterbox": Path("/home/dwemer/chatterbox/venv").exists(),
+    "omnivoice": Path("/home/dwemer/omnivoice-tts/venv").exists(),
     "pockettts": Path("/home/dwemer/pocket-tts/venv").exists(),
 }
 
@@ -178,16 +181,50 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 engine = (sys.argv[1] if len(sys.argv) > 1 else "pockettts").strip().lower()
-if engine not in ("pockettts", "chatterbox"):
+if engine not in ("pockettts", "chatterbox", "omnivoice"):
     engine = "pockettts"
 
-herika_driver = "chatterbox" if engine == "chatterbox" else "pockettts"
-herika_label = "ddistro chatterbox" if engine == "chatterbox" else "ddistro pockettts"
-stobe_type = "chatterbox" if engine == "chatterbox" else "pocket_tts"
-stobe_name = "Chatterbox Default" if engine == "chatterbox" else "Pocket TTS Default"
-display = "Chatterbox" if engine == "chatterbox" else "Pocket-TTS"
+def read_omnivoice_language():
+    config_path = Path("/home/dwemer/omnivoice-tts/config.json")
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return "en"
+    language = str(data.get("active_language") or "en").strip().lower()
+    return language or "en"
+
+active_language = read_omnivoice_language() if engine == "omnivoice" else "en"
+
+if engine == "chatterbox":
+    herika_driver = "chatterbox"
+    herika_label = "ddistro chatterbox"
+    herika_url = "http://127.0.0.1:8020"
+    stobe_type = "chatterbox"
+    stobe_name = "Chatterbox Default"
+    stobe_url = "http://127.0.0.1:8020"
+    stobe_match_provider = True
+    display = "Chatterbox"
+elif engine == "omnivoice":
+    herika_driver = "omnivoice"
+    herika_label = "OmniVoice Default"
+    herika_url = "http://127.0.0.1:8021"
+    stobe_type = "omnivoice"
+    stobe_name = "OmniVoice Default"
+    stobe_url = "http://127.0.0.1:8021"
+    stobe_match_provider = False
+    display = "Multilingual OmniVoice"
+else:
+    herika_driver = "pockettts"
+    herika_label = "ddistro pockettts"
+    herika_url = "http://127.0.0.1:8020"
+    stobe_type = "pocket_tts"
+    stobe_name = "Pocket TTS Default"
+    stobe_url = "http://127.0.0.1:8020"
+    stobe_match_provider = True
+    display = "Pocket-TTS"
 
 TARGETS = [
     {"targetName": "CHIM / Skyrim", "databaseName": "dwemer"},
@@ -219,94 +256,125 @@ def columns_for(db, table_name):
 def apply_herika_style(db):
     driver = sql_literal(herika_driver)
     label = sql_literal(herika_label)
-    metadata = sql_literal('{"_title":"' + display + ' (DwemerDistro quickstart)","voiceid":{"type":"string"},"language":{"type":"select","values":["en"]},"voicelogic":{"type":"select","values":["voicetype","name"]}}')
-    sql = """
-DO $$
-DECLARE
-    connector_id integer;
-BEGIN
-    SELECT id INTO connector_id
-    FROM core_tts_connector
-    WHERE driver = __DRIVER__
-    ORDER BY id
-    LIMIT 1;
+    url = sql_literal(herika_url)
+    fallback_male = "default_male" if engine == "omnivoice" and db == "dialectic" else "malenord"
+    fallback_female = "default_female" if engine == "omnivoice" and db == "dialectic" else "femalenord"
+    if engine == "omnivoice":
+        metadata = sql_literal(json.dumps({
+            "language": active_language,
+            "voicelogic": "voicetype",
+            "fallback_male": fallback_male,
+            "fallback_female": fallback_female,
+        }))
+    else:
+        metadata = sql_literal(json.dumps({
+            "_title": display + " (DwemerDistro quickstart)",
+            "voiceid": {"type": "string"},
+            "language": {"type": "select", "values": [active_language]},
+            "voicelogic": {"type": "select", "values": ["voicetype", "name"]},
+            "fallback_male": {"type": "string", "default": fallback_male},
+            "fallback_female": {"type": "string", "default": fallback_female},
+        }))
+    connector_id = f"(SELECT id FROM core_tts_connector WHERE driver = {driver} AND label = {label} ORDER BY id LIMIT 1)"
+    statements = [f"""
+INSERT INTO core_tts_connector(driver, label, metadata, api_badge_id, url, voice_field)
+SELECT {driver}, {label}, {metadata}::jsonb, NULL, {url}, 'voiceid'
+WHERE NOT EXISTS (
+    SELECT 1 FROM core_tts_connector WHERE driver = {driver} AND label = {label}
+);
 
-    IF connector_id IS NULL THEN
-        INSERT INTO core_tts_connector(driver, label, metadata, api_badge_id, url, voice_field)
-        VALUES (__DRIVER__, __LABEL__, __METADATA__::jsonb, NULL, 'http://127.0.0.1:8020', 'voiceid')
-        RETURNING id INTO connector_id;
-    ELSE
-        UPDATE core_tts_connector
-        SET label = __LABEL__,
-            metadata = COALESCE(metadata, __METADATA__::jsonb),
-            url = 'http://127.0.0.1:8020',
-            voice_field = 'voiceid'
-        WHERE id = connector_id;
-    END IF;
+UPDATE core_tts_connector
+SET label = {label},
+    metadata = {metadata}::jsonb,
+    url = {url},
+    voice_field = 'voiceid'
+WHERE id = {connector_id};
+"""]
 
-    IF to_regclass('public.core_profiles') IS NOT NULL THEN
-        UPDATE core_profiles
-        SET tts_connector_id = connector_id
-        WHERE tts_connector_id IS NULL
-           OR COALESCE(default_npc, '') = '1'
-           OR COALESCE(default_narrator, '') = '1';
-    END IF;
+    profile_columns, _ = columns_for(db, "core_profiles")
+    if profile_columns and "tts_connector_id" in profile_columns:
+        profile_conditions = ["tts_connector_id IS NULL"]
+        if "default_npc" in profile_columns:
+            profile_conditions.append("COALESCE(default_npc, '') = '1'")
+        if "default_narrator" in profile_columns:
+            profile_conditions.append("COALESCE(default_narrator, '') = '1'")
+        statements.append(f"""
+UPDATE core_profiles
+SET tts_connector_id = {connector_id}
+WHERE {" OR ".join(profile_conditions)};
+""")
 
-    IF to_regclass('public.core_player') IS NOT NULL THEN
-        UPDATE core_player
-        SET tts_connector_id = connector_id
-        WHERE tts_connector_id IS NULL OR id = 1;
-    END IF;
-END
-$$ LANGUAGE plpgsql;
-"""
-    sql = sql.replace("__DRIVER__", driver).replace("__LABEL__", label).replace("__METADATA__", metadata)
+    player_columns, _ = columns_for(db, "core_player")
+    if player_columns and "tts_connector_id" in player_columns:
+        player_conditions = ["tts_connector_id IS NULL"]
+        if "id" in player_columns:
+            player_conditions.append("id = 1")
+        statements.append(f"""
+UPDATE core_player
+SET tts_connector_id = {connector_id}
+WHERE {" OR ".join(player_conditions)};
+""")
+
+    sql = "\n".join(statements)
     return psql(db, sql)
 
 def apply_stobe_style(db):
     provider = sql_literal(stobe_type)
     name = sql_literal(stobe_name)
-    config = sql_literal('{"language":"en","fallback_male":"male1","fallback_female":"female1","stream_chunk_size":20,"temperature":0.9,"speed":1.0,"length_penalty":1.0,"repetition_penalty":5.0,"top_p":0.85,"top_k":50,"enable_text_splitting":true}')
-    sql = """
-DO $$
-DECLARE
-    connector_id integer;
-BEGIN
-    UPDATE core_tts_connector
-    SET is_default = FALSE
-    WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'cartesia', 'inworld');
+    url = sql_literal(stobe_url)
+    fallback_male = "default_male" if engine == "omnivoice" else "male1"
+    fallback_female = "default_female" if engine == "omnivoice" else "female1"
+    config = sql_literal(json.dumps({
+        "language": active_language,
+        "fallback_male": fallback_male,
+        "fallback_female": fallback_female,
+        "stream_chunk_size": 20,
+        "temperature": 0.9,
+        "speed": 1.0,
+        "length_penalty": 1.0,
+        "repetition_penalty": 5.0,
+        "top_p": 0.85,
+        "top_k": 50,
+        "enable_text_splitting": True,
+    }))
+    match_clause = f"LOWER(name) = LOWER({name})"
+    if stobe_match_provider:
+        match_clause = f"{match_clause} OR connector_type = {provider}"
+    connector_id = f"(SELECT id FROM core_tts_connector WHERE {match_clause} ORDER BY CASE WHEN LOWER(name) = LOWER({name}) THEN 0 ELSE 1 END, id LIMIT 1)"
+    statements = [f"""
+UPDATE core_tts_connector
+SET is_default = FALSE
+WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'cartesia', 'inworld');
 
-    SELECT id INTO connector_id
-    FROM core_tts_connector
-    WHERE LOWER(name) = LOWER(__NAME__) OR connector_type = __PROVIDER__
-    ORDER BY CASE WHEN LOWER(name) = LOWER(__NAME__) THEN 0 ELSE 1 END, id
-    LIMIT 1;
+INSERT INTO core_tts_connector(name, connector_type, base_url, is_default, config)
+SELECT {name}, {provider}, {url}, TRUE, {config}::jsonb
+WHERE NOT EXISTS (
+    SELECT 1 FROM core_tts_connector WHERE {match_clause}
+);
 
-    IF connector_id IS NULL THEN
-        INSERT INTO core_tts_connector(name, connector_type, base_url, is_default, config)
-        VALUES (__NAME__, __PROVIDER__, 'http://127.0.0.1:8020', TRUE, __CONFIG__::jsonb)
-        RETURNING id INTO connector_id;
-    ELSE
-        UPDATE core_tts_connector
-        SET name = __NAME__,
-            connector_type = __PROVIDER__,
-            base_url = 'http://127.0.0.1:8020',
-            is_default = TRUE,
-            config = COALESCE(config, __CONFIG__::jsonb)
-        WHERE id = connector_id;
-    END IF;
+UPDATE core_tts_connector
+SET name = {name},
+    connector_type = {provider},
+    base_url = {url},
+    is_default = TRUE,
+    config = {config}::jsonb
+WHERE id = {connector_id};
+"""]
 
-    IF to_regclass('public.core_profiles') IS NOT NULL THEN
-        UPDATE core_profiles
-        SET tts_connector_id = connector_id
-        WHERE tts_connector_id IS NULL
-           OR COALESCE(is_default_npc, FALSE)
-           OR COALESCE(is_player_faction_profile, FALSE);
-    END IF;
-END
-$$ LANGUAGE plpgsql;
-"""
-    sql = sql.replace("__NAME__", name).replace("__PROVIDER__", provider).replace("__CONFIG__", config)
+    profile_columns, _ = columns_for(db, "core_profiles")
+    if profile_columns and "tts_connector_id" in profile_columns:
+        profile_conditions = ["tts_connector_id IS NULL"]
+        if "is_default_npc" in profile_columns:
+            profile_conditions.append("COALESCE(is_default_npc, FALSE)")
+        if "is_player_faction_profile" in profile_columns:
+            profile_conditions.append("COALESCE(is_player_faction_profile, FALSE)")
+        statements.append(f"""
+UPDATE core_profiles
+SET tts_connector_id = {connector_id}
+WHERE {" OR ".join(profile_conditions)};
+""")
+
+    sql = "\n".join(statements)
     return psql(db, sql)
 
 statuses = []

@@ -103,6 +103,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         InstallLocalWhisperCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/remote-faster-whisper/ddistro_install.sh"));
         InstallParakeetCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/parakeet-api-server/ddistro_install.sh"));
         InstallPocketTtsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/pocket-tts/ddistro_install.sh"));
+        InstallOmniVoiceCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d omnivoice-tts ]; then git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts; fi; /home/dwemer/omnivoice-tts/ddistro_install.sh\""));
+        ConfigureOmniVoiceCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/omnivoice-tts/conf.sh"));
         OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"));
 
         OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"));
@@ -114,6 +116,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"));
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"));
         ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/pocket-tts/log.txt"));
+        ViewOmniVoiceLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/omnivoice-tts/logs/server.log"));
         ViewMeloTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/MeloTTS/melo/log.txt"));
         ViewPiperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/piper/log.txt"));
         ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"));
@@ -287,6 +290,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand InstallLocalWhisperCommand { get; }
     public RelayCommand InstallParakeetCommand { get; }
     public RelayCommand InstallPocketTtsCommand { get; }
+    public RelayCommand InstallOmniVoiceCommand { get; }
+    public RelayCommand ConfigureOmniVoiceCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand ViewMemoryUsageCommand { get; }
@@ -297,6 +302,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand ViewXttsLogsCommand { get; }
     public RelayCommand ViewChatterboxLogsCommand { get; }
     public RelayCommand ViewPocketTtsLogsCommand { get; }
+    public RelayCommand ViewOmniVoiceLogsCommand { get; }
     public RelayCommand ViewMeloTtsLogsCommand { get; }
     public RelayCommand ViewPiperLogsCommand { get; }
     public RelayCommand ViewLocalWhisperLogsCommand { get; }
@@ -1172,6 +1178,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
             ("Chatterbox", "/home/dwemer/chatterbox/log.txt"),
             ("Pocket-TTS", "/home/dwemer/pocket-tts/log.txt"),
+            ("OmniVoice", "/home/dwemer/omnivoice-tts/logs/server.log"),
             ("Minime and TXT2VEC", "/home/dwemer/minime-t5/log.txt"),
             ("MeloTTS", "/home/dwemer/MeloTTS/melo/log.txt"),
             ("Piper", "/home/dwemer/piper/log.txt"),
@@ -1229,6 +1236,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 "if command -v curl >/dev/null 2>&1; then " +
                 "echo 'GET /health'; curl -sS --max-time 5 http://127.0.0.1:8020/health 2>&1 || true; " +
                 "echo; echo 'GET /speakers_list_extended'; curl -sS --max-time 5 http://127.0.0.1:8020/speakers_list_extended 2>&1 || true; " +
+                "else echo '[missing] curl'; fi"
+            ),
+            (
+                "OmniVoice component status",
+                "echo '/home/dwemer/omnivoice-tts'; " +
+                "ls -la /home/dwemer/omnivoice-tts 2>&1 || true; " +
+                "echo; echo 'voices'; find /home/dwemer/omnivoice-tts/voices -maxdepth 2 -type f 2>/dev/null | head -100 || true; " +
+                "echo; echo 'doctor'; if [ -x /home/dwemer/omnivoice-tts/venv/bin/python ]; then cd /home/dwemer/omnivoice-tts && venv/bin/python omnivoice_cli.py doctor 2>&1 || true; else echo '[missing] OmniVoice venv'; fi"
+            ),
+            (
+                "OmniVoice API inventory",
+                "if command -v curl >/dev/null 2>&1; then " +
+                "echo 'GET /health'; curl -sS --max-time 5 http://127.0.0.1:8021/health 2>&1 || true; " +
+                "echo; echo 'GET /active_language'; curl -sS --max-time 5 http://127.0.0.1:8021/active_language 2>&1 || true; " +
+                "echo; echo 'GET /speakers_list_extended'; curl -sS --max-time 5 http://127.0.0.1:8021/speakers_list_extended 2>&1 || true; " +
                 "else echo '[missing] curl'; fi"
             )
         };

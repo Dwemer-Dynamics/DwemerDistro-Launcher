@@ -7,6 +7,7 @@ public sealed class InstallComponentItemViewModel : ObservableObject
 {
     private bool _isInstalled;
     private string _statusText = "Checking...";
+    private string _statusDetailText = string.Empty;
     private string _statusBackground = "#555555";
     private string _statusForeground = "White";
 
@@ -19,7 +20,9 @@ public sealed class InstallComponentItemViewModel : ObservableObject
         bool supportsNvidiaCuda = false,
         bool supportsAmdCpu = false,
         string? secondaryActionText = null,
-        ICommand? secondaryActionCommand = null)
+        ICommand? secondaryActionCommand = null,
+        string? tertiaryActionText = null,
+        ICommand? tertiaryActionCommand = null)
     {
         Key = key;
         Title = title;
@@ -30,6 +33,8 @@ public sealed class InstallComponentItemViewModel : ObservableObject
         SupportsAmdCpu = supportsAmdCpu;
         SecondaryActionText = secondaryActionText;
         SecondaryActionCommand = secondaryActionCommand;
+        TertiaryActionText = tertiaryActionText;
+        TertiaryActionCommand = tertiaryActionCommand;
     }
 
     public string Key { get; }
@@ -44,13 +49,19 @@ public sealed class InstallComponentItemViewModel : ObservableObject
 
     public ICommand? SecondaryActionCommand { get; }
 
+    public ICommand? TertiaryActionCommand { get; }
+
     public string? SecondaryActionText { get; }
+
+    public string? TertiaryActionText { get; }
 
     public bool SupportsNvidiaCuda { get; }
 
     public bool SupportsAmdCpu { get; }
 
     public bool HasSecondaryAction => SecondaryActionCommand is not null && !string.IsNullOrWhiteSpace(SecondaryActionText);
+
+    public bool HasTertiaryAction => TertiaryActionCommand is not null && !string.IsNullOrWhiteSpace(TertiaryActionText);
 
     public bool IsInstalled
     {
@@ -72,6 +83,20 @@ public sealed class InstallComponentItemViewModel : ObservableObject
         private set => SetProperty(ref _statusText, value);
     }
 
+    public string StatusDetailText
+    {
+        get => _statusDetailText;
+        private set
+        {
+            if (SetProperty(ref _statusDetailText, value))
+            {
+                OnPropertyChanged(nameof(HasStatusDetail));
+            }
+        }
+    }
+
+    public bool HasStatusDetail => !string.IsNullOrWhiteSpace(StatusDetailText);
+
     public string StatusBackground
     {
         get => _statusBackground;
@@ -87,6 +112,7 @@ public sealed class InstallComponentItemViewModel : ObservableObject
     public void SetCheckingState()
     {
         StatusText = "Checking";
+        StatusDetailText = string.Empty;
         StatusBackground = "#555555";
         StatusForeground = "White";
     }
@@ -95,7 +121,25 @@ public sealed class InstallComponentItemViewModel : ObservableObject
     {
         IsInstalled = installed;
         StatusText = installed ? "Installed" : "Not installed";
+        StatusDetailText = string.Empty;
         StatusBackground = installed ? "#285A2D" : "#6A3A12";
+        StatusForeground = "White";
+    }
+
+    public void SetProbeState(
+        bool installed,
+        string statusText,
+        string statusBackground,
+        string detailText)
+    {
+        IsInstalled = installed;
+        StatusText = string.IsNullOrWhiteSpace(statusText)
+            ? installed ? "Installed" : "Not installed"
+            : statusText;
+        StatusDetailText = detailText;
+        StatusBackground = string.IsNullOrWhiteSpace(statusBackground)
+            ? installed ? "#285A2D" : "#6A3A12"
+            : statusBackground;
         StatusForeground = "White";
     }
 
@@ -103,6 +147,7 @@ public sealed class InstallComponentItemViewModel : ObservableObject
     {
         IsInstalled = false;
         StatusText = "Unknown";
+        StatusDetailText = string.Empty;
         StatusBackground = "#4F3C7A";
         StatusForeground = "White";
     }
