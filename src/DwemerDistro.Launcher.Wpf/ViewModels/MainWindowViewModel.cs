@@ -123,6 +123,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"));
         ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"));
         FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync);
+        FixPermissionIssuesCommand = new AsyncRelayCommand(FixPermissionIssuesAsync);
         ReclaimDistroDiskSpaceCommand = new AsyncRelayCommand(ReclaimDistroDiskSpaceAsync);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync());
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher);
@@ -309,6 +310,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand ViewParakeetLogsCommand { get; }
     public RelayCommand ViewApacheLogsCommand { get; }
     public AsyncRelayCommand FixWslDnsCommand { get; }
+    public AsyncRelayCommand FixPermissionIssuesCommand { get; }
     public AsyncRelayCommand ReclaimDistroDiskSpaceCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
@@ -1046,6 +1048,59 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    private async Task FixPermissionIssuesAsync()
+    {
+        if (!await _wsl.DistroExistsAsync().ConfigureAwait(true))
+        {
+            MessageBox.Show(
+                $"{LauncherConstants.DistroName} is not currently installed.",
+                "Fix Permission Issues",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            "This will repair runtime write permissions for DwemerDistro web server folders used by CHIM, Stobe, Dialectic, and the dashboard.\n\nIt targets log, cache, upload, data, soundcache, and config folders only. It does not apply chmod 777.\n\nContinue?",
+            "Fix Permission Issues",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (confirmed != MessageBoxResult.Yes)
+        {
+            AppendLog("Permission repair canceled." + Environment.NewLine);
+            return;
+        }
+
+        AppendLog("Starting permission repair..." + Environment.NewLine);
+        var command =
+            "if [ -x /usr/local/bin/fix_ddistro_permissions ]; then " +
+            "/usr/local/bin/fix_ddistro_permissions --repair; " +
+            "elif [ -f /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions ]; then " +
+            "bash /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions --repair; " +
+            "else echo 'fix_ddistro_permissions is not installed. Run Update System first.'; exit 127; fi";
+
+        var result = await _wsl.RunBashAsync(command, text => AppendLog(text), user: "root", loginShell: false, lineBuffered: true).ConfigureAwait(true);
+        if (result.Succeeded)
+        {
+            AppendLog("Permission repair completed successfully." + Environment.NewLine, "green");
+            MessageBox.Show(
+                "Permission repair completed successfully.",
+                "Fix Permission Issues",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var error = GetCommandError(result);
+        AppendLog($"Permission repair failed: {error}{Environment.NewLine}", "red");
+        MessageBox.Show(
+            $"Permission repair failed.\n\n{error}",
+            "Fix Permission Issues",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+
     private async Task CleanLogsAsync()
     {
         var command =
@@ -1115,6 +1170,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             lines.Add("");
         }
 
+        await AddPermissionDiagnosticsAsync(lines).ConfigureAwait(false);
         await AddLogDiagnosticsAsync(lines).ConfigureAwait(false);
         await AddDatabaseSchemaDiagnosticsAsync(lines).ConfigureAwait(false);
         await AddConnectorDiagnosticsAsync(lines).ConfigureAwait(false);
@@ -1125,6 +1181,47 @@ public sealed partial class MainWindowViewModel : ObservableObject
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
         OpenFolder(outputDir);
+    }
+
+    private async Task AddPermissionDiagnosticsAsync(List<string> lines)
+    {
+        lines.Add("Permission Diagnostics");
+        lines.Add("Read-only write checks for common DwemerDistro runtime folders.");
+        lines.Add("");
+        lines.Add("$ fix_ddistro_permissions --check");
+
+        var command =
+            "if [ -x /usr/local/bin/fix_ddistro_permissions ]; then " +
+            "/usr/local/bin/fix_ddistro_permissions --check; " +
+            "elif [ -f /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions ]; then " +
+            "bash /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions --check; " +
+            "else echo '[missing] fix_ddistro_permissions is not installed.'; exit 127; fi";
+
+        try
+        {
+            var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+            {
+                lines.Add(SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.StandardError))
+            {
+                lines.Add("[stderr]");
+                lines.Add(SanitizeDiagnosticText(result.StandardError.TrimEnd()));
+            }
+
+            if (!result.Succeeded)
+            {
+                lines.Add($"[exit code {result.ExitCode}]");
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add(ex.ToString());
+        }
+
+        lines.Add("");
     }
 
     private async Task AddLogDiagnosticsAsync(List<string> lines)

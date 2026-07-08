@@ -191,6 +191,34 @@
 
                         <StackPanel Grid.Column="0"
                                     Margin="0,0,16,0">
+                            <TextBlock Text="Fix Permission Issues"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Repair runtime folder permissions when logs show Permission denied or PHP cannot write files."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Fix"
+                                Command="{Binding FixPermissionIssuesCommand}"
+                                Style="{StaticResource PrimaryActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#565656"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
                             <TextBlock Text="View Memory Usage"
                                        Style="{StaticResource ActionCardTitle}" />
                             <TextBlock Text="Open live resource usage inside WSL to inspect RAM, CPU, and process pressure."
