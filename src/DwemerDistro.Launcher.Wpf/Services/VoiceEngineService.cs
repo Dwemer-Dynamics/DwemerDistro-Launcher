@@ -170,7 +170,7 @@ import json
 status = {
     "chatterbox": Path("/home/dwemer/chatterbox/venv").exists(),
     "omnivoice": Path("/home/dwemer/omnivoice-tts/venv").exists(),
-    "pockettts": Path("/home/dwemer/pocket-tts/venv").exists(),
+    "pockettts": Path("/home/dwemer/pocket-tts/venv/bin/python").exists() and Path("/home/dwemer/pocket-tts/start.sh").exists(),
 }
 
 print(json.dumps(status))

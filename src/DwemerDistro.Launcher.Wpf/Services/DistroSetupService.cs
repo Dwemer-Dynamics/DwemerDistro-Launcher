@@ -5,15 +5,35 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 public sealed class DistroSetupService(WslService wsl)
 {
     private const int ComponentInstallTimeoutSeconds = 7200;
-    private const string NonInteractiveInstallInput = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
-    private const string CudaInstallCommand =
-        "set -e; " +
-        "printf '%s\\n' " +
-        "'nvidia-cudnn nvidia-cudnn/question select I Agree' " +
-        "'nvidia-cudnn nvidia-cudnn/question seen true' " +
-        "'nvidia-cudnn nvidia-cudnn/license seen true' " +
-        "| debconf-set-selections; " +
-        "/usr/local/bin/install_full_packages </dev/null";
+    private const string NonInteractiveInstallInput = "";
+    private const string CudaInstallCommand = """
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export DEBIAN_PRIORITY=critical
+export APT_LISTCHANGES_FRONTEND=none
+export NEEDRESTART_MODE=a
+export UCF_FORCE_CONFFOLD=1
+
+printf '%s\n' \
+    'nvidia-cudnn nvidia-cudnn/question select I Agree' \
+    'nvidia-cudnn nvidia-cudnn/question seen true' \
+    'nvidia-cudnn nvidia-cudnn/license seen true' \
+    | debconf-set-selections
+
+if [ ! -s /etc/ddistro-full-packages.txt ]; then
+    echo "Missing /etc/ddistro-full-packages.txt. Cannot install CUDA package set."
+    exit 21
+fi
+
+echo "Installing CUDA package set..."
+dpkg --configure -a
+apt-get update
+xargs --arg-file=/etc/ddistro-full-packages.txt apt-get install -y
+apt-get clean
+find /var/lib/apt/lists/ -type f -delete
+
+echo "CUDA package install complete."
+""";
     private const string PrepareDistroCommand = """
 set -e
 export DEBIAN_FRONTEND=noninteractive
@@ -21,6 +41,7 @@ export DEBIAN_PRIORITY=critical
 export APT_LISTCHANGES_FRONTEND=none
 export NEEDRESTART_MODE=a
 export UCF_FORCE_CONFFOLD=1
+export GIT_TERMINAL_PROMPT=0
 
 echo "Preparing DwemerDistro package state..."
 dpkg --configure -a
@@ -60,6 +81,12 @@ echo "Distro preparation complete."
 set -e
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export GIT_TERMINAL_PROMPT=0
+
+if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
+    echo "Hugging Face token is required for Pocket-TTS. Save it in Quickstart and retry."
+    exit 22
+fi
 
 mkdir -p /home/dwemer
 cd /home/dwemer
@@ -78,7 +105,7 @@ if [ ! -d venv ]; then
 fi
 
 . venv/bin/activate
-python -m pip install --upgrade pip wheel
+python -m pip install --upgrade pip wheel setuptools
 
 if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
     python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu128
@@ -88,11 +115,6 @@ fi
 
 python -m pip install -e .
 
-if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
-    echo "Hugging Face token is required for Pocket-TTS. Save it in Quickstart and retry."
-    exit 22
-fi
-
 if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
     ln -sf /home/dwemer/pocket-tts/start-gpu.sh /home/dwemer/pocket-tts/start.sh
     echo "Pocket-TTS installed and enabled in GPU / CUDA mode."
@@ -101,10 +123,46 @@ else
     echo "Pocket-TTS installed and enabled in CPU mode."
 fi
 """;
+    private const string MinimeInstallCommand = """
+set -e
+export PIP_NO_INPUT=1
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+
+if [ ! -d /home/dwemer/minime-t5 ]; then
+    echo "Missing /home/dwemer/minime-t5. Cannot install Minime/TXT2VEC."
+    exit 23
+fi
+
+cd /home/dwemer/minime-t5
+
+if [ ! -d /home/dwemer/python-minime ]; then
+    python3 -m venv /home/dwemer/python-minime
+fi
+
+. /home/dwemer/python-minime/bin/activate
+python -m pip install --upgrade pip wheel setuptools
+
+if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
+    python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu128
+else
+    python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+fi
+
+python -m pip install -r requirements.txt
+
+if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
+    ln -sf /home/dwemer/minime-t5/start-gpu.sh /home/dwemer/minime-t5/start.sh
+    echo "Minime/TXT2VEC installed and enabled in GPU / CUDA mode."
+else
+    ln -sf /home/dwemer/minime-t5/start-cpu.sh /home/dwemer/minime-t5/start.sh
+    echo "Minime/TXT2VEC installed and enabled in CPU mode."
+fi
+""";
     private const string ParakeetInstallCommand = """
 set -e
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export GIT_TERMINAL_PROMPT=0
 
 mkdir -p /home/dwemer
 cd /home/dwemer
@@ -118,15 +176,59 @@ fi
 
 cd /home/dwemer/parakeet-api-server
 
+if [ ! -d venv ]; then
+    python3 -m venv venv
+fi
+
+. venv/bin/activate
+python -m pip install --upgrade pip wheel setuptools
+
 if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
-    printf 'Y\n' | PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128" ./install.sh
+    python -m pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+    python -m pip install sherpa-onnx==1.12.13+cuda12.cudnn9 -f https://k2-fsa.github.io/sherpa/onnx/cuda.html
+    python -m pip install nvidia-cudnn-cu12
+    python -m pip install -r requirements.txt
     ln -sf /home/dwemer/parakeet-api-server/start-gpu.sh /home/dwemer/parakeet-api-server/start.sh
     echo "Parakeet installed and enabled in GPU / CUDA mode."
 else
-    ./install.sh
+    python -m pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+    python -m pip install "sherpa-onnx>=1.10.0"
+    python -m pip install -r requirements.txt
     ln -sf /home/dwemer/parakeet-api-server/start-cpu.sh /home/dwemer/parakeet-api-server/start.sh
     echo "Parakeet installed and enabled in CPU mode."
 fi
+""";
+    private const string ActiveInstallerProbeCommand = """
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+tokens = (
+    "/usr/local/bin/install_full_packages",
+    "ddistro_install.sh",
+    "/conf.sh",
+    "/install.sh",
+)
+
+matches = []
+skip_pids = {str(os.getpid()), str(os.getppid())}
+for proc in Path("/proc").iterdir():
+    if not proc.name.isdigit():
+        continue
+    if proc.name in skip_pids:
+        continue
+    try:
+        raw = (proc / "cmdline").read_bytes()
+    except OSError:
+        continue
+    if not raw:
+        continue
+    cmd = raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+    if any(token in cmd for token in tokens):
+        matches.append(f"{proc.name}: {cmd}")
+
+print("\n".join(matches[:12]))
+PY
 """;
 
     private static readonly SetupComponent[] Components =
@@ -141,19 +243,19 @@ fi
             "pockettts",
             "Pocket-TTS",
             "Cloned voice engine",
-            "Path('/home/dwemer/pocket-tts/venv').exists()",
+            "Path('/home/dwemer/pocket-tts/venv/bin/python').exists() and Path('/home/dwemer/pocket-tts/start.sh').exists()",
             ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "bash", "-lc", PocketTtsInstallCommand]),
         new(
             "minime",
             "Minime and TXT2VEC",
             "Local helper model and vector service",
-            "Path('/home/dwemer/python-minime').exists()",
-            ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "/home/dwemer/minime-t5/ddistro_install.sh"]),
+            "Path('/home/dwemer/python-minime/bin/python').exists() and Path('/home/dwemer/minime-t5/start.sh').exists()",
+            ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "bash", "-lc", MinimeInstallCommand]),
         new(
             "parakeet",
             "Parakeet",
             "Local speech-to-text service",
-            "Path('/home/dwemer/parakeet-api-server/venv').exists()",
+            "Path('/home/dwemer/parakeet-api-server/venv/bin/python').exists() and Path('/home/dwemer/parakeet-api-server/start.sh').exists()",
             ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "bash", "-lc", ParakeetInstallCommand])
     ];
 
@@ -276,6 +378,14 @@ fi
             return current;
         }
 
+        var activeInstaller = await GetActiveInstallerProcessSummaryAsync(cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(activeInstaller))
+        {
+            output?.Invoke("Another distro installer is already running. Stop it before starting quick setup again." + Environment.NewLine);
+            output?.Invoke(activeInstaller + Environment.NewLine);
+            return current;
+        }
+
         var totalComponents = preset.ComponentKeys.Count + 1;
         var completedComponents = 0;
         progress?.Invoke(new SetupInstallProgress(0, totalComponents, preset.Title, "Starting setup"));
@@ -382,16 +492,36 @@ fi
 
         try
         {
-            return await wsl.RunWslWithInputAsync(
+            output?.Invoke($"Starting {component.Title} command..." + Environment.NewLine);
+            var result = await wsl.RunWslWithInputAsync(
                     BuildNonInteractiveInstallArguments(component),
                     component.InstallInput ?? NonInteractiveInstallInput,
                     output,
                     componentTimeout.Token)
                 .ConfigureAwait(false);
+            output?.Invoke($"{component.Title} exited with code {result.ExitCode}." + Environment.NewLine);
+            return result;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return new Models.CommandResult(124, string.Empty, $"{component.Title} timed out after 2 hours.");
+        }
+    }
+
+    private async Task<string?> GetActiveInstallerProcessSummaryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await wsl.RunWslAsync(
+                    ["-d", LauncherConstants.DistroName, "--", "bash", "-lc", ActiveInstallerProbeCommand],
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            return result.Succeeded ? result.StandardOutput.Trim() : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

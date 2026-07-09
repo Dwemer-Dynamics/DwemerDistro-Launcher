@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using DwemerDistro.Launcher.Wpf.Services;
@@ -13,6 +14,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private const string StatusWarn = "#6A3A12";
     private const string StatusBad = "#7A2828";
     private const string StatusUnknown = "#4F3C7A";
+    private static readonly object QuickstartInstallLogLock = new();
+    private static readonly string QuickstartInstallLogPath =
+        Path.Combine(AppContext.BaseDirectory, "Logs", "quickstart-install.log");
 
     private readonly MainWindowViewModel _mainWindowViewModel;
     private readonly Dispatcher _dispatcher;
@@ -443,9 +447,11 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         await RunBusyAsync($"Installing {_selectedPreset.Title}", async () =>
         {
             SetupLogText = string.Empty;
+            ResetQuickstartInstallLog();
             SetupInstallProgress = 0;
             SetupInstallProgressText = $"Preparing {_selectedPreset.Title}...";
             IsInstallingSetup = true;
+            AppendSetupLog($"Quickstart install log: {QuickstartInstallLogPath}{Environment.NewLine}");
             AppendSetupLog($"Recommended path: {_selectedPreset.Title}{Environment.NewLine}");
             try
             {
@@ -854,6 +860,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
+        AppendQuickstartInstallLog(text);
+
         if (_dispatcher.CheckAccess())
         {
             SetupLogText += text;
@@ -861,6 +869,40 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
 
         _ = _dispatcher.BeginInvoke(() => SetupLogText += text, DispatcherPriority.Background);
+    }
+
+    private static void ResetQuickstartInstallLog()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(QuickstartInstallLogPath)!);
+            lock (QuickstartInstallLogLock)
+            {
+                File.WriteAllText(
+                    QuickstartInstallLogPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Quickstart install log started.{Environment.NewLine}");
+            }
+        }
+        catch
+        {
+            // The visible setup log is still available if the persistent log cannot be written.
+        }
+    }
+
+    private static void AppendQuickstartInstallLog(string text)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(QuickstartInstallLogPath)!);
+            lock (QuickstartInstallLogLock)
+            {
+                File.AppendAllText(QuickstartInstallLogPath, text);
+            }
+        }
+        catch
+        {
+            // Logging must never break first-time setup.
+        }
     }
 
     private void ApplySetupInstallProgress(SetupInstallProgress progress)
