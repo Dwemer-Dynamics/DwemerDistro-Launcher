@@ -17,8 +17,7 @@ export UCF_FORCE_CONFFOLD=1
 printf '%s\n' \
     'nvidia-cudnn nvidia-cudnn/question select I Agree' \
     'nvidia-cudnn nvidia-cudnn/question seen true' \
-    'nvidia-cudnn nvidia-cudnn/license seen true' \
-    | debconf-set-selections
+    'nvidia-cudnn nvidia-cudnn/license seen true' | debconf-set-selections
 
 if [ ! -s /etc/ddistro-full-packages.txt ]; then
     echo "Missing /etc/ddistro-full-packages.txt. Cannot install CUDA package set."
@@ -538,7 +537,7 @@ PY
         }
 
         var prefix = component.InstallArguments.Take(separatorIndex.Value + 1);
-        var command = EscapeWslShellCommandArguments(component.InstallArguments.Skip(separatorIndex.Value + 1));
+        var command = NormalizeWslShellCommandArguments(component.InstallArguments.Skip(separatorIndex.Value + 1));
         return prefix.Concat(
             new[]
             {
@@ -557,18 +556,20 @@ PY
             }).Concat(command).ToArray();
     }
 
-    private static IReadOnlyList<string> EscapeWslShellCommandArguments(IEnumerable<string> arguments)
+    private static IReadOnlyList<string> NormalizeWslShellCommandArguments(IEnumerable<string> arguments)
     {
-        var escaped = new List<string>();
-        var escapeNext = false;
+        var normalized = new List<string>();
+        var normalizeShellCommand = false;
 
         foreach (var argument in arguments)
         {
-            escaped.Add(escapeNext ? argument.Replace("$", "\\$") : argument);
-            escapeNext = argument is "-c" or "-lc";
+            normalized.Add(normalizeShellCommand
+                ? argument.Replace("\r\n", "\n").Replace("\r", "\n").Replace("$", "\\$")
+                : argument);
+            normalizeShellCommand = argument is "-c" or "-lc";
         }
 
-        return escaped;
+        return normalized;
     }
 
     private static string BuildProbeScript()
