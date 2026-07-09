@@ -2,8 +2,6 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public sealed class HardwareDetectionService(ProcessRunner processRunner)
 {
-    private const int PowerfulNvidiaVramMb = 12000;
-
     public async Task<HardwareDetectionResult> DetectAsync(CancellationToken cancellationToken = default)
     {
         var nvidiaResult = await TryDetectNvidiaAsync(cancellationToken).ConfigureAwait(false);
@@ -16,7 +14,7 @@ public sealed class HardwareDetectionService(ProcessRunner processRunner)
         if (adapterNames.Any(name => name.Contains("nvidia", StringComparison.OrdinalIgnoreCase)))
         {
             return new HardwareDetectionResult(
-                SetupPresetKey.NvidiaStandard,
+                SetupPresetKey.NvidiaGpu,
                 "NVIDIA GPU detected",
                 string.Join(", ", adapterNames),
                 true);
@@ -69,19 +67,12 @@ public sealed class HardwareDetectionService(ProcessRunner processRunner)
             }
 
             var strongest = gpus.OrderByDescending(gpu => gpu.MemoryMb).First();
-            var preset = strongest.MemoryMb >= PowerfulNvidiaVramMb
-                ? SetupPresetKey.NvidiaPowerful
-                : SetupPresetKey.NvidiaStandard;
-
-            var summary = preset == SetupPresetKey.NvidiaPowerful
-                ? "Powerful NVIDIA GPU detected"
-                : "NVIDIA GPU detected";
 
             var detail = strongest.MemoryMb > 0
                 ? $"{strongest.Name} with {strongest.MemoryMb:N0} MB VRAM"
                 : strongest.Name;
 
-            return new HardwareDetectionResult(preset, summary, detail, true);
+            return new HardwareDetectionResult(SetupPresetKey.NvidiaGpu, "NVIDIA GPU detected", detail, true);
         }
         catch
         {

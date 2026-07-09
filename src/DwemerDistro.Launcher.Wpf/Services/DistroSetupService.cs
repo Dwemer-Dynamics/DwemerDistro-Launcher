@@ -4,6 +4,9 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public sealed class DistroSetupService(WslService wsl)
 {
+    private const int ComponentInstallTimeoutSeconds = 7200;
+    private const string NonInteractiveInstallInput = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+
     private static readonly SetupComponent[] Components =
     [
         new(
@@ -13,15 +16,9 @@ public sealed class DistroSetupService(WslService wsl)
             "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
             ["-d", LauncherConstants.DistroName, "--", "/usr/local/bin/install_full_packages"]),
         new(
-            "chatterbox",
-            "Chatterbox",
-            "Cloned voice engine for powerful NVIDIA systems",
-            "Path('/home/dwemer/chatterbox/venv').exists()",
-            ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "/home/dwemer/chatterbox/ddistro_install.sh"]),
-        new(
             "pockettts",
             "Pocket-TTS",
-            "Cloned voice engine for standard NVIDIA, AMD, and CPU systems",
+            "Cloned voice engine",
             "Path('/home/dwemer/pocket-tts/venv').exists()",
             ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "/home/dwemer/pocket-tts/ddistro_install.sh"]),
         new(
@@ -44,28 +41,19 @@ public sealed class DistroSetupService(WslService wsl)
     public IReadOnlyList<SetupPreset> Presets { get; } =
     [
         new(
-            SetupPresetKey.NvidiaPowerful,
-            "NVIDIA Powerful",
+            SetupPresetKey.NvidiaGpu,
+            "NVIDIA",
             "Recommended",
-            "High VRAM NVIDIA",
-            "chatterbox",
-            "Chatterbox",
-            "Installs CUDA, Chatterbox cloned voices, Minime/TXT2VEC, and Parakeet.",
-            ["cuda", "chatterbox", "minime", "parakeet"]),
-        new(
-            SetupPresetKey.NvidiaStandard,
-            "NVIDIA Standard",
-            "Recommended",
-            "NVIDIA CUDA",
+            "NVIDIA GPU",
             "pockettts",
             "Pocket-TTS",
-            "Installs CUDA, Pocket-TTS cloned voices, Minime/TXT2VEC, and Parakeet.",
+            "Installs CUDA, Pocket-TTS cloned voices, Minime/TXT2VEC, and Parakeet for GPU-backed setup.",
             ["cuda", "pockettts", "minime", "parakeet"]),
         new(
             SetupPresetKey.AmdCpu,
             "AMD / CPU",
             "Recommended",
-            "AMD or no CUDA GPU",
+            "AMD GPU or CPU",
             "pockettts",
             "Pocket-TTS",
             "Installs Pocket-TTS cloned voices, Minime/TXT2VEC, and Parakeet without CUDA.",
@@ -80,6 +68,11 @@ public sealed class DistroSetupService(WslService wsl)
     public SetupComponent GetComponent(string key)
     {
         return ComponentMap[key];
+    }
+
+    public IReadOnlyList<SetupComponent> GetComponents(SetupPreset preset)
+    {
+        return preset.ComponentKeys.Select(GetComponent).ToArray();
     }
 
     public async Task<DistroSetupStatus> ProbeAsync(SetupPreset preset, CancellationToken cancellationToken = default)
@@ -144,6 +137,7 @@ public sealed class DistroSetupService(WslService wsl)
     public async Task<DistroSetupStatus> InstallPresetAsync(
         SetupPreset preset,
         Action<string>? output = null,
+        Action<SetupInstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         var current = await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
@@ -152,6 +146,10 @@ public sealed class DistroSetupService(WslService wsl)
             output?.Invoke("DwemerAI4Skyrim3 is not registered. Install or import the distro first." + Environment.NewLine);
             return current;
         }
+
+        var totalComponents = preset.ComponentKeys.Count;
+        var completedComponents = 0;
+        progress?.Invoke(new SetupInstallProgress(0, totalComponents, preset.Title, "Starting setup"));
 
         foreach (var componentKey in preset.ComponentKeys)
         {
@@ -164,22 +162,102 @@ public sealed class DistroSetupService(WslService wsl)
             if (currentComponent?.IsInstalled == true)
             {
                 output?.Invoke($"{component.Title} already installed. Skipping." + Environment.NewLine);
+                completedComponents++;
+                progress?.Invoke(new SetupInstallProgress(
+                    completedComponents,
+                    totalComponents,
+                    component.Title,
+                    $"{component.Title} already installed"));
                 continue;
             }
 
             output?.Invoke($"Installing {component.Title}..." + Environment.NewLine);
-            var result = await wsl.RunWslAsync(component.InstallArguments, output, cancellationToken).ConfigureAwait(false);
+            output?.Invoke("Running in non-interactive mode with a 2 hour safety timeout." + Environment.NewLine);
+            progress?.Invoke(new SetupInstallProgress(
+                completedComponents,
+                totalComponents,
+                component.Title,
+                $"Installing {component.Title}"));
+
+            Models.CommandResult result;
+            using (var componentTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                componentTimeout.CancelAfter(TimeSpan.FromSeconds(ComponentInstallTimeoutSeconds + 60));
+                try
+                {
+                    result = await wsl.RunWslWithInputAsync(
+                            BuildNonInteractiveInstallArguments(component),
+                            component.InstallInput ?? NonInteractiveInstallInput,
+                            output,
+                            componentTimeout.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    output?.Invoke($"{component.Title} timed out after 2 hours." + Environment.NewLine);
+                    progress?.Invoke(new SetupInstallProgress(
+                        completedComponents,
+                        totalComponents,
+                        component.Title,
+                        $"{component.Title} timed out"));
+                    return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
             if (!result.Succeeded)
             {
-                output?.Invoke($"{component.Title} failed: {BuildCommandError(result)}" + Environment.NewLine);
+                var errorText = result.ExitCode == 124
+                    ? $"{component.Title} timed out after 2 hours."
+                    : $"{component.Title} failed: {BuildCommandError(result)}";
+                output?.Invoke(errorText + Environment.NewLine);
+                progress?.Invoke(new SetupInstallProgress(
+                    completedComponents,
+                    totalComponents,
+                    component.Title,
+                    result.ExitCode == 124 ? $"{component.Title} timed out" : $"{component.Title} failed"));
                 return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
             }
 
             output?.Invoke($"{component.Title} installed." + Environment.NewLine);
+            completedComponents++;
+            progress?.Invoke(new SetupInstallProgress(
+                completedComponents,
+                totalComponents,
+                component.Title,
+                $"{component.Title} installed"));
             current = await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
         }
 
+        progress?.Invoke(new SetupInstallProgress(totalComponents, totalComponents, preset.Title, "Setup complete"));
         return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static IReadOnlyList<string> BuildNonInteractiveInstallArguments(SetupComponent component)
+    {
+        var separatorIndex = component.InstallArguments
+            .Select((argument, index) => new { argument, index })
+            .FirstOrDefault(item => item.argument == "--")
+            ?.index;
+
+        if (separatorIndex is null)
+        {
+            return component.InstallArguments;
+        }
+
+        var prefix = component.InstallArguments.Take(separatorIndex.Value + 1);
+        var command = component.InstallArguments.Skip(separatorIndex.Value + 1);
+        return prefix.Concat(
+            new[]
+            {
+                "env",
+                "DEBIAN_FRONTEND=noninteractive",
+                "PIP_NO_INPUT=1",
+                "PIP_DISABLE_PIP_VERSION_CHECK=1",
+                "timeout",
+                "--foreground",
+                "--kill-after=30s",
+                $"{ComponentInstallTimeoutSeconds}s"
+            }).Concat(command).ToArray();
     }
 
     private static string BuildProbeScript()
@@ -243,8 +321,7 @@ public sealed class DistroSetupService(WslService wsl)
 
 public enum SetupPresetKey
 {
-    NvidiaPowerful,
-    NvidiaStandard,
+    NvidiaGpu,
     AmdCpu
 }
 
@@ -263,7 +340,19 @@ public sealed record SetupComponent(
     string Title,
     string Description,
     string InstallCheckExpression,
-    IReadOnlyList<string> InstallArguments);
+    IReadOnlyList<string> InstallArguments,
+    string? InstallInput = null);
+
+public sealed record SetupInstallProgress(
+    int CompletedComponents,
+    int TotalComponents,
+    string ComponentTitle,
+    string StatusText)
+{
+    public double Percentage => TotalComponents <= 0
+        ? 0
+        : Math.Clamp((double)CompletedComponents / TotalComponents * 100, 0, 100);
+}
 
 public sealed record SetupComponentState(
     string Key,

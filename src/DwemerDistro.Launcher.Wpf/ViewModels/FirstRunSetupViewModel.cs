@@ -30,8 +30,10 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private OpenRouterSyncStatus? _openRouterStatus;
     private HuggingFaceTokenStatus? _huggingFaceStatus;
     private VoiceEngineStatus? _voiceEngineStatus;
+    private SetupPresetTabViewModel? _selectedPresetTab;
     private int _currentStepIndex;
     private bool _isBusy;
+    private bool _isInstallingSetup;
     private bool _showPresetOptions;
     private bool _showTechnicalDetails;
     private string _busyText = "Working";
@@ -40,6 +42,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private string _setupStatusText = "Checking setup";
     private string _setupStatusBackground = StatusChecking;
     private string _setupLogText = string.Empty;
+    private double _setupInstallProgress;
+    private string _setupInstallProgressText = "Preparing setup...";
     private string _openRouterKey = string.Empty;
     private string _openRouterStatusText = "Checking OpenRouter";
     private string _openRouterStatusBackground = StatusChecking;
@@ -71,6 +75,14 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 preset.Title,
                 preset.HardwareLabel,
                 preset.Description)));
+        SetupPresetTabs = new ObservableCollection<SetupPresetTabViewModel>(
+            _distroSetup.Presets.Select(preset => new SetupPresetTabViewModel(
+                preset.Key,
+                preset.Title,
+                preset.Description,
+                preset.HardwareLabel,
+                _distroSetup.GetComponents(preset).Select(component =>
+                    new SetupPresetServiceViewModel(component.Title, component.Description)))));
         OpenRouterTargets = [];
         HuggingFaceModelAccessItems = new ObservableCollection<HuggingFaceQuickstartModelViewModel>(
             HuggingFaceTokenService.RequiredModelAccess.Select(model =>
@@ -87,9 +99,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         BackCommand = new RelayCommand(Back, () => !IsBusy && CurrentStepIndex > 0);
         ToggleTechnicalDetailsCommand = new RelayCommand(() => ShowTechnicalDetails = !ShowTechnicalDetails, () => !IsBusy);
         TogglePresetOptionsCommand = new RelayCommand(() => ShowPresetOptions = !ShowPresetOptions, () => !IsBusy);
-        SelectNvidiaPowerfulCommand = new AsyncRelayCommand(() => SelectPresetAsync(SetupPresetKey.NvidiaPowerful), () => !IsBusy);
-        SelectNvidiaStandardCommand = new AsyncRelayCommand(() => SelectPresetAsync(SetupPresetKey.NvidiaStandard), () => !IsBusy);
-        SelectAmdCpuCommand = new AsyncRelayCommand(() => SelectPresetAsync(SetupPresetKey.AmdCpu), () => !IsBusy);
         RefreshSetupCommand = new AsyncRelayCommand(RefreshSetupAsync, () => !IsBusy);
         SaveOpenRouterCommand = new AsyncRelayCommand(SaveOpenRouterAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(OpenRouterKey));
         RefreshOpenRouterCommand = new AsyncRelayCommand(RefreshOpenRouterStatusAsync, () => !IsBusy);
@@ -112,6 +121,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public ObservableCollection<PresetOptionViewModel> PresetOptions { get; }
 
+    public ObservableCollection<SetupPresetTabViewModel> SetupPresetTabs { get; }
+
     public ObservableCollection<CredentialTargetViewModel> OpenRouterTargets { get; }
 
     public ObservableCollection<HuggingFaceQuickstartModelViewModel> HuggingFaceModelAccessItems { get; }
@@ -127,12 +138,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public RelayCommand ToggleTechnicalDetailsCommand { get; }
 
     public RelayCommand TogglePresetOptionsCommand { get; }
-
-    public AsyncRelayCommand SelectNvidiaPowerfulCommand { get; }
-
-    public AsyncRelayCommand SelectNvidiaStandardCommand { get; }
-
-    public AsyncRelayCommand SelectAmdCpuCommand { get; }
 
     public AsyncRelayCommand RefreshSetupCommand { get; }
 
@@ -173,6 +178,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 OnPropertyChanged(nameof(StepSubtitle));
                 OnPropertyChanged(nameof(PrimaryContinueText));
                 OnPropertyChanged(nameof(InstallRecommendedButtonText));
+                OnPropertyChanged(nameof(IsSetupSelectionEnabled));
                 ShowTechnicalDetails = false;
                 RaiseCommandStates();
             }
@@ -198,9 +204,18 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             if (SetProperty(ref _isBusy, value))
             {
+                OnPropertyChanged(nameof(IsSetupSelectionEnabled));
                 RaiseCommandStates();
             }
         }
+    }
+
+    public bool IsSetupSelectionEnabled => !IsBusy && IsSetupStep;
+
+    public bool IsInstallingSetup
+    {
+        get => _isInstallingSetup;
+        private set => SetProperty(ref _isInstallingSetup, value);
     }
 
     public bool ShowPresetOptions
@@ -232,7 +247,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public string StepTitle => CurrentStepIndex switch
     {
         0 => "Connect Hugging Face",
-        1 => "Install the recommended setup",
+        1 => "Recommended Setup",
         2 => "Paste your OpenRouter key",
         _ => "Ready to play"
     };
@@ -264,12 +279,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public string SelectedVoiceEngine => _selectedPreset.VoiceEngineName;
 
-    public bool ShowNvidiaPowerfulSwitch => _selectedPreset.Key != SetupPresetKey.NvidiaPowerful;
-
-    public bool ShowNvidiaStandardSwitch => _selectedPreset.Key != SetupPresetKey.NvidiaStandard;
-
-    public bool ShowAmdCpuSwitch => _selectedPreset.Key != SetupPresetKey.AmdCpu;
-
     public string HardwareSummary
     {
         get => _hardwareSummary;
@@ -298,6 +307,32 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         get => _setupLogText;
         private set => SetProperty(ref _setupLogText, value);
+    }
+
+    public double SetupInstallProgress
+    {
+        get => _setupInstallProgress;
+        private set => SetProperty(ref _setupInstallProgress, value);
+    }
+
+    public string SetupInstallProgressText
+    {
+        get => _setupInstallProgressText;
+        private set => SetProperty(ref _setupInstallProgressText, value);
+    }
+
+    public SetupPresetTabViewModel? SelectedPresetTab
+    {
+        get => _selectedPresetTab;
+        set
+        {
+            if (!SetProperty(ref _selectedPresetTab, value) || value is null || IsBusy || value.Key == _selectedPreset.Key)
+            {
+                return;
+            }
+
+            _ = SelectPresetAsync(value.Key);
+        }
     }
 
     public string OpenRouterKey
@@ -398,28 +433,19 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         var wsl = new WslService(processRunner);
         var hardwareDetection = new HardwareDetectionService(processRunner);
         var setup = new DistroSetupService(wsl);
-        var openRouter = new OpenRouterCredentialSyncService(wsl);
-        var huggingFace = new HuggingFaceTokenService(wsl);
         var voiceEngine = new VoiceEngineService(wsl);
-        var stateService = new OnboardingStateService();
 
-        var state = await stateService.LoadAsync(cancellationToken).ConfigureAwait(false);
         var hardware = await hardwareDetection.DetectAsync(cancellationToken).ConfigureAwait(false);
         var preset = setup.GetPreset(hardware.RecommendedPreset);
         var setupStatus = await setup.ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
-        var voiceStatus = await voiceEngine.GetStatusAsync(preset, cancellationToken).ConfigureAwait(false);
 
-        if (!setupStatus.DistroExists || !setupStatus.AllRequiredInstalled || !voiceStatus.HasUsableEngine)
+        if (!setupStatus.DistroExists || !setupStatus.AllRequiredInstalled)
         {
             return true;
         }
 
-        var openRouterStatus = await openRouter.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-        var huggingFaceStatus = await huggingFace.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-
-        return !state.Completed ||
-               !openRouterStatus.AllAvailableTargetsConfigured ||
-               !IsHuggingFaceReady(huggingFaceStatus);
+        var voiceStatus = await voiceEngine.GetStatusAsync(preset, cancellationToken).ConfigureAwait(false);
+        return !voiceStatus.HasUsableEngine;
     }
 
     private async Task InstallRecommendedAsync()
@@ -433,10 +459,24 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         await RunBusyAsync($"Installing {_selectedPreset.Title}", async () =>
         {
             SetupLogText = string.Empty;
+            SetupInstallProgress = 0;
+            SetupInstallProgressText = $"Preparing {_selectedPreset.Title}...";
+            IsInstallingSetup = true;
             AppendSetupLog($"Recommended path: {_selectedPreset.Title}{Environment.NewLine}");
-            var status = await _distroSetup.InstallPresetAsync(_selectedPreset, AppendSetupLog).ConfigureAwait(true);
-            ApplySetupStatus(status);
-            await RefreshVoiceStatusCoreAsync().ConfigureAwait(true);
+            try
+            {
+                var status = await _distroSetup.InstallPresetAsync(
+                        _selectedPreset,
+                        AppendSetupLog,
+                        ApplySetupInstallProgress)
+                    .ConfigureAwait(true);
+                ApplySetupStatus(status);
+                await RefreshVoiceStatusCoreAsync().ConfigureAwait(true);
+            }
+            finally
+            {
+                IsInstallingSetup = false;
+            }
         }).ConfigureAwait(true);
     }
 
@@ -612,9 +652,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedPresetHardware));
         OnPropertyChanged(nameof(SelectedPresetDescription));
         OnPropertyChanged(nameof(SelectedVoiceEngine));
-        OnPropertyChanged(nameof(ShowNvidiaPowerfulSwitch));
-        OnPropertyChanged(nameof(ShowNvidiaStandardSwitch));
-        OnPropertyChanged(nameof(ShowAmdCpuSwitch));
         ApplySelectedPresetToOptions();
         RebuildSetupComponentItems(_setupStatus?.Components ?? []);
     }
@@ -624,6 +661,18 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         foreach (var option in PresetOptions)
         {
             option.IsSelected = option.Key == _selectedPreset.Key;
+        }
+
+        foreach (var tab in SetupPresetTabs)
+        {
+            tab.IsSelected = tab.Key == _selectedPreset.Key;
+        }
+
+        var selectedTab = SetupPresetTabs.FirstOrDefault(tab => tab.Key == _selectedPreset.Key);
+        if (!ReferenceEquals(_selectedPresetTab, selectedTab))
+        {
+            _selectedPresetTab = selectedTab;
+            OnPropertyChanged(nameof(SelectedPresetTab));
         }
     }
 
@@ -723,14 +772,14 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         if (!status.IsConfigured && string.IsNullOrWhiteSpace(status.Error))
         {
             HuggingFaceStatusText = "Token needed";
-            HuggingFaceStatusDetail = "Do this first. The voice installers use Hugging Face to download Pocket-TTS and Chatterbox models.";
+            HuggingFaceStatusDetail = "Do this first. The voice installer uses Hugging Face to download the Pocket-TTS model.";
             HuggingFaceStatusBackground = StatusWarn;
         }
         else if (IsHuggingFaceReady(status))
         {
             var userSuffix = string.IsNullOrWhiteSpace(status.UserName) ? string.Empty : $" as {status.UserName}";
             HuggingFaceStatusText = $"Ready{userSuffix}";
-            HuggingFaceStatusDetail = "Token is valid and the required cloned-voice models are reachable.";
+            HuggingFaceStatusDetail = "Token is valid and the required cloned-voice model is reachable.";
             HuggingFaceStatusBackground = StatusGood;
         }
         else if (status.IsValid == false)
@@ -742,7 +791,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         else if (status.IsConfigured)
         {
             HuggingFaceStatusText = "Needs model access";
-            HuggingFaceStatusDetail = "Open the voice model pages, accept access, then refresh.";
+            HuggingFaceStatusDetail = "Accept the required cloned-voice model access on Hugging Face, then refresh.";
             HuggingFaceStatusBackground = StatusWarn;
         }
         else
@@ -840,6 +889,23 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         _ = _dispatcher.BeginInvoke(() => SetupLogText += text, DispatcherPriority.Background);
     }
 
+    private void ApplySetupInstallProgress(SetupInstallProgress progress)
+    {
+        void Apply()
+        {
+            SetupInstallProgress = progress.Percentage;
+            SetupInstallProgressText = $"{progress.StatusText} ({progress.CompletedComponents} of {progress.TotalComponents})";
+        }
+
+        if (_dispatcher.CheckAccess())
+        {
+            Apply();
+            return;
+        }
+
+        _ = _dispatcher.BeginInvoke((Action)Apply, DispatcherPriority.Background);
+    }
+
     private void RaiseCommandStates()
     {
         InstallRecommendedCommand.RaiseCanExecuteChanged();
@@ -847,9 +913,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         BackCommand.RaiseCanExecuteChanged();
         ToggleTechnicalDetailsCommand.RaiseCanExecuteChanged();
         TogglePresetOptionsCommand.RaiseCanExecuteChanged();
-        SelectNvidiaPowerfulCommand.RaiseCanExecuteChanged();
-        SelectNvidiaStandardCommand.RaiseCanExecuteChanged();
-        SelectAmdCpuCommand.RaiseCanExecuteChanged();
         RefreshSetupCommand.RaiseCanExecuteChanged();
         SaveOpenRouterCommand.RaiseCanExecuteChanged();
         RefreshOpenRouterCommand.RaiseCanExecuteChanged();
@@ -905,6 +968,59 @@ public sealed class PresetOptionViewModel : ObservableObject
     public string StatusText => IsSelected ? "Selected" : "Available";
 
     public string StatusBackground => IsSelected ? "#285A2D" : "#555555";
+}
+
+public sealed class SetupPresetTabViewModel : ObservableObject
+{
+    private bool _isSelected;
+
+    public SetupPresetTabViewModel(
+        SetupPresetKey key,
+        string title,
+        string description,
+        string hardwareLabel,
+        IEnumerable<SetupPresetServiceViewModel> services)
+    {
+        Key = key;
+        Title = title;
+        Description = description;
+        HardwareLabel = hardwareLabel;
+        Services = new ObservableCollection<SetupPresetServiceViewModel>(services);
+    }
+
+    public SetupPresetKey Key { get; }
+
+    public string Title { get; }
+
+    public string Description { get; }
+
+    public string HardwareLabel { get; }
+
+    public ObservableCollection<SetupPresetServiceViewModel> Services { get; }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (SetProperty(ref _isSelected, value))
+            {
+                OnPropertyChanged(nameof(StatusText));
+                OnPropertyChanged(nameof(StatusBackground));
+            }
+        }
+    }
+
+    public string StatusText => IsSelected ? "Selected" : "Available";
+
+    public string StatusBackground => IsSelected ? "#285A2D" : "#555555";
+}
+
+public sealed class SetupPresetServiceViewModel(string title, string description)
+{
+    public string Title { get; } = title;
+
+    public string Description { get; } = description;
 }
 
 public sealed class SetupComponentQuickstartViewModel(
