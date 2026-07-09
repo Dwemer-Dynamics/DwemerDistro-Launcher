@@ -433,28 +433,19 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         var wsl = new WslService(processRunner);
         var hardwareDetection = new HardwareDetectionService(processRunner);
         var setup = new DistroSetupService(wsl);
-        var openRouter = new OpenRouterCredentialSyncService(wsl);
-        var huggingFace = new HuggingFaceTokenService(wsl);
         var voiceEngine = new VoiceEngineService(wsl);
-        var stateService = new OnboardingStateService();
 
-        var state = await stateService.LoadAsync(cancellationToken).ConfigureAwait(false);
         var hardware = await hardwareDetection.DetectAsync(cancellationToken).ConfigureAwait(false);
         var preset = setup.GetPreset(hardware.RecommendedPreset);
         var setupStatus = await setup.ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
-        var voiceStatus = await voiceEngine.GetStatusAsync(preset, cancellationToken).ConfigureAwait(false);
 
-        if (!setupStatus.DistroExists || !setupStatus.AllRequiredInstalled || !voiceStatus.HasUsableEngine)
+        if (!setupStatus.DistroExists || !setupStatus.AllRequiredInstalled)
         {
             return true;
         }
 
-        var openRouterStatus = await openRouter.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-        var huggingFaceStatus = await huggingFace.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-
-        return !state.Completed ||
-               !openRouterStatus.AllAvailableTargetsConfigured ||
-               !IsHuggingFaceReady(huggingFaceStatus);
+        var voiceStatus = await voiceEngine.GetStatusAsync(preset, cancellationToken).ConfigureAwait(false);
+        return !voiceStatus.HasUsableEngine;
     }
 
     private async Task InstallRecommendedAsync()
