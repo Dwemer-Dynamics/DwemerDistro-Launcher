@@ -14,7 +14,7 @@ public sealed class DistroSetupService(WslService wsl)
             "CUDA",
             "NVIDIA CUDA runtime",
             "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
-            ["-d", LauncherConstants.DistroName, "--", "/usr/local/bin/install_full_packages"]),
+            ["-d", LauncherConstants.DistroName, "--", "bash", "-lc", "/usr/local/bin/install_full_packages </dev/null"]),
         new(
             "pockettts",
             "Pocket-TTS",

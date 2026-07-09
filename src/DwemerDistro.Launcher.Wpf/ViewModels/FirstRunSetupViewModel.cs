@@ -178,9 +178,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
     }
 
-    public bool IsHuggingFaceStep => CurrentStepIndex == 0;
+    public bool IsSetupIntroStep => CurrentStepIndex == 0;
 
-    public bool IsSetupIntroStep => CurrentStepIndex == 1;
+    public bool IsHuggingFaceStep => CurrentStepIndex == 1;
 
     public bool IsSetupStep => CurrentStepIndex == 2;
 
@@ -241,8 +241,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public string StepTitle => CurrentStepIndex switch
     {
-        0 => "Connect Hugging Face",
-        1 => "Recommended Setup",
+        0 => "Recommended Setup",
+        1 => "Connect Hugging Face",
         2 => "Recommended Setup",
         3 => "Paste your OpenRouter key",
         _ => "Ready to play"
@@ -250,8 +250,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public string StepSubtitle => CurrentStepIndex switch
     {
-        0 => "The installers use Hugging Face to download cloned voice models.",
-        1 => "Use the detected setup path, or skip this install step if the distro is already configured.",
+        0 => "Use the detected setup path, or skip this install step if the distro is already configured.",
+        1 => "The installers use Hugging Face to download cloned voice models.",
         2 => "The launcher shows only the detected setup path and installs the components first-time users need.",
         3 => "One key is applied to every installed Dwemer game profile.",
         _ => "The launcher detected your voice engine and applied it to the installed game profiles."
@@ -259,8 +259,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public string PrimaryContinueText => CurrentStepIndex switch
     {
-        0 => "Continue to Recommended Setup",
-        1 => "Continue",
+        0 => "Continue",
+        1 => "Continue to Install",
         2 => "Continue to OpenRouter",
         3 => "Continue to Ready",
         _ => "Ready"
@@ -819,8 +819,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
         return CurrentStepIndex switch
         {
-            0 => IsHuggingFaceReady(_huggingFaceStatus),
-            1 => true,
+            0 => true,
+            1 => IsHuggingFaceReady(_huggingFaceStatus),
             2 => _setupStatus?.AllRequiredInstalled == true,
             3 => _openRouterStatus?.AllAvailableTargetsConfigured == true,
             4 => _voiceEngineStatus?.HasUsableEngine == true,
