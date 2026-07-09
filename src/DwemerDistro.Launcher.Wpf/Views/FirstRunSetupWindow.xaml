@@ -376,11 +376,15 @@
                                         </ItemsControl>
                                     </StackPanel>
                                 </Border>
-                                <Button Content="{Binding InstallRecommendedButtonText}"
-                                        Command="{Binding InstallRecommendedCommand}"
-                                        Style="{StaticResource PrimaryButton}"
-                                        HorizontalAlignment="Left"
-                                        Margin="0,18,0,0" />
+                                <StackPanel Orientation="Horizontal"
+                                            Margin="0,18,0,0">
+                                    <Button Content="Update Distro"
+                                            Command="{Binding UpdateDistroCommand}"
+                                            Style="{StaticResource SecondaryButton}" />
+                                    <Button Content="{Binding InstallRecommendedButtonText}"
+                                            Command="{Binding InstallRecommendedCommand}"
+                                            Style="{StaticResource PrimaryButton}" />
+                                </StackPanel>
                                 <StackPanel Visibility="{Binding IsInstallingSetup, Converter={StaticResource BoolToVisibilityConverter}}"
                                             Margin="0,12,0,0">
                                     <TextBlock Text="{Binding SetupInstallProgressText}"
@@ -524,6 +528,10 @@
                                            FontWeight="Bold" />
                                 <TextBlock Text="Paste the key once. The launcher applies it to CHIM, STOBE, and Dialectic when those databases are installed."
                                            Foreground="#D6D6D6"
+                                           TextWrapping="Wrap"
+                                           Margin="0,8,0,0" />
+                                <TextBlock Text="{Binding OpenRouterStatusDetail}"
+                                           Foreground="#F4D8A6"
                                            TextWrapping="Wrap"
                                            Margin="0,8,0,0" />
                                 <Button Content="Open OpenRouter Keys"

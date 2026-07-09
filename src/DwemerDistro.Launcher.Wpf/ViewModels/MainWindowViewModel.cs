@@ -48,6 +48,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
     private string _launcherUpdateButtonText = "Check Launcher Update";
+    private string _distroUpdateButtonText = "Update";
+    private bool _isDistroUpdateInProgress;
     private bool _mcpEnabled = true;
     private bool _includeHerikaServerUpdate = true;
     private bool _includeStobeServerUpdate = true;
@@ -80,7 +82,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
         ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
-        UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync);
+        UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync, () => !IsDistroUpdateInProgress);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
         InstallComponentsCommand = new RelayCommand(OpenInstallComponentsWindow);
@@ -219,6 +221,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         get => _launcherUpdateButtonText;
         private set => SetProperty(ref _launcherUpdateButtonText, value);
+    }
+
+    public string DistroUpdateButtonText
+    {
+        get => _distroUpdateButtonText;
+        private set => SetProperty(ref _distroUpdateButtonText, value);
+    }
+
+    public bool IsDistroUpdateInProgress
+    {
+        get => _isDistroUpdateInProgress;
+        private set
+        {
+            if (SetProperty(ref _isDistroUpdateInProgress, value))
+            {
+                UpdateAllCommand.RaiseCanExecuteChanged();
+            }
+        }
     }
 
     public bool McpEnabled
@@ -537,6 +557,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task UpdateAllAsync()
     {
+        await RunDistroUpdateAsync(requireConfirmation: true, sourceLabel: "Mod Updates").ConfigureAwait(true);
+    }
+
+    public Task<bool> UpdateDistroFromQuickstartAsync()
+    {
+        return RunDistroUpdateAsync(requireConfirmation: false, sourceLabel: "Quickstart");
+    }
+
+    private async Task<bool> RunDistroUpdateAsync(bool requireConfirmation, string sourceLabel)
+    {
+        if (IsDistroUpdateInProgress)
+        {
+            AppendLog("Distro update is already running." + Environment.NewLine, "yellow");
+            return false;
+        }
+
         var includeHerika = IncludeHerikaServerUpdate;
         var includeStobe = IncludeStobeServerUpdate;
         var targetHerika = NormalizeBranch(TargetHerikaBranch, "aiagent", "aiagent", "dev", "unstable");
@@ -549,11 +585,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
               "\nAre you sure?"
             : "This will update Dwemer Distro only.\n\nHerikaServer and StobeServer updates are disabled in the Mod Updates section.\n\nAre you sure?";
 
-        if (MessageBox.Show(confirmText, "Update System", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        if (requireConfirmation &&
+            MessageBox.Show(confirmText, "Update System", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             AppendLog("Update canceled." + Environment.NewLine);
-            return;
+            return false;
         }
+
+        IsDistroUpdateInProgress = true;
+        DistroUpdateButtonText = sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
+            ? "Quickstart Updating..."
+            : "Updating...";
 
         try
         {
@@ -578,7 +620,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 AppendLog(Environment.NewLine + "STEP 1: Prepare HerikaServer branch" + Environment.NewLine, "green");
                 if (!await SwitchHerikaServerBranchAsync(targetHerika).ConfigureAwait(false))
                 {
-                    return;
+                    return false;
                 }
             }
 
@@ -587,7 +629,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 AppendLog(Environment.NewLine + (includeHerika ? "STEP 2: Prepare StobeServer branch" : "STEP 1: Prepare StobeServer branch") + Environment.NewLine, "green");
                 if (!await SwitchStobeServerBranchAsync(targetStobe).ConfigureAwait(false))
                 {
-                    return;
+                    return false;
                 }
             }
 
@@ -656,7 +698,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 distroUpdateComplete = result.Succeeded;
             }
 
-            if (result.Succeeded && distroUpdateComplete && (!serverUpdateRequested || !branchErrorDetected))
+            var updateSucceeded = result.Succeeded && distroUpdateComplete && (!serverUpdateRequested || !branchErrorDetected);
+            if (updateSucceeded)
             {
                 var statusParts = new List<string>();
                 if (includeHerika)
@@ -685,13 +728,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 AppendLog("Update may have encountered issues. Check logs above." + Environment.NewLine, "red");
             }
+
+            return updateSucceeded;
         }
         catch (Exception ex)
         {
             AppendLog($"Error during update: {ex.Message}{Environment.NewLine}", "red");
+            return false;
         }
         finally
         {
+            IsDistroUpdateInProgress = false;
+            DistroUpdateButtonText = "Update";
             _ = Task.Run(CheckForUpdatesAsync);
             _ = Task.Run(CheckStobeServerUpdatesAsync);
             _ = Task.Run(CheckNexusVersionsAsync);

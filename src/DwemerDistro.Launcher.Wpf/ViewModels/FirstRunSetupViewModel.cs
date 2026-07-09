@@ -49,6 +49,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private string _setupInstallProgressText = "Preparing setup...";
     private string _openRouterKey = string.Empty;
     private string _openRouterStatusText = "Checking OpenRouter";
+    private string _openRouterStatusDetail = "Paste your key to apply it to installed game profiles.";
     private string _openRouterStatusBackground = StatusChecking;
     private string _huggingFaceTokenValue = string.Empty;
     private string _huggingFaceStatusText = "Checking Hugging Face";
@@ -95,6 +96,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         BackCommand = new RelayCommand(Back, () => !IsBusy && CurrentStepIndex > 0);
         ToggleTechnicalDetailsCommand = new RelayCommand(() => ShowTechnicalDetails = !ShowTechnicalDetails, () => !IsBusy);
         TogglePresetOptionsCommand = new RelayCommand(() => ShowPresetOptions = !ShowPresetOptions, () => !IsBusy);
+        UpdateDistroCommand = new AsyncRelayCommand(UpdateDistroAsync, () => !IsBusy && !_mainWindowViewModel.IsDistroUpdateInProgress);
         RefreshSetupCommand = new AsyncRelayCommand(RefreshSetupAsync, () => !IsBusy);
         SaveOpenRouterCommand = new AsyncRelayCommand(SaveOpenRouterAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(OpenRouterKey));
         RefreshOpenRouterCommand = new AsyncRelayCommand(RefreshOpenRouterStatusAsync, () => !IsBusy);
@@ -134,6 +136,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public RelayCommand ToggleTechnicalDetailsCommand { get; }
 
     public RelayCommand TogglePresetOptionsCommand { get; }
+
+    public AsyncRelayCommand UpdateDistroCommand { get; }
 
     public AsyncRelayCommand RefreshSetupCommand { get; }
 
@@ -341,6 +345,12 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         private set => SetProperty(ref _openRouterStatusText, value);
     }
 
+    public string OpenRouterStatusDetail
+    {
+        get => _openRouterStatusDetail;
+        private set => SetProperty(ref _openRouterStatusDetail, value);
+    }
+
     public string OpenRouterStatusBackground
     {
         get => _openRouterStatusBackground;
@@ -470,6 +480,35 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }).ConfigureAwait(true);
     }
 
+    private async Task UpdateDistroAsync()
+    {
+        await RunBusyAsync("Updating distro", async () =>
+        {
+            SetupLogText = string.Empty;
+            ResetQuickstartInstallLog();
+            SetupInstallProgress = 0;
+            SetupInstallProgressText = "Updating DwemerDistro...";
+            IsInstallingSetup = true;
+            AppendSetupLog($"Quickstart update log: {QuickstartInstallLogPath}{Environment.NewLine}");
+            AppendSetupLog("Starting DwemerDistro update. Detailed output is shown in the main launcher log." + Environment.NewLine);
+            try
+            {
+                var updated = await _mainWindowViewModel.UpdateDistroFromQuickstartAsync().ConfigureAwait(true);
+                SetupInstallProgress = updated ? 100 : 0;
+                SetupInstallProgressText = updated ? "Distro update complete." : "Distro update needs attention.";
+                AppendSetupLog(updated
+                    ? "Distro update completed. Refreshed quickstart checks." + Environment.NewLine
+                    : "Distro update reported issues. Check the main launcher log." + Environment.NewLine);
+                await RefreshSetupCoreAsync().ConfigureAwait(true);
+                await RefreshOpenRouterStatusCoreAsync().ConfigureAwait(true);
+            }
+            finally
+            {
+                IsInstallingSetup = false;
+            }
+        }).ConfigureAwait(true);
+    }
+
     private async Task ContinueAsync()
     {
         if (!CanContinue())
@@ -517,10 +556,14 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         await RunBusyAsync("Saving OpenRouter key", async () =>
         {
             OpenRouterStatusText = "Applying key";
+            OpenRouterStatusDetail = "Applying key to installed game profiles...";
             OpenRouterStatusBackground = StatusChecking;
             var status = await _openRouterSync.SaveKeyAsync(OpenRouterKey).ConfigureAwait(true);
-            OpenRouterKey = string.Empty;
             ApplyOpenRouterStatus(status);
+            if (status.AnyUpdated || status.AllAvailableTargetsConfigured)
+            {
+                OpenRouterKey = string.Empty;
+            }
         }).ConfigureAwait(true);
     }
 
@@ -608,6 +651,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private async Task RefreshOpenRouterStatusCoreAsync()
     {
         OpenRouterStatusText = "Checking OpenRouter";
+        OpenRouterStatusDetail = "Checking installed game databases...";
         OpenRouterStatusBackground = StatusChecking;
         var status = await _openRouterSync.GetStatusAsync().ConfigureAwait(true);
         ApplyOpenRouterStatus(status);
@@ -715,16 +759,19 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         if (status.HasError)
         {
             OpenRouterStatusText = "Unable to check OpenRouter";
+            OpenRouterStatusDetail = status.Error ?? "OpenRouter status could not be checked.";
             OpenRouterStatusBackground = StatusUnknown;
         }
         else if (status.AllAvailableTargetsConfigured)
         {
             OpenRouterStatusText = status.AnyUpdated ? "OpenRouter key applied" : "OpenRouter key configured";
+            OpenRouterStatusDetail = BuildOpenRouterStatusDetail(status);
             OpenRouterStatusBackground = StatusGood;
         }
         else
         {
-            OpenRouterStatusText = "OpenRouter key needed";
+            OpenRouterStatusText = status.AnyUpdated ? "OpenRouter partially applied" : "OpenRouter key needed";
+            OpenRouterStatusDetail = BuildOpenRouterStatusDetail(status);
             OpenRouterStatusBackground = StatusWarn;
         }
 
@@ -938,6 +985,64 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         RefreshReadyCommand.RaiseCanExecuteChanged();
         StartServerCommand.RaiseCanExecuteChanged();
         AdvancedSettingsCommand.RaiseCanExecuteChanged();
+        UpdateDistroCommand.RaiseCanExecuteChanged();
+    }
+
+    private static string BuildOpenRouterStatusDetail(OpenRouterSyncStatus status)
+    {
+        if (status.HasError)
+        {
+            return status.Error ?? "OpenRouter status could not be checked.";
+        }
+
+        if (status.Targets.Count == 0)
+        {
+            return "No installed game database responded. Run Update Distro, then apply the key again.";
+        }
+
+        var parts = new List<string>();
+        var updated = status.Targets
+            .Where(target => target.WasUpdated)
+            .Select(target => target.TargetName)
+            .ToArray();
+        var configured = status.Targets
+            .Where(target => target.IsConfigured && !target.WasUpdated)
+            .Select(target => target.TargetName)
+            .ToArray();
+        var skipped = status.Targets
+            .Where(target => target.IsSkipped)
+            .Select(target => $"{target.TargetName}: {target.StatusText}")
+            .ToArray();
+        var failed = status.Targets
+            .Where(target => !target.IsConfigured && !target.IsSkipped)
+            .Select(target => string.IsNullOrWhiteSpace(target.Error)
+                ? $"{target.TargetName}: {target.StatusText}"
+                : $"{target.TargetName}: {target.StatusText} - {target.Error}")
+            .ToArray();
+
+        if (updated.Length > 0)
+        {
+            parts.Add("Saved to " + string.Join(", ", updated) + ".");
+        }
+
+        if (configured.Length > 0)
+        {
+            parts.Add("Already configured in " + string.Join(", ", configured) + ".");
+        }
+
+        if (failed.Length > 0)
+        {
+            parts.Add("Needs attention: " + string.Join("; ", failed) + ".");
+        }
+
+        if (skipped.Length > 0)
+        {
+            parts.Add("Skipped unavailable targets: " + string.Join("; ", skipped) + ".");
+        }
+
+        return parts.Count == 0
+            ? "Paste your key and apply it to the installed game profiles."
+            : string.Join(" ", parts);
     }
 
     private static bool IsHuggingFaceReady(HuggingFaceTokenStatus? status)

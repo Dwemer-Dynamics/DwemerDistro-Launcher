@@ -276,7 +276,7 @@
                                                       StrokeLineJoin="Round" />
                                             </Canvas>
                                         </Viewbox>
-                                        <TextBlock Text="Update"
+                                        <TextBlock Text="{Binding DistroUpdateButtonText}"
                                                    Foreground="White"
                                                    FontFamily="Trebuchet MS"
                                                    FontSize="11"
