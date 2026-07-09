@@ -33,7 +33,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private DiscoveryService? _discoveryService;
     private Process? _serverProcess;
     private string? _wslIp;
-    private bool _isFirstRunSetupWindowOpen;
+    private Window? _firstRunSetupWindow;
 
     private string _outputText = string.Empty;
     private bool _isServerRunning;
@@ -2892,18 +2892,43 @@ fi
 
     public void OpenFirstRunSetupWindow()
     {
-        if (_isFirstRunSetupWindowOpen)
+        RunOnUi(() =>
         {
-            return;
-        }
+            if (_firstRunSetupWindow is not null)
+            {
+                if (_firstRunSetupWindow.WindowState == WindowState.Minimized)
+                {
+                    _firstRunSetupWindow.WindowState = WindowState.Normal;
+                }
 
-        _isFirstRunSetupWindowOpen = true;
-        var window = new FirstRunSetupWindow(this)
-        {
-            Owner = Application.Current.MainWindow
-        };
-        window.Closed += (_, _) => _isFirstRunSetupWindowOpen = false;
-        window.Show();
+                _firstRunSetupWindow.Activate();
+                _firstRunSetupWindow.Focus();
+                return;
+            }
+
+            try
+            {
+                AppendLog("Opening first-time setup..." + Environment.NewLine);
+                var window = new FirstRunSetupWindow(this)
+                {
+                    Owner = Application.Current.MainWindow
+                };
+                _firstRunSetupWindow = window;
+                window.Closed += (_, _) => _firstRunSetupWindow = null;
+                window.Show();
+                window.Activate();
+            }
+            catch (Exception ex)
+            {
+                _firstRunSetupWindow = null;
+                AppendLog($"Failed to open first-time setup: {ex.Message}{Environment.NewLine}", "red");
+                MessageBox.Show(
+                    $"First-time setup could not be opened.\n\n{ex.Message}",
+                    "First-Time Setup",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        });
     }
 
     private void OpenDebuggingWindow()
