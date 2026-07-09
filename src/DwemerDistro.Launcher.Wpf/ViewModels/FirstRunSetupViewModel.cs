@@ -30,7 +30,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private OpenRouterSyncStatus? _openRouterStatus;
     private HuggingFaceTokenStatus? _huggingFaceStatus;
     private VoiceEngineStatus? _voiceEngineStatus;
-    private SetupPresetTabViewModel? _selectedPresetTab;
     private int _currentStepIndex;
     private bool _isBusy;
     private bool _isInstallingSetup;
@@ -75,14 +74,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 preset.Title,
                 preset.HardwareLabel,
                 preset.Description)));
-        SetupPresetTabs = new ObservableCollection<SetupPresetTabViewModel>(
-            _distroSetup.Presets.Select(preset => new SetupPresetTabViewModel(
-                preset.Key,
-                preset.Title,
-                preset.Description,
-                preset.HardwareLabel,
-                _distroSetup.GetComponents(preset).Select(component =>
-                    new SetupPresetServiceViewModel(component.Title, component.Description)))));
         OpenRouterTargets = [];
         HuggingFaceModelAccessItems = new ObservableCollection<HuggingFaceQuickstartModelViewModel>(
             HuggingFaceTokenService.RequiredModelAccess.Select(model =>
@@ -96,6 +87,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
         InstallRecommendedCommand = new AsyncRelayCommand(InstallRecommendedAsync, () => !IsBusy);
         ContinueCommand = new AsyncRelayCommand(ContinueAsync, CanContinue);
+        SkipRecommendedSetupCommand = new RelayCommand(SkipRecommendedSetup, () => !IsBusy && IsSetupIntroStep);
         BackCommand = new RelayCommand(Back, () => !IsBusy && CurrentStepIndex > 0);
         ToggleTechnicalDetailsCommand = new RelayCommand(() => ShowTechnicalDetails = !ShowTechnicalDetails, () => !IsBusy);
         TogglePresetOptionsCommand = new RelayCommand(() => ShowPresetOptions = !ShowPresetOptions, () => !IsBusy);
@@ -121,8 +113,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public ObservableCollection<PresetOptionViewModel> PresetOptions { get; }
 
-    public ObservableCollection<SetupPresetTabViewModel> SetupPresetTabs { get; }
-
     public ObservableCollection<CredentialTargetViewModel> OpenRouterTargets { get; }
 
     public ObservableCollection<HuggingFaceQuickstartModelViewModel> HuggingFaceModelAccessItems { get; }
@@ -132,6 +122,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public AsyncRelayCommand InstallRecommendedCommand { get; }
 
     public AsyncRelayCommand ContinueCommand { get; }
+
+    public RelayCommand SkipRecommendedSetupCommand { get; }
 
     public RelayCommand BackCommand { get; }
 
@@ -168,6 +160,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             if (SetProperty(ref _currentStepIndex, value))
             {
+                OnPropertyChanged(nameof(IsSetupIntroStep));
                 OnPropertyChanged(nameof(IsSetupStep));
                 OnPropertyChanged(nameof(IsOpenRouterStep));
                 OnPropertyChanged(nameof(IsHuggingFaceStep));
@@ -187,15 +180,17 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public bool IsHuggingFaceStep => CurrentStepIndex == 0;
 
-    public bool IsSetupStep => CurrentStepIndex == 1;
+    public bool IsSetupIntroStep => CurrentStepIndex == 1;
 
-    public bool IsOpenRouterStep => CurrentStepIndex == 2;
+    public bool IsSetupStep => CurrentStepIndex == 2;
 
-    public bool IsReadyStep => CurrentStepIndex == 3;
+    public bool IsOpenRouterStep => CurrentStepIndex == 3;
 
-    public bool ShowContinueButton => !IsReadyStep;
+    public bool IsReadyStep => CurrentStepIndex == 4;
 
-    public string CurrentStepLabel => $"Step {CurrentStepIndex + 1} of 4";
+    public bool ShowContinueButton => !IsReadyStep && !IsSetupIntroStep;
+
+    public string CurrentStepLabel => $"Step {CurrentStepIndex + 1} of 5";
 
     public bool IsBusy
     {
@@ -248,23 +243,26 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         0 => "Connect Hugging Face",
         1 => "Recommended Setup",
-        2 => "Paste your OpenRouter key",
+        2 => "Recommended Setup",
+        3 => "Paste your OpenRouter key",
         _ => "Ready to play"
     };
 
     public string StepSubtitle => CurrentStepIndex switch
     {
         0 => "The installers use Hugging Face to download cloned voice models.",
-        1 => "The launcher picks the right path from your hardware and installs only what first-time users need.",
-        2 => "One key is applied to every installed Dwemer game profile.",
+        1 => "Use the detected setup path, or skip this install step if the distro is already configured.",
+        2 => "The launcher shows only the detected setup path and installs the components first-time users need.",
+        3 => "One key is applied to every installed Dwemer game profile.",
         _ => "The launcher detected your voice engine and applied it to the installed game profiles."
     };
 
     public string PrimaryContinueText => CurrentStepIndex switch
     {
-        0 => "Continue to Install",
-        1 => "Continue to OpenRouter",
-        2 => "Continue to Ready",
+        0 => "Continue to Recommended Setup",
+        1 => "Continue",
+        2 => "Continue to OpenRouter",
+        3 => "Continue to Ready",
         _ => "Ready"
     };
 
@@ -319,20 +317,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         get => _setupInstallProgressText;
         private set => SetProperty(ref _setupInstallProgressText, value);
-    }
-
-    public SetupPresetTabViewModel? SelectedPresetTab
-    {
-        get => _selectedPresetTab;
-        set
-        {
-            if (!SetProperty(ref _selectedPresetTab, value) || value is null || IsBusy || value.Key == _selectedPreset.Key)
-            {
-                return;
-            }
-
-            _ = SelectPresetAsync(value.Key);
-        }
     }
 
     public string OpenRouterKey
@@ -452,7 +436,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         if (_setupStatus?.AllRequiredInstalled == true)
         {
-            CurrentStepIndex = 2;
+            CurrentStepIndex = 3;
             return;
         }
 
@@ -487,14 +471,24 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
-        if (CurrentStepIndex == 2)
+        if (CurrentStepIndex == 3)
         {
-            CurrentStepIndex = 3;
+            CurrentStepIndex = 4;
             await PrepareReadyAsync().ConfigureAwait(true);
             return;
         }
 
         CurrentStepIndex++;
+    }
+
+    private void SkipRecommendedSetup()
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        CurrentStepIndex = 3;
     }
 
     private void Back()
@@ -505,16 +499,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
 
         CurrentStepIndex--;
-    }
-
-    private async Task SelectPresetAsync(SetupPresetKey key)
-    {
-        await RunBusyAsync("Checking selected setup", async () =>
-        {
-            ApplyPreset(key);
-            ShowPresetOptions = false;
-            await RefreshSetupCoreAsync().ConfigureAwait(true);
-        }).ConfigureAwait(true);
     }
 
     private async Task RefreshSetupAsync()
@@ -663,17 +647,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             option.IsSelected = option.Key == _selectedPreset.Key;
         }
 
-        foreach (var tab in SetupPresetTabs)
-        {
-            tab.IsSelected = tab.Key == _selectedPreset.Key;
-        }
-
-        var selectedTab = SetupPresetTabs.FirstOrDefault(tab => tab.Key == _selectedPreset.Key);
-        if (!ReferenceEquals(_selectedPresetTab, selectedTab))
-        {
-            _selectedPresetTab = selectedTab;
-            OnPropertyChanged(nameof(SelectedPresetTab));
-        }
     }
 
     private void ApplySetupStatus(DistroSetupStatus status)
@@ -847,9 +820,10 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         return CurrentStepIndex switch
         {
             0 => IsHuggingFaceReady(_huggingFaceStatus),
-            1 => _setupStatus?.AllRequiredInstalled == true,
-            2 => _openRouterStatus?.AllAvailableTargetsConfigured == true,
-            3 => _voiceEngineStatus?.HasUsableEngine == true,
+            1 => true,
+            2 => _setupStatus?.AllRequiredInstalled == true,
+            3 => _openRouterStatus?.AllAvailableTargetsConfigured == true,
+            4 => _voiceEngineStatus?.HasUsableEngine == true,
             _ => false
         };
     }
@@ -910,6 +884,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         InstallRecommendedCommand.RaiseCanExecuteChanged();
         ContinueCommand.RaiseCanExecuteChanged();
+        SkipRecommendedSetupCommand.RaiseCanExecuteChanged();
         BackCommand.RaiseCanExecuteChanged();
         ToggleTechnicalDetailsCommand.RaiseCanExecuteChanged();
         TogglePresetOptionsCommand.RaiseCanExecuteChanged();
@@ -968,59 +943,6 @@ public sealed class PresetOptionViewModel : ObservableObject
     public string StatusText => IsSelected ? "Selected" : "Available";
 
     public string StatusBackground => IsSelected ? "#285A2D" : "#555555";
-}
-
-public sealed class SetupPresetTabViewModel : ObservableObject
-{
-    private bool _isSelected;
-
-    public SetupPresetTabViewModel(
-        SetupPresetKey key,
-        string title,
-        string description,
-        string hardwareLabel,
-        IEnumerable<SetupPresetServiceViewModel> services)
-    {
-        Key = key;
-        Title = title;
-        Description = description;
-        HardwareLabel = hardwareLabel;
-        Services = new ObservableCollection<SetupPresetServiceViewModel>(services);
-    }
-
-    public SetupPresetKey Key { get; }
-
-    public string Title { get; }
-
-    public string Description { get; }
-
-    public string HardwareLabel { get; }
-
-    public ObservableCollection<SetupPresetServiceViewModel> Services { get; }
-
-    public bool IsSelected
-    {
-        get => _isSelected;
-        set
-        {
-            if (SetProperty(ref _isSelected, value))
-            {
-                OnPropertyChanged(nameof(StatusText));
-                OnPropertyChanged(nameof(StatusBackground));
-            }
-        }
-    }
-
-    public string StatusText => IsSelected ? "Selected" : "Available";
-
-    public string StatusBackground => IsSelected ? "#285A2D" : "#555555";
-}
-
-public sealed class SetupPresetServiceViewModel(string title, string description)
-{
-    public string Title { get; } = title;
-
-    public string Description { get; } = description;
 }
 
 public sealed class SetupComponentQuickstartViewModel(
