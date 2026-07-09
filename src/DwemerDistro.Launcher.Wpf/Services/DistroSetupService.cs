@@ -6,6 +6,14 @@ public sealed class DistroSetupService(WslService wsl)
 {
     private const int ComponentInstallTimeoutSeconds = 7200;
     private const string NonInteractiveInstallInput = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+    private const string CudaInstallCommand =
+        "set -e; " +
+        "printf '%s\\n' " +
+        "'nvidia-cudnn nvidia-cudnn/question select I Agree' " +
+        "'nvidia-cudnn nvidia-cudnn/question seen true' " +
+        "'nvidia-cudnn nvidia-cudnn/license seen true' " +
+        "| debconf-set-selections; " +
+        "/usr/local/bin/install_full_packages </dev/null";
 
     private static readonly SetupComponent[] Components =
     [
@@ -14,7 +22,7 @@ public sealed class DistroSetupService(WslService wsl)
             "CUDA",
             "NVIDIA CUDA runtime",
             "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
-            ["-d", LauncherConstants.DistroName, "--", "bash", "-lc", "/usr/local/bin/install_full_packages </dev/null"]),
+            ["-d", LauncherConstants.DistroName, "--", "bash", "-lc", CudaInstallCommand]),
         new(
             "pockettts",
             "Pocket-TTS",
@@ -251,6 +259,10 @@ public sealed class DistroSetupService(WslService wsl)
             {
                 "env",
                 "DEBIAN_FRONTEND=noninteractive",
+                "DEBIAN_PRIORITY=critical",
+                "APT_LISTCHANGES_FRONTEND=none",
+                "NEEDRESTART_MODE=a",
+                "UCF_FORCE_CONFFOLD=1",
                 "PIP_NO_INPUT=1",
                 "PIP_DISABLE_PIP_VERSION_CHECK=1",
                 "timeout",
