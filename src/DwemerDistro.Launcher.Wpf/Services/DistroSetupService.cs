@@ -16,8 +16,7 @@ export UCF_FORCE_CONFFOLD=1
 
 printf '%s\n' \
     'nvidia-cudnn nvidia-cudnn/question select I Agree' \
-    'nvidia-cudnn nvidia-cudnn/question seen true' \
-    'nvidia-cudnn nvidia-cudnn/license seen true' | debconf-set-selections
+    'nvidia-cudnn nvidia-cudnn/question seen true' | debconf-set-selections
 
 if [ ! -s /etc/ddistro-full-packages.txt ]; then
     echo "Missing /etc/ddistro-full-packages.txt. Cannot install CUDA package set."
