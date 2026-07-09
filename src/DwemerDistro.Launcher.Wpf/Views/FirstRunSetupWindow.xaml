@@ -109,6 +109,27 @@
             <Setter Property="FontFamily" Value="Consolas" />
             <Setter Property="FontSize" Value="12" />
         </Style>
+
+        <Style TargetType="ProgressBar">
+            <Setter Property="Background" Value="#191919" />
+            <Setter Property="Foreground" Value="#2F8F3A" />
+            <Setter Property="BorderBrush" Value="#565656" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Height" Value="12" />
+        </Style>
+
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="#1E1E1E" />
+            <Setter Property="BorderBrush" Value="#565656" />
+            <Setter Property="Foreground" Value="White" />
+        </Style>
+
+        <Style TargetType="TabItem">
+            <Setter Property="Background" Value="#333333" />
+            <Setter Property="BorderBrush" Value="#565656" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Padding" Value="10,6" />
+        </Style>
     </Window.Resources>
 
     <DockPanel Margin="14">
@@ -226,39 +247,119 @@
                                            Foreground="#D6D6D6"
                                            TextWrapping="Wrap"
                                            Margin="0,5,0,0" />
-                                <Border Background="#262626"
-                                        BorderBrush="#4B4B4B"
-                                        BorderThickness="1"
-                                        CornerRadius="6"
-                                        Padding="10"
-                                        Margin="0,14,0,0">
-                                    <StackPanel>
-                                        <TextBlock Text="Other Setup Paths"
-                                                   Foreground="#FFD700"
-                                                   FontSize="12"
-                                                   FontWeight="Bold"
-                                                   Margin="0,0,0,8" />
-                                        <StackPanel Orientation="Horizontal">
-                                            <Button Content="NVIDIA Powerful"
-                                                    Command="{Binding SelectNvidiaPowerfulCommand}"
-                                                    Style="{StaticResource SecondaryButton}"
-                                                    Visibility="{Binding ShowNvidiaPowerfulSwitch, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                            <Button Content="NVIDIA Standard"
-                                                    Command="{Binding SelectNvidiaStandardCommand}"
-                                                    Style="{StaticResource SecondaryButton}"
-                                                    Visibility="{Binding ShowNvidiaStandardSwitch, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                            <Button Content="AMD / CPU"
-                                                    Command="{Binding SelectAmdCpuCommand}"
-                                                    Style="{StaticResource SecondaryButton}"
-                                                    Visibility="{Binding ShowAmdCpuSwitch, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                        </StackPanel>
-                                    </StackPanel>
-                                </Border>
+                                <TabControl ItemsSource="{Binding SetupPresetTabs}"
+                                            SelectedItem="{Binding SelectedPresetTab, Mode=TwoWay}"
+                                            IsEnabled="{Binding IsSetupSelectionEnabled}"
+                                            Margin="0,14,0,0">
+                                    <TabControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Title}"
+                                                       Foreground="White"
+                                                       FontWeight="Bold" />
+                                        </DataTemplate>
+                                    </TabControl.ItemTemplate>
+                                    <TabControl.ContentTemplate>
+                                        <DataTemplate>
+                                            <Border Background="#262626"
+                                                    BorderBrush="#4B4B4B"
+                                                    BorderThickness="1"
+                                                    Padding="10">
+                                                <StackPanel>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0"
+                                                                    Margin="0,0,12,0">
+                                                            <TextBlock Text="{Binding HardwareLabel}"
+                                                                       Foreground="#FFD700"
+                                                                       FontSize="12"
+                                                                       FontWeight="Bold" />
+                                                            <TextBlock Text="{Binding Description}"
+                                                                       Foreground="#D6D6D6"
+                                                                       FontSize="11"
+                                                                       TextWrapping="Wrap"
+                                                                       Margin="0,4,0,0" />
+                                                        </StackPanel>
+                                                        <Border Grid.Column="1"
+                                                                Background="{Binding StatusBackground}"
+                                                                CornerRadius="12"
+                                                                Padding="10,4"
+                                                                VerticalAlignment="Top">
+                                                            <TextBlock Text="{Binding StatusText}"
+                                                                       FontSize="11"
+                                                                       FontWeight="Bold" />
+                                                        </Border>
+                                                    </Grid>
+
+                                                    <Border Background="#1E1E1E"
+                                                            BorderBrush="#565656"
+                                                            BorderThickness="1"
+                                                            CornerRadius="6"
+                                                            Padding="8"
+                                                            Margin="0,10,0,0">
+                                                        <StackPanel>
+                                                            <Grid Margin="0,0,0,6">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="150" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Grid.Column="0"
+                                                                           Text="Service"
+                                                                           Foreground="#FFD700"
+                                                                           FontSize="11"
+                                                                           FontWeight="Bold" />
+                                                                <TextBlock Grid.Column="1"
+                                                                           Text="Installed by this setup"
+                                                                           Foreground="#FFD700"
+                                                                           FontSize="11"
+                                                                           FontWeight="Bold" />
+                                                            </Grid>
+                                                            <ItemsControl ItemsSource="{Binding Services}">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate>
+                                                                        <Grid Margin="0,0,0,6">
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="150" />
+                                                                                <ColumnDefinition Width="*" />
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <TextBlock Grid.Column="0"
+                                                                                       Text="{Binding Title}"
+                                                                                       FontSize="12"
+                                                                                       FontWeight="Bold" />
+                                                                            <TextBlock Grid.Column="1"
+                                                                                       Text="{Binding Description}"
+                                                                                       Foreground="#D6D6D6"
+                                                                                       FontSize="11"
+                                                                                       TextWrapping="Wrap" />
+                                                                        </Grid>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </TabControl.ContentTemplate>
+                                </TabControl>
                                 <Button Content="{Binding InstallRecommendedButtonText}"
                                         Command="{Binding InstallRecommendedCommand}"
                                         Style="{StaticResource PrimaryButton}"
                                         HorizontalAlignment="Left"
                                         Margin="0,18,0,0" />
+                                <StackPanel Visibility="{Binding IsInstallingSetup, Converter={StaticResource BoolToVisibilityConverter}}"
+                                            Margin="0,12,0,0">
+                                    <TextBlock Text="{Binding SetupInstallProgressText}"
+                                               Foreground="#D6D6D6"
+                                               FontSize="11"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,6" />
+                                    <ProgressBar Minimum="0"
+                                                 Maximum="100"
+                                                 Value="{Binding SetupInstallProgress}" />
+                                </StackPanel>
                             </StackPanel>
 
                             <Border Grid.Column="1"
@@ -450,9 +551,6 @@
                                             Margin="0,16,0,0">
                                     <Button Content="Open Token Page"
                                             Command="{Binding OpenHuggingFaceTokensCommand}"
-                                            Style="{StaticResource SecondaryButton}" />
-                                    <Button Content="Open Voice Model Pages"
-                                            Command="{Binding OpenHuggingFaceModelAccessCommand}"
                                             Style="{StaticResource SecondaryButton}" />
                                 </StackPanel>
                                 <PasswordBox x:Name="HuggingFacePasswordBox"

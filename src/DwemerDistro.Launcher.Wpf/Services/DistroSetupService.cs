@@ -11,7 +11,8 @@ public sealed class DistroSetupService(WslService wsl)
             "CUDA",
             "NVIDIA CUDA runtime",
             "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
-            ["-d", LauncherConstants.DistroName, "--", "/usr/local/bin/install_full_packages"]),
+            ["-d", LauncherConstants.DistroName, "--", "/usr/local/bin/install_full_packages"],
+            "\n\n"),
         new(
             "chatterbox",
             "Chatterbox",
@@ -82,6 +83,11 @@ public sealed class DistroSetupService(WslService wsl)
         return ComponentMap[key];
     }
 
+    public IReadOnlyList<SetupComponent> GetComponents(SetupPreset preset)
+    {
+        return preset.ComponentKeys.Select(GetComponent).ToArray();
+    }
+
     public async Task<DistroSetupStatus> ProbeAsync(SetupPreset preset, CancellationToken cancellationToken = default)
     {
         if (!await wsl.DistroExistsAsync(cancellationToken).ConfigureAwait(false))
@@ -144,6 +150,7 @@ public sealed class DistroSetupService(WslService wsl)
     public async Task<DistroSetupStatus> InstallPresetAsync(
         SetupPreset preset,
         Action<string>? output = null,
+        Action<SetupInstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
         var current = await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
@@ -152,6 +159,10 @@ public sealed class DistroSetupService(WslService wsl)
             output?.Invoke("DwemerAI4Skyrim3 is not registered. Install or import the distro first." + Environment.NewLine);
             return current;
         }
+
+        var totalComponents = preset.ComponentKeys.Count;
+        var completedComponents = 0;
+        progress?.Invoke(new SetupInstallProgress(0, totalComponents, preset.Title, "Starting setup"));
 
         foreach (var componentKey in preset.ComponentKeys)
         {
@@ -164,21 +175,48 @@ public sealed class DistroSetupService(WslService wsl)
             if (currentComponent?.IsInstalled == true)
             {
                 output?.Invoke($"{component.Title} already installed. Skipping." + Environment.NewLine);
+                completedComponents++;
+                progress?.Invoke(new SetupInstallProgress(
+                    completedComponents,
+                    totalComponents,
+                    component.Title,
+                    $"{component.Title} already installed"));
                 continue;
             }
 
             output?.Invoke($"Installing {component.Title}..." + Environment.NewLine);
-            var result = await wsl.RunWslAsync(component.InstallArguments, output, cancellationToken).ConfigureAwait(false);
+            progress?.Invoke(new SetupInstallProgress(
+                completedComponents,
+                totalComponents,
+                component.Title,
+                $"Installing {component.Title}"));
+
+            var result = component.InstallInput is null
+                ? await wsl.RunWslAsync(component.InstallArguments, output, cancellationToken).ConfigureAwait(false)
+                : await wsl.RunWslWithInputAsync(component.InstallArguments, component.InstallInput, output, cancellationToken).ConfigureAwait(false);
+
             if (!result.Succeeded)
             {
                 output?.Invoke($"{component.Title} failed: {BuildCommandError(result)}" + Environment.NewLine);
+                progress?.Invoke(new SetupInstallProgress(
+                    completedComponents,
+                    totalComponents,
+                    component.Title,
+                    $"{component.Title} failed"));
                 return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
             }
 
             output?.Invoke($"{component.Title} installed." + Environment.NewLine);
+            completedComponents++;
+            progress?.Invoke(new SetupInstallProgress(
+                completedComponents,
+                totalComponents,
+                component.Title,
+                $"{component.Title} installed"));
             current = await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
         }
 
+        progress?.Invoke(new SetupInstallProgress(totalComponents, totalComponents, preset.Title, "Setup complete"));
         return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
     }
 
@@ -263,7 +301,19 @@ public sealed record SetupComponent(
     string Title,
     string Description,
     string InstallCheckExpression,
-    IReadOnlyList<string> InstallArguments);
+    IReadOnlyList<string> InstallArguments,
+    string? InstallInput = null);
+
+public sealed record SetupInstallProgress(
+    int CompletedComponents,
+    int TotalComponents,
+    string ComponentTitle,
+    string StatusText)
+{
+    public double Percentage => TotalComponents <= 0
+        ? 0
+        : Math.Clamp((double)CompletedComponents / TotalComponents * 100, 0, 100);
+}
 
 public sealed record SetupComponentState(
     string Key,
