@@ -125,7 +125,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"));
         ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"));
         FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync);
-        FixPermissionIssuesCommand = new AsyncRelayCommand(FixPermissionIssuesAsync);
+        DistroDoctorCommand = new AsyncRelayCommand(RunDistroDoctorAsync);
         ReclaimDistroDiskSpaceCommand = new AsyncRelayCommand(ReclaimDistroDiskSpaceAsync);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync());
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher);
@@ -330,7 +330,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand ViewParakeetLogsCommand { get; }
     public RelayCommand ViewApacheLogsCommand { get; }
     public AsyncRelayCommand FixWslDnsCommand { get; }
-    public AsyncRelayCommand FixPermissionIssuesCommand { get; }
+    public AsyncRelayCommand DistroDoctorCommand { get; }
     public AsyncRelayCommand ReclaimDistroDiskSpaceCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
@@ -1153,55 +1153,65 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task FixPermissionIssuesAsync()
+    private async Task RunDistroDoctorAsync()
     {
         if (!await _wsl.DistroExistsAsync().ConfigureAwait(true))
         {
             MessageBox.Show(
                 $"{LauncherConstants.DistroName} is not currently installed.",
-                "Fix Permission Issues",
+                "Distro Doctor",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             return;
         }
 
-        var confirmed = MessageBox.Show(
-            "This will repair runtime write permissions for DwemerDistro web server folders used by CHIM, Stobe, Dialectic, and the dashboard.\n\nIt targets log, cache, upload, data, soundcache, and config folders only. It does not apply chmod 777.\n\nContinue?",
-            "Fix Permission Issues",
-            MessageBoxButton.YesNo,
+        var choice = MessageBox.Show(
+            "Distro Doctor checks common DwemerDistro runtime issues: permissions, Apache, PostgreSQL, required tools, CHIM Background Life service, service ports, disk space, and recent server logs.\n\nChoose Yes to check and repair safe issues.\nChoose No to check only.\nChoose Cancel to do nothing.",
+            "Distro Doctor",
+            MessageBoxButton.YesNoCancel,
             MessageBoxImage.Question);
 
-        if (confirmed != MessageBoxResult.Yes)
+        if (choice == MessageBoxResult.Cancel)
         {
-            AppendLog("Permission repair canceled." + Environment.NewLine);
+            AppendLog("Distro Doctor canceled." + Environment.NewLine);
             return;
         }
 
-        AppendLog("Starting permission repair..." + Environment.NewLine);
+        var doctorMode = choice == MessageBoxResult.Yes ? "--repair" : "--check";
+        var actionLabel = choice == MessageBoxResult.Yes ? "check and repair" : "check only";
+
+        AppendLog($"Starting Distro Doctor ({actionLabel})..." + Environment.NewLine);
         var command =
+            "if [ -x /usr/local/bin/ddistro_doctor ]; then " +
+            $"/usr/local/bin/ddistro_doctor {doctorMode}; " +
+            "elif [ -f /home/dwemer/dwemerdistro/bin/ddistro_doctor ]; then " +
+            $"bash /home/dwemer/dwemerdistro/bin/ddistro_doctor {doctorMode}; " +
+            "else " +
+            "echo 'ddistro_doctor is not installed. Falling back to permission helper only.'; " +
             "if [ -x /usr/local/bin/fix_ddistro_permissions ]; then " +
-            "/usr/local/bin/fix_ddistro_permissions --repair; " +
+            $"/usr/local/bin/fix_ddistro_permissions {doctorMode}; " +
             "elif [ -f /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions ]; then " +
-            "bash /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions --repair; " +
-            "else echo 'fix_ddistro_permissions is not installed. Run Update System first.'; exit 127; fi";
+            $"bash /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions {doctorMode}; " +
+            "else echo 'Neither ddistro_doctor nor fix_ddistro_permissions is installed. Run Update System first.'; exit 127; fi; " +
+            "fi";
 
         var result = await _wsl.RunBashAsync(command, text => AppendLog(text), user: "root", loginShell: false, lineBuffered: true).ConfigureAwait(true);
         if (result.Succeeded)
         {
-            AppendLog("Permission repair completed successfully." + Environment.NewLine, "green");
+            AppendLog("Distro Doctor completed successfully." + Environment.NewLine, "green");
             MessageBox.Show(
-                "Permission repair completed successfully.",
-                "Fix Permission Issues",
+                "Distro Doctor completed successfully. Review the launcher log for warnings and details.",
+                "Distro Doctor",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
             return;
         }
 
         var error = GetCommandError(result);
-        AppendLog($"Permission repair failed: {error}{Environment.NewLine}", "red");
+        AppendLog($"Distro Doctor failed: {error}{Environment.NewLine}", "red");
         MessageBox.Show(
-            $"Permission repair failed.\n\n{error}",
-            "Fix Permission Issues",
+            $"Distro Doctor failed.\n\n{error}",
+            "Distro Doctor",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
     }
@@ -1290,17 +1300,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task AddPermissionDiagnosticsAsync(List<string> lines)
     {
-        lines.Add("Permission Diagnostics");
-        lines.Add("Read-only write checks for common DwemerDistro runtime folders.");
+        lines.Add("Distro Doctor Diagnostics");
+        lines.Add("Read-only checks for common DwemerDistro runtime, service, port, permission, and log issues.");
         lines.Add("");
-        lines.Add("$ fix_ddistro_permissions --check");
+        lines.Add("$ ddistro_doctor --check");
 
         var command =
-            "if [ -x /usr/local/bin/fix_ddistro_permissions ]; then " +
+            "if [ -x /usr/local/bin/ddistro_doctor ]; then " +
+            "/usr/local/bin/ddistro_doctor --check; " +
+            "elif [ -f /home/dwemer/dwemerdistro/bin/ddistro_doctor ]; then " +
+            "bash /home/dwemer/dwemerdistro/bin/ddistro_doctor --check; " +
+            "elif [ -x /usr/local/bin/fix_ddistro_permissions ]; then " +
+            "echo '[missing] ddistro_doctor is not installed. Falling back to permission checks only.'; " +
             "/usr/local/bin/fix_ddistro_permissions --check; " +
             "elif [ -f /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions ]; then " +
+            "echo '[missing] ddistro_doctor is not installed. Falling back to permission checks only.'; " +
             "bash /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions --check; " +
-            "else echo '[missing] fix_ddistro_permissions is not installed.'; exit 127; fi";
+            "else echo '[missing] ddistro_doctor and fix_ddistro_permissions are not installed.'; exit 127; fi";
 
         try
         {

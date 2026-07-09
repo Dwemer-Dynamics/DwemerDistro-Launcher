@@ -191,15 +191,15 @@
 
                         <StackPanel Grid.Column="0"
                                     Margin="0,0,16,0">
-                            <TextBlock Text="Fix Permission Issues"
+                            <TextBlock Text="Distro Doctor"
                                        Style="{StaticResource ActionCardTitle}" />
-                            <TextBlock Text="Repair runtime folder permissions when logs show Permission denied or PHP cannot write files."
+                            <TextBlock Text="Check and repair common distro issues including permissions, Apache, Background Life, ports, disk space, and recent logs."
                                        Style="{StaticResource ActionCardDescription}" />
                         </StackPanel>
 
                         <Button Grid.Column="1"
-                                Content="Fix"
-                                Command="{Binding FixPermissionIssuesCommand}"
+                                Content="Run"
+                                Command="{Binding DistroDoctorCommand}"
                                 Style="{StaticResource PrimaryActionButton}"
                                 VerticalAlignment="Center" />
                     </Grid>
