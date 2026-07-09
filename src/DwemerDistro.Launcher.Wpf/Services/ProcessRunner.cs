@@ -74,9 +74,7 @@ public sealed class ProcessRunner
 
         try
         {
-            await process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
-            await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-            process.StandardInput.Close();
+            await TryWriteStandardInputAsync(process, input, cancellationToken).ConfigureAwait(false);
 
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
             await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
@@ -88,6 +86,40 @@ public sealed class ProcessRunner
         }
 
         return new CommandResult(process.ExitCode, stdout.ToString(), stderr.ToString());
+    }
+
+    private static async Task TryWriteStandardInputAsync(
+        Process process,
+        string input,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await process.StandardInput.WriteAsync(input.AsMemory(), cancellationToken).ConfigureAwait(false);
+            await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (IOException)
+        {
+            // Some WSL commands close stdin before the launcher finishes writing preset input.
+            // The process exit code is the authoritative success/failure signal.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Treat a closed stdin pipe the same way as a broken pipe.
+        }
+        finally
+        {
+            try
+            {
+                process.StandardInput.Close();
+            }
+            catch (IOException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
     }
 
     public async Task<CommandResult> RunElevatedAsync(
