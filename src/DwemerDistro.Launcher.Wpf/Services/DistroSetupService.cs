@@ -14,29 +14,64 @@ public sealed class DistroSetupService(WslService wsl)
         "'nvidia-cudnn nvidia-cudnn/license seen true' " +
         "| debconf-set-selections; " +
         "/usr/local/bin/install_full_packages </dev/null";
+    private const string PrepareDistroCommand = """
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export DEBIAN_PRIORITY=critical
+export APT_LISTCHANGES_FRONTEND=none
+export NEEDRESTART_MODE=a
+export UCF_FORCE_CONFFOLD=1
+
+echo "Preparing DwemerDistro package state..."
+dpkg --configure -a
+apt-get update
+apt-get install -y git ca-certificates python3 python3-venv python3-pip
+
+runuser -u dwemer -- bash -lc "
+set -e
+cd /home/dwemer
+
+if [ ! -d pocket-tts/.git ]; then
+    rm -rf pocket-tts
+    git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
+else
+    git -C pocket-tts pull --ff-only || echo 'Skipping pocket-tts update; local changes or divergent history.'
+fi
+
+if [ ! -d parakeet-api-server/.git ]; then
+    rm -rf parakeet-api-server
+    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
+else
+    git -C parakeet-api-server pull --ff-only || echo 'Skipping parakeet-api-server update; local changes or divergent history.'
+fi
+
+if [ -d minime-t5/.git ]; then
+    git -C minime-t5 pull --ff-only || echo 'Skipping minime-t5 update; local changes or divergent history.'
+fi
+
+if [ -d remote-faster-whisper/.git ]; then
+    git -C remote-faster-whisper pull --ff-only || echo 'Skipping remote-faster-whisper update; local changes or divergent history.'
+fi
+"
+
+echo "Distro preparation complete."
+""";
     private const string PocketTtsInstallCommand = """
 set -e
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
-base_dir="/home/dwemer"
-repo_dir="$base_dir/pocket-tts"
+mkdir -p /home/dwemer
+cd /home/dwemer
 
-has_cuda() {
-    command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]
-}
-
-mkdir -p "$base_dir"
-cd "$base_dir"
-
-if [ ! -d "$repo_dir/.git" ]; then
-    rm -rf "$repo_dir"
-    git clone https://github.com/Dwemer-Dynamics/pocket-tts "$repo_dir"
+if [ ! -d /home/dwemer/pocket-tts/.git ]; then
+    rm -rf /home/dwemer/pocket-tts
+    git clone https://github.com/Dwemer-Dynamics/pocket-tts /home/dwemer/pocket-tts
 else
-    git -C "$repo_dir" pull --ff-only
+    git -C /home/dwemer/pocket-tts pull --ff-only
 fi
 
-cd "$repo_dir"
+cd /home/dwemer/pocket-tts
 
 if [ ! -d venv ]; then
     python3 -m venv venv
@@ -45,7 +80,7 @@ fi
 . venv/bin/activate
 python -m pip install --upgrade pip wheel
 
-if has_cuda; then
+if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
     python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu128
 else
     python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
@@ -53,16 +88,16 @@ fi
 
 python -m pip install -e .
 
-if [ ! -s "$HOME/.cache/huggingface/token" ]; then
+if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
     echo "Hugging Face token is required for Pocket-TTS. Save it in Quickstart and retry."
     exit 22
 fi
 
-if has_cuda; then
-    ln -sf "$repo_dir/start-gpu.sh" "$repo_dir/start.sh"
+if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
+    ln -sf /home/dwemer/pocket-tts/start-gpu.sh /home/dwemer/pocket-tts/start.sh
     echo "Pocket-TTS installed and enabled in GPU / CUDA mode."
 else
-    ln -sf "$repo_dir/start-cpu.sh" "$repo_dir/start.sh"
+    ln -sf /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
     echo "Pocket-TTS installed and enabled in CPU mode."
 fi
 """;
@@ -71,32 +106,25 @@ set -e
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
-base_dir="/home/dwemer"
-repo_dir="$base_dir/parakeet-api-server"
+mkdir -p /home/dwemer
+cd /home/dwemer
 
-has_cuda() {
-    command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]
-}
-
-mkdir -p "$base_dir"
-cd "$base_dir"
-
-if [ ! -d "$repo_dir/.git" ]; then
-    rm -rf "$repo_dir"
-    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server "$repo_dir"
+if [ ! -d /home/dwemer/parakeet-api-server/.git ]; then
+    rm -rf /home/dwemer/parakeet-api-server
+    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server /home/dwemer/parakeet-api-server
 else
-    git -C "$repo_dir" pull --ff-only
+    git -C /home/dwemer/parakeet-api-server pull --ff-only
 fi
 
-cd "$repo_dir"
+cd /home/dwemer/parakeet-api-server
 
-if has_cuda; then
-    printf 'Y\n' | PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}" ./install.sh
-    ln -sf "$repo_dir/start-gpu.sh" "$repo_dir/start.sh"
+if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
+    printf 'Y\n' | PYTORCH_INDEX_URL="https://download.pytorch.org/whl/cu128" ./install.sh
+    ln -sf /home/dwemer/parakeet-api-server/start-gpu.sh /home/dwemer/parakeet-api-server/start.sh
     echo "Parakeet installed and enabled in GPU / CUDA mode."
 else
     ./install.sh
-    ln -sf "$repo_dir/start-cpu.sh" "$repo_dir/start.sh"
+    ln -sf /home/dwemer/parakeet-api-server/start-cpu.sh /home/dwemer/parakeet-api-server/start.sh
     echo "Parakeet installed and enabled in CPU mode."
 fi
 """;
@@ -128,6 +156,13 @@ fi
             "Path('/home/dwemer/parakeet-api-server/venv').exists()",
             ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "bash", "-lc", ParakeetInstallCommand])
     ];
+
+    private static readonly SetupComponent PrepareComponent = new(
+        "prepare",
+        "Prepare distro",
+        "Refreshes package metadata and required component repositories before installing services.",
+        "True",
+        ["-d", LauncherConstants.DistroName, "--", "bash", "-lc", PrepareDistroCommand]);
 
     private static readonly IReadOnlyDictionary<string, SetupComponent> ComponentMap =
         Components.ToDictionary(component => component.Key, StringComparer.OrdinalIgnoreCase);
@@ -241,9 +276,43 @@ fi
             return current;
         }
 
-        var totalComponents = preset.ComponentKeys.Count;
+        var totalComponents = preset.ComponentKeys.Count + 1;
         var completedComponents = 0;
         progress?.Invoke(new SetupInstallProgress(0, totalComponents, preset.Title, "Starting setup"));
+
+        output?.Invoke("Preparing distro before component installs..." + Environment.NewLine);
+        progress?.Invoke(new SetupInstallProgress(
+            completedComponents,
+            totalComponents,
+            PrepareComponent.Title,
+            "Preparing distro"));
+
+        var prepareResult = await RunComponentInstallAsync(
+                PrepareComponent,
+                output,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!prepareResult.Succeeded)
+        {
+            var errorText = prepareResult.ExitCode == 124
+                ? $"{PrepareComponent.Title} timed out after 2 hours."
+                : $"{PrepareComponent.Title} failed: {BuildCommandError(prepareResult)}";
+            output?.Invoke(errorText + Environment.NewLine);
+            progress?.Invoke(new SetupInstallProgress(
+                completedComponents,
+                totalComponents,
+                PrepareComponent.Title,
+                prepareResult.ExitCode == 124 ? $"{PrepareComponent.Title} timed out" : $"{PrepareComponent.Title} failed"));
+            return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
+        }
+
+        completedComponents++;
+        progress?.Invoke(new SetupInstallProgress(
+            completedComponents,
+            totalComponents,
+            PrepareComponent.Title,
+            "Distro prepared"));
 
         foreach (var componentKey in preset.ComponentKeys)
         {
@@ -273,30 +342,7 @@ fi
                 component.Title,
                 $"Installing {component.Title}"));
 
-            Models.CommandResult result;
-            using (var componentTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
-            {
-                componentTimeout.CancelAfter(TimeSpan.FromSeconds(ComponentInstallTimeoutSeconds + 60));
-                try
-                {
-                    result = await wsl.RunWslWithInputAsync(
-                            BuildNonInteractiveInstallArguments(component),
-                            component.InstallInput ?? NonInteractiveInstallInput,
-                            output,
-                            componentTimeout.Token)
-                        .ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    output?.Invoke($"{component.Title} timed out after 2 hours." + Environment.NewLine);
-                    progress?.Invoke(new SetupInstallProgress(
-                        completedComponents,
-                        totalComponents,
-                        component.Title,
-                        $"{component.Title} timed out"));
-                    return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
-                }
-            }
+            var result = await RunComponentInstallAsync(component, output, cancellationToken).ConfigureAwait(false);
 
             if (!result.Succeeded)
             {
@@ -326,6 +372,29 @@ fi
         return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task<Models.CommandResult> RunComponentInstallAsync(
+        SetupComponent component,
+        Action<string>? output,
+        CancellationToken cancellationToken)
+    {
+        using var componentTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        componentTimeout.CancelAfter(TimeSpan.FromSeconds(ComponentInstallTimeoutSeconds + 60));
+
+        try
+        {
+            return await wsl.RunWslWithInputAsync(
+                    BuildNonInteractiveInstallArguments(component),
+                    component.InstallInput ?? NonInteractiveInstallInput,
+                    output,
+                    componentTimeout.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new Models.CommandResult(124, string.Empty, $"{component.Title} timed out after 2 hours.");
+        }
+    }
+
     private static IReadOnlyList<string> BuildNonInteractiveInstallArguments(SetupComponent component)
     {
         var separatorIndex = component.InstallArguments
@@ -339,7 +408,7 @@ fi
         }
 
         var prefix = component.InstallArguments.Take(separatorIndex.Value + 1);
-        var command = component.InstallArguments.Skip(separatorIndex.Value + 1);
+        var command = EscapeWslShellCommandArguments(component.InstallArguments.Skip(separatorIndex.Value + 1));
         return prefix.Concat(
             new[]
             {
@@ -356,6 +425,20 @@ fi
                 "--kill-after=30s",
                 $"{ComponentInstallTimeoutSeconds}s"
             }).Concat(command).ToArray();
+    }
+
+    private static IReadOnlyList<string> EscapeWslShellCommandArguments(IEnumerable<string> arguments)
+    {
+        var escaped = new List<string>();
+        var escapeNext = false;
+
+        foreach (var argument in arguments)
+        {
+            escaped.Add(escapeNext ? argument.Replace("$", "\\$") : argument);
+            escapeNext = argument is "-c" or "-lc";
+        }
+
+        return escaped;
     }
 
     private static string BuildProbeScript()
