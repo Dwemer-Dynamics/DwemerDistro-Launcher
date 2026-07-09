@@ -358,7 +358,7 @@
                                                Margin="0,0,0,6" />
                                     <ProgressBar Minimum="0"
                                                  Maximum="100"
-                                                 Value="{Binding SetupInstallProgress}" />
+                                                 Value="{Binding SetupInstallProgress, Mode=OneWay}" />
                                 </StackPanel>
                             </StackPanel>
 
