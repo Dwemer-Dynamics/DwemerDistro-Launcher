@@ -4,6 +4,9 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public sealed class DistroSetupService(WslService wsl)
 {
+    private const int ComponentInstallTimeoutSeconds = 7200;
+    private const string NonInteractiveInstallInput = "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+
     private static readonly SetupComponent[] Components =
     [
         new(
@@ -11,8 +14,7 @@ public sealed class DistroSetupService(WslService wsl)
             "CUDA",
             "NVIDIA CUDA runtime",
             "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
-            ["-d", LauncherConstants.DistroName, "--", "/usr/local/bin/install_full_packages"],
-            "\n\n"),
+            ["-d", LauncherConstants.DistroName, "--", "/usr/local/bin/install_full_packages"]),
         new(
             "chatterbox",
             "Chatterbox",
@@ -185,24 +187,49 @@ public sealed class DistroSetupService(WslService wsl)
             }
 
             output?.Invoke($"Installing {component.Title}..." + Environment.NewLine);
+            output?.Invoke("Running in non-interactive mode with a 2 hour safety timeout." + Environment.NewLine);
             progress?.Invoke(new SetupInstallProgress(
                 completedComponents,
                 totalComponents,
                 component.Title,
                 $"Installing {component.Title}"));
 
-            var result = component.InstallInput is null
-                ? await wsl.RunWslAsync(component.InstallArguments, output, cancellationToken).ConfigureAwait(false)
-                : await wsl.RunWslWithInputAsync(component.InstallArguments, component.InstallInput, output, cancellationToken).ConfigureAwait(false);
+            Models.CommandResult result;
+            using (var componentTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                componentTimeout.CancelAfter(TimeSpan.FromSeconds(ComponentInstallTimeoutSeconds + 60));
+                try
+                {
+                    result = await wsl.RunWslWithInputAsync(
+                            BuildNonInteractiveInstallArguments(component),
+                            component.InstallInput ?? NonInteractiveInstallInput,
+                            output,
+                            componentTimeout.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    output?.Invoke($"{component.Title} timed out after 2 hours." + Environment.NewLine);
+                    progress?.Invoke(new SetupInstallProgress(
+                        completedComponents,
+                        totalComponents,
+                        component.Title,
+                        $"{component.Title} timed out"));
+                    return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
+                }
+            }
 
             if (!result.Succeeded)
             {
-                output?.Invoke($"{component.Title} failed: {BuildCommandError(result)}" + Environment.NewLine);
+                var errorText = result.ExitCode == 124
+                    ? $"{component.Title} timed out after 2 hours."
+                    : $"{component.Title} failed: {BuildCommandError(result)}";
+                output?.Invoke(errorText + Environment.NewLine);
                 progress?.Invoke(new SetupInstallProgress(
                     completedComponents,
                     totalComponents,
                     component.Title,
-                    $"{component.Title} failed"));
+                    result.ExitCode == 124 ? $"{component.Title} timed out" : $"{component.Title} failed"));
                 return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
             }
 
@@ -218,6 +245,34 @@ public sealed class DistroSetupService(WslService wsl)
 
         progress?.Invoke(new SetupInstallProgress(totalComponents, totalComponents, preset.Title, "Setup complete"));
         return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static IReadOnlyList<string> BuildNonInteractiveInstallArguments(SetupComponent component)
+    {
+        var separatorIndex = component.InstallArguments
+            .Select((argument, index) => new { argument, index })
+            .FirstOrDefault(item => item.argument == "--")
+            ?.index;
+
+        if (separatorIndex is null)
+        {
+            return component.InstallArguments;
+        }
+
+        var prefix = component.InstallArguments.Take(separatorIndex.Value + 1);
+        var command = component.InstallArguments.Skip(separatorIndex.Value + 1);
+        return prefix.Concat(
+            new[]
+            {
+                "env",
+                "DEBIAN_FRONTEND=noninteractive",
+                "PIP_NO_INPUT=1",
+                "PIP_DISABLE_PIP_VERSION_CHECK=1",
+                "timeout",
+                "--foreground",
+                "--kill-after=30s",
+                $"{ComponentInstallTimeoutSeconds}s"
+            }).Concat(command).ToArray();
     }
 
     private static string BuildProbeScript()
