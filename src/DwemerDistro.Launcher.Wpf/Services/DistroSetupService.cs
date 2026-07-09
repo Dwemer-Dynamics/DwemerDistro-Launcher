@@ -14,6 +14,92 @@ public sealed class DistroSetupService(WslService wsl)
         "'nvidia-cudnn nvidia-cudnn/license seen true' " +
         "| debconf-set-selections; " +
         "/usr/local/bin/install_full_packages </dev/null";
+    private const string PocketTtsInstallCommand = """
+set -e
+export PIP_NO_INPUT=1
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+
+base_dir="/home/dwemer"
+repo_dir="$base_dir/pocket-tts"
+
+has_cuda() {
+    command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]
+}
+
+mkdir -p "$base_dir"
+cd "$base_dir"
+
+if [ ! -d "$repo_dir/.git" ]; then
+    rm -rf "$repo_dir"
+    git clone https://github.com/Dwemer-Dynamics/pocket-tts "$repo_dir"
+else
+    git -C "$repo_dir" pull --ff-only
+fi
+
+cd "$repo_dir"
+
+if [ ! -d venv ]; then
+    python3 -m venv venv
+fi
+
+. venv/bin/activate
+python -m pip install --upgrade pip wheel
+
+if has_cuda; then
+    python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu128
+else
+    python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+fi
+
+python -m pip install -e .
+
+if [ ! -s "$HOME/.cache/huggingface/token" ]; then
+    echo "Hugging Face token is required for Pocket-TTS. Save it in Quickstart and retry."
+    exit 22
+fi
+
+if has_cuda; then
+    ln -sf "$repo_dir/start-gpu.sh" "$repo_dir/start.sh"
+    echo "Pocket-TTS installed and enabled in GPU / CUDA mode."
+else
+    ln -sf "$repo_dir/start-cpu.sh" "$repo_dir/start.sh"
+    echo "Pocket-TTS installed and enabled in CPU mode."
+fi
+""";
+    private const string ParakeetInstallCommand = """
+set -e
+export PIP_NO_INPUT=1
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+
+base_dir="/home/dwemer"
+repo_dir="$base_dir/parakeet-api-server"
+
+has_cuda() {
+    command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]
+}
+
+mkdir -p "$base_dir"
+cd "$base_dir"
+
+if [ ! -d "$repo_dir/.git" ]; then
+    rm -rf "$repo_dir"
+    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server "$repo_dir"
+else
+    git -C "$repo_dir" pull --ff-only
+fi
+
+cd "$repo_dir"
+
+if has_cuda; then
+    printf 'Y\n' | PYTORCH_INDEX_URL="${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}" ./install.sh
+    ln -sf "$repo_dir/start-gpu.sh" "$repo_dir/start.sh"
+    echo "Parakeet installed and enabled in GPU / CUDA mode."
+else
+    ./install.sh
+    ln -sf "$repo_dir/start-cpu.sh" "$repo_dir/start.sh"
+    echo "Parakeet installed and enabled in CPU mode."
+fi
+""";
 
     private static readonly SetupComponent[] Components =
     [
@@ -28,7 +114,7 @@ public sealed class DistroSetupService(WslService wsl)
             "Pocket-TTS",
             "Cloned voice engine",
             "Path('/home/dwemer/pocket-tts/venv').exists()",
-            ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "/home/dwemer/pocket-tts/ddistro_install.sh"]),
+            ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "bash", "-lc", PocketTtsInstallCommand]),
         new(
             "minime",
             "Minime and TXT2VEC",
@@ -40,7 +126,7 @@ public sealed class DistroSetupService(WslService wsl)
             "Parakeet",
             "Local speech-to-text service",
             "Path('/home/dwemer/parakeet-api-server/venv').exists()",
-            ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "/home/dwemer/parakeet-api-server/ddistro_install.sh"])
+            ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "bash", "-lc", ParakeetInstallCommand])
     ];
 
     private static readonly IReadOnlyDictionary<string, SetupComponent> ComponentMap =
