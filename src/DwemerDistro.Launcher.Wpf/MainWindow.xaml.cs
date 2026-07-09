@@ -36,6 +36,11 @@ public partial class MainWindow : Window
         {
             if (await _viewModel.ShouldShowFirstRunSetupAsync().ConfigureAwait(true))
             {
+                if (await _viewModel.TryApplyLauncherUpdateBeforeFirstRunSetupAsync().ConfigureAwait(true))
+                {
+                    return;
+                }
+
                 _viewModel.OpenFirstRunSetupWindow();
             }
         }

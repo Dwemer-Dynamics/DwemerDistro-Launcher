@@ -343,6 +343,63 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync();
     }
 
+    public async Task<bool> TryApplyLauncherUpdateBeforeFirstRunSetupAsync()
+    {
+        try
+        {
+            SetLauncherUpdateState("Launcher update: checking before setup...", "White", false, "Check Launcher Update");
+
+            var currentVersion = _launcherUpdateService.GetCurrentVersion().ToString(3);
+            RunOnUi(() => LauncherVersionText = $"Launcher Version: {currentVersion}");
+
+            var update = await _launcherUpdateService.CheckForUpdatesAsync().ConfigureAwait(false);
+            _pendingLauncherUpdate = update;
+            if (update is null)
+            {
+                SetLauncherUpdateState(
+                    $"Launcher update: up to date [{currentVersion}]",
+                    "LimeGreen",
+                    false,
+                    "Launcher Up To Date");
+                return false;
+            }
+
+            var targetVersion = update.Version.ToString(3);
+            AppendLog($"Launcher update {targetVersion} found. Updating before first-time setup...{Environment.NewLine}", "yellow");
+            SetLauncherUpdateState(
+                $"Launcher update required before setup [{currentVersion} -> {targetVersion}]",
+                "Red",
+                false,
+                "Updating Launcher...");
+
+            var packagePath = await _launcherUpdateService.DownloadUpdatePackageAsync(update, progress =>
+            {
+                var text = $"Downloading launcher update before setup... {progress}%";
+                SetLauncherUpdateState(text, "White", false, text);
+            }).ConfigureAwait(false);
+
+            AppendLog("Launcher update downloaded. Closing launcher to apply update before first-time setup..." + Environment.NewLine, "green");
+            _launcherUpdateService.StartUpdaterAndExit(packagePath);
+            RunOnUi(() =>
+            {
+                LauncherUpdateButtonText = "Applying Launcher Update...";
+                Application.Current.Shutdown();
+            });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _pendingLauncherUpdate = null;
+            SetLauncherUpdateState(
+                "Launcher update before setup failed. Continuing setup.",
+                "Yellow",
+                false,
+                "Check Launcher Update");
+            AppendLog($"Launcher update before first-time setup failed: {ex.Message}{Environment.NewLine}", "yellow");
+            return false;
+        }
+    }
+
     private void StartProxyAndDiscovery()
     {
         _tcpProxyService = new TcpProxyService(async cancellationToken =>
