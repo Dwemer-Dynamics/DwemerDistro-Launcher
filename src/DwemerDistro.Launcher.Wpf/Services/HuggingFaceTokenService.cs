@@ -14,12 +14,7 @@ public sealed class HuggingFaceTokenService(WslService wsl)
             "pockettts",
             "Pocket-TTS voice cloning",
             "kyutai/pocket-tts",
-            "https://huggingface.co/kyutai/pocket-tts"),
-        new HuggingFaceModelAccessDefinition(
-            "chatterbox",
-            "Chatterbox",
-            "ResembleAI/chatterbox-turbo",
-            "https://huggingface.co/ResembleAI/chatterbox-turbo")
+            "https://huggingface.co/kyutai/pocket-tts")
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -164,14 +159,7 @@ models = [
         "repositoryId": "kyutai/pocket-tts",
         "accessUrl": "https://huggingface.co/kyutai/pocket-tts",
         "probeUrl": "https://huggingface.co/kyutai/pocket-tts/resolve/main/languages/english/model.safetensors",
-    },
-    {
-        "key": "chatterbox",
-        "displayName": "Chatterbox",
-        "repositoryId": "ResembleAI/chatterbox-turbo",
-        "accessUrl": "https://huggingface.co/ResembleAI/chatterbox-turbo",
-        "probeUrl": "https://huggingface.co/ResembleAI/chatterbox-turbo/resolve/main/tokenizer_config.json",
-    },
+    }
 ]
 
 def check_model_access(model, token, token_valid):

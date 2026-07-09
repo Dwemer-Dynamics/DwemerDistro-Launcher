@@ -99,9 +99,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         BackCommand = new RelayCommand(Back, () => !IsBusy && CurrentStepIndex > 0);
         ToggleTechnicalDetailsCommand = new RelayCommand(() => ShowTechnicalDetails = !ShowTechnicalDetails, () => !IsBusy);
         TogglePresetOptionsCommand = new RelayCommand(() => ShowPresetOptions = !ShowPresetOptions, () => !IsBusy);
-        SelectNvidiaPowerfulCommand = new AsyncRelayCommand(() => SelectPresetAsync(SetupPresetKey.NvidiaPowerful), () => !IsBusy);
-        SelectNvidiaStandardCommand = new AsyncRelayCommand(() => SelectPresetAsync(SetupPresetKey.NvidiaStandard), () => !IsBusy);
-        SelectAmdCpuCommand = new AsyncRelayCommand(() => SelectPresetAsync(SetupPresetKey.AmdCpu), () => !IsBusy);
         RefreshSetupCommand = new AsyncRelayCommand(RefreshSetupAsync, () => !IsBusy);
         SaveOpenRouterCommand = new AsyncRelayCommand(SaveOpenRouterAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(OpenRouterKey));
         RefreshOpenRouterCommand = new AsyncRelayCommand(RefreshOpenRouterStatusAsync, () => !IsBusy);
@@ -141,12 +138,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public RelayCommand ToggleTechnicalDetailsCommand { get; }
 
     public RelayCommand TogglePresetOptionsCommand { get; }
-
-    public AsyncRelayCommand SelectNvidiaPowerfulCommand { get; }
-
-    public AsyncRelayCommand SelectNvidiaStandardCommand { get; }
-
-    public AsyncRelayCommand SelectAmdCpuCommand { get; }
 
     public AsyncRelayCommand RefreshSetupCommand { get; }
 
@@ -287,12 +278,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public string SelectedPresetDescription => _selectedPreset.Description;
 
     public string SelectedVoiceEngine => _selectedPreset.VoiceEngineName;
-
-    public bool ShowNvidiaPowerfulSwitch => _selectedPreset.Key != SetupPresetKey.NvidiaPowerful;
-
-    public bool ShowNvidiaStandardSwitch => _selectedPreset.Key != SetupPresetKey.NvidiaStandard;
-
-    public bool ShowAmdCpuSwitch => _selectedPreset.Key != SetupPresetKey.AmdCpu;
 
     public string HardwareSummary
     {
@@ -676,9 +661,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedPresetHardware));
         OnPropertyChanged(nameof(SelectedPresetDescription));
         OnPropertyChanged(nameof(SelectedVoiceEngine));
-        OnPropertyChanged(nameof(ShowNvidiaPowerfulSwitch));
-        OnPropertyChanged(nameof(ShowNvidiaStandardSwitch));
-        OnPropertyChanged(nameof(ShowAmdCpuSwitch));
         ApplySelectedPresetToOptions();
         RebuildSetupComponentItems(_setupStatus?.Components ?? []);
     }
@@ -799,14 +781,14 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         if (!status.IsConfigured && string.IsNullOrWhiteSpace(status.Error))
         {
             HuggingFaceStatusText = "Token needed";
-            HuggingFaceStatusDetail = "Do this first. The voice installers use Hugging Face to download Pocket-TTS and Chatterbox models.";
+            HuggingFaceStatusDetail = "Do this first. The voice installer uses Hugging Face to download the Pocket-TTS model.";
             HuggingFaceStatusBackground = StatusWarn;
         }
         else if (IsHuggingFaceReady(status))
         {
             var userSuffix = string.IsNullOrWhiteSpace(status.UserName) ? string.Empty : $" as {status.UserName}";
             HuggingFaceStatusText = $"Ready{userSuffix}";
-            HuggingFaceStatusDetail = "Token is valid and the required cloned-voice models are reachable.";
+            HuggingFaceStatusDetail = "Token is valid and the required cloned-voice model is reachable.";
             HuggingFaceStatusBackground = StatusGood;
         }
         else if (status.IsValid == false)
@@ -940,9 +922,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         BackCommand.RaiseCanExecuteChanged();
         ToggleTechnicalDetailsCommand.RaiseCanExecuteChanged();
         TogglePresetOptionsCommand.RaiseCanExecuteChanged();
-        SelectNvidiaPowerfulCommand.RaiseCanExecuteChanged();
-        SelectNvidiaStandardCommand.RaiseCanExecuteChanged();
-        SelectAmdCpuCommand.RaiseCanExecuteChanged();
         RefreshSetupCommand.RaiseCanExecuteChanged();
         SaveOpenRouterCommand.RaiseCanExecuteChanged();
         RefreshOpenRouterCommand.RaiseCanExecuteChanged();
