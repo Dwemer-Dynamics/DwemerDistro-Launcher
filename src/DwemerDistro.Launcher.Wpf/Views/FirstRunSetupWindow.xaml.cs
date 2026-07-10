@@ -62,11 +62,6 @@ public partial class FirstRunSetupWindow : Window
         Close();
     }
 
-    private void OpenRouterPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
-    {
-        _viewModel.OpenRouterKey = OpenRouterPasswordBox.Password;
-    }
-
     private void HuggingFacePasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
     {
         _viewModel.HuggingFaceTokenValue = HuggingFacePasswordBox.Password;
@@ -74,13 +69,6 @@ public partial class FirstRunSetupWindow : Window
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(FirstRunSetupViewModel.OpenRouterKey) &&
-            string.IsNullOrEmpty(_viewModel.OpenRouterKey) &&
-            !string.IsNullOrEmpty(OpenRouterPasswordBox.Password))
-        {
-            OpenRouterPasswordBox.Clear();
-        }
-
         if (e.PropertyName == nameof(FirstRunSetupViewModel.HuggingFaceTokenValue) &&
             string.IsNullOrEmpty(_viewModel.HuggingFaceTokenValue) &&
             !string.IsNullOrEmpty(HuggingFacePasswordBox.Password))

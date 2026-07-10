@@ -282,6 +282,98 @@
                     </Border>
                 </StackPanel>
 
+                <StackPanel Visibility="{Binding IsUpdateDistroStep, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding StepTitle}"
+                                       FontSize="20"
+                                       FontWeight="Bold" />
+                            <TextBlock Text="Run this first to pull the latest distro scripts and package metadata before the component install."
+                                       Foreground="#D6D6D6"
+                                       TextWrapping="Wrap"
+                                       Margin="0,8,0,0" />
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,16,0,0">
+                                <Button Content="Update Distro"
+                                        Command="{Binding UpdateDistroCommand}"
+                                        Style="{StaticResource PrimaryButton}" />
+                            </StackPanel>
+                            <StackPanel Visibility="{Binding IsInstallingSetup, Converter={StaticResource BoolToVisibilityConverter}}"
+                                        Margin="0,12,0,0">
+                                <TextBlock Text="{Binding SetupInstallProgressText}"
+                                           Foreground="#D6D6D6"
+                                           FontSize="11"
+                                           FontWeight="Bold"
+                                           Margin="0,0,0,6" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ProgressBar Grid.Column="0"
+                                                 Minimum="0"
+                                                 Maximum="100"
+                                                 Value="{Binding SetupInstallProgress, Mode=OneWay}" />
+                                    <Viewbox Grid.Column="1"
+                                             Width="18"
+                                             Height="18"
+                                             Margin="9,0,0,0"
+                                             VerticalAlignment="Center">
+                                        <Canvas Width="20"
+                                                Height="20"
+                                                RenderTransformOrigin="0.5,0.5">
+                                            <Canvas.RenderTransform>
+                                                <RotateTransform x:Name="UpdateSpinnerRotate" />
+                                            </Canvas.RenderTransform>
+                                            <Canvas.Triggers>
+                                                <EventTrigger RoutedEvent="Loaded">
+                                                    <BeginStoryboard>
+                                                        <Storyboard RepeatBehavior="Forever">
+                                                            <DoubleAnimation Storyboard.TargetName="UpdateSpinnerRotate"
+                                                                             Storyboard.TargetProperty="Angle"
+                                                                             From="0"
+                                                                             To="360"
+                                                                             Duration="0:0:0.9" />
+                                                        </Storyboard>
+                                                    </BeginStoryboard>
+                                                </EventTrigger>
+                                            </Canvas.Triggers>
+                                            <Ellipse Width="16"
+                                                     Height="16"
+                                                     Canvas.Left="2"
+                                                     Canvas.Top="2"
+                                                     Stroke="#2F8F3A"
+                                                     StrokeThickness="2"
+                                                     Opacity="0.28" />
+                                            <Path Data="M 10,2 A 8,8 0 0 1 18,10"
+                                                  Stroke="#CFEFCF"
+                                                  StrokeThickness="2.4"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round" />
+                                        </Canvas>
+                                    </Viewbox>
+                                </Grid>
+                                <TextBlock Text="{Binding SetupInstallDetailText}"
+                                           Foreground="#F4D8A6"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
+                                           Margin="0,6,0,0"
+                                           Visibility="{Binding HasSetupInstallDetail, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            </StackPanel>
+                            <TextBlock Text="Output Console"
+                                       Foreground="#FFD700"
+                                       FontWeight="Bold"
+                                       Margin="0,18,0,8" />
+                            <TextBox Text="{Binding SetupLogText, Mode=OneWay}"
+                                     Height="260"
+                                     TextWrapping="Wrap"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     VerticalScrollBarVisibility="Auto" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
                 <StackPanel Visibility="{Binding IsSetupStep, Converter={StaticResource BoolToVisibilityConverter}}">
                     <Border Style="{StaticResource Panel}">
                         <Grid>
@@ -378,9 +470,6 @@
                                 </Border>
                                 <StackPanel Orientation="Horizontal"
                                             Margin="0,18,0,0">
-                                    <Button Content="Update Distro"
-                                            Command="{Binding UpdateDistroCommand}"
-                                            Style="{StaticResource SecondaryButton}" />
                                     <Button Content="{Binding InstallRecommendedButtonText}"
                                             Command="{Binding InstallRecommendedCommand}"
                                             Style="{StaticResource PrimaryButton}" />
@@ -515,101 +604,6 @@
                                     Style="{StaticResource SecondaryButton}"
                                     HorizontalAlignment="Left"
                                     Margin="0,10,0,0" />
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
-
-                <StackPanel Visibility="{Binding IsOpenRouterStep, Converter={StaticResource BoolToVisibilityConverter}}">
-                    <Border Style="{StaticResource Panel}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Grid.Column="0"
-                                        Margin="0,0,16,0">
-                                <TextBlock Text="{Binding StepTitle}"
-                                           FontSize="20"
-                                           FontWeight="Bold" />
-                                <TextBlock Text="Paste the key once. The launcher applies it to CHIM, STOBE, and Dialectic when those databases are installed."
-                                           Foreground="#D6D6D6"
-                                           TextWrapping="Wrap"
-                                           Margin="0,8,0,0" />
-                                <TextBlock Text="{Binding OpenRouterStatusDetail}"
-                                           Foreground="#F4D8A6"
-                                           TextWrapping="Wrap"
-                                           Margin="0,8,0,0" />
-                                <Button Content="Open OpenRouter Keys"
-                                        Command="{Binding OpenOpenRouterKeysCommand}"
-                                        Style="{StaticResource SecondaryButton}"
-                                        HorizontalAlignment="Left"
-                                        Margin="0,16,0,0" />
-                                <PasswordBox x:Name="OpenRouterPasswordBox"
-                                             PasswordChanged="OpenRouterPasswordBox_PasswordChanged"
-                                             Margin="0,12,0,0" />
-                                <Button Content="Apply Key"
-                                        Command="{Binding SaveOpenRouterCommand}"
-                                        Style="{StaticResource PrimaryButton}"
-                                        HorizontalAlignment="Left"
-                                        Margin="0,12,0,0" />
-                            </StackPanel>
-
-                            <Border Grid.Column="1"
-                                    Background="{Binding OpenRouterStatusBackground}"
-                                    CornerRadius="14"
-                                    Padding="12,5"
-                                    VerticalAlignment="Top">
-                                <TextBlock Text="{Binding OpenRouterStatusText}"
-                                           FontSize="11"
-                                           FontWeight="Bold" />
-                            </Border>
-                        </Grid>
-                    </Border>
-
-                    <Border Style="{StaticResource DetailPanel}"
-                            Visibility="{Binding ShowTechnicalDetails, Converter={StaticResource BoolToVisibilityConverter}}">
-                        <StackPanel>
-                            <TextBlock Text="OpenRouter Targets"
-                                       Foreground="#FFD700"
-                                       FontWeight="Bold"
-                                       Margin="0,0,0,10" />
-                            <ItemsControl ItemsSource="{Binding OpenRouterTargets}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel Grid.Column="0"
-                                                        Margin="0,0,12,0">
-                                                <TextBlock Text="{Binding Title}"
-                                                           FontWeight="Bold" />
-                                                <TextBlock Text="{Binding DetailText}"
-                                                           Foreground="#D79C9C"
-                                                           TextWrapping="Wrap"
-                                                           FontSize="11"
-                                                           Visibility="{Binding HasDetail, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                            </StackPanel>
-                                            <Border Grid.Column="1"
-                                                    Background="{Binding StatusBackground}"
-                                                    CornerRadius="12"
-                                                    Padding="10,4"
-                                                    VerticalAlignment="Top">
-                                                <TextBlock Text="{Binding StatusText}"
-                                                           FontSize="11"
-                                                           FontWeight="Bold" />
-                                            </Border>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <Button Content="Refresh"
-                                    Command="{Binding RefreshOpenRouterCommand}"
-                                    Style="{StaticResource SecondaryButton}"
-                                    HorizontalAlignment="Left"
-                                    Margin="0,8,0,0" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
