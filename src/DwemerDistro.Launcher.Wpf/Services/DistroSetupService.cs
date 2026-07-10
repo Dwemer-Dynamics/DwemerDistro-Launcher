@@ -223,6 +223,13 @@ tokens = (
     "ddistro_install.sh",
     "/conf.sh",
     "/install.sh",
+    "/etc/ddistro-full-packages.txt",
+    "apt-get install",
+    "dpkg --configure",
+    "python -m pip install",
+    "pip install",
+    "git clone https://github.com/Dwemer-Dynamics/pocket-tts",
+    "git clone https://github.com/Dwemer-Dynamics/parakeet-api-server",
 )
 
 matches = []

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using DwemerDistro.Launcher.Wpf.Services;
@@ -19,7 +20,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private const string StatusWarn = "#6A3A12";
     private const string StatusBad = "#7A2828";
     private const string StatusUnknown = "#4F3C7A";
-    private const int MaxVisibleSetupLogChars = 60000;
+    private const int MaxVisibleSetupLogChars = 20000;
     private static readonly object QuickstartInstallLogLock = new();
     private static readonly string QuickstartInstallLogPath =
         Path.Combine(AppContext.BaseDirectory, "Logs", "quickstart-install.log");
@@ -34,6 +35,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private readonly HuggingFaceTokenService _huggingFaceToken;
     private readonly VoiceEngineService _voiceEngine;
     private readonly OnboardingStateService _onboardingState = new();
+    private readonly object _visibleSetupLogBufferLock = new();
+    private readonly StringBuilder _visibleSetupLogBuffer = new();
+    private readonly object _setupInstallProgressLock = new();
 
     private SetupPreset _selectedPreset;
     private DistroSetupStatus? _setupStatus;
@@ -47,6 +51,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private bool _showTechnicalDetails;
     private bool _skipHuggingFaceStep = HuggingFaceTokenService.HasManagedToken;
     private bool _quickstartDistroUpdated;
+    private bool _isVisibleSetupLogFlushQueued;
+    private bool _isSetupInstallProgressFlushQueued;
+    private int _setupOutputGeneration;
     private string _busyText = "Working";
     private string _hardwareSummary = "Detecting hardware";
     private string _hardwareDetail = "Checking GPU and recommended setup path...";
@@ -68,6 +75,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private string _voiceStatusDetail = "The launcher will use the cloned voice engine detected in your install.";
     private string _voiceStatusBackground = StatusChecking;
     private string _readySummary = "Finish setup to start DwemerDistro.";
+    private SetupInstallProgress? _pendingSetupInstallProgress;
 
     public FirstRunSetupViewModel(MainWindowViewModel mainWindowViewModel)
     {
@@ -491,6 +499,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         var setupComplete = false;
         await RunBusyAsync($"Installing {_selectedPreset.Title}", async () =>
         {
+            ResetSetupOutputBuffers();
             SetupLogText = string.Empty;
             ResetQuickstartInstallLog();
             SetupInstallProgress = 0;
@@ -498,6 +507,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             SetupInstallDetailText = string.Empty;
             IsInstallingSetup = true;
             AppendSetupLog($"Quickstart install log: {QuickstartInstallLogPath}{Environment.NewLine}");
+            AppendSetupLog("Console output is summarized here to keep the launcher responsive. The full apt and pip output is saved in the quickstart install log." + Environment.NewLine);
             AppendSetupLog($"Recommended path: {_selectedPreset.Title}{Environment.NewLine}");
             try
             {
@@ -529,6 +539,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         await RunBusyAsync("Updating distro", async () =>
         {
+            ResetSetupOutputBuffers();
             SetupLogText = string.Empty;
             ResetQuickstartInstallLog();
             SetupInstallProgress = 0;
@@ -536,6 +547,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             SetupInstallDetailText = string.Empty;
             IsInstallingSetup = true;
             AppendSetupLog($"Quickstart update log: {QuickstartInstallLogPath}{Environment.NewLine}");
+            AppendSetupLog("Console output is summarized here to keep the launcher responsive. The full update output is saved in the quickstart install log." + Environment.NewLine);
             AppendSetupLog("Starting DwemerDistro update. Detailed output is shown in the main launcher log." + Environment.NewLine);
             try
             {
@@ -1016,19 +1028,62 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
 
         AppendQuickstartInstallLog(text);
-
-        void AppendVisible()
+        var visibleText = BuildVisibleSetupLogAppend(text);
+        if (string.IsNullOrEmpty(visibleText))
         {
-            SetupLogText = BuildVisibleSetupLog(SetupLogText, text);
-        }
-
-        if (_dispatcher.CheckAccess())
-        {
-            AppendVisible();
             return;
         }
 
-        _ = _dispatcher.BeginInvoke((Action)AppendVisible, DispatcherPriority.Background);
+        QueueVisibleSetupLog(visibleText, _setupOutputGeneration);
+    }
+
+    private void QueueVisibleSetupLog(string text, int generation)
+    {
+        lock (_visibleSetupLogBufferLock)
+        {
+            if (generation != _setupOutputGeneration)
+            {
+                return;
+            }
+
+            _visibleSetupLogBuffer.Append(text);
+            if (_isVisibleSetupLogFlushQueued)
+            {
+                return;
+            }
+
+            _isVisibleSetupLogFlushQueued = true;
+        }
+
+        _ = _dispatcher.BeginInvoke((Action)(() => FlushVisibleSetupLog(generation)), DispatcherPriority.ContextIdle);
+    }
+
+    private void FlushVisibleSetupLog(int generation)
+    {
+        if (generation != _setupOutputGeneration)
+        {
+            return;
+        }
+
+        string text;
+        lock (_visibleSetupLogBufferLock)
+        {
+            if (generation != _setupOutputGeneration)
+            {
+                _visibleSetupLogBuffer.Clear();
+                _isVisibleSetupLogFlushQueued = false;
+                return;
+            }
+
+            text = _visibleSetupLogBuffer.ToString();
+            _visibleSetupLogBuffer.Clear();
+            _isVisibleSetupLogFlushQueued = false;
+        }
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            SetupLogText = BuildVisibleSetupLog(SetupLogText, text);
+        }
     }
 
     private static void ResetQuickstartInstallLog()
@@ -1067,20 +1122,61 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private void ApplySetupInstallProgress(SetupInstallProgress progress)
     {
-        void Apply()
+        var generation = _setupOutputGeneration;
+        lock (_setupInstallProgressLock)
         {
-            SetupInstallProgress = progress.Percentage;
-            SetupInstallProgressText = $"{progress.StatusText} ({progress.CompletedComponents} of {progress.TotalComponents})";
-            SetupInstallDetailText = progress.DetailText ?? string.Empty;
+            _pendingSetupInstallProgress = progress;
+            if (_isSetupInstallProgressFlushQueued)
+            {
+                return;
+            }
+
+            _isSetupInstallProgressFlushQueued = true;
         }
 
-        if (_dispatcher.CheckAccess())
+        _ = _dispatcher.BeginInvoke((Action)(() => FlushSetupInstallProgress(generation)), DispatcherPriority.Background);
+    }
+
+    private void FlushSetupInstallProgress(int generation)
+    {
+        if (generation != _setupOutputGeneration)
         {
-            Apply();
             return;
         }
 
-        _ = _dispatcher.BeginInvoke((Action)Apply, DispatcherPriority.Background);
+        SetupInstallProgress? progress;
+        lock (_setupInstallProgressLock)
+        {
+            progress = _pendingSetupInstallProgress;
+            _pendingSetupInstallProgress = null;
+            _isSetupInstallProgressFlushQueued = false;
+        }
+
+        if (progress is null)
+        {
+            return;
+        }
+
+        SetupInstallProgress = progress.Percentage;
+        SetupInstallProgressText = $"{progress.StatusText} ({progress.CompletedComponents} of {progress.TotalComponents})";
+        SetupInstallDetailText = progress.DetailText ?? string.Empty;
+    }
+
+    private void ResetSetupOutputBuffers()
+    {
+        _setupOutputGeneration++;
+
+        lock (_visibleSetupLogBufferLock)
+        {
+            _visibleSetupLogBuffer.Clear();
+            _isVisibleSetupLogFlushQueued = false;
+        }
+
+        lock (_setupInstallProgressLock)
+        {
+            _pendingSetupInstallProgress = null;
+            _isSetupInstallProgressFlushQueued = false;
+        }
     }
 
     private static string BuildVisibleSetupLog(string current, string append)
@@ -1101,6 +1197,56 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         return "[Older output is still saved in the full quickstart install log.]" +
                Environment.NewLine +
                visibleTail;
+    }
+
+    private static string BuildVisibleSetupLogAppend(string text)
+    {
+        var builder = new StringBuilder();
+        var normalized = text.Replace("\r", "\n");
+        foreach (var rawLine in normalized.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || IsVerboseInstallerLine(line))
+            {
+                continue;
+            }
+
+            builder.AppendLine(line);
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool IsVerboseInstallerLine(string line)
+    {
+        string[] verbosePrefixes =
+        [
+            "(Reading database",
+            "Selecting previously unselected package",
+            "Preparing to unpack",
+            "Unpacking ",
+            "Setting up ",
+            "Processing triggers for",
+            "Reading package lists",
+            "Building dependency tree",
+            "Reading state information",
+            "Hit:",
+            "Get:",
+            "Ign:",
+            "Fetched ",
+            "The following ",
+            "The following additional packages",
+            "Suggested packages:",
+            "Recommended packages:",
+            "After this operation",
+            "Need to get",
+            "Requirement already satisfied:",
+            "Collecting ",
+            "Downloading ",
+            "Installing collected packages:"
+        ];
+
+        return verbosePrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     }
 
     private void RaiseCommandStates()
