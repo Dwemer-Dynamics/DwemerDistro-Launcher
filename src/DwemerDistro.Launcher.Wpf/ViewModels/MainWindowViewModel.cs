@@ -25,6 +25,40 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static readonly TimeSpan StartupFirstRunProbeTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan StartupLauncherUpdateTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StartupVersionCheckTimeout = TimeSpan.FromSeconds(20);
+    private const string ChimMcpInstallScript = """
+set -e
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+cd /home/dwemer
+
+node_path=$(command -v node 2>/dev/null || true)
+npm_path=$(command -v npm 2>/dev/null || true)
+if [ -z "$node_path" ] || [ -z "$npm_path" ] || [[ "$node_path" == /mnt/c/* ]] || [[ "$node_path" == *.exe ]] || [[ "$npm_path" == /mnt/c/* ]] || [[ "$npm_path" == *.cmd ]]; then
+    echo "Installing Linux nodejs/npm for CHIM-MCP..."
+    echo dwemer | sudo -S apt-get update
+    echo dwemer | sudo -S apt-get -y install nodejs npm
+    export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+fi
+
+if [ ! -d CHIM-MCP/.git ]; then
+    rm -rf CHIM-MCP
+    git clone https://github.com/Dwemer-Dynamics/CHIM-MCP.git CHIM-MCP
+else
+    git -C CHIM-MCP reset --hard HEAD
+    git -C CHIM-MCP pull --ff-only
+fi
+
+cd CHIM-MCP
+if [ -f package-lock.json ]; then
+    npm ci
+else
+    npm install
+fi
+
+npm run build
+test -f dist/index.js
+echo 1 > /home/dwemer/.mcp_enabled
+echo "CHIM-MCP installed and enabled."
+""";
 
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _startAnimationTimer;
@@ -111,6 +145,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         InstallParakeetCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d parakeet-api-server/.git ]; then rm -rf parakeet-api-server; git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server; fi; /home/dwemer/parakeet-api-server/ddistro_install.sh\""));
         InstallPocketTtsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d pocket-tts/.git ]; then rm -rf pocket-tts; git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts; fi; /home/dwemer/pocket-tts/ddistro_install.sh\""));
         InstallOmniVoiceCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d omnivoice-tts ]; then git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts; fi; /home/dwemer/omnivoice-tts/ddistro_install.sh\""));
+        InstallChimMcpCommand = new RelayCommand(() => RunCommandInNewWindow(BuildDistroBashConsoleCommand(ChimMcpInstallScript)));
         ConfigureOmniVoiceCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/omnivoice-tts/conf.sh"));
         OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"));
 
@@ -317,6 +352,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public RelayCommand InstallParakeetCommand { get; }
     public RelayCommand InstallPocketTtsCommand { get; }
     public RelayCommand InstallOmniVoiceCommand { get; }
+    public RelayCommand InstallChimMcpCommand { get; }
     public RelayCommand ConfigureOmniVoiceCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
@@ -383,7 +419,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             LauncherLogService.Startup($"First-time setup startup check timed out after {StartupFirstRunProbeTimeout.TotalSeconds:0} seconds.");
-            AppendLog("First-time setup check timed out. Use the First Time Setup button if this is a fresh install." + Environment.NewLine, "yellow");
+            AppendLog("First-time setup check timed out. Open Debugging > First-Time Setup if this is a fresh install." + Environment.NewLine, "yellow");
             return;
         }
         catch (Exception ex)
@@ -3423,6 +3459,12 @@ fi
     private static string EscapeForSingleQuotedBash(string value)
     {
         return $"'{value.Replace("'", "'\"'\"'")}'";
+    }
+
+    private static string BuildDistroBashConsoleCommand(string script)
+    {
+        var encodedScript = Convert.ToBase64String(Encoding.UTF8.GetBytes(script.Replace("\r\n", "\n")));
+        return $"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"printf %s {encodedScript} | base64 -d | bash\"";
     }
 
     private async Task FlushUpdateUiAsync()

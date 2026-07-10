@@ -261,7 +261,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         IntroStepIndex => "Quick Setup",
         UpdateDistroStepIndex => "Update Distro",
         HuggingFaceStepIndex => "Connect Hugging Face",
-        SetupStepIndex => "Install Components",
+        SetupStepIndex => "Components",
         _ => "Setup Complete"
     };
 

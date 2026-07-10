@@ -35,6 +35,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                     definition.AccessUrl,
                     () => _processRunner.OpenExternalUrl(definition.AccessUrl))));
         _modelAccessItemsByKey = HuggingFaceModelAccessItems.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
+        ConfigureInstalledComponentsCommand = mainWindowViewModel.ConfigureInstalledComponentsCommand;
         Sections = new ObservableCollection<InstallComponentSectionViewModel>(
             BuildSections(mainWindowViewModel, _allItems));
     }
@@ -44,6 +45,22 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     public ObservableCollection<HuggingFaceModelAccessViewModel> HuggingFaceModelAccessItems { get; }
 
     public AsyncRelayCommand RefreshHuggingFaceTokenCommand { get; }
+
+    public ICommand ConfigureInstalledComponentsCommand { get; }
+
+    public bool HasManagedHuggingFaceToken => HuggingFaceTokenService.HasManagedToken;
+
+    public string HuggingFaceAccessTitle => HasManagedHuggingFaceToken
+        ? "Hugging Face Access"
+        : "Hugging Face Token";
+
+    public string HuggingFaceReplaceButtonText => HasManagedHuggingFaceToken
+        ? "Use Own Token"
+        : "Replace Token";
+
+    public string HuggingFaceAccessSummary => HasManagedHuggingFaceToken
+        ? "Built-in access is configured automatically for cloned voice model downloads. Use your own token only if you need to override it."
+        : "Add a Hugging Face token for Pocket-TTS and Chatterbox voice model downloads.";
 
     public string HuggingFaceTokenStatusText
     {
@@ -147,7 +164,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     public void SetHuggingFaceTokenReplacedState()
     {
         HuggingFaceTokenStatusText = "Replaced, not verified";
-        HuggingFaceTokenDetailText = "Token was replaced in WSL. Click Refresh to verify Hugging Face and model access.";
+        HuggingFaceTokenDetailText = "Your token was saved in WSL. Click Refresh to verify access.";
         HuggingFaceTokenStatusBackground = "#4F3C7A";
         HuggingFaceTokenStatusForeground = "White";
         foreach (var model in HuggingFaceModelAccessItems)
@@ -158,9 +175,11 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
     public void SetHuggingFaceTokenClearedState()
     {
-        HuggingFaceTokenStatusText = "Not configured";
-        HuggingFaceTokenDetailText = "Token was cleared from WSL. Pocket-TTS needs a token and accepted model access for voice cloning.";
-        HuggingFaceTokenStatusBackground = "#6A3A12";
+        HuggingFaceTokenStatusText = HasManagedHuggingFaceToken ? "Built-in access available" : "Not configured";
+        HuggingFaceTokenDetailText = HasManagedHuggingFaceToken
+            ? "Your token was cleared. Click Refresh to restore built-in Hugging Face access."
+            : "Token was cleared from WSL. Voice cloning downloads need Hugging Face access.";
+        HuggingFaceTokenStatusBackground = HasManagedHuggingFaceToken ? "#4F3C7A" : "#6A3A12";
         HuggingFaceTokenStatusForeground = "White";
         foreach (var model in HuggingFaceModelAccessItems)
         {
@@ -171,7 +190,9 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private void SetHuggingFaceTokenCheckingState()
     {
         HuggingFaceTokenStatusText = "Checking";
-        HuggingFaceTokenDetailText = "Checking /home/dwemer/.cache/huggingface/token...";
+        HuggingFaceTokenDetailText = HasManagedHuggingFaceToken
+            ? "Setting up built-in Hugging Face access..."
+            : "Checking Hugging Face token status...";
         HuggingFaceTokenStatusBackground = "#555555";
         HuggingFaceTokenStatusForeground = "White";
         foreach (var model in HuggingFaceModelAccessItems)
@@ -186,18 +207,21 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
         if (!status.IsConfigured && string.IsNullOrWhiteSpace(status.Error))
         {
-            HuggingFaceTokenStatusText = "Not configured";
-            HuggingFaceTokenDetailText = "No token detected. Pocket-TTS needs a token and accepted model access for voice cloning.";
-            HuggingFaceTokenStatusBackground = "#6A3A12";
+            HuggingFaceTokenStatusText = HasManagedHuggingFaceToken ? "Built-in access available" : "Not configured";
+            HuggingFaceTokenDetailText = HasManagedHuggingFaceToken
+                ? "Click Refresh to install the built-in Hugging Face access token."
+                : "No token detected. Voice cloning downloads need Hugging Face access.";
+            HuggingFaceTokenStatusBackground = HasManagedHuggingFaceToken ? "#4F3C7A" : "#6A3A12";
             HuggingFaceTokenStatusForeground = "White";
             return;
         }
 
         if (status.IsValid == true)
         {
-            var userSuffix = string.IsNullOrWhiteSpace(status.UserName) ? string.Empty : $": {status.UserName}";
-            HuggingFaceTokenStatusText = $"Valid{userSuffix}";
-            HuggingFaceTokenDetailText = $"Token detected at {status.TokenSource} and verified with Hugging Face.";
+            HuggingFaceTokenStatusText = HasManagedHuggingFaceToken ? "Ready" : "Valid";
+            HuggingFaceTokenDetailText = HasManagedHuggingFaceToken
+                ? "Built-in Hugging Face access is ready for voice model downloads."
+                : "Token verified with Hugging Face.";
             HuggingFaceTokenStatusBackground = "#285A2D";
             HuggingFaceTokenStatusForeground = "White";
             return;
@@ -216,8 +240,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         {
             HuggingFaceTokenStatusText = "Detected, not verified";
             HuggingFaceTokenDetailText = string.IsNullOrWhiteSpace(status.Error)
-                ? $"Token detected at {status.TokenSource}, but validation did not complete."
-                : $"Token detected at {status.TokenSource}, but validation did not complete: {status.Error}";
+                ? "Hugging Face access is saved, but validation did not complete."
+                : $"Hugging Face access is saved, but validation did not complete: {status.Error}";
             HuggingFaceTokenStatusBackground = "#4F3C7A";
             HuggingFaceTokenStatusForeground = "White";
             return;
@@ -449,6 +473,16 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 primaryCommand: mainWindowViewModel.InstallMinimeT5Command,
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true)));
+
+        sections.Add(CreateSection(
+            "Integrations",
+            allItems,
+            CreateItem(
+                key: "chimmcp",
+                title: "CHIM-MCP",
+                description: "Optional MCP integration for CHIM tooling. Install this only when you want MCP support.",
+                installCheckExpression: "Path('/home/dwemer/CHIM-MCP/dist/index.js').exists()",
+                primaryCommand: mainWindowViewModel.InstallChimMcpCommand)));
 
         sections.Add(CreateSection(
             "Text-to-Speech Engines",
