@@ -27,7 +27,13 @@ public sealed class RelayCommand : ICommand
 
     public void RaiseCanExecuteChanged()
     {
-        CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        dispatcher.BeginInvoke(new Action(() => CanExecuteChanged?.Invoke(this, EventArgs.Empty)));
     }
 }
-

@@ -864,8 +864,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         finally
         {
-            IsDistroUpdateInProgress = false;
-            DistroUpdateButtonText = "Update";
+            RunOnUi(() =>
+            {
+                IsDistroUpdateInProgress = false;
+                DistroUpdateButtonText = "Update";
+            });
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Nexus version check", _ => CheckNexusVersionsAsync(), StartupVersionCheckTimeout);
