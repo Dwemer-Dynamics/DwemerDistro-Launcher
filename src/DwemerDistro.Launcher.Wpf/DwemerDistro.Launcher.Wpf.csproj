@@ -8,9 +8,9 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>DwemerDistro</AssemblyName>
-    <Version>3.0.22</Version>
-    <FileVersion>3.0.22.0</FileVersion>
-    <AssemblyVersion>3.0.22.0</AssemblyVersion>
+    <Version>3.0.23</Version>
+    <FileVersion>3.0.23.0</FileVersion>
+    <AssemblyVersion>3.0.23.0</AssemblyVersion>
     <ApplicationIcon>Assets\DwemerDistro.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -22,5 +22,23 @@
     <Resource Include="Assets\*.gif" />
     <Resource Include="Assets\*.ico" />
   </ItemGroup>
+
+  <Target Name="GenerateLauncherSecrets" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <LauncherSecretsGeneratedFile>$(IntermediateOutputPath)Generated\LauncherSecrets.g.cs</LauncherSecretsGeneratedFile>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)Generated" />
+    <ItemGroup>
+      <LauncherSecretsLines Include="namespace DwemerDistro.Launcher.Wpf.Services%3B" />
+      <LauncherSecretsLines Include="internal static class LauncherSecrets" />
+      <LauncherSecretsLines Include="{" />
+      <LauncherSecretsLines Include="    public const string ManagedHuggingFaceToken = &quot;$(ManagedHuggingFaceToken)&quot;%3B" />
+      <LauncherSecretsLines Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(LauncherSecretsGeneratedFile)" Lines="@(LauncherSecretsLines)" Overwrite="true" />
+    <ItemGroup>
+      <Compile Include="$(LauncherSecretsGeneratedFile)" />
+    </ItemGroup>
+  </Target>
 
 </Project>

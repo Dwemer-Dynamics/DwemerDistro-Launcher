@@ -39,6 +39,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private bool _isInstallingSetup;
     private bool _showPresetOptions;
     private bool _showTechnicalDetails;
+    private bool _skipHuggingFaceStep = HuggingFaceTokenService.HasManagedToken;
     private string _busyText = "Working";
     private string _hardwareSummary = "Detecting hardware";
     private string _hardwareDetail = "Checking GPU and recommended setup path...";
@@ -188,7 +189,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public bool IsSetupIntroStep => CurrentStepIndex == 0;
 
-    public bool IsHuggingFaceStep => CurrentStepIndex == 1;
+    public bool IsHuggingFaceStep => CurrentStepIndex == 1 && !_skipHuggingFaceStep;
 
     public bool IsSetupStep => CurrentStepIndex == 2;
 
@@ -198,7 +199,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public bool ShowContinueButton => !IsReadyStep && !IsSetupIntroStep;
 
-    public string CurrentStepLabel => $"Step {CurrentStepIndex + 1} of 5";
+    public string CurrentStepLabel => $"Step {GetDisplayStepNumber()} of {GetTotalStepCount()}";
 
     public bool IsBusy
     {
@@ -258,7 +259,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public string StepSubtitle => CurrentStepIndex switch
     {
-        0 => "Use the detected setup path, or skip this install step if the distro is already configured.",
+        0 => _skipHuggingFaceStep
+            ? "Voice model access is handled automatically. Continue with the detected setup path."
+            : "Use the detected setup path, or skip this install step if the distro is already configured.",
         1 => "The installers use Hugging Face to download cloned voice models.",
         2 => "The launcher shows only the detected setup path and installs the components first-time users need.",
         3 => "One key is applied to every installed Dwemer game profile.",
@@ -267,7 +270,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public string PrimaryContinueText => CurrentStepIndex switch
     {
-        0 => "Continue",
+        0 => _skipHuggingFaceStep ? "Continue to Install" : "Continue",
         1 => "Continue to Install",
         2 => "Continue to OpenRouter",
         3 => "Continue to Ready",
@@ -421,6 +424,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             ApplyPreset(hardware.RecommendedPreset);
             await RefreshSetupCoreAsync().ConfigureAwait(true);
             await RefreshOpenRouterStatusCoreAsync().ConfigureAwait(true);
+            await _huggingFaceToken.EnsureManagedTokenAsync().ConfigureAwait(true);
             await RefreshHuggingFaceStatusCoreAsync().ConfigureAwait(true);
         }).ConfigureAwait(true);
     }
@@ -471,6 +475,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                         ApplySetupInstallProgress)
                     .ConfigureAwait(true);
                 ApplySetupStatus(status);
+                await RefreshHuggingFaceStatusCoreAsync().ConfigureAwait(true);
                 await RefreshVoiceStatusCoreAsync().ConfigureAwait(true);
             }
             finally
@@ -523,7 +528,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
-        CurrentStepIndex++;
+        CurrentStepIndex = GetNextStepIndex(CurrentStepIndex);
     }
 
     private void SkipRecommendedSetup()
@@ -543,7 +548,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
-        CurrentStepIndex--;
+        CurrentStepIndex = GetPreviousStepIndex(CurrentStepIndex);
     }
 
     private async Task RefreshSetupAsync()
@@ -667,6 +672,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             item.SetCheckingState();
         }
 
+        await _huggingFaceToken.EnsureManagedTokenAsync().ConfigureAwait(true);
         var status = await _huggingFaceToken.GetStatusAsync().ConfigureAwait(true);
         ApplyHuggingFaceStatus(status);
     }
@@ -827,6 +833,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             HuggingFaceStatusBackground = StatusUnknown;
         }
 
+        ApplyHuggingFaceStepState(IsHuggingFaceReady(status));
         RaiseCommandStates();
     }
 
@@ -879,6 +886,52 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             4 => _voiceEngineStatus?.HasUsableEngine == true,
             _ => false
         };
+    }
+
+    private void ApplyHuggingFaceStepState(bool shouldSkip)
+    {
+        var skipStep = HuggingFaceTokenService.HasManagedToken || shouldSkip;
+        if (_skipHuggingFaceStep == skipStep)
+        {
+            return;
+        }
+
+        _skipHuggingFaceStep = skipStep;
+        OnPropertyChanged(nameof(IsHuggingFaceStep));
+        OnPropertyChanged(nameof(CurrentStepLabel));
+        OnPropertyChanged(nameof(StepSubtitle));
+        OnPropertyChanged(nameof(PrimaryContinueText));
+
+        if (_skipHuggingFaceStep && CurrentStepIndex == 1)
+        {
+            CurrentStepIndex = GetNextStepIndex(CurrentStepIndex);
+        }
+    }
+
+    private int GetNextStepIndex(int currentStepIndex)
+    {
+        return _skipHuggingFaceStep && currentStepIndex == 0
+            ? 2
+            : Math.Min(4, currentStepIndex + 1);
+    }
+
+    private int GetPreviousStepIndex(int currentStepIndex)
+    {
+        return _skipHuggingFaceStep && currentStepIndex == 2
+            ? 0
+            : Math.Max(0, currentStepIndex - 1);
+    }
+
+    private int GetTotalStepCount()
+    {
+        return _skipHuggingFaceStep ? 4 : 5;
+    }
+
+    private int GetDisplayStepNumber()
+    {
+        return _skipHuggingFaceStep && CurrentStepIndex > 1
+            ? CurrentStepIndex
+            : CurrentStepIndex + 1;
     }
 
     private async Task RunBusyAsync(string busyText, Func<Task> action)

@@ -40,6 +40,7 @@ jobs:
           /p:Version=${{ steps.version.outputs.value }}
           /p:FileVersion=${{ steps.version.outputs.value }}.0
           /p:AssemblyVersion=${{ steps.version.outputs.value }}.0
+          /p:ManagedHuggingFaceToken=${{ secrets.DWEMER_MANAGED_HF_TOKEN }}
           /p:PublishSingleFile=true
           /p:IncludeNativeLibrariesForSelfExtract=true
           -o .\artifacts\publish\launcher

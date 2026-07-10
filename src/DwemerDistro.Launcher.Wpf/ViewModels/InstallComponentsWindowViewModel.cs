@@ -81,6 +81,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         try
         {
             using var timeout = new CancellationTokenSource(HuggingFaceTokenStatusTimeout);
+            await _huggingFaceToken.EnsureManagedTokenAsync(timeout.Token).ConfigureAwait(true);
             var status = await _huggingFaceToken.GetStatusAsync(timeout.Token).ConfigureAwait(true);
             ApplyHuggingFaceTokenStatus(status);
         }

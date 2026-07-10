@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using DwemerDistro.Launcher.Wpf.Models;
 
@@ -8,13 +7,25 @@ public sealed class HuggingFaceTokenService(WslService wsl)
 {
     public const string TokenPath = "/home/dwemer/.cache/huggingface/token";
 
+    public static bool HasManagedToken => !string.IsNullOrWhiteSpace(LauncherSecrets.ManagedHuggingFaceToken);
+
     public static readonly IReadOnlyList<HuggingFaceModelAccessDefinition> RequiredModelAccess = new[]
     {
         new HuggingFaceModelAccessDefinition(
             "pockettts",
             "Pocket-TTS voice cloning",
             "kyutai/pocket-tts",
-            "https://huggingface.co/kyutai/pocket-tts")
+            "https://huggingface.co/kyutai/pocket-tts"),
+        new HuggingFaceModelAccessDefinition(
+            "chatterbox",
+            "Chatterbox voice cloning",
+            "ResembleAI/chatterbox",
+            "https://huggingface.co/ResembleAI/chatterbox"),
+        new HuggingFaceModelAccessDefinition(
+            "chatterbox-turbo",
+            "Chatterbox Turbo voice cloning",
+            "ResembleAI/chatterbox-turbo",
+            "https://huggingface.co/ResembleAI/chatterbox-turbo")
     };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -79,6 +90,29 @@ public sealed class HuggingFaceTokenService(WslService wsl)
         return result.Succeeded ? result.StandardOutput.Trim() : null;
     }
 
+    public Task<bool> EnsureManagedTokenAsync(CancellationToken cancellationToken = default)
+    {
+        return EnsureManagedTokenAsync(overwriteExisting: false, cancellationToken);
+    }
+
+    public async Task<bool> EnsureManagedTokenAsync(bool overwriteExisting, CancellationToken cancellationToken = default)
+    {
+        if (!HasManagedToken)
+        {
+            return false;
+        }
+
+        var currentToken = await ReadTokenAsync(cancellationToken).ConfigureAwait(false);
+        if (!overwriteExisting && !string.IsNullOrWhiteSpace(currentToken))
+        {
+            return false;
+        }
+
+        var result = await SaveTokenAsync(LauncherSecrets.ManagedHuggingFaceToken, cancellationToken)
+            .ConfigureAwait(false);
+        return result.Succeeded;
+    }
+
     public Task<CommandResult> SaveTokenAsync(string token, CancellationToken cancellationToken = default)
     {
         var normalizedToken = (token ?? string.Empty).Trim();
@@ -87,10 +121,10 @@ public sealed class HuggingFaceTokenService(WslService wsl)
             return ClearTokenAsync(cancellationToken);
         }
 
-        var encodedToken = Convert.ToBase64String(Encoding.UTF8.GetBytes(normalizedToken));
-        return wsl.RunDistroAsUserAsync(
+        return wsl.RunDistroAsUserWithInputAsync(
             LauncherConstants.DistroUser,
-            new[] { "python3", "-c", SaveTokenScript, encodedToken },
+            new[] { "python3", "-c", SaveTokenScript },
+            normalizedToken,
             cancellationToken: cancellationToken);
     }
 
@@ -118,11 +152,10 @@ if path.exists():
 
     private const string SaveTokenScript = """
 from pathlib import Path
-import base64
 import os
 import sys
 
-token = base64.b64decode(sys.argv[1]).decode("utf-8").strip()
+token = sys.stdin.read().strip()
 path = Path.home() / ".cache" / "huggingface" / "token"
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(token + "\n", encoding="utf-8")
@@ -159,6 +192,20 @@ models = [
         "repositoryId": "kyutai/pocket-tts",
         "accessUrl": "https://huggingface.co/kyutai/pocket-tts",
         "probeUrl": "https://huggingface.co/kyutai/pocket-tts/resolve/main/languages/english/model.safetensors",
+    },
+    {
+        "key": "chatterbox",
+        "displayName": "Chatterbox voice cloning",
+        "repositoryId": "ResembleAI/chatterbox",
+        "accessUrl": "https://huggingface.co/ResembleAI/chatterbox",
+        "probeUrl": "https://huggingface.co/ResembleAI/chatterbox/resolve/main/ve.safetensors",
+    },
+    {
+        "key": "chatterbox-turbo",
+        "displayName": "Chatterbox Turbo voice cloning",
+        "repositoryId": "ResembleAI/chatterbox-turbo",
+        "accessUrl": "https://huggingface.co/ResembleAI/chatterbox-turbo",
+        "probeUrl": "https://huggingface.co/ResembleAI/chatterbox-turbo/resolve/main/t3_turbo_v1.yaml",
     }
 ]
 

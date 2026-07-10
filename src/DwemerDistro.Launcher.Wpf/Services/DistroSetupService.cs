@@ -86,6 +86,8 @@ if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
     exit 22
 fi
 
+export HF_TOKEN="$(cat /home/dwemer/.cache/huggingface/token 2>/dev/null || true)"
+
 mkdir -p /home/dwemer
 cd /home/dwemer
 
@@ -421,6 +423,18 @@ PY
             totalComponents,
             PrepareComponent.Title,
             "Distro prepared"));
+
+        if (HuggingFaceTokenService.HasManagedToken)
+        {
+            var tokenService = new HuggingFaceTokenService(wsl);
+            var seededToken = await tokenService.EnsureManagedTokenAsync(
+                    overwriteExisting: true,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            output?.Invoke(seededToken
+                ? "Managed Hugging Face token configured for voice model downloads." + Environment.NewLine
+                : "Hugging Face token already configured for voice model downloads." + Environment.NewLine);
+        }
 
         foreach (var componentKey in preset.ComponentKeys)
         {
