@@ -490,7 +490,7 @@ echo "CHIM-MCP installed and enabled."
             var packagePath = await _launcherUpdateService.DownloadUpdatePackageAsync(update, progress =>
             {
                 var statusText = $"Downloading launcher update before setup... {progress}%";
-                SetLauncherUpdateState(statusText, "White", false, $"Download {progress}%");
+                SetLauncherUpdateState(statusText, "White", false, $"Update {progress}%");
             }, cancellationToken).ConfigureAwait(false);
 
             AppendLog("Launcher update downloaded. Closing launcher to apply update before first-time setup..." + Environment.NewLine, "green");
@@ -1181,7 +1181,7 @@ echo "CHIM-MCP installed and enabled."
             var packagePath = await _launcherUpdateService.DownloadUpdatePackageAsync(_pendingLauncherUpdate, progress =>
             {
                 var statusText = $"Downloading launcher update... {progress}%";
-                SetLauncherUpdateState(statusText, "White", false, $"Download {progress}%");
+                SetLauncherUpdateState(statusText, "White", false, $"Update {progress}%");
             }).ConfigureAwait(false);
 
             AppendLog("Launcher update downloaded. Closing launcher to apply update..." + Environment.NewLine, "green");

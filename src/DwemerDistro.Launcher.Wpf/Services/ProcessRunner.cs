@@ -347,13 +347,15 @@ public sealed class ProcessRunner
         Action<string> onLine,
         CancellationToken cancellationToken = default)
     {
-        while (!reader.EndOfStream && !cancellationToken.IsCancellationRequested)
+        while (!cancellationToken.IsCancellationRequested)
         {
             var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-            if (line is not null)
+            if (line is null)
             {
-                onLine(line.Replace("\0", string.Empty));
+                break;
             }
+
+            onLine(line.Replace("\0", string.Empty));
         }
     }
 }

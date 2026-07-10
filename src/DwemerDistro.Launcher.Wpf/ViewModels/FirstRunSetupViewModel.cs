@@ -293,7 +293,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     };
 
     public string InstallRecommendedButtonText =>
-        _setupStatus?.AllRequiredInstalled == true ? "Continue to Start Server" : "Install Recommended Setup";
+        _setupStatus?.AllRequiredInstalled == true ? "Continue to Start Server" : "Install";
 
     public string SelectedPresetTitle => _selectedPreset.Title;
 
@@ -548,7 +548,6 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             SetupInstallDetailText = string.Empty;
             IsInstallingSetup = true;
             AppendSetupLog($"Quickstart update log: {QuickstartInstallLogPath}{Environment.NewLine}");
-            AppendSetupLog("Console output is summarized here to keep the launcher responsive. The full update output is saved in the quickstart install log." + Environment.NewLine);
             AppendSetupLog("Starting DwemerDistro update. Detailed output is shown in the main launcher log." + Environment.NewLine);
             try
             {
