@@ -82,7 +82,6 @@ echo "CHIM-MCP installed and enabled."
     private string _herikaStatusColor = "White";
     private string _stobeStatusText = "StobeServer: ...";
     private string _stobeStatusColor = "White";
-    private string _nexusVersionText = "CHIM Nexus: ... | STOBE Nexus: ...";
     private string _launcherVersionText = $"Launcher Version: {LauncherConstants.LauncherVersion}";
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
@@ -231,12 +230,6 @@ echo "CHIM-MCP installed and enabled."
         private set => SetProperty(ref _stobeStatusColor, value);
     }
 
-    public string NexusVersionText
-    {
-        get => _nexusVersionText;
-        private set => SetProperty(ref _nexusVersionText, value);
-    }
-
     public string LauncherVersionText
     {
         get => _launcherVersionText;
@@ -382,7 +375,6 @@ echo "CHIM-MCP installed and enabled."
         await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Nexus version check", _ => CheckNexusVersionsAsync(), StartupVersionCheckTimeout);
         QueueBackgroundTask("Launcher update check", cancellationToken => CheckLauncherUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueServerStatusRefresh();
         LauncherLogService.Startup("MainWindowViewModel initialization completed.");
@@ -903,7 +895,6 @@ echo "CHIM-MCP installed and enabled."
             });
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Nexus version check", _ => CheckNexusVersionsAsync(), StartupVersionCheckTimeout);
         }
     }
 
@@ -1109,13 +1100,6 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private async Task CheckNexusVersionsAsync()
-    {
-        var chimVersion = await GetNexusVersionAsync(LauncherConstants.ChimNexusUrl).ConfigureAwait(false) ?? "N/A";
-        var stobeVersion = await GetNexusVersionAsync(LauncherConstants.StobeNexusUrl).ConfigureAwait(false) ?? "N/A";
-        RunOnUi(() => NexusVersionText = $"CHIM Nexus: {chimVersion} | STOBE Nexus: {stobeVersion}");
-    }
-
     private async Task CheckLauncherUpdatesAsync(CancellationToken cancellationToken = default)
     {
         try
@@ -1196,20 +1180,6 @@ echo "CHIM-MCP installed and enabled."
                 true,
                 "Retry Update");
             AppendLog($"Launcher update failed: {ex.Message}{Environment.NewLine}", "red");
-        }
-    }
-
-    private async Task<string?> GetNexusVersionAsync(string url)
-    {
-        try
-        {
-            var html = await _httpClient.GetStringAsync(url).ConfigureAwait(false);
-            var match = NexusVersionRegex().Match(html);
-            return match.Success ? match.Groups[1].Value : null;
-        }
-        catch
-        {
-            return null;
         }
     }
 
@@ -3401,7 +3371,6 @@ fi
 
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Nexus version check", _ => CheckNexusVersionsAsync(), StartupVersionCheckTimeout);
         }
         catch (Exception ex)
         {
@@ -3671,9 +3640,6 @@ fi
 
     [GeneratedRegex(@"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")]
     private static partial Regex AnsiRegex();
-
-    [GeneratedRegex(@"(?:Version|version)[^<]{0,120}</[^>]+>\s*<[^>]+[^>]*>(\d+\.\d+\.\d+)")]
-    private static partial Regex NexusVersionRegex();
 
     private sealed record RollbackServerConfig(
         string Key,

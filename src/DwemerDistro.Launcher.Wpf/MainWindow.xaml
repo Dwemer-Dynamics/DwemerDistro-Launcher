@@ -349,9 +349,6 @@
                             </StackPanel>
                         </Border>
 
-                        <TextBlock Text="{Binding NexusVersionText}"
-                                   Style="{StaticResource SectionCaption}"
-                                   Margin="0,10,0,0" />
                     </StackPanel>
                 </Border>
 
@@ -359,31 +356,9 @@
                     <StackPanel>
                         <TextBlock Text="Server Configuration"
                                    Style="{StaticResource SectionTitle}" />
-                        <Button Command="{Binding OpenServerFolderCommand}"
+                        <Button Command="{Binding InstallComponentsCommand}"
                                 Style="{StaticResource PrimaryControlButton}"
                                 Margin="0,10,0,6">
-                            <Button.Content>
-                                <StackPanel Orientation="Horizontal">
-                                    <Viewbox Width="12"
-                                             Height="12"
-                                             Margin="0,0,8,0">
-                                        <Canvas Width="12"
-                                                Height="12">
-                                            <Path Data="M 1 3 L 4.5 3 L 5.8 4.6 L 11 4.6 L 11 10.5 L 1 10.5 Z"
-                                                  Fill="White" />
-                                        </Canvas>
-                                    </Viewbox>
-                                    <TextBlock Text="Open Server Folder"
-                                               Foreground="White"
-                                               FontFamily="Trebuchet MS"
-                                               FontSize="11"
-                                               FontWeight="Bold"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button.Content>
-                        </Button>
-                        <Button Command="{Binding InstallComponentsCommand}"
-                                Style="{StaticResource PrimaryControlButton}">
                             <Button.Content>
                                 <StackPanel Orientation="Horizontal">
                                     <Viewbox Width="12"
@@ -400,6 +375,28 @@
                                         </Canvas>
                                     </Viewbox>
                                     <TextBlock Text="Components"
+                                               Foreground="White"
+                                               FontFamily="Trebuchet MS"
+                                               FontSize="11"
+                                               FontWeight="Bold"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button.Content>
+                        </Button>
+                        <Button Command="{Binding OpenServerFolderCommand}"
+                                Style="{StaticResource PrimaryControlButton}">
+                            <Button.Content>
+                                <StackPanel Orientation="Horizontal">
+                                    <Viewbox Width="12"
+                                             Height="12"
+                                             Margin="0,0,8,0">
+                                        <Canvas Width="12"
+                                                Height="12">
+                                            <Path Data="M 1 3 L 4.5 3 L 5.8 4.6 L 11 4.6 L 11 10.5 L 1 10.5 Z"
+                                                  Fill="White" />
+                                        </Canvas>
+                                    </Viewbox>
+                                    <TextBlock Text="Open Server Folder"
                                                Foreground="White"
                                                FontFamily="Trebuchet MS"
                                                FontSize="11"
