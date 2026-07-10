@@ -250,7 +250,7 @@
 
                             <StackPanel Grid.Column="0"
                                         Margin="0,0,10,0">
-                                <TextBlock Text="Mod Updates"
+                                <TextBlock Text="Distro Updates"
                                            Style="{StaticResource SectionTitle}" />
                             </StackPanel>
 
@@ -467,6 +467,7 @@
                                     Style="{StaticResource LauncherUpdateControlButton}"
                                     IsEnabled="{Binding CanUpdateLauncher}"
                                     HorizontalContentAlignment="Center"
+                                    Width="124"
                                     Margin="0,0,0,0"
                                     VerticalAlignment="Center">
                                 <Button.Content>

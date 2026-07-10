@@ -800,6 +800,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 SetupComponents.Add(new SetupComponentQuickstartViewModel(
                     state.Title,
                     state.Description,
+                    state.IsInstalled,
                     state.IsInstalled ? "Done" : "Install",
                     state.IsInstalled ? StatusGood : StatusWarn,
                     state.Error));
@@ -809,6 +810,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 SetupComponents.Add(new SetupComponentQuickstartViewModel(
                     component.Title,
                     component.Description,
+                    false,
                     "Checking",
                     StatusChecking,
                     null));
@@ -1132,6 +1134,13 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private void ApplySetupInstallProgress(SetupInstallProgress progress)
     {
+        if (progress.IsInstalled == true && !_dispatcher.HasShutdownStarted)
+        {
+            _ = _dispatcher.BeginInvoke(
+                (Action)(() => MarkSetupComponentInstalled(progress.ComponentTitle)),
+                DispatcherPriority.Background);
+        }
+
         var generation = _setupOutputGeneration;
         lock (_setupInstallProgressLock)
         {
@@ -1145,6 +1154,13 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
 
         _ = FlushSetupInstallProgressLaterAsync(generation);
+    }
+
+    private void MarkSetupComponentInstalled(string componentTitle)
+    {
+        var component = SetupComponents.FirstOrDefault(item =>
+            string.Equals(item.Title, componentTitle, StringComparison.OrdinalIgnoreCase));
+        component?.MarkInstalled();
     }
 
     private async Task FlushSetupInstallProgressLaterAsync(int generation)
@@ -1394,21 +1410,63 @@ public sealed class PresetOptionViewModel : ObservableObject
 public sealed class SetupComponentQuickstartViewModel(
     string title,
     string description,
+    bool isInstalled,
     string statusText,
     string statusBackground,
-    string? detailText)
+    string? detailText) : ObservableObject
 {
+    private bool _isInstalled = isInstalled;
+    private string _statusText = statusText;
+    private string _statusBackground = statusBackground;
+
     public string Title { get; } = title;
 
     public string Description { get; } = description;
 
-    public string StatusText { get; } = statusText;
+    public bool IsInstalled
+    {
+        get => _isInstalled;
+        private set
+        {
+            if (SetProperty(ref _isInstalled, value))
+            {
+                OnPropertyChanged(nameof(StatusIconData));
+                OnPropertyChanged(nameof(StatusIconColor));
+                OnPropertyChanged(nameof(StatusToolTip));
+            }
+        }
+    }
 
-    public string StatusBackground { get; } = statusBackground;
+    public string StatusText
+    {
+        get => _statusText;
+        private set => SetProperty(ref _statusText, value);
+    }
+
+    public string StatusBackground
+    {
+        get => _statusBackground;
+        private set => SetProperty(ref _statusBackground, value);
+    }
+
+    public string StatusIconData => IsInstalled
+        ? "M 4 10 L 8 14 L 16 6"
+        : "M 5 5 L 15 15 M 15 5 L 5 15";
+
+    public string StatusIconColor => IsInstalled ? "#61C46A" : "#E14A4A";
+
+    public string StatusToolTip => IsInstalled ? "Installed" : "Not installed";
 
     public string? DetailText { get; } = detailText;
 
     public bool HasDetail => !string.IsNullOrWhiteSpace(DetailText);
+
+    public void MarkInstalled()
+    {
+        IsInstalled = true;
+        StatusText = "Done";
+        StatusBackground = "#285A2D";
+    }
 }
 
 public sealed class CredentialTargetViewModel(

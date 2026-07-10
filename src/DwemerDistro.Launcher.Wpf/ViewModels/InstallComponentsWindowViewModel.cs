@@ -59,8 +59,10 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         : "Replace Token";
 
     public string HuggingFaceAccessSummary => HasManagedHuggingFaceToken
-        ? "Built-in access is configured automatically for cloned voice model downloads. Use your own token only if you need to override it."
+        ? string.Empty
         : "Add a Hugging Face token for Pocket-TTS and Chatterbox voice model downloads.";
+
+    public bool HasHuggingFaceAccessSummary => !string.IsNullOrWhiteSpace(HuggingFaceAccessSummary);
 
     public string HuggingFaceTokenStatusText
     {

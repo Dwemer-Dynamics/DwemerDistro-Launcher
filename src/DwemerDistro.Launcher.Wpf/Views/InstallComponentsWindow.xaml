@@ -239,7 +239,8 @@
                                    Foreground="#DDDDDD"
                                    FontFamily="Trebuchet MS"
                                    TextWrapping="Wrap"
-                                   Margin="0,7,0,0" />
+                                   Margin="0,7,0,0"
+                                   Visibility="{Binding HasHuggingFaceAccessSummary, Converter={StaticResource BoolToVisibilityConverter}}" />
                         <TextBlock Text="{Binding HuggingFaceTokenDetailText}"
                                    Foreground="#DDDDDD"
                                    FontFamily="Trebuchet MS"

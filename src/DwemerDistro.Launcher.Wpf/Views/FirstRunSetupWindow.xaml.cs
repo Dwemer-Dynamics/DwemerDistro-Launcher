@@ -59,7 +59,19 @@ public partial class FirstRunSetupWindow : Window
 
     private void ViewModel_RequestClose()
     {
+        var owner = Owner;
         Close();
+
+        if (owner is not null)
+        {
+            if (!owner.IsVisible)
+            {
+                owner.Show();
+            }
+
+            owner.WindowState = WindowState.Normal;
+            owner.Activate();
+        }
     }
 
     private void HuggingFacePasswordBox_PasswordChanged(object sender, RoutedEventArgs e)

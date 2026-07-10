@@ -490,7 +490,8 @@ PY
                     completedComponents,
                     totalComponents,
                     component.Title,
-                    $"{component.Title} already installed"));
+                    $"{component.Title} already installed",
+                    IsInstalled: true));
                 continue;
             }
 
@@ -531,7 +532,8 @@ PY
                 completedComponents,
                 totalComponents,
                 component.Title,
-                $"{component.Title} installed"));
+                $"{component.Title} installed",
+                IsInstalled: true));
             current = await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
         }
 
@@ -847,7 +849,8 @@ public sealed record SetupInstallProgress(
     int TotalComponents,
     string ComponentTitle,
     string StatusText,
-    string? DetailText = null)
+    string? DetailText = null,
+    bool? IsInstalled = null)
 {
     public double Percentage => TotalComponents <= 0
         ? 0

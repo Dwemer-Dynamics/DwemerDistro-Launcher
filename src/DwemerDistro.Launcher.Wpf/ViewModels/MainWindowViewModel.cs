@@ -86,7 +86,7 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherVersionText = $"Launcher Version: {LauncherConstants.LauncherVersion}";
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
-    private string _launcherUpdateButtonText = "Check Launcher Update";
+    private string _launcherUpdateButtonText = "Check Update";
     private string _distroUpdateButtonText = "Update";
     private bool _isDistroUpdateInProgress;
     private bool _mcpEnabled = true;
@@ -462,7 +462,7 @@ echo "CHIM-MCP installed and enabled."
     {
         try
         {
-            SetLauncherUpdateState("Launcher update: checking before setup...", "White", false, "Check Launcher Update");
+            SetLauncherUpdateState("Launcher update: checking before setup...", "White", false, "Checking...");
 
             var currentVersion = _launcherUpdateService.GetCurrentVersion().ToString(3);
             RunOnUi(() => LauncherVersionText = $"Launcher Version: {currentVersion}");
@@ -475,7 +475,7 @@ echo "CHIM-MCP installed and enabled."
                     $"Launcher update: up to date [{currentVersion}]",
                     "LimeGreen",
                     false,
-                    "Launcher Up To Date");
+                    "Up To Date");
                 return false;
             }
 
@@ -485,19 +485,19 @@ echo "CHIM-MCP installed and enabled."
                 $"Launcher update required before setup [{currentVersion} -> {targetVersion}]",
                 "Red",
                 false,
-                "Updating Launcher...");
+                "Updating...");
 
             var packagePath = await _launcherUpdateService.DownloadUpdatePackageAsync(update, progress =>
             {
-                var text = $"Downloading launcher update before setup... {progress}%";
-                SetLauncherUpdateState(text, "White", false, text);
+                var statusText = $"Downloading launcher update before setup... {progress}%";
+                SetLauncherUpdateState(statusText, "White", false, $"Download {progress}%");
             }, cancellationToken).ConfigureAwait(false);
 
             AppendLog("Launcher update downloaded. Closing launcher to apply update before first-time setup..." + Environment.NewLine, "green");
             _launcherUpdateService.StartUpdaterAndExit(packagePath);
             RunOnUi(() =>
             {
-                LauncherUpdateButtonText = "Applying Launcher Update...";
+                LauncherUpdateButtonText = "Applying...";
                 Application.Current.Shutdown();
             });
             return true;
@@ -509,7 +509,7 @@ echo "CHIM-MCP installed and enabled."
                 "Launcher update before setup failed. Continuing setup.",
                 "Yellow",
                 false,
-                "Check Launcher Update");
+                "Check Again");
             AppendLog($"Launcher update before first-time setup failed: {ex.Message}{Environment.NewLine}", "yellow");
             return false;
         }
@@ -719,7 +719,7 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task UpdateAllAsync()
     {
-        await RunDistroUpdateAsync(requireConfirmation: true, sourceLabel: "Mod Updates").ConfigureAwait(true);
+        await RunDistroUpdateAsync(requireConfirmation: true, sourceLabel: "Distro Updates").ConfigureAwait(true);
     }
 
     public Task<bool> UpdateDistroFromQuickstartAsync()
@@ -745,7 +745,7 @@ echo "CHIM-MCP installed and enabled."
               (includeHerika ? $"HerikaServer target branch: {targetHerika}\n" : "HerikaServer update: disabled\n") +
               (includeStobe ? $"StobeServer target branch: {targetStobe}\n" : "StobeServer update: disabled\n") +
               "\nAre you sure?"
-            : "This will update Dwemer Distro only.\n\nHerikaServer and StobeServer updates are disabled in the Mod Updates section.\n\nAre you sure?";
+            : "This will update Dwemer Distro only.\n\nHerikaServer and StobeServer updates are disabled in the Distro Updates section.\n\nAre you sure?";
 
         if (requireConfirmation &&
             MessageBox.Show(confirmText, "Update System", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -1124,7 +1124,7 @@ echo "CHIM-MCP installed and enabled."
     {
         try
         {
-            SetLauncherUpdateState("Launcher update: checking...", "White", false, "Check Launcher Update");
+            SetLauncherUpdateState("Launcher update: checking...", "White", false, "Checking...");
 
             var currentVersion = _launcherUpdateService.GetCurrentVersion().ToString(3);
             RunOnUi(() => LauncherVersionText = $"Launcher Version: {currentVersion}");
@@ -1138,7 +1138,7 @@ echo "CHIM-MCP installed and enabled."
                     $"Launcher update: up to date [{currentVersion}]",
                     "LimeGreen",
                     false,
-                    "Launcher Up To Date");
+                    "Up To Date");
                 return;
             }
 
@@ -1156,7 +1156,7 @@ echo "CHIM-MCP installed and enabled."
                 "Launcher update check failed. See log.",
                 "Yellow",
                 false,
-                "Check Launcher Update");
+                "Check Again");
             AppendLog($"Launcher update check failed: {ex.Message}{Environment.NewLine}", "yellow");
         }
     }
@@ -1175,20 +1175,20 @@ echo "CHIM-MCP installed and enabled."
             }
 
             CanUpdateLauncher = false;
-            RunOnUi(() => LauncherUpdateButtonText = "Downloading Launcher Update...");
+            RunOnUi(() => LauncherUpdateButtonText = "Downloading...");
             AppendLog("Downloading launcher update..." + Environment.NewLine);
 
             var packagePath = await _launcherUpdateService.DownloadUpdatePackageAsync(_pendingLauncherUpdate, progress =>
             {
-                var text = $"Downloading launcher update... {progress}%";
-                SetLauncherUpdateState(text, "White", false, text);
+                var statusText = $"Downloading launcher update... {progress}%";
+                SetLauncherUpdateState(statusText, "White", false, $"Download {progress}%");
             }).ConfigureAwait(false);
 
             AppendLog("Launcher update downloaded. Closing launcher to apply update..." + Environment.NewLine, "green");
             _launcherUpdateService.StartUpdaterAndExit(packagePath);
             RunOnUi(() =>
             {
-                LauncherUpdateButtonText = "Applying Launcher Update...";
+                LauncherUpdateButtonText = "Applying...";
                 Application.Current.Shutdown();
             });
         }
@@ -1198,7 +1198,7 @@ echo "CHIM-MCP installed and enabled."
                 "Launcher update failed. See log.",
                 "Red",
                 true,
-                "Retry Launcher Update");
+                "Retry Update");
             AppendLog($"Launcher update failed: {ex.Message}{Environment.NewLine}", "red");
         }
     }
