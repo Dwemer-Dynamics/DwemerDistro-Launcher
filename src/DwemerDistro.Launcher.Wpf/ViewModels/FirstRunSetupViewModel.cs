@@ -21,6 +21,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private const string StatusBad = "#7A2828";
     private const string StatusUnknown = "#4F3C7A";
     private const int MaxVisibleSetupLogChars = 20000;
+    private const int SetupUiFlushDelayMilliseconds = 250;
     private static readonly object QuickstartInstallLogLock = new();
     private static readonly string QuickstartInstallLogPath =
         Path.Combine(AppContext.BaseDirectory, "Logs", "quickstart-install.log");
@@ -1055,7 +1056,16 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             _isVisibleSetupLogFlushQueued = true;
         }
 
-        _ = _dispatcher.BeginInvoke((Action)(() => FlushVisibleSetupLog(generation)), DispatcherPriority.ContextIdle);
+        _ = FlushVisibleSetupLogLaterAsync(generation);
+    }
+
+    private async Task FlushVisibleSetupLogLaterAsync(int generation)
+    {
+        await Task.Delay(SetupUiFlushDelayMilliseconds).ConfigureAwait(false);
+        if (!_dispatcher.HasShutdownStarted)
+        {
+            _ = _dispatcher.BeginInvoke((Action)(() => FlushVisibleSetupLog(generation)), DispatcherPriority.ContextIdle);
+        }
     }
 
     private void FlushVisibleSetupLog(int generation)
@@ -1134,7 +1144,16 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             _isSetupInstallProgressFlushQueued = true;
         }
 
-        _ = _dispatcher.BeginInvoke((Action)(() => FlushSetupInstallProgress(generation)), DispatcherPriority.Background);
+        _ = FlushSetupInstallProgressLaterAsync(generation);
+    }
+
+    private async Task FlushSetupInstallProgressLaterAsync(int generation)
+    {
+        await Task.Delay(SetupUiFlushDelayMilliseconds).ConfigureAwait(false);
+        if (!_dispatcher.HasShutdownStarted)
+        {
+            _ = _dispatcher.BeginInvoke((Action)(() => FlushSetupInstallProgress(generation)), DispatcherPriority.Background);
+        }
     }
 
     private void FlushSetupInstallProgress(int generation)
