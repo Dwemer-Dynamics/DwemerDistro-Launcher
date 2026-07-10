@@ -28,10 +28,9 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         new("localwhisper", "LocalWhisper", "/home/dwemer/remote-faster-whisper", "/home/dwemer/remote-faster-whisper/conf.sh", "Path('/home/dwemer/python-stt').is_dir()", "whisper"),
         new("xtts", "Dwemer Distro XTTS", "/home/dwemer/xtts-api-server", "/home/dwemer/xtts-api-server/conf.sh", "Path('/home/dwemer/python-tts').is_dir()", "start"),
         new("llamacpp", "llama.cpp", "/home/dwemer/llama-cpp", "/home/dwemer/llama-cpp/conf.sh", "Path('/home/dwemer/llama-cpp').is_dir()", "start"),
-        new("mimic3", "Mimic3", "/home/dwemer/mimic3", "/home/dwemer/mimic3/conf.sh", "Path('/home/dwemer/mimic3').is_dir()", "start"),
         new("minime", "Minime and TXT2VEC", "/home/dwemer/minime-t5", "/home/dwemer/minime-t5/conf.sh", "Path('/home/dwemer/python-minime').is_dir()", "start"),
         new("melotts", "MeloTTS", "/home/dwemer/MeloTTS", "/home/dwemer/MeloTTS/conf.sh", "Path('/home/dwemer/python-melotts').is_dir()", "start"),
-        new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "Path('/home/dwemer/piper').is_dir()", "start"),
+        new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))", "start"),
         new("parakeet", "Parakeet STT", "/home/dwemer/parakeet-api-server", "/home/dwemer/parakeet-api-server/conf.sh", "Path('/home/dwemer/parakeet-api-server/venv').is_dir()", "start"),
         new("chatterbox", "Chatterbox", "/home/dwemer/chatterbox", "/home/dwemer/chatterbox/conf.sh", "Path('/home/dwemer/chatterbox/venv').is_dir()", "start"),
         new("audiocpp", "Pocket-TTS audio.cpp", "/home/dwemer/audio.cpp", "/home/dwemer/audio.cpp/conf.sh", "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file()", "start"),
@@ -518,6 +517,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("        'start.sh': 'Enabled',");
         builder.AppendLine("        'start-gpu.sh': 'GPU / CUDA',");
         builder.AppendLine("        'start-cpu.sh': 'CPU',");
+        builder.AppendLine("        'start-piper-gpu.sh': 'GPU / CUDA',");
+        builder.AppendLine("        'start-piper-cpu.sh': 'CPU',");
         builder.AppendLine("        'start-deepspeed.sh': 'DeepSpeed - GPU / CUDA',");
         builder.AppendLine("        'start-lowvram.sh': 'Low VRAM - GPU / CUDA',");
         builder.AppendLine("        'start-regular.sh': 'Regular - GPU / CUDA',");
@@ -724,7 +725,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 key: "pipertts",
                 title: "Piper-TTS",
                 description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.",
-                installCheckExpression: "Path('/home/dwemer/piper').exists()",
+                installCheckExpression: "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))",
                 primaryCommand: mainWindowViewModel.InstallPiperTtsCommand,
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true,
