@@ -666,11 +666,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 installCheckExpression: "Path('/home/dwemer/python-minime').exists()",
                 primaryCommand: mainWindowViewModel.InstallMinimeT5Command,
                 supportsNvidiaCuda: true,
-                supportsAmdCpu: true)));
-
-        sections.Add(CreateSection(
-            "Integrations",
-            allItems,
+                supportsAmdCpu: true),
             CreateItem(
                 key: "chimmcp",
                 title: "CHIM-MCP",
