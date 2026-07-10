@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
@@ -400,6 +401,9 @@ PY
         var prepareResult = await RunComponentInstallAsync(
                 PrepareComponent,
                 output,
+                progress,
+                completedComponents,
+                totalComponents,
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -464,7 +468,14 @@ PY
                 component.Title,
                 $"Installing {component.Title}"));
 
-            var result = await RunComponentInstallAsync(component, output, cancellationToken).ConfigureAwait(false);
+            var result = await RunComponentInstallAsync(
+                    component,
+                    output,
+                    progress,
+                    completedComponents,
+                    totalComponents,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             if (!result.Succeeded)
             {
@@ -497,18 +508,55 @@ PY
     private async Task<Models.CommandResult> RunComponentInstallAsync(
         SetupComponent component,
         Action<string>? output,
+        Action<SetupInstallProgress>? progress,
+        int completedComponents,
+        int totalComponents,
         CancellationToken cancellationToken)
     {
         using var componentTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         componentTimeout.CancelAfter(TimeSpan.FromSeconds(ComponentInstallTimeoutSeconds + 60));
+        using var heartbeatCancellation = CancellationTokenSource.CreateLinkedTokenSource(componentTimeout.Token);
+        var stopwatch = Stopwatch.StartNew();
+
+        void PublishProgress(string statusText, string? detailText = null)
+        {
+            progress?.Invoke(new SetupInstallProgress(
+                completedComponents,
+                totalComponents,
+                component.Title,
+                statusText,
+                detailText));
+        }
+
+        var heartbeatTask = Task.Run(async () =>
+        {
+            while (!heartbeatCancellation.Token.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), heartbeatCancellation.Token).ConfigureAwait(false);
+                PublishProgress(
+                    $"Installing {component.Title}",
+                    $"{component.Title} is still running ({FormatElapsed(stopwatch.Elapsed)} elapsed). Large downloads can take several minutes.");
+            }
+        }, CancellationToken.None);
 
         try
         {
             output?.Invoke($"Starting {component.Title} command..." + Environment.NewLine);
+            PublishProgress($"Installing {component.Title}", $"Starting {component.Title} command...");
+            void HandleOutput(string text)
+            {
+                output?.Invoke(text);
+                var detailText = BuildOutputProgressDetail(text);
+                if (!string.IsNullOrWhiteSpace(detailText))
+                {
+                    PublishProgress($"Installing {component.Title}", detailText);
+                }
+            }
+
             var result = await wsl.RunWslWithInputAsync(
                     BuildNonInteractiveInstallArguments(component),
                     component.InstallInput ?? NonInteractiveInstallInput,
-                    output,
+                    HandleOutput,
                     componentTimeout.Token)
                 .ConfigureAwait(false);
             output?.Invoke($"{component.Title} exited with code {result.ExitCode}." + Environment.NewLine);
@@ -518,6 +566,98 @@ PY
         {
             return new Models.CommandResult(124, string.Empty, $"{component.Title} timed out after 2 hours.");
         }
+        finally
+        {
+            heartbeatCancellation.Cancel();
+            try
+            {
+                await heartbeatTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
+
+    private static string? BuildOutputProgressDetail(string text)
+    {
+        var line = text.Replace("\r", string.Empty).Replace("\n", string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return null;
+        }
+
+        if (line.StartsWith("Collecting ", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrimProgressDetail("Resolving " + line["Collecting ".Length..]);
+        }
+
+        if (line.StartsWith("Downloading ", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrimProgressDetail(line);
+        }
+
+        if (line.StartsWith("Installing collected packages:", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Installing Python packages...";
+        }
+
+        if (line.StartsWith("Successfully installed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Python packages installed.";
+        }
+
+        if (line.StartsWith("Requirement already satisfied:", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrimProgressDetail("Already installed: " + line["Requirement already satisfied:".Length..].Trim());
+        }
+
+        if (line.StartsWith("Setting up ", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrimProgressDetail("Configuring " + line["Setting up ".Length..]);
+        }
+
+        if (line.StartsWith("Unpacking ", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrimProgressDetail(line);
+        }
+
+        if (line.StartsWith("Fetched ", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrimProgressDetail(line);
+        }
+
+        if (line.Contains("Already up to date.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Repository already up to date.";
+        }
+
+        if (line.Contains("Cloning into", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrimProgressDetail(line);
+        }
+
+        if (line.Contains("MB", StringComparison.OrdinalIgnoreCase) &&
+            line.Contains("/", StringComparison.OrdinalIgnoreCase))
+        {
+            return TrimProgressDetail(line);
+        }
+
+        return null;
+    }
+
+    private static string TrimProgressDetail(string text)
+    {
+        const int maxLength = 150;
+        var normalized = string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= maxLength ? normalized : normalized[..(maxLength - 3)] + "...";
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed)
+    {
+        return elapsed.TotalMinutes >= 1
+            ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:00}s"
+            : $"{elapsed.Seconds}s";
     }
 
     private async Task<string?> GetActiveInstallerProcessSummaryAsync(CancellationToken cancellationToken)
@@ -672,7 +812,8 @@ public sealed record SetupInstallProgress(
     int CompletedComponents,
     int TotalComponents,
     string ComponentTitle,
-    string StatusText)
+    string StatusText,
+    string? DetailText = null)
 {
     public double Percentage => TotalComponents <= 0
         ? 0

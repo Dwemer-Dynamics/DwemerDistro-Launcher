@@ -440,6 +440,12 @@
                                             </Canvas>
                                         </Viewbox>
                                     </Grid>
+                                    <TextBlock Text="{Binding SetupInstallDetailText}"
+                                               Foreground="#F4D8A6"
+                                               FontSize="11"
+                                               TextWrapping="Wrap"
+                                               Margin="0,6,0,0"
+                                               Visibility="{Binding HasSetupInstallDetail, Converter={StaticResource BoolToVisibilityConverter}}" />
                                 </StackPanel>
                             </StackPanel>
 

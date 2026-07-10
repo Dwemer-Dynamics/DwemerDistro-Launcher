@@ -14,6 +14,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private const string StatusWarn = "#6A3A12";
     private const string StatusBad = "#7A2828";
     private const string StatusUnknown = "#4F3C7A";
+    private const int MaxVisibleSetupLogChars = 60000;
     private static readonly object QuickstartInstallLogLock = new();
     private static readonly string QuickstartInstallLogPath =
         Path.Combine(AppContext.BaseDirectory, "Logs", "quickstart-install.log");
@@ -48,6 +49,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private string _setupLogText = string.Empty;
     private double _setupInstallProgress;
     private string _setupInstallProgressText = "Preparing setup...";
+    private string _setupInstallDetailText = string.Empty;
     private string _openRouterKey = string.Empty;
     private string _openRouterStatusText = "Checking OpenRouter";
     private string _openRouterStatusDetail = "Paste your key to apply it to installed game profiles.";
@@ -330,6 +332,20 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         private set => SetProperty(ref _setupInstallProgressText, value);
     }
 
+    public string SetupInstallDetailText
+    {
+        get => _setupInstallDetailText;
+        private set
+        {
+            if (SetProperty(ref _setupInstallDetailText, value))
+            {
+                OnPropertyChanged(nameof(HasSetupInstallDetail));
+            }
+        }
+    }
+
+    public bool HasSetupInstallDetail => !string.IsNullOrWhiteSpace(SetupInstallDetailText);
+
     public string OpenRouterKey
     {
         get => _openRouterKey;
@@ -464,6 +480,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             ResetQuickstartInstallLog();
             SetupInstallProgress = 0;
             SetupInstallProgressText = $"Preparing {_selectedPreset.Title}...";
+            SetupInstallDetailText = string.Empty;
             IsInstallingSetup = true;
             AppendSetupLog($"Quickstart install log: {QuickstartInstallLogPath}{Environment.NewLine}");
             AppendSetupLog($"Recommended path: {_selectedPreset.Title}{Environment.NewLine}");
@@ -493,6 +510,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             ResetQuickstartInstallLog();
             SetupInstallProgress = 0;
             SetupInstallProgressText = "Updating DwemerDistro...";
+            SetupInstallDetailText = string.Empty;
             IsInstallingSetup = true;
             AppendSetupLog($"Quickstart update log: {QuickstartInstallLogPath}{Environment.NewLine}");
             AppendSetupLog("Starting DwemerDistro update. Detailed output is shown in the main launcher log." + Environment.NewLine);
@@ -962,13 +980,18 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
         AppendQuickstartInstallLog(text);
 
+        void AppendVisible()
+        {
+            SetupLogText = BuildVisibleSetupLog(SetupLogText, text);
+        }
+
         if (_dispatcher.CheckAccess())
         {
-            SetupLogText += text;
+            AppendVisible();
             return;
         }
 
-        _ = _dispatcher.BeginInvoke(() => SetupLogText += text, DispatcherPriority.Background);
+        _ = _dispatcher.BeginInvoke((Action)AppendVisible, DispatcherPriority.Background);
     }
 
     private static void ResetQuickstartInstallLog()
@@ -1011,6 +1034,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             SetupInstallProgress = progress.Percentage;
             SetupInstallProgressText = $"{progress.StatusText} ({progress.CompletedComponents} of {progress.TotalComponents})";
+            SetupInstallDetailText = progress.DetailText ?? string.Empty;
         }
 
         if (_dispatcher.CheckAccess())
@@ -1020,6 +1044,26 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
 
         _ = _dispatcher.BeginInvoke((Action)Apply, DispatcherPriority.Background);
+    }
+
+    private static string BuildVisibleSetupLog(string current, string append)
+    {
+        var combined = current + append;
+        if (combined.Length <= MaxVisibleSetupLogChars)
+        {
+            return combined;
+        }
+
+        var visibleTail = combined[^MaxVisibleSetupLogChars..];
+        var lineBreakIndex = visibleTail.IndexOf('\n');
+        if (lineBreakIndex >= 0 && lineBreakIndex + 1 < visibleTail.Length)
+        {
+            visibleTail = visibleTail[(lineBreakIndex + 1)..];
+        }
+
+        return "[Older output is still saved in the full quickstart install log.]" +
+               Environment.NewLine +
+               visibleTail;
     }
 
     private void RaiseCommandStates()
