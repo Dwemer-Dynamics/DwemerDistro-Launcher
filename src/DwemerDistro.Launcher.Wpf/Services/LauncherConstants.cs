@@ -2,7 +2,7 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public static class LauncherConstants
 {
-    public const string LauncherVersion = "3.1.2";
+    public const string LauncherVersion = "3.1.3";
     public const string LauncherRepoUrl = "https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher";
     public const string LauncherLatestReleaseApiUrl = "https://api.github.com/repos/Dwemer-Dynamics/DwemerDistro-Launcher/releases/latest";
     public const string LauncherExeName = "DwemerDistro.exe";
@@ -16,6 +16,7 @@ public static class LauncherConstants
     public const int StobeServerPort = 8083;
     public const int StarfieldServerPort = 8087;
     public const int DialecticServerPort = 8088;
+    public const int ReignServerPort = 8089;
 
     public const string WikiUrl = "https://dwemerdynamics.hostwiki.io/";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";

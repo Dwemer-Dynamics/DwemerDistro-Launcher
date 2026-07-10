@@ -156,6 +156,11 @@ public sealed class DiscoveryService
                 {
                     return LauncherConstants.DialecticServerPort;
                 }
+
+                if (value is "reign")
+                {
+                    return LauncherConstants.ReignServerPort;
+                }
             }
         }
 
