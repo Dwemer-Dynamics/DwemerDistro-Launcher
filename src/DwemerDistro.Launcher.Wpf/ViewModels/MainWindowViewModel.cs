@@ -21,6 +21,11 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 public sealed partial class MainWindowViewModel : ObservableObject
 {
+    private static readonly TimeSpan StartupSettingsTimeout = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan StartupFirstRunProbeTimeout = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan StartupLauncherUpdateTimeout = TimeSpan.FromSeconds(25);
+    private static readonly TimeSpan StartupVersionCheckTimeout = TimeSpan.FromSeconds(20);
+
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _startAnimationTimer;
     private readonly DispatcherTimer _serverStatusRetryTimer;
@@ -339,31 +344,85 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task InitializeAsync()
     {
+        LauncherLogService.Startup("MainWindowViewModel initialization started.");
         StartProxyAndDiscovery();
-        await LoadMcpEnabledAsync().ConfigureAwait(true);
-        await LoadUpdateIncludeSettingsAsync().ConfigureAwait(true);
-        _ = Task.Run(CheckForUpdatesAsync);
-        _ = Task.Run(CheckStobeServerUpdatesAsync);
-        _ = Task.Run(CheckNexusVersionsAsync);
-        _ = Task.Run(CheckLauncherUpdatesAsync);
+        await RunStartupStepAsync("Load MCP setting", LoadMcpEnabledAsync, StartupSettingsTimeout).ConfigureAwait(true);
+        await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
+        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Nexus version check", _ => CheckNexusVersionsAsync(), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Launcher update check", cancellationToken => CheckLauncherUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueServerStatusRefresh();
+        LauncherLogService.Startup("MainWindowViewModel initialization completed.");
     }
 
     public async Task ShutdownAsync()
     {
+        LauncherLogService.Startup("Launcher shutdown started.");
         _startAnimationTimer.Stop();
         _serverStatusRetryTimer.Stop();
         await (_tcpProxyService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         await (_discoveryService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         _processRunner.TryKill(_serverProcess);
+        LauncherLogService.Startup("Launcher shutdown completed.");
     }
 
-    public Task<bool> ShouldShowFirstRunSetupAsync()
+    public async Task RunFirstRunSetupStartupCheckAsync()
     {
-        return FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync();
+        LauncherLogService.Startup("First-time setup startup check started.");
+
+        try
+        {
+            using var probeCts = new CancellationTokenSource(StartupFirstRunProbeTimeout);
+            if (!await ShouldShowFirstRunSetupAsync(probeCts.Token).ConfigureAwait(false))
+            {
+                LauncherLogService.Startup("First-time setup startup check completed: not needed.");
+                return;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            LauncherLogService.Startup($"First-time setup startup check timed out after {StartupFirstRunProbeTimeout.TotalSeconds:0} seconds.");
+            AppendLog("First-time setup check timed out. Use the First Time Setup button if this is a fresh install." + Environment.NewLine, "yellow");
+            return;
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("First-time setup startup check failed.", ex);
+            AppendLog($"First-time setup check failed: {ex.Message}{Environment.NewLine}", "yellow");
+            return;
+        }
+
+        try
+        {
+            using var updateCts = new CancellationTokenSource(StartupLauncherUpdateTimeout);
+            if (await TryApplyLauncherUpdateBeforeFirstRunSetupAsync(updateCts.Token).ConfigureAwait(false))
+            {
+                LauncherLogService.Startup("Launcher update started before first-time setup.");
+                return;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            LauncherLogService.Startup($"Launcher update check before first-time setup timed out after {StartupLauncherUpdateTimeout.TotalSeconds:0} seconds.");
+            AppendLog("Launcher update check timed out. Continuing first-time setup." + Environment.NewLine, "yellow");
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Launcher update check before first-time setup failed.", ex);
+            AppendLog($"Launcher update check before setup failed: {ex.Message}{Environment.NewLine}", "yellow");
+        }
+
+        LauncherLogService.Startup("Opening first-time setup from startup check.");
+        OpenFirstRunSetupWindow();
     }
 
-    public async Task<bool> TryApplyLauncherUpdateBeforeFirstRunSetupAsync()
+    public Task<bool> ShouldShowFirstRunSetupAsync(CancellationToken cancellationToken = default)
+    {
+        return FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(cancellationToken);
+    }
+
+    public async Task<bool> TryApplyLauncherUpdateBeforeFirstRunSetupAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -372,7 +431,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var currentVersion = _launcherUpdateService.GetCurrentVersion().ToString(3);
             RunOnUi(() => LauncherVersionText = $"Launcher Version: {currentVersion}");
 
-            var update = await _launcherUpdateService.CheckForUpdatesAsync().ConfigureAwait(false);
+            var update = await _launcherUpdateService.CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
             _pendingLauncherUpdate = update;
             if (update is null)
             {
@@ -396,7 +455,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 var text = $"Downloading launcher update before setup... {progress}%";
                 SetLauncherUpdateState(text, "White", false, text);
-            }).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
 
             AppendLog("Launcher update downloaded. Closing launcher to apply update before first-time setup..." + Environment.NewLine, "green");
             _launcherUpdateService.StartUpdaterAndExit(packagePath);
@@ -420,19 +479,86 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    private async Task RunStartupStepAsync(
+        string name,
+        Func<CancellationToken, Task> action,
+        TimeSpan timeout)
+    {
+        LauncherLogService.Startup($"{name} started.");
+        using var timeoutCts = new CancellationTokenSource(timeout);
+
+        try
+        {
+            await action(timeoutCts.Token).ConfigureAwait(true);
+            LauncherLogService.Startup($"{name} completed.");
+        }
+        catch (OperationCanceledException)
+        {
+            LauncherLogService.Startup($"{name} timed out after {timeout.TotalSeconds:0} seconds.");
+            AppendLog($"{name} timed out. Continuing launcher startup.{Environment.NewLine}", "yellow");
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup($"{name} failed.", ex);
+            AppendLog($"{name} failed: {ex.Message}{Environment.NewLine}", "yellow");
+        }
+    }
+
+    private void QueueBackgroundTask(
+        string name,
+        Func<CancellationToken, Task> action,
+        TimeSpan timeout)
+    {
+        _ = Task.Run(async () =>
+        {
+            using var timeoutCts = new CancellationTokenSource(timeout);
+            try
+            {
+                await action(timeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                LauncherLogService.Startup($"{name} timed out after {timeout.TotalSeconds:0} seconds.");
+            }
+            catch (Exception ex)
+            {
+                LauncherLogService.Startup($"{name} failed.", ex);
+                AppendLog($"{name} failed: {ex.Message}{Environment.NewLine}", "yellow");
+            }
+        });
+    }
+
     private void StartProxyAndDiscovery()
     {
-        _tcpProxyService = new TcpProxyService(async cancellationToken =>
+        try
         {
-            var ip = await GetWslIpAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
-            return ip is null ? null : new IPEndPoint(IPAddress.Parse(ip), LauncherConstants.SkyrimServerPort);
-        }, text => AppendLog(text));
-        _tcpProxyService.Start();
+            _tcpProxyService = new TcpProxyService(async cancellationToken =>
+            {
+                var ip = await GetWslIpAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
+                return ip is null ? null : new IPEndPoint(IPAddress.Parse(ip), LauncherConstants.SkyrimServerPort);
+            }, text => AppendLog(text));
+            _tcpProxyService.Start();
+        }
+        catch (Exception ex)
+        {
+            _tcpProxyService = null;
+            LauncherLogService.Startup("TCP proxy failed to start.", ex);
+            AppendLog($"TCP proxy failed to start: {ex.Message}{Environment.NewLine}", "yellow");
+        }
 
-        _discoveryService = new DiscoveryService(
-            cancellationToken => GetWslIpAsync(forceRefresh: false, cancellationToken),
-            text => AppendLog(text));
-        _discoveryService.Start();
+        try
+        {
+            _discoveryService = new DiscoveryService(
+                cancellationToken => GetWslIpAsync(forceRefresh: false, cancellationToken),
+                text => AppendLog(text));
+            _discoveryService.Start();
+        }
+        catch (Exception ex)
+        {
+            _discoveryService = null;
+            LauncherLogService.Startup("Discovery service failed to start.", ex);
+            AppendLog($"Discovery service failed to start: {ex.Message}{Environment.NewLine}", "yellow");
+        }
     }
 
     private async Task StartServerAsync()
@@ -740,9 +866,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             IsDistroUpdateInProgress = false;
             DistroUpdateButtonText = "Update";
-            _ = Task.Run(CheckForUpdatesAsync);
-            _ = Task.Run(CheckStobeServerUpdatesAsync);
-            _ = Task.Run(CheckNexusVersionsAsync);
+            QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            QueueBackgroundTask("Nexus version check", _ => CheckNexusVersionsAsync(), StartupVersionCheckTimeout);
         }
     }
 
@@ -862,34 +988,38 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return true;
     }
 
-    private async Task<string?> GetCurrentBranchAsync()
+    private async Task<string?> GetCurrentBranchAsync(CancellationToken cancellationToken = default)
     {
-        var result = await _wsl.RunBashAsync("cd /var/www/html/HerikaServer && git rev-parse --abbrev-ref HEAD")
+        var result = await _wsl.RunBashAsync(
+                "cd /var/www/html/HerikaServer && git rev-parse --abbrev-ref HEAD",
+                cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         return result.Succeeded ? result.StandardOutput.Trim() : null;
     }
 
-    private async Task<string?> GetStobeServerCurrentBranchAsync()
+    private async Task<string?> GetStobeServerCurrentBranchAsync(CancellationToken cancellationToken = default)
     {
-        var result = await _wsl.RunBashAsync("cd /var/www/html/StobeServer && git rev-parse --abbrev-ref HEAD")
+        var result = await _wsl.RunBashAsync(
+                "cd /var/www/html/StobeServer && git rev-parse --abbrev-ref HEAD",
+                cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         return result.Succeeded ? result.StandardOutput.Trim() : null;
     }
 
-    private async Task CheckForUpdatesAsync()
+    private async Task CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
         SetHerikaStatus(BuildServerStatusText("HerikaServer", null, "Checking..."), "White");
-        var currentBranch = await GetCurrentBranchAsync().ConfigureAwait(false);
+        var currentBranch = await GetCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         if (currentBranch is "aiagent" or "dev" or "unstable")
         {
             RunOnUi(() => TargetHerikaBranch = currentBranch);
         }
 
-        var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/HerikaServer/.version.txt").ConfigureAwait(false);
-        var semanticVersion = await ReadWslFileFirstLineAsync("/var/www/html/HerikaServer/.version_number.txt").ConfigureAwait(false);
+        var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/HerikaServer/.version.txt", cancellationToken).ConfigureAwait(false);
+        var semanticVersion = await ReadWslFileFirstLineAsync("/var/www/html/HerikaServer/.version_number.txt", cancellationToken).ConfigureAwait(false);
         var gitVersion = currentBranch is null
             ? null
-            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/abeiro/HerikaServer/{currentBranch}/.version.txt").ConfigureAwait(false);
+            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/abeiro/HerikaServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
         var versionDisplay = $"{FormatDateVersion(currentVersion) ?? "N/A"} | {semanticVersion ?? "N/A"}";
         var statusText = BuildServerStatusText("HerikaServer", currentBranch, $"[{versionDisplay}]");
@@ -909,22 +1039,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task CheckStobeServerUpdatesAsync()
+    private async Task CheckStobeServerUpdatesAsync(CancellationToken cancellationToken = default)
     {
         SetStobeStatus(BuildServerStatusText("StobeServer", null, "Checking..."), "White");
-        var currentBranch = await GetStobeServerCurrentBranchAsync().ConfigureAwait(false);
+        var currentBranch = await GetStobeServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         if (currentBranch is "stobe" or "dev" or "unstable")
         {
             RunOnUi(() => TargetStobeBranch = currentBranch);
         }
 
-        var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/StobeServer/.version.txt").ConfigureAwait(false);
+        var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/StobeServer/.version.txt", cancellationToken).ConfigureAwait(false);
         var semanticVersion =
-            await ReadWslFileFirstLineAsync("/var/www/html/StobeServer/.version_number.txt").ConfigureAwait(false) ??
-            await ReadWslFileFirstLineAsync("/var/www/html/StobeServer/versionnumber.txt").ConfigureAwait(false);
+            await ReadWslFileFirstLineAsync("/var/www/html/StobeServer/.version_number.txt", cancellationToken).ConfigureAwait(false) ??
+            await ReadWslFileFirstLineAsync("/var/www/html/StobeServer/versionnumber.txt", cancellationToken).ConfigureAwait(false);
         var gitVersion = currentBranch is null
             ? null
-            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/StobeServer/{currentBranch}/.version.txt").ConfigureAwait(false);
+            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/StobeServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
         var versionDisplay = $"{FormatDateVersion(currentVersion) ?? "N/A"} | {semanticVersion ?? "N/A"}";
         var statusText = BuildServerStatusText("StobeServer", currentBranch, $"[{versionDisplay}]");
@@ -951,7 +1081,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         RunOnUi(() => NexusVersionText = $"CHIM Nexus: {chimVersion} | STOBE Nexus: {stobeVersion}");
     }
 
-    private async Task CheckLauncherUpdatesAsync()
+    private async Task CheckLauncherUpdatesAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -960,7 +1090,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var currentVersion = _launcherUpdateService.GetCurrentVersion().ToString(3);
             RunOnUi(() => LauncherVersionText = $"Launcher Version: {currentVersion}");
 
-            var update = await _launcherUpdateService.CheckForUpdatesAsync().ConfigureAwait(false);
+            var update = await _launcherUpdateService.CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
             _pendingLauncherUpdate = update;
 
             if (update is null)
@@ -1048,9 +1178,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task LoadMcpEnabledAsync()
+    private async Task LoadMcpEnabledAsync(CancellationToken cancellationToken = default)
     {
-        var result = await _wsl.RunDistroAsync(new[] { "bash", "-lc", "if [ -f /home/dwemer/.mcp_enabled ]; then cat /home/dwemer/.mcp_enabled; else echo 1 > /home/dwemer/.mcp_enabled; echo 1; fi" })
+        var result = await _wsl.RunDistroAsync(
+                new[] { "bash", "-lc", "if [ -f /home/dwemer/.mcp_enabled ]; then cat /home/dwemer/.mcp_enabled; else echo 1 > /home/dwemer/.mcp_enabled; echo 1; fi" },
+                cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         RunOnUi(() => McpEnabled = result.Succeeded ? result.StandardOutput.Trim() == "1" : true);
     }
@@ -1073,11 +1205,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task LoadUpdateIncludeSettingsAsync()
+    private async Task LoadUpdateIncludeSettingsAsync(CancellationToken cancellationToken = default)
     {
         var result = await _wsl.RunDistroAsUserAsync(
             "root",
-            new[] { "bash", "-lc", "mkdir -p /home/dwemer; if [ ! -f /home/dwemer/.update_include_herika ]; then echo 1 > /home/dwemer/.update_include_herika; fi; if [ ! -f /home/dwemer/.update_include_stobe ]; then echo 1 > /home/dwemer/.update_include_stobe; fi; sed -n '1p' /home/dwemer/.update_include_herika; sed -n '1p' /home/dwemer/.update_include_stobe" })
+            new[] { "bash", "-lc", "mkdir -p /home/dwemer; if [ ! -f /home/dwemer/.update_include_herika ]; then echo 1 > /home/dwemer/.update_include_herika; fi; if [ ! -f /home/dwemer/.update_include_stobe ]; then echo 1 > /home/dwemer/.update_include_stobe; fi; sed -n '1p' /home/dwemer/.update_include_herika; sed -n '1p' /home/dwemer/.update_include_stobe" },
+            cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
         if (!result.Succeeded)
@@ -2411,9 +2544,12 @@ fi
         }
     }
 
-    private async Task<string?> ReadWslFileFirstLineAsync(string path)
+    private async Task<string?> ReadWslFileFirstLineAsync(string path, CancellationToken cancellationToken = default)
     {
-        var result = await _wsl.RunBashAsync($"sed -n '1p' {path} 2>/dev/null").ConfigureAwait(false);
+        var result = await _wsl.RunBashAsync(
+                $"sed -n '1p' {path} 2>/dev/null",
+                cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
         return result.Succeeded && !string.IsNullOrWhiteSpace(result.StandardOutput)
             ? result.StandardOutput.Trim()
             : null;
@@ -2520,8 +2656,14 @@ fi
         _isServerStatusRefreshInProgress = true;
         try
         {
-            await CheckForUpdatesAsync().ConfigureAwait(false);
-            await CheckStobeServerUpdatesAsync().ConfigureAwait(false);
+            using var timeoutCts = new CancellationTokenSource(StartupVersionCheckTimeout);
+            await CheckForUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
+            await CheckStobeServerUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            LauncherLogService.Startup($"Version status refresh timed out after {StartupVersionCheckTimeout.TotalSeconds:0} seconds.");
+            AppendLog("Version status refresh timed out. It will retry later." + Environment.NewLine, "yellow");
         }
         catch (Exception ex)
         {
@@ -2916,11 +3058,11 @@ fi
             : $"{value:0.0} {units[unitIndex]}";
     }
 
-    private async Task<string?> GetTextOrNullAsync(string url)
+    private async Task<string?> GetTextOrNullAsync(string url, CancellationToken cancellationToken = default)
     {
         try
         {
-            return (await _httpClient.GetStringAsync(url).ConfigureAwait(false)).Trim();
+            return (await _httpClient.GetStringAsync(url, cancellationToken).ConfigureAwait(false)).Trim();
         }
         catch
         {
@@ -3222,9 +3364,9 @@ fi
             AppendLog($"{config.DisplayName} rollback completed successfully. HEAD: {rolledBackSha ?? "unknown"}{Environment.NewLine}", "green");
             RunOnUi(rollbackWindow.Close);
 
-            _ = Task.Run(CheckForUpdatesAsync);
-            _ = Task.Run(CheckStobeServerUpdatesAsync);
-            _ = Task.Run(CheckNexusVersionsAsync);
+            QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            QueueBackgroundTask("Nexus version check", _ => CheckNexusVersionsAsync(), StartupVersionCheckTimeout);
         }
         catch (Exception ex)
         {

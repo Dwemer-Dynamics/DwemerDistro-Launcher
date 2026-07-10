@@ -4,8 +4,10 @@ using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
+using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using Brushes = System.Windows.Media.Brushes;
+using MessageBox = System.Windows.MessageBox;
 
 namespace DwemerDistro.Launcher.Wpf;
 
@@ -31,22 +33,20 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        await _viewModel.InitializeAsync();
         try
         {
-            if (await _viewModel.ShouldShowFirstRunSetupAsync().ConfigureAwait(true))
-            {
-                if (await _viewModel.TryApplyLauncherUpdateBeforeFirstRunSetupAsync().ConfigureAwait(true))
-                {
-                    return;
-                }
-
-                _viewModel.OpenFirstRunSetupWindow();
-            }
+            LauncherLogService.Startup("Main window loaded.");
+            await _viewModel.InitializeAsync().ConfigureAwait(true);
+            _ = _viewModel.RunFirstRunSetupStartupCheckAsync();
         }
-        catch
+        catch (Exception ex)
         {
-            // First-run checks are best effort. The manual Quickstart button remains available.
+            LauncherLogService.Startup("Main window initialization failed.", ex);
+            MessageBox.Show(
+                $"Launcher startup hit an error but stayed open.\n\n{ex.Message}\n\nDetails were written to:\n{LauncherLogService.StartupLogPath}",
+                "DwemerDistro Launcher",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
         }
     }
 
@@ -62,7 +62,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        Dispatcher.Invoke(() => RenderOutputText(_viewModel.OutputText));
+        _ = Dispatcher.BeginInvoke(() => RenderOutputText(_viewModel.OutputText));
     }
 
     private void RenderOutputText(string value)

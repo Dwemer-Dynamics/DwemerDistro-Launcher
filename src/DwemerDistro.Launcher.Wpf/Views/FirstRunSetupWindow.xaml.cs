@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Windows;
+using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
+using MessageBox = System.Windows.MessageBox;
 
 namespace DwemerDistro.Launcher.Wpf.Views;
 
@@ -22,7 +24,29 @@ public partial class FirstRunSetupWindow : Window
     private async void FirstRunSetupWindow_Loaded(object sender, RoutedEventArgs e)
     {
         Loaded -= FirstRunSetupWindow_Loaded;
-        await _viewModel.InitializeAsync().ConfigureAwait(true);
+        try
+        {
+            using var initializationTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            await _viewModel.InitializeAsync(initializationTimeout.Token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            LauncherLogService.Startup("First-time setup initialization timed out.");
+            MessageBox.Show(
+                "First-time setup checks timed out. The launcher is still usable; retry setup after WSL finishes starting or run Distro Doctor from Debugging.",
+                "First-Time Setup",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("First-time setup initialization failed.", ex);
+            MessageBox.Show(
+                $"First-time setup failed to initialize.\n\n{ex.Message}\n\nDetails were written to:\n{LauncherLogService.StartupLogPath}",
+                "First-Time Setup",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
     }
 
     private void FirstRunSetupWindow_Closed(object? sender, EventArgs e)

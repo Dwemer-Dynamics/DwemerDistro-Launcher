@@ -414,18 +414,18 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         private set => SetProperty(ref _readySummary, value);
     }
 
-    public async Task InitializeAsync()
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await RunBusyAsync("Checking your setup", async () =>
         {
-            var hardware = await _hardwareDetection.DetectAsync().ConfigureAwait(true);
+            var hardware = await _hardwareDetection.DetectAsync(cancellationToken).ConfigureAwait(true);
             HardwareSummary = hardware.Summary;
             HardwareDetail = hardware.Detail;
             ApplyPreset(hardware.RecommendedPreset);
-            await RefreshSetupCoreAsync().ConfigureAwait(true);
-            await RefreshOpenRouterStatusCoreAsync().ConfigureAwait(true);
-            await _huggingFaceToken.EnsureManagedTokenAsync().ConfigureAwait(true);
-            await RefreshHuggingFaceStatusCoreAsync().ConfigureAwait(true);
+            await RefreshSetupCoreAsync(cancellationToken).ConfigureAwait(true);
+            await RefreshOpenRouterStatusCoreAsync(cancellationToken).ConfigureAwait(true);
+            await _huggingFaceToken.EnsureManagedTokenAsync(cancellationToken).ConfigureAwait(true);
+            await RefreshHuggingFaceStatusCoreAsync(cancellationToken).ConfigureAwait(true);
         }).ConfigureAwait(true);
     }
 
@@ -553,7 +553,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private async Task RefreshSetupAsync()
     {
-        await RunBusyAsync("Checking setup", RefreshSetupCoreAsync).ConfigureAwait(true);
+        await RunBusyAsync("Checking setup", () => RefreshSetupCoreAsync()).ConfigureAwait(true);
     }
 
     private async Task SaveOpenRouterAsync()
@@ -574,7 +574,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private async Task RefreshOpenRouterStatusAsync()
     {
-        await RunBusyAsync("Checking OpenRouter", RefreshOpenRouterStatusCoreAsync).ConfigureAwait(true);
+        await RunBusyAsync("Checking OpenRouter", () => RefreshOpenRouterStatusCoreAsync()).ConfigureAwait(true);
     }
 
     private async Task SaveHuggingFaceAsync()
@@ -597,7 +597,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private async Task RefreshHuggingFaceStatusAsync()
     {
-        await RunBusyAsync("Checking Hugging Face", RefreshHuggingFaceStatusCoreAsync).ConfigureAwait(true);
+        await RunBusyAsync("Checking Hugging Face", () => RefreshHuggingFaceStatusCoreAsync()).ConfigureAwait(true);
     }
 
     private void OpenHuggingFaceModelAccessPages()
@@ -645,24 +645,24 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         RequestClose?.Invoke();
     }
 
-    private async Task RefreshSetupCoreAsync()
+    private async Task RefreshSetupCoreAsync(CancellationToken cancellationToken = default)
     {
         SetupStatusText = "Checking setup";
         SetupStatusBackground = StatusChecking;
-        var status = await _distroSetup.ProbeAsync(_selectedPreset).ConfigureAwait(true);
+        var status = await _distroSetup.ProbeAsync(_selectedPreset, cancellationToken).ConfigureAwait(true);
         ApplySetupStatus(status);
     }
 
-    private async Task RefreshOpenRouterStatusCoreAsync()
+    private async Task RefreshOpenRouterStatusCoreAsync(CancellationToken cancellationToken = default)
     {
         OpenRouterStatusText = "Checking OpenRouter";
         OpenRouterStatusDetail = "Checking installed game databases...";
         OpenRouterStatusBackground = StatusChecking;
-        var status = await _openRouterSync.GetStatusAsync().ConfigureAwait(true);
+        var status = await _openRouterSync.GetStatusAsync(cancellationToken).ConfigureAwait(true);
         ApplyOpenRouterStatus(status);
     }
 
-    private async Task RefreshHuggingFaceStatusCoreAsync()
+    private async Task RefreshHuggingFaceStatusCoreAsync(CancellationToken cancellationToken = default)
     {
         HuggingFaceStatusText = "Checking";
         HuggingFaceStatusDetail = "Checking token and required model access...";
@@ -672,16 +672,16 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             item.SetCheckingState();
         }
 
-        await _huggingFaceToken.EnsureManagedTokenAsync().ConfigureAwait(true);
-        var status = await _huggingFaceToken.GetStatusAsync().ConfigureAwait(true);
+        await _huggingFaceToken.EnsureManagedTokenAsync(cancellationToken).ConfigureAwait(true);
+        var status = await _huggingFaceToken.GetStatusAsync(cancellationToken).ConfigureAwait(true);
         ApplyHuggingFaceStatus(status);
     }
 
-    private async Task RefreshVoiceStatusCoreAsync()
+    private async Task RefreshVoiceStatusCoreAsync(CancellationToken cancellationToken = default)
     {
         VoiceStatusText = "Checking voice engine";
         VoiceStatusBackground = StatusChecking;
-        var status = await _voiceEngine.GetStatusAsync(_selectedPreset).ConfigureAwait(true);
+        var status = await _voiceEngine.GetStatusAsync(_selectedPreset, cancellationToken).ConfigureAwait(true);
         ApplyVoiceStatus(status);
     }
 

@@ -1,4 +1,7 @@
+using System.Windows;
 using System.Windows.Input;
+using DwemerDistro.Launcher.Wpf.Services;
+using MessageBox = System.Windows.MessageBox;
 
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
@@ -34,6 +37,15 @@ public sealed class AsyncRelayCommand : ICommand
         {
             await _execute().ConfigureAwait(true);
         }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Async command failed.", ex);
+            MessageBox.Show(
+                $"The action failed.\n\n{ex.Message}\n\nDetails were written to:\n{LauncherLogService.StartupLogPath}",
+                "DwemerDistro Launcher",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
         finally
         {
             _isRunning = false;
@@ -46,4 +58,3 @@ public sealed class AsyncRelayCommand : ICommand
         CanExecuteChanged?.Invoke(this, EventArgs.Empty);
     }
 }
-
