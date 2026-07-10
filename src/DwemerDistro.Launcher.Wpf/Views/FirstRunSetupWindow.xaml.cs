@@ -26,8 +26,10 @@ public partial class FirstRunSetupWindow : Window
         Loaded -= FirstRunSetupWindow_Loaded;
         try
         {
+            LauncherLogService.Startup("First-time setup initialization started.");
             using var initializationTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
             await _viewModel.InitializeAsync(initializationTimeout.Token).ConfigureAwait(true);
+            LauncherLogService.Startup("First-time setup initialization completed.");
         }
         catch (OperationCanceledException)
         {

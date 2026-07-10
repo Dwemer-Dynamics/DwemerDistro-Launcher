@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using DwemerDistro.Launcher.Wpf.Models;
 
@@ -121,10 +122,11 @@ public sealed class HuggingFaceTokenService(WslService wsl)
             return ClearTokenAsync(cancellationToken);
         }
 
-        return wsl.RunDistroAsUserWithInputAsync(
+        var encodedToken = Convert.ToBase64String(Encoding.UTF8.GetBytes(normalizedToken));
+        return wsl.RunDistroAsUserWithEnvironmentAsync(
             LauncherConstants.DistroUser,
             new[] { "python3", "-c", SaveTokenScript },
-            normalizedToken,
+            BuildTokenEnvironment(encodedToken),
             cancellationToken: cancellationToken);
     }
 
@@ -142,6 +144,37 @@ public sealed class HuggingFaceTokenService(WslService wsl)
         return string.IsNullOrWhiteSpace(text) ? $"Exit code {result.ExitCode}" : text;
     }
 
+    private static Dictionary<string, string> BuildTokenEnvironment(string encodedToken)
+    {
+        const string tokenVariable = "DWEMER_HF_TOKEN_B64";
+        var environment = new Dictionary<string, string>
+        {
+            [tokenVariable] = encodedToken,
+            ["WSLENV"] = MergeWslEnv(Environment.GetEnvironmentVariable("WSLENV"), tokenVariable)
+        };
+
+        return environment;
+    }
+
+    private static string MergeWslEnv(string? currentWslEnv, string variableName)
+    {
+        if (string.IsNullOrWhiteSpace(currentWslEnv))
+        {
+            return variableName;
+        }
+
+        var parts = currentWslEnv
+            .Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+
+        if (!parts.Any(part => part.Split('/', 2)[0].Equals(variableName, StringComparison.Ordinal)))
+        {
+            parts.Add(variableName);
+        }
+
+        return string.Join(':', parts);
+    }
+
     private const string ReadTokenScript = """
 from pathlib import Path
 
@@ -152,10 +185,21 @@ if path.exists():
 
     private const string SaveTokenScript = """
 from pathlib import Path
+import base64
 import os
 import sys
 
-token = sys.stdin.read().strip()
+encoded = os.environ.get("DWEMER_HF_TOKEN_B64", "").strip()
+if not encoded:
+    print("Managed Hugging Face token was not passed to WSL.", file=sys.stderr)
+    raise SystemExit(2)
+
+try:
+    token = base64.b64decode(encoded).decode("utf-8").strip()
+except Exception as ex:
+    print(f"Managed Hugging Face token could not be decoded: {ex}", file=sys.stderr)
+    raise SystemExit(3)
+
 path = Path.home() / ".cache" / "huggingface" / "token"
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(token + "\n", encoding="utf-8")

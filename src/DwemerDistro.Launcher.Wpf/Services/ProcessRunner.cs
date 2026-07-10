@@ -7,6 +7,8 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public sealed class ProcessRunner
 {
+    private static readonly TimeSpan StandardInputCloseTimeout = TimeSpan.FromSeconds(2);
+
     public async Task<CommandResult> RunHiddenAsync(
         string fileName,
         IEnumerable<string> arguments,
@@ -17,6 +19,46 @@ public sealed class ProcessRunner
         var stderr = new StringBuilder();
 
         using var process = CreateHiddenProcess(fileName, arguments, redirectInput: false);
+
+        process.Start();
+
+        var stdoutTask = ReadLinesAsync(process.StandardOutput, line =>
+        {
+            stdout.AppendLine(line);
+            output?.Invoke(line + Environment.NewLine);
+        }, cancellationToken);
+
+        var stderrTask = ReadLinesAsync(process.StandardError, line =>
+        {
+            stderr.AppendLine(line);
+            output?.Invoke(line + Environment.NewLine);
+        }, cancellationToken);
+
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            throw;
+        }
+
+        return new CommandResult(process.ExitCode, stdout.ToString(), stderr.ToString());
+    }
+
+    public async Task<CommandResult> RunHiddenWithEnvironmentAsync(
+        string fileName,
+        IEnumerable<string> arguments,
+        IReadOnlyDictionary<string, string> environment,
+        Action<string>? output = null,
+        CancellationToken cancellationToken = default)
+    {
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
+
+        using var process = CreateHiddenProcess(fileName, arguments, redirectInput: false, environment);
 
         process.Start();
 
@@ -111,7 +153,7 @@ public sealed class ProcessRunner
         {
             try
             {
-                process.StandardInput.Close();
+                await CloseStandardInputAsync(process, cancellationToken).ConfigureAwait(false);
             }
             catch (IOException)
             {
@@ -119,6 +161,33 @@ public sealed class ProcessRunner
             catch (InvalidOperationException)
             {
             }
+        }
+    }
+
+    private static async Task CloseStandardInputAsync(Process process, CancellationToken cancellationToken)
+    {
+        var closeTask = Task.Run(() =>
+        {
+            try
+            {
+                process.StandardInput.Close();
+            }
+            catch (IOException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }, CancellationToken.None);
+
+        var delayTask = Task.Delay(StandardInputCloseTimeout, cancellationToken);
+        var completedTask = await Task.WhenAny(closeTask, delayTask).ConfigureAwait(false);
+        if (completedTask == closeTask)
+        {
+            await closeTask.ConfigureAwait(false);
         }
     }
 
@@ -236,7 +305,11 @@ public sealed class ProcessRunner
         }
     }
 
-    private static Process CreateHiddenProcess(string fileName, IEnumerable<string> arguments, bool redirectInput)
+    private static Process CreateHiddenProcess(
+        string fileName,
+        IEnumerable<string> arguments,
+        bool redirectInput,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         var startInfo = new ProcessStartInfo(fileName)
         {
@@ -252,6 +325,14 @@ public sealed class ProcessRunner
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
+        }
+
+        if (environment is not null)
+        {
+            foreach (var (key, value) in environment)
+            {
+                startInfo.Environment[key] = value;
+            }
         }
 
         return new Process
