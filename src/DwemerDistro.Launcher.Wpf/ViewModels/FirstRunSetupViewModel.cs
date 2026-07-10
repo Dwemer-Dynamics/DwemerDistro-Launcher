@@ -204,7 +204,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public bool IsReadyStep => CurrentStepIndex == ReadyStepIndex;
 
-    public bool ShowContinueButton => !IsReadyStep && !IsSetupIntroStep;
+    public bool ShowContinueButton => !IsReadyStep && !IsSetupIntroStep && !IsSetupStep;
 
     public string CurrentStepLabel => $"Step {GetDisplayStepNumber()} of {GetTotalStepCount()}";
 
@@ -257,28 +257,26 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public string StepTitle => CurrentStepIndex switch
     {
-        IntroStepIndex => "Recommended Setup",
+        IntroStepIndex => "Quick Setup",
         UpdateDistroStepIndex => "Update Distro",
         HuggingFaceStepIndex => "Connect Hugging Face",
-        SetupStepIndex => "Recommended Setup",
-        _ => "Ready to play"
+        SetupStepIndex => "Install Components",
+        _ => "Setup Complete"
     };
 
     public string StepSubtitle => CurrentStepIndex switch
     {
-        IntroStepIndex => _skipHuggingFaceStep
-            ? "Voice model access is handled automatically. Continue with the detected setup path."
-            : "Use the detected setup path, or skip this install step if the distro is already configured.",
-        UpdateDistroStepIndex => "Update DwemerDistro before installing components.",
+        IntroStepIndex => "The launcher picked the recommended setup for this machine.",
+        UpdateDistroStepIndex => "Pull the latest distro scripts first.",
         HuggingFaceStepIndex => "The installers use Hugging Face to download cloned voice models.",
-        SetupStepIndex => "Install the detected setup path. Once components are installed, quickstart is complete.",
-        _ => "Components are installed. Start the server, switch on the game, and talk."
+        SetupStepIndex => "Install the required voice and speech components.",
+        _ => "Start the server, switch on the game, and talk."
     };
 
     public string PrimaryContinueText => CurrentStepIndex switch
     {
         IntroStepIndex => "Continue",
-        UpdateDistroStepIndex => "Continue to Install",
+        UpdateDistroStepIndex => "Next",
         HuggingFaceStepIndex => "Continue to Install",
         SetupStepIndex => "Continue to Start Server",
         _ => "Ready"
@@ -648,14 +646,14 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
             if (_voiceEngineStatus?.HasUsableEngine != true)
             {
-                ReadySummary = "A cloned voice engine was not detected. Return to the install step or use Advanced Settings.";
+                ReadySummary = "Components are not ready yet. Go back and install the recommended setup.";
                 return;
             }
 
             var targets = await _voiceEngine.ApplyVoiceEngineAsync(_voiceEngineStatus.EngineKey).ConfigureAwait(true);
             ApplyVoiceTargetStatuses(targets);
 
-            ReadySummary = $"{_voiceEngineStatus.DisplayName} is selected. Start the server, switch on the game, and talk.";
+            ReadySummary = $"{_voiceEngineStatus.DisplayName} is ready.";
         }).ConfigureAwait(true);
     }
 
@@ -739,7 +737,11 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private void ApplySetupStatus(DistroSetupStatus status)
     {
         _setupStatus = status;
-        SetupStatusText = status.Summary;
+        SetupStatusText = !status.DistroExists
+            ? "Distro missing"
+            : status.AllRequiredInstalled
+                ? "Ready"
+                : "Needs install";
         SetupStatusBackground = !status.DistroExists
             ? StatusBad
             : status.AllRequiredInstalled
@@ -763,7 +765,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 SetupComponents.Add(new SetupComponentQuickstartViewModel(
                     state.Title,
                     state.Description,
-                    state.IsInstalled ? "Installed" : "Needed",
+                    state.IsInstalled ? "Done" : "Install",
                     state.IsInstalled ? StatusGood : StatusWarn,
                     state.Error));
             }
