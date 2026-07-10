@@ -8,7 +8,7 @@ public sealed class HuggingFaceTokenService(WslService wsl)
 {
     public const string TokenPath = "/home/dwemer/.cache/huggingface/token";
 
-    public static bool HasManagedToken => !string.IsNullOrWhiteSpace(LauncherSecrets.ManagedHuggingFaceToken);
+    public static bool HasManagedToken => !string.IsNullOrWhiteSpace(NormalizeToken(LauncherSecrets.ManagedHuggingFaceToken));
 
     public static readonly IReadOnlyList<HuggingFaceModelAccessDefinition> RequiredModelAccess = new[]
     {
@@ -103,20 +103,27 @@ public sealed class HuggingFaceTokenService(WslService wsl)
             return false;
         }
 
-        var currentToken = await ReadTokenAsync(cancellationToken).ConfigureAwait(false);
+        var currentRawToken = await ReadTokenAsync(cancellationToken).ConfigureAwait(false);
+        var currentToken = NormalizeToken(currentRawToken);
         if (!overwriteExisting && !string.IsNullOrWhiteSpace(currentToken))
         {
+            if (!string.Equals(currentRawToken, currentToken, StringComparison.Ordinal))
+            {
+                var sanitizeResult = await SaveTokenAsync(currentToken, cancellationToken).ConfigureAwait(false);
+                return sanitizeResult.Succeeded;
+            }
+
             return false;
         }
 
-        var result = await SaveTokenAsync(LauncherSecrets.ManagedHuggingFaceToken, cancellationToken)
+        var result = await SaveTokenAsync(NormalizeToken(LauncherSecrets.ManagedHuggingFaceToken), cancellationToken)
             .ConfigureAwait(false);
         return result.Succeeded;
     }
 
     public Task<CommandResult> SaveTokenAsync(string token, CancellationToken cancellationToken = default)
     {
-        var normalizedToken = (token ?? string.Empty).Trim();
+        var normalizedToken = NormalizeToken(token);
         if (string.IsNullOrWhiteSpace(normalizedToken))
         {
             return ClearTokenAsync(cancellationToken);
@@ -142,6 +149,23 @@ public sealed class HuggingFaceTokenService(WslService wsl)
     {
         var text = (result.StandardError + result.StandardOutput).Trim();
         return string.IsNullOrWhiteSpace(text) ? $"Exit code {result.ExitCode}" : text;
+    }
+
+    private static string NormalizeToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return string.Empty;
+        }
+
+        char[] hiddenCharacters = ['\uFEFF', '\u200B', '\u200C', '\u200D', '\u2060'];
+        var normalized = new StringBuilder(token.Trim());
+        foreach (var character in hiddenCharacters)
+        {
+            normalized.Replace(character.ToString(), string.Empty);
+        }
+
+        return normalized.ToString().Trim();
     }
 
     private static Dictionary<string, string> BuildTokenEnvironment(string encodedToken)
@@ -195,7 +219,10 @@ if not encoded:
     raise SystemExit(2)
 
 try:
-    token = base64.b64decode(encoded).decode("utf-8").strip()
+    token = "".join(
+        ch for ch in base64.b64decode(encoded).decode("utf-8-sig").strip()
+        if ch not in "\ufeff\u200b\u200c\u200d\u2060"
+    )
 except Exception as ex:
     print(f"Managed Hugging Face token could not be decoded: {ex}", file=sys.stderr)
     raise SystemExit(3)
@@ -253,6 +280,9 @@ models = [
     }
 ]
 
+def normalize_token(value):
+    return "".join(ch for ch in value.strip() if ch not in "\ufeff\u200b\u200c\u200d\u2060")
+
 def check_model_access(model, token, token_valid):
     if token and token_valid is False:
         return {
@@ -298,7 +328,11 @@ def check_model_access(model, token, token_valid):
     }
 
 try:
-    token = path.read_text(encoding="utf-8").strip() if path.exists() else ""
+    raw_token = path.read_text(encoding="utf-8-sig", errors="replace") if path.exists() else ""
+    token = normalize_token(raw_token)
+    if token and raw_token.strip() != token:
+        path.write_text(token + "\n", encoding="utf-8")
+        path.chmod(0o600)
 except Exception as ex:
     result["error"] = f"Token read failed: {ex}"
     print(json.dumps(result))
