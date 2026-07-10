@@ -69,17 +69,17 @@
         </Style>
 
         <Style x:Key="LargePrimaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
-            <Setter Property="MinWidth" Value="230" />
-            <Setter Property="MinHeight" Value="74" />
-            <Setter Property="FontSize" Value="15" />
-            <Setter Property="Padding" Value="22,16" />
+            <Setter Property="MinWidth" Value="220" />
+            <Setter Property="MinHeight" Value="56" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Padding" Value="18,12" />
         </Style>
 
         <Style x:Key="LargeSkipButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
             <Setter Property="Background" Value="#404040" />
             <Setter Property="BorderBrush" Value="#565656" />
-            <Setter Property="MinWidth" Value="180" />
-            <Setter Property="MinHeight" Value="44" />
+            <Setter Property="MinWidth" Value="132" />
+            <Setter Property="MinHeight" Value="40" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Padding" Value="16,10" />
         </Style>
@@ -215,51 +215,47 @@
             <Grid>
                 <StackPanel Visibility="{Binding IsSetupIntroStep, Converter={StaticResource BoolToVisibilityConverter}}">
                     <Border Style="{StaticResource Panel}">
-                        <StackPanel>
+                        <StackPanel Margin="0,10,0,8">
                             <TextBlock Text="Quick Setup"
-                                       FontSize="22"
+                                       FontSize="24"
                                        FontWeight="Bold"
                                        HorizontalAlignment="Center" />
-                            <TextBlock Text="{Binding HardwareSummary}"
-                                       Foreground="#FFD700"
+                            <TextBlock Text="Update distro, install the required services, then start the server."
+                                       Foreground="#D6D6D6"
                                        FontSize="13"
-                                       FontWeight="Bold"
+                                       TextWrapping="Wrap"
+                                       TextAlignment="Center"
+                                       MaxWidth="520"
                                        HorizontalAlignment="Center"
                                        Margin="0,10,0,0" />
 
-                            <Border Background="#262626"
-                                    BorderBrush="#565656"
+                            <Border Background="#252525"
+                                    BorderBrush="#6A3A12"
                                     BorderThickness="1"
                                     CornerRadius="6"
-                                    Padding="16"
-                                    Margin="0,22,0,0"
-                                    MaxWidth="560"
-                                    HorizontalAlignment="Center">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding SelectedPresetHardware}"
-                                               Foreground="#FFD700"
-                                               FontSize="18"
-                                               FontWeight="Bold"
-                                               HorizontalAlignment="Center" />
-                                    <TextBlock Text="Update distro, install voice components, start server."
-                                               Foreground="#D6D6D6"
-                                               FontSize="12"
-                                               HorizontalAlignment="Center"
-                                               Margin="0,8,0,0" />
-                                </StackPanel>
+                                    Padding="12,9"
+                                    Margin="0,16,0,0"
+                                    MaxWidth="540"
+                                    HorizontalAlignment="Center"
+                                    Visibility="{Binding ShowAmdCpuModeNote, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <TextBlock Text="AMD GPU path installs services in CPU mode because CUDA is NVIDIA-only."
+                                           Foreground="#F4D8A6"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"
+                                           TextAlignment="Center" />
                             </Border>
 
-                            <StackPanel
+                            <StackPanel Orientation="Horizontal"
                                         HorizontalAlignment="Center"
-                                        Margin="0,28,0,8">
+                                        VerticalAlignment="Center"
+                                        Margin="0,24,0,0">
                                 <Button Content="Start Quick Setup"
                                         Command="{Binding ContinueCommand}"
                                         Style="{StaticResource LargePrimaryButton}"
-                                        Margin="0,0,0,10" />
+                                        Margin="0,0,10,0" />
                                 <Button Content="Skip Quick Setup"
                                         Command="{Binding SkipRecommendedSetupCommand}"
                                         Style="{StaticResource LargeSkipButton}"
-                                        HorizontalAlignment="Center"
                                         Margin="0" />
                             </StackPanel>
                         </StackPanel>
@@ -268,17 +264,14 @@
 
                 <StackPanel Visibility="{Binding IsUpdateDistroStep, Converter={StaticResource BoolToVisibilityConverter}}">
                     <Border Style="{StaticResource Panel}">
-                        <StackPanel>
+                        <StackPanel Margin="0,8,0,0">
                             <TextBlock Text="{Binding StepTitle}"
                                        FontSize="20"
-                                       FontWeight="Bold" />
-                            <TextBlock Text="Recommended before installing components."
-                                       Foreground="#D6D6D6"
-                                       TextWrapping="Wrap"
-                                       Margin="0,8,0,0" />
+                                       FontWeight="Bold"
+                                       HorizontalAlignment="Center" />
                             <StackPanel Orientation="Horizontal"
                                         HorizontalAlignment="Center"
-                                        Margin="0,18,0,0">
+                                        Margin="0,14,0,0">
                                 <Button Content="Update Distro"
                                         Command="{Binding UpdateDistroCommand}"
                                         Style="{StaticResource LargePrimaryButton}" />
@@ -350,7 +343,7 @@
                                        FontWeight="Bold"
                                        Margin="0,18,0,8" />
                             <TextBox Text="{Binding SetupLogText, Mode=OneWay}"
-                                     Height="150"
+                                     Height="130"
                                      TextWrapping="Wrap"
                                      AcceptsReturn="True"
                                      IsReadOnly="True"
@@ -372,21 +365,12 @@
                                 <TextBlock Text="{Binding StepTitle}"
                                            FontSize="20"
                                            FontWeight="Bold" />
-                                <TextBlock Text="{Binding HardwareSummary}"
-                                           Foreground="#FFD700"
-                                           FontSize="12"
-                                           FontWeight="Bold"
-                                           Margin="0,8,0,0" />
-                                <TextBlock Text="{Binding SelectedPresetTitle}"
-                                           FontSize="16"
-                                           FontWeight="Bold"
-                                           Margin="0,16,0,0" />
                                 <Border Background="#262626"
                                         BorderBrush="#4B4B4B"
                                         BorderThickness="1"
                                         CornerRadius="6"
                                         Padding="10"
-                                        Margin="0,14,0,0">
+                                        Margin="0,12,0,0">
                                     <StackPanel>
                                         <Grid Margin="0,0,0,8">
                                             <Grid.ColumnDefinitions>

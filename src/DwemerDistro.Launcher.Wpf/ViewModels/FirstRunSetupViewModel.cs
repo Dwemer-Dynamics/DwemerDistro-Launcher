@@ -294,10 +294,20 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     public string SelectedVoiceEngine => _selectedPreset.VoiceEngineName;
 
+    public bool ShowAmdCpuModeNote =>
+        _selectedPreset.Key == SetupPresetKey.AmdCpu &&
+        HardwareSummary.Contains("AMD GPU", StringComparison.OrdinalIgnoreCase);
+
     public string HardwareSummary
     {
         get => _hardwareSummary;
-        private set => SetProperty(ref _hardwareSummary, value);
+        private set
+        {
+            if (SetProperty(ref _hardwareSummary, value))
+            {
+                OnPropertyChanged(nameof(ShowAmdCpuModeNote));
+            }
+        }
     }
 
     public string HardwareDetail
@@ -656,13 +666,21 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             var targets = await _voiceEngine.ApplyVoiceEngineAsync(_voiceEngineStatus.EngineKey).ConfigureAwait(true);
             ApplyVoiceTargetStatuses(targets);
 
-            ReadySummary = $"{_voiceEngineStatus.DisplayName} is ready.";
+            ReadySummary = "Ready to start DwemerDistro.";
         }).ConfigureAwait(true);
     }
 
     private async Task StartServerFromSetupAsync()
     {
-        await MarkReadyAsync().ConfigureAwait(true);
+        try
+        {
+            await MarkReadyAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Quickstart could not mark onboarding complete before starting server.", ex);
+        }
+
         RequestClose?.Invoke();
         _mainWindowViewModel.StartServerCommand.Execute(null);
     }
@@ -724,6 +742,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedPresetHardware));
         OnPropertyChanged(nameof(SelectedPresetDescription));
         OnPropertyChanged(nameof(SelectedVoiceEngine));
+        OnPropertyChanged(nameof(ShowAmdCpuModeNote));
         ApplySelectedPresetToOptions();
         RebuildSetupComponentItems(_setupStatus?.Components ?? []);
     }
@@ -876,7 +895,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private void ApplyVoiceStatus(VoiceEngineStatus status)
     {
         _voiceEngineStatus = status;
-        VoiceStatusText = status.HasUsableEngine ? $"{status.DisplayName} detected" : "Voice engine needed";
+        VoiceStatusText = status.HasUsableEngine ? "Ready" : "Voice engine needed";
         VoiceStatusDetail = status.DetailText;
         VoiceStatusBackground = status.HasUsableEngine ? StatusGood : StatusWarn;
         RaiseCommandStates();
