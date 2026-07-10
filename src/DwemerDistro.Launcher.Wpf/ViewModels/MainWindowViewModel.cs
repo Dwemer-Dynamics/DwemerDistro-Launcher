@@ -125,7 +125,6 @@ echo "CHIM-MCP installed and enabled."
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
         InstallComponentsCommand = new RelayCommand(OpenInstallComponentsWindow);
-        ConfigureInstalledComponentsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/conf_services"));
         OpenDebuggingCommand = new RelayCommand(OpenDebuggingWindow);
         SaveMcpEnabledCommand = new AsyncRelayCommand(SaveMcpEnabledAsync);
         SaveUpdateIncludeCommand = new AsyncRelayCommand(SaveUpdateIncludeSettingsAsync);
@@ -146,7 +145,6 @@ echo "CHIM-MCP installed and enabled."
         InstallPocketTtsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d pocket-tts/.git ]; then rm -rf pocket-tts; git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts; fi; /home/dwemer/pocket-tts/ddistro_install.sh\""));
         InstallOmniVoiceCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d omnivoice-tts ]; then git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts; fi; /home/dwemer/omnivoice-tts/ddistro_install.sh\""));
         InstallChimMcpCommand = new RelayCommand(() => RunCommandInNewWindow(BuildDistroBashConsoleCommand(ChimMcpInstallScript)));
-        ConfigureOmniVoiceCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/omnivoice-tts/conf.sh"));
         OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"));
 
         OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"));
@@ -333,7 +331,6 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenServerFolderCommand { get; }
     public RelayCommand OpenFirstRunSetupCommand { get; }
     public RelayCommand InstallComponentsCommand { get; }
-    public RelayCommand ConfigureInstalledComponentsCommand { get; }
     public RelayCommand OpenDebuggingCommand { get; }
     public AsyncRelayCommand SaveMcpEnabledCommand { get; }
     public AsyncRelayCommand SaveUpdateIncludeCommand { get; }
@@ -353,7 +350,6 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand InstallPocketTtsCommand { get; }
     public RelayCommand InstallOmniVoiceCommand { get; }
     public RelayCommand InstallChimMcpCommand { get; }
-    public RelayCommand ConfigureOmniVoiceCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand ViewMemoryUsageCommand { get; }

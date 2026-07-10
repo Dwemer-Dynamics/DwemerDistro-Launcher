@@ -240,6 +240,20 @@ public sealed class ProcessRunner
 
     public void RunInNewConsole(string command)
     {
+        _ = StartInNewConsole(command);
+    }
+
+    public async Task<int> RunInNewConsoleAndWaitAsync(
+        string command,
+        CancellationToken cancellationToken = default)
+    {
+        using var process = StartInNewConsole(command);
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        return process.ExitCode;
+    }
+
+    private static Process StartInNewConsole(string command)
+    {
         var startInfo = new ProcessStartInfo("cmd.exe")
         {
             UseShellExecute = true,
@@ -247,7 +261,7 @@ public sealed class ProcessRunner
         };
         startInfo.ArgumentList.Add("/c");
         startInfo.ArgumentList.Add(command);
-        Process.Start(startInfo);
+        return Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to open the component configuration terminal.");
     }
 
     public void OpenExternalUrl(string url)

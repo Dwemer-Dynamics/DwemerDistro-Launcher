@@ -268,32 +268,135 @@
                     BorderBrush="#565656"
                     BorderThickness="1"
                     CornerRadius="6">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0"
-                                Margin="0,0,14,0">
-                        <TextBlock Text="Configure Installed Components"
+                        <TextBlock Text="Installed Components"
                                    Foreground="White"
                                    FontFamily="Trebuchet MS"
                                    FontSize="13"
-                                   FontWeight="Bold" />
-                        <TextBlock Text="Open the service configuration menu for components already installed in the distro."
-                                   Foreground="#DDDDDD"
-                                   FontFamily="Trebuchet MS"
-                                   TextWrapping="Wrap"
-                                   Margin="0,7,0,0" />
-                    </StackPanel>
+                                   FontWeight="Bold"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                Content="Refresh"
+                                Command="{Binding RefreshComponentsCommand}"
+                                Style="{StaticResource CompactActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
 
-                    <Button Grid.Column="1"
-                            Content="Open"
-                            Command="{Binding ConfigureInstalledComponentsCommand}"
-                            Style="{StaticResource CompactActionButton}"
-                            VerticalAlignment="Center" />
-                </Grid>
+                    <Border Background="#1E1E1E"
+                            BorderBrush="#4B4B4B"
+                            BorderThickness="1"
+                            Padding="10,7">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="230" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="105" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="Component"
+                                       Foreground="#FFD700"
+                                       FontFamily="Trebuchet MS"
+                                       FontSize="11"
+                                       FontWeight="Bold" />
+                            <TextBlock Grid.Column="1"
+                                       Text="Current configuration"
+                                       Foreground="#FFD700"
+                                       FontFamily="Trebuchet MS"
+                                       FontSize="11"
+                                       FontWeight="Bold" />
+                            <TextBlock Grid.Column="2"
+                                       Text="Action"
+                                       Foreground="#FFD700"
+                                       FontFamily="Trebuchet MS"
+                                       FontSize="11"
+                                       FontWeight="Bold"
+                                       HorizontalAlignment="Center" />
+                        </Grid>
+                    </Border>
+
+                    <ScrollViewer MaxHeight="220"
+                                  VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding ConfigurableComponents}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="#444444"
+                                            BorderThickness="1,0,1,1"
+                                            Padding="10,7">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="230" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="105" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Grid.Column="0"
+                                                        Orientation="Horizontal"
+                                                        VerticalAlignment="Center"
+                                                        Margin="0,0,12,0">
+                                                <Viewbox Width="16"
+                                                         Height="16"
+                                                         Margin="0,0,8,0">
+                                                    <Canvas Width="16"
+                                                            Height="16">
+                                                        <Ellipse Width="14"
+                                                                 Height="14"
+                                                                 Canvas.Left="1"
+                                                                 Canvas.Top="1"
+                                                                 Stroke="#61C46A"
+                                                                 StrokeThickness="1.4" />
+                                                        <Path Data="M 3.5 8 L 6.5 11 L 12.5 5"
+                                                              Stroke="#61C46A"
+                                                              StrokeThickness="1.8"
+                                                              StrokeStartLineCap="Round"
+                                                              StrokeEndLineCap="Round"
+                                                              StrokeLineJoin="Round" />
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Text="{Binding Title}"
+                                                           Foreground="White"
+                                                           FontFamily="Trebuchet MS"
+                                                           FontSize="12"
+                                                           FontWeight="Bold"
+                                                           TextWrapping="Wrap" />
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding ConfigurationText}"
+                                                       Foreground="#D6D6D6"
+                                                       FontFamily="Trebuchet MS"
+                                                       FontSize="12"
+                                                       TextWrapping="Wrap"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,12,0" />
+
+                                            <Button Grid.Column="2"
+                                                    Content="{Binding ConfigureButtonText}"
+                                                    Command="{Binding ConfigureCommand}"
+                                                    Style="{StaticResource CompactActionButton}"
+                                                    HorizontalAlignment="Stretch"
+                                                    VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <TextBlock Text="{Binding ConfigurableComponentsStatusText}"
+                               Foreground="#BDBDBD"
+                               FontFamily="Trebuchet MS"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               Margin="0,12,0,2"
+                               Visibility="{Binding HasConfigurableComponentsStatus, Converter={StaticResource BoolToVisibilityConverter}}" />
+                </StackPanel>
             </Border>
             </StackPanel>
         </Border>

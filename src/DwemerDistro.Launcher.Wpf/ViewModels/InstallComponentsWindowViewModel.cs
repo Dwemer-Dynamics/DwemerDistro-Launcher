@@ -13,19 +13,41 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private readonly HuggingFaceTokenService _huggingFaceToken;
     private readonly List<InstallComponentItemViewModel> _allItems = [];
     private readonly Dictionary<string, HuggingFaceModelAccessViewModel> _modelAccessItemsByKey;
+    private readonly SemaphoreSlim _componentProbeGate = new(1, 1);
     private string _huggingFaceTokenStatusText = "Checking";
     private string _huggingFaceTokenDetailText = "Checking Hugging Face token...";
     private string _huggingFaceTokenStatusBackground = "#555555";
     private string _huggingFaceTokenStatusForeground = "White";
+    private string _configurableComponentsStatusText = "Checking installed components...";
     private static readonly TimeSpan HuggingFaceTokenReadTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan HuggingFaceTokenWriteTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan HuggingFaceTokenStatusTimeout = TimeSpan.FromSeconds(30);
+    private static readonly IReadOnlyList<ConfigurableComponentDefinition> ConfigurableComponentDefinitions =
+    [
+        new("text2vec", "Text2Vec", "/home/dwemer/text2vec-api", "/home/dwemer/text2vec-api/conf.sh", "Path('/home/dwemer/text2vec-api').is_dir()", "start"),
+        new("localwhisper", "LocalWhisper", "/home/dwemer/remote-faster-whisper", "/home/dwemer/remote-faster-whisper/conf.sh", "Path('/home/dwemer/python-stt').is_dir()", "whisper"),
+        new("xtts", "Dwemer Distro XTTS", "/home/dwemer/xtts-api-server", "/home/dwemer/xtts-api-server/conf.sh", "Path('/home/dwemer/python-tts').is_dir()", "start"),
+        new("llamacpp", "llama.cpp", "/home/dwemer/llama-cpp", "/home/dwemer/llama-cpp/conf.sh", "Path('/home/dwemer/llama-cpp').is_dir()", "start"),
+        new("mimic3", "Mimic3", "/home/dwemer/mimic3", "/home/dwemer/mimic3/conf.sh", "Path('/home/dwemer/mimic3').is_dir()", "start"),
+        new("minime", "Minime and TXT2VEC", "/home/dwemer/minime-t5", "/home/dwemer/minime-t5/conf.sh", "Path('/home/dwemer/python-minime').is_dir()", "start"),
+        new("melotts", "MeloTTS", "/home/dwemer/MeloTTS", "/home/dwemer/MeloTTS/conf.sh", "Path('/home/dwemer/python-melotts').is_dir()", "start"),
+        new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "Path('/home/dwemer/piper').is_dir()", "start"),
+        new("parakeet", "Parakeet STT", "/home/dwemer/parakeet-api-server", "/home/dwemer/parakeet-api-server/conf.sh", "Path('/home/dwemer/parakeet-api-server/venv').is_dir()", "start"),
+        new("chatterbox", "Chatterbox", "/home/dwemer/chatterbox", "/home/dwemer/chatterbox/conf.sh", "Path('/home/dwemer/chatterbox/venv').is_dir()", "start"),
+        new("audiocpp", "Pocket-TTS audio.cpp", "/home/dwemer/audio.cpp", "/home/dwemer/audio.cpp/conf.sh", "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file()", "start"),
+        new("pockettts", "Pocket-TTS", "/home/dwemer/pocket-tts", "/home/dwemer/pocket-tts/conf.sh", "Path('/home/dwemer/pocket-tts/venv').is_dir()", "start"),
+        new("omnivoice", "Multilingual OmniVoice TTS", "/home/dwemer/omnivoice-tts", "/home/dwemer/omnivoice-tts/conf.sh", "Path('/home/dwemer/omnivoice-tts/venv').is_dir()", "omnivoice")
+    ];
+    private static readonly IReadOnlyDictionary<string, ConfigurableComponentDefinition> ConfigurableComponentsByKey =
+        ConfigurableComponentDefinitions.ToDictionary(definition => definition.Key, StringComparer.OrdinalIgnoreCase);
 
     public InstallComponentsWindowViewModel(MainWindowViewModel mainWindowViewModel)
     {
         _wsl = new WslService(_processRunner);
         _huggingFaceToken = new HuggingFaceTokenService(_wsl);
         RefreshHuggingFaceTokenCommand = new AsyncRelayCommand(RefreshHuggingFaceTokenStatusAsync);
+        RefreshComponentsCommand = new AsyncRelayCommand(RefreshInstalledStatesAsync);
+        ConfigurableComponents = [];
         HuggingFaceModelAccessItems = new ObservableCollection<HuggingFaceModelAccessViewModel>(
             HuggingFaceTokenService.RequiredModelAccess.Select(definition =>
                 new HuggingFaceModelAccessViewModel(
@@ -35,7 +57,6 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                     definition.AccessUrl,
                     () => _processRunner.OpenExternalUrl(definition.AccessUrl))));
         _modelAccessItemsByKey = HuggingFaceModelAccessItems.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
-        ConfigureInstalledComponentsCommand = mainWindowViewModel.ConfigureInstalledComponentsCommand;
         Sections = new ObservableCollection<InstallComponentSectionViewModel>(
             BuildSections(mainWindowViewModel, _allItems));
     }
@@ -44,9 +65,25 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
     public ObservableCollection<HuggingFaceModelAccessViewModel> HuggingFaceModelAccessItems { get; }
 
+    public ObservableCollection<ConfigurableComponentItemViewModel> ConfigurableComponents { get; }
+
     public AsyncRelayCommand RefreshHuggingFaceTokenCommand { get; }
 
-    public ICommand ConfigureInstalledComponentsCommand { get; }
+    public AsyncRelayCommand RefreshComponentsCommand { get; }
+
+    public string ConfigurableComponentsStatusText
+    {
+        get => _configurableComponentsStatusText;
+        private set
+        {
+            if (SetProperty(ref _configurableComponentsStatusText, value))
+            {
+                OnPropertyChanged(nameof(HasConfigurableComponentsStatus));
+            }
+        }
+    }
+
+    public bool HasConfigurableComponentsStatus => !string.IsNullOrWhiteSpace(ConfigurableComponentsStatusText);
 
     public bool HasManagedHuggingFaceToken => HuggingFaceTokenService.HasManagedToken;
 
@@ -278,56 +315,116 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
     private async Task RefreshInstalledStatesAsync()
     {
-        foreach (var item in _allItems)
-        {
-            item.SetCheckingState();
-        }
-
-        var probeScript = BuildProbeScript();
-        var result = await _wsl.RunBashAsync(probeScript, loginShell: false).ConfigureAwait(true);
-        if (!result.Succeeded)
-        {
-            foreach (var item in _allItems)
-            {
-                item.SetUnknownState();
-            }
-            return;
-        }
-
-        Dictionary<string, InstallComponentProbeState>? installMap;
+        await _componentProbeGate.WaitAsync().ConfigureAwait(true);
         try
         {
-            installMap = JsonSerializer.Deserialize<Dictionary<string, InstallComponentProbeState>>(
-                result.StandardOutput.Trim(),
-                JsonOptions);
-        }
-        catch (JsonException)
-        {
-            installMap = null;
-        }
-
-        if (installMap is null)
-        {
+            ConfigurableComponentsStatusText = "Checking installed components...";
             foreach (var item in _allItems)
             {
-                item.SetUnknownState();
+                item.SetCheckingState();
             }
-            return;
+
+            var probeScript = BuildProbeScript();
+            var result = await _wsl.RunBashAsync(probeScript, loginShell: false).ConfigureAwait(true);
+            if (!result.Succeeded)
+            {
+                SetComponentProbeUnavailable();
+                return;
+            }
+
+            ComponentProbePayload? payload;
+            try
+            {
+                payload = JsonSerializer.Deserialize<ComponentProbePayload>(
+                    result.StandardOutput.Trim(),
+                    JsonOptions);
+            }
+            catch (JsonException)
+            {
+                payload = null;
+            }
+
+            if (payload?.Install is null || payload.Configurable is null)
+            {
+                SetComponentProbeUnavailable();
+                return;
+            }
+
+            foreach (var item in _allItems)
+            {
+                if (payload.Install.TryGetValue(item.Key, out var state))
+                {
+                    item.SetProbeState(
+                        state.Installed,
+                        state.StatusText ?? string.Empty,
+                        state.StatusBackground ?? string.Empty,
+                        state.DetailText ?? string.Empty);
+                }
+                else
+                {
+                    item.SetUnknownState();
+                }
+            }
+
+            ApplyConfigurableComponents(payload.Configurable);
         }
+        finally
+        {
+            _componentProbeGate.Release();
+        }
+    }
+
+    private void SetComponentProbeUnavailable()
+    {
         foreach (var item in _allItems)
         {
-            if (installMap.TryGetValue(item.Key, out var state))
+            item.SetUnknownState();
+        }
+
+        ConfigurableComponents.Clear();
+        ConfigurableComponentsStatusText = "Unable to check installed components.";
+    }
+
+    private void ApplyConfigurableComponents(IReadOnlyList<ConfigurableComponentProbeState> states)
+    {
+        var statesByKey = states.ToDictionary(state => state.Key, StringComparer.OrdinalIgnoreCase);
+        ConfigurableComponents.Clear();
+
+        foreach (var definition in ConfigurableComponentDefinitions)
+        {
+            if (!statesByKey.TryGetValue(definition.Key, out var state) || !state.Available)
             {
-                item.SetProbeState(
-                    state.Installed,
-                    state.StatusText ?? string.Empty,
-                    state.StatusBackground ?? string.Empty,
-                    state.DetailText ?? string.Empty);
+                continue;
             }
-            else
-            {
-                item.SetUnknownState();
-            }
+
+            ConfigurableComponents.Add(new ConfigurableComponentItemViewModel(
+                definition.Key,
+                definition.Title,
+                state.ConfigurationText ?? "Unknown",
+                () => ConfigureComponentAsync(definition)));
+        }
+
+        ConfigurableComponentsStatusText = ConfigurableComponents.Count == 0
+            ? "No configurable components are currently installed."
+            : string.Empty;
+    }
+
+    private async Task ConfigureComponentAsync(ConfigurableComponentDefinition definition)
+    {
+        if (!ConfigurableComponentsByKey.ContainsKey(definition.Key))
+        {
+            throw new InvalidOperationException("The selected component is not in the trusted configuration catalog.");
+        }
+
+        var command =
+            $"wsl.exe -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"{definition.ScriptPath}\"";
+        try
+        {
+            await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true);
+        }
+        finally
+        {
+            await RefreshInstalledStatesAsync().ConfigureAwait(true);
         }
     }
 
@@ -406,6 +503,59 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("        detail += ' Last log: ' + log_error");
         builder.AppendLine("    return make_status(True, 'Installed', detail, WARN)");
         builder.AppendLine();
+        builder.AppendLine("def target_name(path):");
+        builder.AppendLine("    if not path.exists() and not path.is_symlink():");
+        builder.AppendLine("        return ''");
+        builder.AppendLine("    if path.is_symlink():");
+        builder.AppendLine("        return path.resolve(strict=False).name");
+        builder.AppendLine("    return path.name");
+        builder.AppendLine();
+        builder.AppendLine("def start_configuration(base):");
+        builder.AppendLine("    target = target_name(base / 'start.sh')");
+        builder.AppendLine("    if not target:");
+        builder.AppendLine("        return 'Disabled'");
+        builder.AppendLine("    labels = {");
+        builder.AppendLine("        'start.sh': 'Enabled',");
+        builder.AppendLine("        'start-gpu.sh': 'GPU / CUDA',");
+        builder.AppendLine("        'start-cpu.sh': 'CPU',");
+        builder.AppendLine("        'start-deepspeed.sh': 'DeepSpeed - GPU / CUDA',");
+        builder.AppendLine("        'start-lowvram.sh': 'Low VRAM - GPU / CUDA',");
+        builder.AppendLine("        'start-regular.sh': 'Regular - GPU / CUDA',");
+        builder.AppendLine("        'start-audiocpp-pockettts.sh': 'Enabled',");
+        builder.AppendLine("    }");
+        builder.AppendLine("    return labels.get(target, 'Custom')");
+        builder.AppendLine();
+        builder.AppendLine("def whisper_configuration(base):");
+        builder.AppendLine("    target = target_name(base / 'config.yaml')");
+        builder.AppendLine("    if not target:");
+        builder.AppendLine("        return 'Disabled'");
+        builder.AppendLine("    labels = {");
+        builder.AppendLine("        'config-Small-CPU-EN.yaml': 'Small EN - CPU',");
+        builder.AppendLine("        'config-Small-GPU-EN.yaml': 'Small EN - GPU / CUDA',");
+        builder.AppendLine("        'config-Small-GPU-ES.yaml': 'Small ES - GPU / CUDA',");
+        builder.AppendLine("        'config-Tiny-GPU-EN.yaml': 'Tiny EN - GPU / CUDA',");
+        builder.AppendLine("        'config-Medium-GPU-EN.yaml': 'Medium EN - GPU / CUDA',");
+        builder.AppendLine("        'config-numbat-GPU-Skyrim-EN.yaml': 'Skyrim EN - GPU / CUDA',");
+        builder.AppendLine("    }");
+        builder.AppendLine("    return labels.get(target, 'Custom')");
+        builder.AppendLine();
+        builder.AppendLine("def omnivoice_configuration(base):");
+        builder.AppendLine("    mode = start_configuration(base)");
+        builder.AppendLine("    language = 'unknown'");
+        builder.AppendLine("    try:");
+        builder.AppendLine("        config = json.loads((base / 'config.json').read_text(encoding='utf-8'))");
+        builder.AppendLine("        language = str(config.get('active_language') or 'unknown')");
+        builder.AppendLine("    except (OSError, ValueError, TypeError):");
+        builder.AppendLine("        pass");
+        builder.AppendLine("    return f'{mode} - Language: {language}'");
+        builder.AppendLine();
+        builder.AppendLine("def current_configuration(base, kind):");
+        builder.AppendLine("    if kind == 'whisper':");
+        builder.AppendLine("        return whisper_configuration(base)");
+        builder.AppendLine("    if kind == 'omnivoice':");
+        builder.AppendLine("        return omnivoice_configuration(base)");
+        builder.AppendLine("    return start_configuration(base)");
+        builder.AppendLine();
         builder.AppendLine("status = {");
 
         foreach (var item in _allItems)
@@ -425,7 +575,24 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
 
         builder.AppendLine("}");
-        builder.AppendLine("print(json.dumps(status))");
+        builder.AppendLine("configurable = []");
+        foreach (var definition in ConfigurableComponentDefinitions)
+        {
+            builder.Append("if bool(");
+            builder.Append(definition.InstallCheckExpression);
+            builder.Append(") and Path(");
+            builder.Append(JsonSerializer.Serialize(definition.ScriptPath));
+            builder.AppendLine(").is_file():");
+            builder.Append("    configurable.append({'key': ");
+            builder.Append(JsonSerializer.Serialize(definition.Key));
+            builder.Append(", 'available': True, 'configurationText': current_configuration(Path(");
+            builder.Append(JsonSerializer.Serialize(definition.BasePath));
+            builder.Append("), ");
+            builder.Append(JsonSerializer.Serialize(definition.ConfigurationKind));
+            builder.AppendLine(")})");
+        }
+
+        builder.AppendLine("print(json.dumps({'install': status, 'configurable': configurable}))");
         builder.AppendLine("PY");
 
         return builder.ToString();
@@ -441,6 +608,30 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
         public string? DetailText { get; set; }
     }
+
+    private sealed class ComponentProbePayload
+    {
+        public Dictionary<string, InstallComponentProbeState>? Install { get; set; }
+
+        public List<ConfigurableComponentProbeState>? Configurable { get; set; }
+    }
+
+    private sealed class ConfigurableComponentProbeState
+    {
+        public string Key { get; set; } = string.Empty;
+
+        public bool Available { get; set; }
+
+        public string? ConfigurationText { get; set; }
+    }
+
+    private sealed record ConfigurableComponentDefinition(
+        string Key,
+        string Title,
+        string BasePath,
+        string ScriptPath,
+        string InstallCheckExpression,
+        string ConfigurationKind);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -512,10 +703,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 installCheckExpression: "Path('/home/dwemer/omnivoice-tts/venv').exists()",
                 primaryCommand: mainWindowViewModel.InstallOmniVoiceCommand,
                 supportsNvidiaCuda: true,
-                secondaryActionText: "Configure",
-                secondaryActionCommand: mainWindowViewModel.ConfigureOmniVoiceCommand,
-                tertiaryActionText: "View Logs",
-                tertiaryActionCommand: mainWindowViewModel.ViewOmniVoiceLogsCommand),
+                secondaryActionText: "View Logs",
+                secondaryActionCommand: mainWindowViewModel.ViewOmniVoiceLogsCommand),
             CreateItem(
                 key: "xtts",
                 title: "Dwemer Distro XTTS",
@@ -605,6 +794,67 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             secondaryActionCommand,
             tertiaryActionText,
             tertiaryActionCommand);
+    }
+}
+
+public sealed class ConfigurableComponentItemViewModel : ObservableObject
+{
+    private readonly Func<Task> _configure;
+    private string _configurationText;
+    private bool _isConfiguring;
+
+    public ConfigurableComponentItemViewModel(
+        string key,
+        string title,
+        string configurationText,
+        Func<Task> configure)
+    {
+        Key = key;
+        Title = title;
+        _configurationText = configurationText;
+        _configure = configure;
+        ConfigureCommand = new AsyncRelayCommand(ConfigureAsync, () => !IsConfiguring);
+    }
+
+    public string Key { get; }
+
+    public string Title { get; }
+
+    public AsyncRelayCommand ConfigureCommand { get; }
+
+    public string ConfigurationText
+    {
+        get => _configurationText;
+        private set => SetProperty(ref _configurationText, value);
+    }
+
+    public bool IsConfiguring
+    {
+        get => _isConfiguring;
+        private set
+        {
+            if (SetProperty(ref _isConfiguring, value))
+            {
+                OnPropertyChanged(nameof(ConfigureButtonText));
+                ConfigureCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string ConfigureButtonText => IsConfiguring ? "Configuring..." : "Configure";
+
+    private async Task ConfigureAsync()
+    {
+        IsConfiguring = true;
+        ConfigurationText = "Configuring...";
+        try
+        {
+            await _configure().ConfigureAwait(true);
+        }
+        finally
+        {
+            IsConfiguring = false;
+        }
     }
 }
 
