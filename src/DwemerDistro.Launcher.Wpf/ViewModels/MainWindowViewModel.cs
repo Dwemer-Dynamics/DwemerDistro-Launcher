@@ -78,9 +78,9 @@ echo "CHIM-MCP installed and enabled."
     private bool _isServerRunning;
     private bool _isServerStarting;
     private string _startButtonText = "Start Server";
-    private string _herikaStatusText = "HerikaServer: ...";
+    private string _herikaStatusText = "Checking...";
     private string _herikaStatusColor = "White";
-    private string _stobeStatusText = "StobeServer: ...";
+    private string _stobeStatusText = "Checking...";
     private string _stobeStatusColor = "White";
     private string _launcherVersionText = $"Launcher Version: {LauncherConstants.LauncherVersion}";
     private string _launcherUpdateStatusText = "Launcher update: checking...";
@@ -1034,7 +1034,7 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        SetHerikaStatus(BuildServerStatusText("HerikaServer", null, "Checking..."), "White");
+        SetHerikaStatus("Checking...", "White");
         var currentBranch = await GetCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         if (currentBranch is "aiagent" or "dev" or "unstable")
         {
@@ -1047,8 +1047,11 @@ echo "CHIM-MCP installed and enabled."
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/abeiro/HerikaServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
-        var versionDisplay = $"{FormatDateVersion(currentVersion) ?? "N/A"} | {semanticVersion ?? "N/A"}";
-        var statusText = BuildServerStatusText("HerikaServer", currentBranch, $"[{versionDisplay}]");
+        var statusText = BuildServerVersionStatusText(
+            "herika",
+            currentBranch,
+            FormatDateVersion(currentVersion),
+            semanticVersion);
 
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
@@ -1061,13 +1064,13 @@ echo "CHIM-MCP installed and enabled."
         }
         else
         {
-            SetHerikaStatus(BuildServerStatusText("HerikaServer", currentBranch, "[N/A]"), "Yellow");
+            SetHerikaStatus(BuildServerVersionStatusText("herika", currentBranch, null, null), "Yellow");
         }
     }
 
     private async Task CheckStobeServerUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        SetStobeStatus(BuildServerStatusText("StobeServer", null, "Checking..."), "White");
+        SetStobeStatus("Checking...", "White");
         var currentBranch = await GetStobeServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         if (currentBranch is "stobe" or "dev" or "unstable")
         {
@@ -1082,8 +1085,11 @@ echo "CHIM-MCP installed and enabled."
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/StobeServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
-        var versionDisplay = $"{FormatDateVersion(currentVersion) ?? "N/A"} | {semanticVersion ?? "N/A"}";
-        var statusText = BuildServerStatusText("StobeServer", currentBranch, $"[{versionDisplay}]");
+        var statusText = BuildServerVersionStatusText(
+            "stobe",
+            currentBranch,
+            FormatDateVersion(currentVersion),
+            semanticVersion);
 
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
@@ -1096,7 +1102,7 @@ echo "CHIM-MCP installed and enabled."
         }
         else
         {
-            SetStobeStatus(BuildServerStatusText("StobeServer", currentBranch, "[N/A]"), "Yellow");
+            SetStobeStatus(BuildServerVersionStatusText("stobe", currentBranch, null, null), "Yellow");
         }
     }
 
@@ -2953,12 +2959,14 @@ fi
                text.Contains("[N/A]", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildServerStatusText(string serverName, string? branch, string detail)
+    private static string BuildServerVersionStatusText(
+        string serviceName,
+        string? branch,
+        string? dateVersion,
+        string? semanticVersion)
     {
-        var header = string.IsNullOrWhiteSpace(branch)
-            ? serverName
-            : $"{serverName} ({branch.Trim()})";
-        return $"{header}{Environment.NewLine}{detail}";
+        var source = string.IsNullOrWhiteSpace(branch) ? serviceName : branch.Trim();
+        return $"{source} | {dateVersion ?? "N/A"} | {semanticVersion ?? "N/A"}";
     }
 
     private static FileProgressSnapshot? TryGetFileProgressSnapshot(string path)

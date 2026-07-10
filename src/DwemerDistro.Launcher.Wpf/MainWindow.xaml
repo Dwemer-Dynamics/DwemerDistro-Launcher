@@ -139,6 +139,64 @@
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
 
+        <Style x:Key="UpdateIncludeCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#E6E6E6" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Background="Transparent">
+                            <Border x:Name="CheckBoxBorder"
+                                    Width="17"
+                                    Height="17"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Background="#1D1D1D"
+                                    BorderBrush="#747474"
+                                    BorderThickness="1"
+                                    CornerRadius="3">
+                                <Path x:Name="CheckMark"
+                                      Width="10"
+                                      Height="8"
+                                      Data="M 1,4 L 4,7 L 9,1"
+                                      Stretch="Fill"
+                                      Stroke="White"
+                                      StrokeThickness="2"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      Visibility="Collapsed" />
+                            </Border>
+                            <ContentPresenter Margin="24,0,0,0"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckBoxBorder" Property="Background" Value="#2E7D39" />
+                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#62B26C" />
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#AFAFAF" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="White" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="ComboBox">
             <Setter Property="Margin" Value="0,0,8,0" />
             <Setter Property="Height" Value="26" />
@@ -305,7 +363,8 @@
                                     <CheckBox Grid.Column="0"
                                               Content="Include"
                                               IsChecked="{Binding IncludeHerikaServerUpdate}"
-                                              Command="{Binding SaveUpdateIncludeCommand}" />
+                                              Command="{Binding SaveUpdateIncludeCommand}"
+                                              Style="{StaticResource UpdateIncludeCheckBox}" />
                                     <ComboBox Grid.Column="1"
                                               ItemsSource="{Binding HerikaBranches}"
                                               SelectedItem="{Binding TargetHerikaBranch}" />
@@ -336,7 +395,8 @@
                                     <CheckBox Grid.Column="0"
                                               Content="Include"
                                               IsChecked="{Binding IncludeStobeServerUpdate}"
-                                              Command="{Binding SaveUpdateIncludeCommand}" />
+                                              Command="{Binding SaveUpdateIncludeCommand}"
+                                              Style="{StaticResource UpdateIncludeCheckBox}" />
                                     <ComboBox Grid.Column="1"
                                               ItemsSource="{Binding StobeBranches}"
                                               SelectedItem="{Binding TargetStobeBranch}" />
