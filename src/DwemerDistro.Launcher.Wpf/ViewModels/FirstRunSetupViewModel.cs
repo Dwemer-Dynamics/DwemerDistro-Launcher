@@ -46,6 +46,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private bool _showPresetOptions;
     private bool _showTechnicalDetails;
     private bool _skipHuggingFaceStep = HuggingFaceTokenService.HasManagedToken;
+    private bool _quickstartDistroUpdated;
     private string _busyText = "Working";
     private string _hardwareSummary = "Detecting hardware";
     private string _hardwareDetail = "Checking GPU and recommended setup path...";
@@ -493,7 +494,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 var status = await _distroSetup.InstallPresetAsync(
                         _selectedPreset,
                         AppendSetupLog,
-                        ApplySetupInstallProgress)
+                        ApplySetupInstallProgress,
+                        skipPreparation: _quickstartDistroUpdated)
                     .ConfigureAwait(true);
                 ApplySetupStatus(status);
                 await RefreshHuggingFaceStatusCoreAsync().ConfigureAwait(true);
@@ -528,6 +530,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             try
             {
                 var updated = await _mainWindowViewModel.UpdateDistroFromQuickstartAsync().ConfigureAwait(true);
+                _quickstartDistroUpdated = updated;
                 SetupInstallProgress = updated ? 100 : 0;
                 SetupInstallProgressText = updated ? "Distro update complete." : "Distro update needs attention.";
                 AppendSetupLog(updated

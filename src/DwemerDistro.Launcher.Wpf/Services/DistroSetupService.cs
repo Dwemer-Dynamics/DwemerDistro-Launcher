@@ -43,9 +43,23 @@ export UCF_FORCE_CONFFOLD=1
 export GIT_TERMINAL_PROMPT=0
 
 echo "Preparing DwemerDistro package state..."
-dpkg --configure -a
-apt-get update
-apt-get install -y git ca-certificates python3 python3-venv python3-pip
+missing_packages=()
+command -v git >/dev/null 2>&1 || missing_packages+=(git)
+test -s /etc/ssl/certs/ca-certificates.crt || missing_packages+=(ca-certificates)
+command -v python3 >/dev/null 2>&1 || missing_packages+=(python3)
+python3 -m venv --help >/dev/null 2>&1 || missing_packages+=(python3-venv)
+python3 -m pip --version >/dev/null 2>&1 || missing_packages+=(python3-pip)
+
+if [ ${#missing_packages[@]} -gt 0 ]; then
+    echo "Installing missing base packages: ${missing_packages[*]}"
+    dpkg --configure -a
+    apt-get update
+    apt-get install -y "${missing_packages[@]}"
+    apt-get clean
+    find /var/lib/apt/lists/ -type f -delete
+else
+    echo "Base distro tools already installed; skipping apt package preparation."
+fi
 
 runuser -u dwemer -- bash -lc "
 set -e
@@ -370,6 +384,7 @@ PY
         SetupPreset preset,
         Action<string>? output = null,
         Action<SetupInstallProgress>? progress = null,
+        bool skipPreparation = false,
         CancellationToken cancellationToken = default)
     {
         var current = await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
@@ -387,46 +402,58 @@ PY
             return current;
         }
 
-        var totalComponents = preset.ComponentKeys.Count + 1;
+        var totalComponents = preset.ComponentKeys.Count + (skipPreparation ? 0 : 1);
         var completedComponents = 0;
         progress?.Invoke(new SetupInstallProgress(0, totalComponents, preset.Title, "Starting setup"));
 
-        output?.Invoke("Preparing distro before component installs..." + Environment.NewLine);
-        progress?.Invoke(new SetupInstallProgress(
-            completedComponents,
-            totalComponents,
-            PrepareComponent.Title,
-            "Preparing distro"));
-
-        var prepareResult = await RunComponentInstallAsync(
-                PrepareComponent,
-                output,
-                progress,
+        if (skipPreparation)
+        {
+            output?.Invoke("Distro was already updated in Quick Setup. Skipping extra package preparation." + Environment.NewLine);
+            progress?.Invoke(new SetupInstallProgress(
                 completedComponents,
                 totalComponents,
-                cancellationToken)
-            .ConfigureAwait(false);
-
-        if (!prepareResult.Succeeded)
+                preset.Title,
+                "Using updated distro"));
+        }
+        else
         {
-            var errorText = prepareResult.ExitCode == 124
-                ? $"{PrepareComponent.Title} timed out after 2 hours."
-                : $"{PrepareComponent.Title} failed: {BuildCommandError(prepareResult)}";
-            output?.Invoke(errorText + Environment.NewLine);
+            output?.Invoke("Preparing distro before component installs..." + Environment.NewLine);
             progress?.Invoke(new SetupInstallProgress(
                 completedComponents,
                 totalComponents,
                 PrepareComponent.Title,
-                prepareResult.ExitCode == 124 ? $"{PrepareComponent.Title} timed out" : $"{PrepareComponent.Title} failed"));
-            return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
-        }
+                "Preparing distro"));
 
-        completedComponents++;
-        progress?.Invoke(new SetupInstallProgress(
-            completedComponents,
-            totalComponents,
-            PrepareComponent.Title,
-            "Distro prepared"));
+            var prepareResult = await RunComponentInstallAsync(
+                    PrepareComponent,
+                    output,
+                    progress,
+                    completedComponents,
+                    totalComponents,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (!prepareResult.Succeeded)
+            {
+                var errorText = prepareResult.ExitCode == 124
+                    ? $"{PrepareComponent.Title} timed out after 2 hours."
+                    : $"{PrepareComponent.Title} failed: {BuildCommandError(prepareResult)}";
+                output?.Invoke(errorText + Environment.NewLine);
+                progress?.Invoke(new SetupInstallProgress(
+                    completedComponents,
+                    totalComponents,
+                    PrepareComponent.Title,
+                    prepareResult.ExitCode == 124 ? $"{PrepareComponent.Title} timed out" : $"{PrepareComponent.Title} failed"));
+                return await ProbeAsync(preset, cancellationToken).ConfigureAwait(false);
+            }
+
+            completedComponents++;
+            progress?.Invoke(new SetupInstallProgress(
+                completedComponents,
+                totalComponents,
+                PrepareComponent.Title,
+                "Distro prepared"));
+        }
 
         if (HuggingFaceTokenService.HasManagedToken)
         {

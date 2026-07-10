@@ -152,14 +152,11 @@
                        Stretch="Uniform"
                        Margin="0,0,12,0" />
 
-                <StackPanel Grid.Column="1">
+                <StackPanel Grid.Column="1"
+                            VerticalAlignment="Center">
                     <TextBlock Text="DwemerDistro Quickstart"
                                FontSize="18"
                                FontWeight="Bold" />
-                    <TextBlock Text="{Binding StepSubtitle}"
-                               Foreground="#D6D6D6"
-                               TextWrapping="Wrap"
-                               Margin="0,4,0,0" />
                 </StackPanel>
 
                 <StackPanel Grid.Column="2"
@@ -353,7 +350,7 @@
                                        FontWeight="Bold"
                                        Margin="0,18,0,8" />
                             <TextBox Text="{Binding SetupLogText, Mode=OneWay}"
-                                     Height="260"
+                                     Height="150"
                                      TextWrapping="Wrap"
                                      AcceptsReturn="True"
                                      IsReadOnly="True"
