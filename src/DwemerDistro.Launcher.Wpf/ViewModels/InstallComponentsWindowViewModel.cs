@@ -11,6 +11,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private readonly ProcessRunner _processRunner = new();
     private readonly WslService _wsl;
     private readonly HuggingFaceTokenService _huggingFaceToken;
+    private readonly MainWindowViewModel _mainWindowViewModel;
     private readonly List<InstallComponentItemViewModel> _allItems = [];
     private readonly Dictionary<string, HuggingFaceModelAccessViewModel> _modelAccessItemsByKey;
     private readonly SemaphoreSlim _componentProbeGate = new(1, 1);
@@ -42,6 +43,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
     public InstallComponentsWindowViewModel(MainWindowViewModel mainWindowViewModel)
     {
+        _mainWindowViewModel = mainWindowViewModel;
         _wsl = new WslService(_processRunner);
         _huggingFaceToken = new HuggingFaceTokenService(_wsl);
         RefreshHuggingFaceTokenCommand = new AsyncRelayCommand(RefreshHuggingFaceTokenStatusAsync);
@@ -57,7 +59,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                     () => _processRunner.OpenExternalUrl(definition.AccessUrl))));
         _modelAccessItemsByKey = HuggingFaceModelAccessItems.ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
         Sections = new ObservableCollection<InstallComponentSectionViewModel>(
-            BuildSections(mainWindowViewModel, _allItems));
+            BuildSections(_allItems));
     }
 
     public ObservableCollection<InstallComponentSectionViewModel> Sections { get; }
@@ -639,8 +641,16 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         PropertyNameCaseInsensitive = true
     };
 
-    private static IEnumerable<InstallComponentSectionViewModel> BuildSections(
-        MainWindowViewModel mainWindowViewModel,
+    private ICommand CreateInstallCommand(string componentKey)
+    {
+        return new AsyncRelayCommand(async () =>
+        {
+            await _mainWindowViewModel.InstallComponentAsync(componentKey).ConfigureAwait(true);
+            await RefreshInstalledStatesAsync().ConfigureAwait(true);
+        });
+    }
+
+    private IEnumerable<InstallComponentSectionViewModel> BuildSections(
         List<InstallComponentItemViewModel> allItems)
     {
         var sections = new List<InstallComponentSectionViewModel>();
@@ -653,7 +663,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "CUDA",
                 description: "Install the NVIDIA CUDA stack used by GPU-backed services. Run this first on NVIDIA systems.",
                 installCheckExpression: "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
-                primaryCommand: mainWindowViewModel.InstallCudaCommand,
+                primaryCommand: CreateInstallCommand("cuda"),
                 supportsNvidiaCuda: true)));
 
         sections.Add(CreateSection(
@@ -664,7 +674,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "Minime and TXT2VEC",
                 description: "Installs the small helper LLM and vector service used to improve NPC responses and retrieval.",
                 installCheckExpression: "Path('/home/dwemer/python-minime').exists()",
-                primaryCommand: mainWindowViewModel.InstallMinimeT5Command,
+                primaryCommand: CreateInstallCommand("minime"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true),
             CreateItem(
@@ -672,7 +682,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "CHIM-MCP",
                 description: "Optional MCP integration for CHIM tooling. Install this only when you want MCP support.",
                 installCheckExpression: "Path('/home/dwemer/CHIM-MCP/dist/index.js').exists()",
-                primaryCommand: mainWindowViewModel.InstallChimMcpCommand)));
+                primaryCommand: CreateInstallCommand("chimmcp"))));
 
         sections.Add(CreateSection(
             "Text-to-Speech Engines",
@@ -682,7 +692,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "Pocket-TTS",
                 description: "Compact TTS that supports voice samples and can run in CPU or GPU mode depending on your configuration.",
                 installCheckExpression: "Path('/home/dwemer/pocket-tts/venv').exists()",
-                primaryCommand: mainWindowViewModel.InstallPocketTtsCommand,
+                primaryCommand: CreateInstallCommand("pockettts"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true),
             CreateItem(
@@ -690,7 +700,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "Chatterbox",
                 description: "High-quality multilingual TTS with voice cloning. Shares port 8020 with XTTS and PocketTTS.",
                 installCheckExpression: "Path('/home/dwemer/chatterbox/venv').exists()",
-                primaryCommand: mainWindowViewModel.InstallChatterboxCommand,
+                primaryCommand: CreateInstallCommand("chatterbox"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true),
             CreateItem(
@@ -698,23 +708,23 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "Multilingual OmniVoice TTS",
                 description: "Optional local OmniVoice TTS for CHIM voice libraries. Uses a separate service on port 8021.",
                 installCheckExpression: "Path('/home/dwemer/omnivoice-tts/venv').exists()",
-                primaryCommand: mainWindowViewModel.InstallOmniVoiceCommand,
+                primaryCommand: CreateInstallCommand("omnivoice"),
                 supportsNvidiaCuda: true,
                 secondaryActionText: "View Logs",
-                secondaryActionCommand: mainWindowViewModel.ViewOmniVoiceLogsCommand),
+                secondaryActionCommand: _mainWindowViewModel.ViewOmniVoiceLogsCommand),
             CreateItem(
                 key: "xtts",
                 title: "Dwemer Distro XTTS",
                 description: "High-quality XTTS deployment for cloned Skyrim voices. Requires the shared XTTS Python environment.",
                 installCheckExpression: "Path('/home/dwemer/python-tts').exists()",
-                primaryCommand: mainWindowViewModel.InstallXttsCommand,
+                primaryCommand: CreateInstallCommand("xtts"),
                 supportsNvidiaCuda: true),
             CreateItem(
                 key: "melotts",
                 title: "MeloTTS",
                 description: "Fast TTS option for lightweight setups with low overhead and strong CPU support.",
                 installCheckExpression: "Path('/home/dwemer/python-melotts').exists()",
-                primaryCommand: mainWindowViewModel.InstallMeloTtsCommand,
+                primaryCommand: CreateInstallCommand("melotts"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true),
             CreateItem(
@@ -722,17 +732,17 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "Piper-TTS",
                 description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.",
                 installCheckExpression: "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))",
-                primaryCommand: mainWindowViewModel.InstallPiperTtsCommand,
+                primaryCommand: CreateInstallCommand("pipertts"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true,
                 secondaryActionText: "Open Piper Voice Folder",
-                secondaryActionCommand: mainWindowViewModel.OpenPiperVoicesFolderCommand),
+                secondaryActionCommand: _mainWindowViewModel.OpenPiperVoicesFolderCommand),
             CreateItem(
                 key: "mimic3",
                 title: "Mimic3",
                 description: "Older local TTS service that is still useful when you want a simple, lightweight fallback.",
-                installCheckExpression: "Path('/home/dwemer/mimic3').exists()",
-                primaryCommand: mainWindowViewModel.InstallMimic3Command)));
+                installCheckExpression: "Path('/home/dwemer/python-mimic3/bin/python').is_file()",
+                primaryCommand: CreateInstallCommand("mimic3"))));
 
         sections.Add(CreateSection(
             "Speech-to-Text Engines",
@@ -742,7 +752,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "Parakeet STT",
                 description: "Offline speech-to-text service with GPU and CPU modes for local transcription.",
                 installCheckExpression: "Path('/home/dwemer/parakeet-api-server/venv').exists()",
-                primaryCommand: mainWindowViewModel.InstallParakeetCommand,
+                primaryCommand: CreateInstallCommand("parakeet"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true),
             CreateItem(
@@ -750,7 +760,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 title: "LocalWhisper",
                 description: "Offline Whisper-based speech-to-text service for local microphone and transcription workflows.",
                 installCheckExpression: "Path('/home/dwemer/python-stt').exists()",
-                primaryCommand: mainWindowViewModel.InstallLocalWhisperCommand,
+                primaryCommand: CreateInstallCommand("localwhisper"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true)));
 

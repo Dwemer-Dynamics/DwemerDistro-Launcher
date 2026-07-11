@@ -60,35 +60,6 @@ echo 1 > /home/dwemer/.mcp_enabled
 echo "CHIM-MCP installed and enabled."
 """;
 
-    private const string OmniVoiceInstallScript = """
-set -uo pipefail
-log_file=/home/dwemer/omnivoice-install.log
-
-set +e
-(
-    set -e
-    cd /home/dwemer
-    if [ ! -d omnivoice-tts/.git ]; then
-        rm -rf omnivoice-tts
-        git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts
-    fi
-
-    /home/dwemer/omnivoice-tts/ddistro_install.sh
-) 2>&1 | tee "$log_file"
-status=${PIPESTATUS[0]}
-
-echo
-if [ "$status" -eq 0 ]; then
-    echo "OmniVoice installation completed successfully."
-else
-    echo "OmniVoice installation failed with exit code $status."
-fi
-echo "Install log: $log_file"
-echo
-read -r -p "Press Enter to close this window..." _
-exit "$status"
-""";
-
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _startAnimationTimer;
     private readonly DispatcherTimer _serverStatusRetryTimer;
@@ -96,6 +67,7 @@ exit "$status"
     private readonly WslService _wsl;
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly LauncherUpdateService _launcherUpdateService;
+    private readonly SemaphoreSlim _componentInstallGate = new(1, 1);
 
     private TcpProxyService? _tcpProxyService;
     private DiscoveryService? _discoveryService;
@@ -161,19 +133,6 @@ exit "$status"
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
-        InstallCudaCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- /usr/local/bin/install_full_packages"));
-        InstallXttsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/xtts-api-server/ddistro_install.sh"));
-        InstallChatterboxCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/chatterbox/ddistro_install.sh"));
-        InstallMeloTtsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/MeloTTS/ddistro_install.sh"));
-        InstallMinimeT5Command = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/minime-t5/ddistro_install.sh"));
-        InstallMimic3Command = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/mimic3/ddistro_install.sh"));
-        InstallPiperTtsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/piper/ddistro_install.sh"));
-        InstallLocalWhisperCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/remote-faster-whisper/ddistro_install.sh"));
-        InstallParakeetCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d parakeet-api-server/.git ]; then rm -rf parakeet-api-server; git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server; fi; /home/dwemer/parakeet-api-server/ddistro_install.sh\""));
-        InstallPocketTtsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d pocket-tts/.git ]; then rm -rf pocket-tts; git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts; fi; /home/dwemer/pocket-tts/ddistro_install.sh\""));
-        InstallOmniVoiceCommand = new RelayCommand(() =>
-            RunCommandInNewWindow(BuildDistroBashConsoleCommand(OmniVoiceInstallScript)));
-        InstallChimMcpCommand = new RelayCommand(() => RunCommandInNewWindow(BuildDistroBashConsoleCommand(ChimMcpInstallScript)));
         OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"));
 
         OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"));
@@ -361,18 +320,6 @@ exit "$status"
     public RelayCommand OpenStobeCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
-    public RelayCommand InstallCudaCommand { get; }
-    public RelayCommand InstallXttsCommand { get; }
-    public RelayCommand InstallChatterboxCommand { get; }
-    public RelayCommand InstallMeloTtsCommand { get; }
-    public RelayCommand InstallMinimeT5Command { get; }
-    public RelayCommand InstallMimic3Command { get; }
-    public RelayCommand InstallPiperTtsCommand { get; }
-    public RelayCommand InstallLocalWhisperCommand { get; }
-    public RelayCommand InstallParakeetCommand { get; }
-    public RelayCommand InstallPocketTtsCommand { get; }
-    public RelayCommand InstallOmniVoiceCommand { get; }
-    public RelayCommand InstallChimMcpCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand ViewMemoryUsageCommand { get; }
@@ -3253,6 +3200,45 @@ fi
         }
     }
 
+    public async Task InstallComponentAsync(string componentKey)
+    {
+        var definition = GetComponentInstallDefinition(componentKey);
+        if (!await _componentInstallGate.WaitAsync(0).ConfigureAwait(true))
+        {
+            MessageBox.Show(
+                "Another component installer is already running. Finish or close it before starting another install.",
+                "Component Install In Progress",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var wrapperScript = BuildComponentInstallWrapper(definition);
+            var command = BuildDistroBashConsoleCommand(wrapperScript, definition.RunAsUser);
+            AppendLog($"Starting {definition.DisplayName} installer. Log: {definition.LogPath}{Environment.NewLine}");
+
+            var exitCode = await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true);
+            AppendLog(
+                $"{definition.DisplayName} installer exited with code {exitCode}.{Environment.NewLine}",
+                exitCode == 0 ? "green" : "red");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"{definition.DisplayName} installer could not be started: {ex.Message}{Environment.NewLine}", "red");
+            MessageBox.Show(
+                $"{definition.DisplayName} could not be installed.\n\n{ex.Message}",
+                "Component Install Failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            _componentInstallGate.Release();
+        }
+    }
+
     private void RunCommandInNewWindow(string command)
     {
         try
@@ -3464,10 +3450,183 @@ fi
         return $"'{value.Replace("'", "'\"'\"'")}'";
     }
 
-    private static string BuildDistroBashConsoleCommand(string script)
+    private static ComponentInstallDefinition GetComponentInstallDefinition(string componentKey)
     {
-        var encodedScript = Convert.ToBase64String(Encoding.UTF8.GetBytes(script.Replace("\r\n", "\n")));
-        return $"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"printf %s {encodedScript} | base64 -d | bash\"";
+        return componentKey.Trim().ToLowerInvariant() switch
+        {
+            "cuda" => new(
+                "cuda",
+                "CUDA",
+                "/usr/local/bin/install_full_packages",
+                "command -v nvcc >/dev/null 2>&1 || [ -x /usr/bin/nvcc ] || [ -x /usr/local/cuda/bin/nvcc ]",
+                "root"),
+            "minime" => new(
+                "minime",
+                "Minime and TXT2VEC",
+                "/home/dwemer/minime-t5/ddistro_install.sh",
+                "[ -x /home/dwemer/python-minime/bin/python ]"),
+            "chimmcp" => new(
+                "chimmcp",
+                "CHIM-MCP",
+                ChimMcpInstallScript,
+                "[ -f /home/dwemer/CHIM-MCP/dist/index.js ]"),
+            "pockettts" => new(
+                "pockettts",
+                "Pocket-TTS",
+                """
+                cd /home/dwemer
+                if [ ! -d pocket-tts/.git ]; then
+                    rm -rf pocket-tts
+                    git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
+                fi
+                /home/dwemer/pocket-tts/ddistro_install.sh
+                """,
+                "[ -x /home/dwemer/pocket-tts/venv/bin/python ]"),
+            "chatterbox" => new(
+                "chatterbox",
+                "Chatterbox",
+                "/home/dwemer/chatterbox/ddistro_install.sh",
+                "[ -x /home/dwemer/chatterbox/venv/bin/python ]"),
+            "omnivoice" => new(
+                "omnivoice",
+                "Multilingual OmniVoice TTS",
+                """
+                cd /home/dwemer
+                if [ ! -d omnivoice-tts/.git ]; then
+                    rm -rf omnivoice-tts
+                    git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts
+                fi
+                /home/dwemer/omnivoice-tts/ddistro_install.sh
+                """,
+                "[ -x /home/dwemer/omnivoice-tts/venv/bin/python ]"),
+            "xtts" => new(
+                "xtts",
+                "Dwemer Distro XTTS",
+                "/home/dwemer/xtts-api-server/ddistro_install.sh",
+                "[ -x /home/dwemer/python-tts/bin/python ]"),
+            "melotts" => new(
+                "melotts",
+                "MeloTTS",
+                "/home/dwemer/MeloTTS/ddistro_install.sh",
+                "[ -x /home/dwemer/python-melotts/bin/python ]"),
+            "pipertts" => new(
+                "pipertts",
+                "Piper-TTS",
+                "/home/dwemer/piper/ddistro_install.sh",
+                "find /home/dwemer/python-piper/lib -path '*/site-packages/piper/const.py' -print -quit 2>/dev/null | grep -q ."),
+            "mimic3" => new(
+                "mimic3",
+                "Mimic3",
+                "/home/dwemer/mimic3/ddistro_install.sh",
+                "[ -x /home/dwemer/python-mimic3/bin/python ]"),
+            "parakeet" => new(
+                "parakeet",
+                "Parakeet STT",
+                """
+                cd /home/dwemer
+                if [ ! -d parakeet-api-server/.git ]; then
+                    rm -rf parakeet-api-server
+                    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
+                fi
+                /home/dwemer/parakeet-api-server/ddistro_install.sh
+                """,
+                "[ -x /home/dwemer/parakeet-api-server/venv/bin/python ]"),
+            "localwhisper" => new(
+                "localwhisper",
+                "LocalWhisper",
+                "/home/dwemer/remote-faster-whisper/ddistro_install.sh",
+                "[ -x /home/dwemer/python-stt/bin/python ]"),
+            _ => throw new ArgumentOutOfRangeException(nameof(componentKey), componentKey, "Unknown component installer.")
+        };
+    }
+
+    private static string BuildComponentInstallWrapper(ComponentInstallDefinition definition)
+    {
+        var payload = $$"""
+        set +e
+        (
+            set -e
+        {{definition.InstallScript}}
+        )
+        install_status=$?
+        set -e
+
+        set +e
+        bash -lc {{EscapeForSingleQuotedBash(definition.VerificationScript)}}
+        verification_status=$?
+        set -e
+
+        if [ "$verification_status" -ne 0 ]; then
+            echo
+            echo "Verification failed: the expected component files were not found."
+            exit 1
+        fi
+
+        if [ "$install_status" -eq 0 ] || [ "$install_status" -eq 130 ]; then
+            exit 0
+        fi
+
+        exit "$install_status"
+        """;
+        var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload.Replace("\r\n", "\n")));
+
+        return $$"""
+        set -uo pipefail
+        component_name={{EscapeForSingleQuotedBash(definition.DisplayName)}}
+        log_file={{EscapeForSingleQuotedBash(definition.LogPath)}}
+        log_dir=$(dirname "$log_file")
+
+        if [ "$(id -u)" -eq 0 ]; then
+            install -d -o dwemer -g dwemer -m 0775 "$log_dir"
+        else
+            mkdir -p "$log_dir"
+        fi
+
+        payload_file=$(mktemp)
+        cleanup() {
+            rm -f "$payload_file"
+        }
+        trap cleanup EXIT
+        echo {{encodedPayload}} | base64 -d > "$payload_file"
+        chmod 700 "$payload_file"
+
+        echo "=== $component_name installer ==="
+        echo "Install log: $log_file"
+        echo
+
+        set +e
+        if command -v script >/dev/null 2>&1; then
+            script -q -e -c "bash $payload_file" "$log_file"
+            status=$?
+        else
+            bash "$payload_file" 2>&1 | tee "$log_file"
+            status=${PIPESTATUS[0]}
+        fi
+        set -e
+
+        echo
+        if [ "$status" -eq 0 ]; then
+            echo "$component_name installation completed and was verified."
+        else
+            echo "$component_name installation failed with exit code $status."
+        fi
+        echo "Install log: $log_file"
+        echo
+
+        if [ "${DWEMER_COMPONENT_INSTALL_NO_PAUSE:-0}" != "1" ]; then
+            read -r -p "Press Enter to close this window..." _
+        fi
+        exit "$status"
+        """;
+    }
+
+    private static string BuildDistroBashConsoleCommand(string script, string user = LauncherConstants.DistroUser)
+    {
+        var scriptPath = $"/tmp/dwemerdistro-launcher-{Guid.NewGuid():N}.sh";
+        var scriptWithCleanup = $"trap 'rm -f {scriptPath}' EXIT\n{script.Replace("\r\n", "\n")}";
+        var encodedScript = Convert.ToBase64String(Encoding.UTF8.GetBytes(scriptWithCleanup));
+        return
+            $"wsl -d {LauncherConstants.DistroName} -u {user} -- bash -lc \"echo {encodedScript} | base64 -d > {scriptPath} && bash {scriptPath}\"";
     }
 
     private async Task FlushUpdateUiAsync()
@@ -3678,6 +3837,16 @@ fi
 
     [GeneratedRegex(@"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")]
     private static partial Regex AnsiRegex();
+
+    private sealed record ComponentInstallDefinition(
+        string Key,
+        string DisplayName,
+        string InstallScript,
+        string VerificationScript,
+        string RunAsUser = LauncherConstants.DistroUser)
+    {
+        public string LogPath => $"/home/dwemer/.dwemerdistro/logs/components/{Key}.log";
+    }
 
     private sealed record RollbackServerConfig(
         string Key,
