@@ -60,6 +60,35 @@ echo 1 > /home/dwemer/.mcp_enabled
 echo "CHIM-MCP installed and enabled."
 """;
 
+    private const string OmniVoiceInstallScript = """
+set -uo pipefail
+log_file=/home/dwemer/omnivoice-install.log
+
+set +e
+(
+    set -e
+    cd /home/dwemer
+    if [ ! -d omnivoice-tts/.git ]; then
+        rm -rf omnivoice-tts
+        git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts
+    fi
+
+    /home/dwemer/omnivoice-tts/ddistro_install.sh
+) 2>&1 | tee "$log_file"
+status=${PIPESTATUS[0]}
+
+echo
+if [ "$status" -eq 0 ]; then
+    echo "OmniVoice installation completed successfully."
+else
+    echo "OmniVoice installation failed with exit code $status."
+fi
+echo "Install log: $log_file"
+echo
+read -r -p "Press Enter to close this window..." _
+exit "$status"
+""";
+
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _startAnimationTimer;
     private readonly DispatcherTimer _serverStatusRetryTimer;
@@ -142,7 +171,8 @@ echo "CHIM-MCP installed and enabled."
         InstallLocalWhisperCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/remote-faster-whisper/ddistro_install.sh"));
         InstallParakeetCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d parakeet-api-server/.git ]; then rm -rf parakeet-api-server; git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server; fi; /home/dwemer/parakeet-api-server/ddistro_install.sh\""));
         InstallPocketTtsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d pocket-tts/.git ]; then rm -rf pocket-tts; git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts; fi; /home/dwemer/pocket-tts/ddistro_install.sh\""));
-        InstallOmniVoiceCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"set -e; cd /home/dwemer; if [ ! -d omnivoice-tts ]; then git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts; fi; /home/dwemer/omnivoice-tts/ddistro_install.sh\""));
+        InstallOmniVoiceCommand = new RelayCommand(() =>
+            RunCommandInNewWindow(BuildDistroBashConsoleCommand(OmniVoiceInstallScript)));
         InstallChimMcpCommand = new RelayCommand(() => RunCommandInNewWindow(BuildDistroBashConsoleCommand(ChimMcpInstallScript)));
         OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"));
 
