@@ -252,6 +252,36 @@ public sealed class ProcessRunner
         return process.ExitCode;
     }
 
+    public async Task<int> RunWslScriptInNewConsoleAndWaitAsync(
+        string distroName,
+        string userName,
+        string script,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedScript = script.Replace("\r\n", "\n");
+        var encodedScript = Convert.ToBase64String(Encoding.UTF8.GetBytes(normalizedScript));
+        var bashCommand = $"bash <(echo {encodedScript} | base64 -d)";
+
+        var startInfo = new ProcessStartInfo("wsl.exe")
+        {
+            UseShellExecute = true,
+            WindowStyle = ProcessWindowStyle.Normal
+        };
+        startInfo.ArgumentList.Add("-d");
+        startInfo.ArgumentList.Add(distroName);
+        startInfo.ArgumentList.Add("-u");
+        startInfo.ArgumentList.Add(userName);
+        startInfo.ArgumentList.Add("--");
+        startInfo.ArgumentList.Add("bash");
+        startInfo.ArgumentList.Add("-lc");
+        startInfo.ArgumentList.Add(bashCommand);
+
+        using var process = Process.Start(startInfo) ??
+            throw new InvalidOperationException("Failed to open the component installer terminal.");
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        return process.ExitCode;
+    }
+
     private static Process StartInNewConsole(string command)
     {
         var startInfo = new ProcessStartInfo("cmd.exe")

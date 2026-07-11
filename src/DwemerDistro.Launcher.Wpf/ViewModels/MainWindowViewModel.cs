@@ -3216,10 +3216,13 @@ fi
         try
         {
             var wrapperScript = BuildComponentInstallWrapper(definition);
-            var command = BuildDistroBashConsoleCommand(wrapperScript, definition.RunAsUser);
             AppendLog($"Starting {definition.DisplayName} installer. Log: {definition.LogPath}{Environment.NewLine}");
 
-            var exitCode = await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true);
+            var exitCode = await _processRunner.RunWslScriptInNewConsoleAndWaitAsync(
+                    LauncherConstants.DistroName,
+                    definition.RunAsUser,
+                    wrapperScript)
+                .ConfigureAwait(true);
             AppendLog(
                 $"{definition.DisplayName} installer exited with code {exitCode}.{Environment.NewLine}",
                 exitCode == 0 ? "green" : "red");
@@ -3618,15 +3621,6 @@ fi
         fi
         exit "$status"
         """;
-    }
-
-    private static string BuildDistroBashConsoleCommand(string script, string user = LauncherConstants.DistroUser)
-    {
-        var scriptPath = $"/tmp/dwemerdistro-launcher-{Guid.NewGuid():N}.sh";
-        var scriptWithCleanup = $"trap 'rm -f {scriptPath}' EXIT\n{script.Replace("\r\n", "\n")}";
-        var encodedScript = Convert.ToBase64String(Encoding.UTF8.GetBytes(scriptWithCleanup));
-        return
-            $"wsl -d {LauncherConstants.DistroName} -u {user} -- bash -lc \"echo {encodedScript} | base64 -d > {scriptPath} && bash {scriptPath}\"";
     }
 
     private async Task FlushUpdateUiAsync()
