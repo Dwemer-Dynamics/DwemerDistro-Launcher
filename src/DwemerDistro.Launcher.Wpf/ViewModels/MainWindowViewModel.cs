@@ -1665,7 +1665,12 @@ echo "CHIM-MCP installed and enabled."
             ("DialecticServer service", "/var/www/html/DialecticServer/log/service.log"),
             ("DialecticServer manager", "/var/www/html/DialecticServer/log/manager.log"),
             ("DialecticServer output_from_llm", "/var/www/html/DialecticServer/log/output_from_llm.log"),
+            ("DialecticServer output_from_llm_fast", "/var/www/html/DialecticServer/log/output_from_llm_fast.log"),
+            ("DialecticServer output_to_plugin", "/var/www/html/DialecticServer/log/output_to_plugin.log"),
             ("DialecticServer context_sent_to_llm", "/var/www/html/DialecticServer/log/context_sent_to_llm.log"),
+            ("DialecticServer context_sent_to_llm_fast", "/var/www/html/DialecticServer/log/context_sent_to_llm_fast.log"),
+            ("DialecticServer debugStream", "/var/www/html/DialecticServer/log/debugStream.log"),
+            ("DialecticServer monitor", "/var/www/html/DialecticServer/log/monitor.log"),
             ("Apache error", "/var/log/apache2/error.log"),
             ("Apache vhost access", "/var/log/apache2/other_vhosts_access.log"),
             ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
@@ -1798,6 +1803,8 @@ echo "CHIM-MCP installed and enabled."
             [
                 @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\Logs\Script\Papyrus.0.log"
             ]),
+            ("Dialectic Fallout New Vegas Plugin Log",
+                BuildDialecticPluginLogCandidates()),
             ("STOBE Mod Log",
                 BuildStobeModLogCandidates())
         };
@@ -1830,6 +1837,68 @@ echo "CHIM-MCP installed and enabled."
 
             lines.Add($"--- End of {selectedTemplate} ---");
             lines.Add("");
+        }
+    }
+
+    private static string[] BuildDialecticPluginLogCandidates()
+    {
+        var candidates = new List<string>
+        {
+            @"%USERPROFILE%\Documents\My Games\FalloutNV\NVSE\dialectic.log",
+            @"%USERPROFILE%\Documents\My Games\FalloutNV\dialectic.log",
+            @"%ProgramFiles(x86)%\Steam\steamapps\common\Fallout New Vegas\dialectic.log",
+            @"%ProgramFiles%\Steam\steamapps\common\Fallout New Vegas\dialectic.log",
+            @"%ProgramFiles(x86)%\GOG Galaxy\Games\Fallout New Vegas\dialectic.log",
+            @"%ProgramFiles%\GOG Galaxy\Games\Fallout New Vegas\dialectic.log",
+            Path.GetFullPath("dialectic.log")
+        };
+
+        var globalInstances = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ModOrganizer");
+        AddModOrganizerInstanceCandidates(candidates, globalInstances);
+
+        foreach (var drive in DriveInfo.GetDrives().Where(drive => drive.DriveType == DriveType.Fixed))
+        {
+            AddModOrganizerInstanceCandidates(candidates, Path.Combine(drive.RootDirectory.FullName, "Modlists"));
+        }
+
+        foreach (var steamLibrary in GetSteamLibraryPaths())
+        {
+            candidates.Add(Path.Combine(steamLibrary, "steamapps", "common", "Fallout New Vegas", "dialectic.log"));
+        }
+
+        return candidates
+            .Select(Environment.ExpandEnvironmentVariables)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static void AddModOrganizerInstanceCandidates(List<string> candidates, string instancesRoot)
+    {
+        if (!Directory.Exists(instancesRoot))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var instancePath in Directory.EnumerateDirectories(instancesRoot))
+            {
+                candidates.Add(Path.Combine(instancePath, "overwrite", "Root", "dialectic.log"));
+                candidates.Add(Path.Combine(instancePath, "overwrite", "dialectic.log"));
+                candidates.Add(Path.Combine(instancePath, "mods", "Dialectic_dev", "dialectic.log"));
+                candidates.Add(Path.Combine(instancePath, "mods", "Dialectic_dev", "NVSE", "Plugins", "dialectic.log"));
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Unreadable MO2 roots remain visible in the diagnostic candidate list through known paths.
+        }
+        catch (IOException)
+        {
+            // A disconnected or changing drive should not prevent diagnostic creation.
         }
     }
 
