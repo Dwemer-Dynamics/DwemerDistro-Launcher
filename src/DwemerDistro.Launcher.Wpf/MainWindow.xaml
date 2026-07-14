@@ -660,13 +660,12 @@
                             </Button>
                             <Button Grid.Row="1"
                                     Grid.Column="0"
-                                    Grid.ColumnSpan="2"
                                     Command="{Binding OpenDialecticCommand}"
                                     Style="{StaticResource BaseControlButton}"
                                     HorizontalContentAlignment="Center"
                                     Background="#FFB641"
                                     BorderBrush="#FFD08A"
-                                    Margin="0,0,0,6">
+                                    Margin="0,0,6,6">
                                 <Button.Content>
                                     <StackPanel Orientation="Horizontal">
                                         <Image Source="Assets/dialectic-icon.png"
@@ -675,7 +674,7 @@
                                                Stretch="Uniform"
                                                Margin="0,0,8,0" />
                                         <TextBlock Text="DIALECTIC"
-                                                   Foreground="#1A1A1A"
+                                                   Foreground="White"
                                                    FontFamily="Trebuchet MS"
                                                    FontSize="11"
                                                    FontWeight="Bold"
@@ -685,12 +684,13 @@
                             </Button>
                             <Button Grid.Row="2"
                                     Grid.Column="0"
+                                    Grid.ColumnSpan="2"
                                     Command="{Binding OpenWikiCommand}"
                                     Style="{StaticResource BaseControlButton}"
                                     HorizontalContentAlignment="Center"
                                     Background="#4A4F57"
                                     BorderBrush="#707782"
-                                    Margin="0,0,6,0">
+                                    Margin="0">
                                 <Button.Content>
                                     <StackPanel Orientation="Horizontal">
                                         <Viewbox Width="14"
@@ -721,14 +721,14 @@
                                     </StackPanel>
                                 </Button.Content>
                             </Button>
-                            <Button Grid.Row="2"
+                            <Button Grid.Row="1"
                                     Grid.Column="1"
                                     Command="{Binding OpenDiscordCommand}"
                                     Style="{StaticResource BaseControlButton}"
                                     HorizontalContentAlignment="Center"
                                     Background="#5865F2"
                                     BorderBrush="#7A85FF"
-                                    Margin="6,0,0,0">
+                                    Margin="6,0,0,6">
                                 <Button.Content>
                                     <StackPanel Orientation="Horizontal">
                                         <Image Source="Assets/discord.png"
