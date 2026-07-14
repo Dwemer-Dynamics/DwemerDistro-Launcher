@@ -22,6 +22,8 @@ internal static class Program
             Log(options.LogPath, "Updater starting.");
 
             await WaitForProcessExitAsync(options.ProcessId, options.LogPath).ConfigureAwait(false);
+            await StopOtherLauncherProcessesAsync(options.EntryExePath, options.LogPath).ConfigureAwait(false);
+            await WaitForFileUnlockAsync(options.EntryExePath, options.LogPath).ConfigureAwait(false);
 
             var stagingDirectory = Path.Combine(Path.GetTempPath(), "DwemerDistro", "UpdateStaging", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(stagingDirectory);
@@ -68,6 +70,91 @@ internal static class Program
         {
             Log(logPath, $"Process {processId} is already closed.");
         }
+    }
+
+    private static async Task StopOtherLauncherProcessesAsync(string entryExePath, string logPath)
+    {
+        var normalizedEntryPath = Path.GetFullPath(entryExePath);
+        var processName = Path.GetFileNameWithoutExtension(normalizedEntryPath);
+
+        foreach (var process in Process.GetProcessesByName(processName))
+        {
+            using (process)
+            {
+                string? processPath;
+                try
+                {
+                    processPath = process.MainModule?.FileName;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    Log(logPath, $"Could not inspect launcher process {process.Id}: {ex.Message}");
+                    continue;
+                }
+
+                if (!string.Equals(
+                        Path.GetFullPath(processPath ?? string.Empty),
+                        normalizedEntryPath,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                Log(logPath, $"Stopping additional launcher process {process.Id} using '{processPath}'.");
+                try
+                {
+                    if (process.CloseMainWindow())
+                    {
+                        try
+                        {
+                            await process.WaitForExitAsync()
+                                .WaitAsync(TimeSpan.FromSeconds(5))
+                                .ConfigureAwait(false);
+                        }
+                        catch (TimeoutException)
+                        {
+                            // Fall through to the forced shutdown below.
+                        }
+                    }
+
+                    if (!process.HasExited)
+                    {
+                        Log(logPath, $"Launcher process {process.Id} did not close; terminating it.");
+                        process.Kill(entireProcessTree: true);
+                        await process.WaitForExitAsync().ConfigureAwait(false);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    Log(logPath, $"Launcher process {process.Id} closed before updater cleanup completed.");
+                }
+            }
+        }
+    }
+
+    private static async Task WaitForFileUnlockAsync(string filePath, string logPath)
+    {
+        if (!File.Exists(filePath))
+        {
+            return;
+        }
+
+        const int maxAttempts = 30;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                Log(logPath, $"Launcher executable is ready to replace after {attempt} attempt(s).");
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                await Task.Delay(500).ConfigureAwait(false);
+            }
+        }
+
+        throw new IOException($"The launcher executable is still in use: {filePath}");
     }
 
     private static void CopyDirectory(string sourceDirectory, string destinationDirectory, string logPath)
