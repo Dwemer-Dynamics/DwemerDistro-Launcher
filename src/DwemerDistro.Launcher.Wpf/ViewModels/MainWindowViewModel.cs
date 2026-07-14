@@ -83,6 +83,8 @@ echo "CHIM-MCP installed and enabled."
     private string _herikaStatusColor = "White";
     private string _stobeStatusText = "Checking...";
     private string _stobeStatusColor = "White";
+    private string _dialecticStatusText = "Checking...";
+    private string _dialecticStatusColor = "White";
     private string _launcherVersionText = $"Launcher Version: {LauncherConstants.LauncherVersion}";
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
@@ -92,9 +94,11 @@ echo "CHIM-MCP installed and enabled."
     private bool _mcpEnabled = true;
     private bool _includeHerikaServerUpdate = true;
     private bool _includeStobeServerUpdate = true;
+    private bool _includeDialecticServerUpdate = true;
     private bool _canUpdateLauncher;
     private string _targetHerikaBranch = "aiagent";
     private string _targetStobeBranch = "stobe";
+    private string _targetDialecticBranch = "dialectic";
     private int _startAnimationDots;
     private bool _isServerStatusRefreshInProgress;
     private LauncherReleaseInfo? _pendingLauncherUpdate;
@@ -117,6 +121,7 @@ echo "CHIM-MCP installed and enabled."
 
         HerikaBranches = new ObservableCollection<string>(new[] { "aiagent", "dev", "unstable" });
         StobeBranches = new ObservableCollection<string>(new[] { "stobe", "dev", "unstable" });
+        DialecticBranches = new ObservableCollection<string>(new[] { "dialectic", "dev", "unstable" });
 
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
@@ -130,6 +135,7 @@ echo "CHIM-MCP installed and enabled."
         SaveUpdateIncludeCommand = new AsyncRelayCommand(SaveUpdateIncludeSettingsAsync);
         OpenChimCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.ChimNexusUrl));
         OpenStobeCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.StobeNexusUrl));
+        OpenDialecticCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DialecticServerUiUrl));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
@@ -141,6 +147,7 @@ echo "CHIM-MCP installed and enabled."
         ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync);
         OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"));
         OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"));
+        OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"));
         ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"));
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"));
         ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/pocket-tts/log.txt"));
@@ -219,6 +226,18 @@ echo "CHIM-MCP installed and enabled."
         private set => SetProperty(ref _stobeStatusColor, value);
     }
 
+    public string DialecticStatusText
+    {
+        get => _dialecticStatusText;
+        private set => SetProperty(ref _dialecticStatusText, value);
+    }
+
+    public string DialecticStatusColor
+    {
+        get => _dialecticStatusColor;
+        private set => SetProperty(ref _dialecticStatusColor, value);
+    }
+
     public string LauncherVersionText
     {
         get => _launcherVersionText;
@@ -279,6 +298,12 @@ echo "CHIM-MCP installed and enabled."
         set => SetProperty(ref _includeStobeServerUpdate, value);
     }
 
+    public bool IncludeDialecticServerUpdate
+    {
+        get => _includeDialecticServerUpdate;
+        set => SetProperty(ref _includeDialecticServerUpdate, value);
+    }
+
     public bool CanUpdateLauncher
     {
         get => _canUpdateLauncher;
@@ -303,8 +328,15 @@ echo "CHIM-MCP installed and enabled."
         set => SetProperty(ref _targetStobeBranch, value);
     }
 
+    public string TargetDialecticBranch
+    {
+        get => _targetDialecticBranch;
+        set => SetProperty(ref _targetDialecticBranch, value);
+    }
+
     public ObservableCollection<string> HerikaBranches { get; }
     public ObservableCollection<string> StobeBranches { get; }
+    public ObservableCollection<string> DialecticBranches { get; }
 
     public AsyncRelayCommand StartServerCommand { get; }
     public AsyncRelayCommand StopServerCommand { get; }
@@ -318,6 +350,7 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand SaveUpdateIncludeCommand { get; }
     public RelayCommand OpenChimCommand { get; }
     public RelayCommand OpenStobeCommand { get; }
+    public RelayCommand OpenDialecticCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
@@ -327,6 +360,7 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand ImportDistroCommand { get; }
     public RelayCommand OpenHerikaRollbackCommand { get; }
     public RelayCommand OpenStobeRollbackCommand { get; }
+    public RelayCommand OpenDialecticRollbackCommand { get; }
     public RelayCommand ViewXttsLogsCommand { get; }
     public RelayCommand ViewChatterboxLogsCommand { get; }
     public RelayCommand ViewPocketTtsLogsCommand { get; }
@@ -352,6 +386,7 @@ echo "CHIM-MCP installed and enabled."
         await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Launcher update check", cancellationToken => CheckLauncherUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueServerStatusRefresh();
         LauncherLogService.Startup("MainWindowViewModel initialization completed.");
@@ -702,15 +737,18 @@ echo "CHIM-MCP installed and enabled."
 
         var includeHerika = IncludeHerikaServerUpdate;
         var includeStobe = IncludeStobeServerUpdate;
+        var includeDialectic = IncludeDialecticServerUpdate;
         var targetHerika = NormalizeBranch(TargetHerikaBranch, "aiagent", "aiagent", "dev", "unstable");
         var targetStobe = NormalizeBranch(TargetStobeBranch, "stobe", "stobe", "dev", "unstable");
+        var targetDialectic = NormalizeBranch(TargetDialecticBranch, "dialectic", "dialectic", "dev", "unstable");
 
-        var confirmText = includeHerika || includeStobe
+        var confirmText = includeHerika || includeStobe || includeDialectic
             ? "This will update the Dwemer Distro and selected server components.\n\n" +
               (includeHerika ? $"HerikaServer target branch: {targetHerika}\n" : "HerikaServer update: disabled\n") +
               (includeStobe ? $"StobeServer target branch: {targetStobe}\n" : "StobeServer update: disabled\n") +
+              (includeDialectic ? $"DialecticServer target branch: {targetDialectic}\n" : "DialecticServer update: disabled\n") +
               "\nAre you sure?"
-            : "This will update Dwemer Distro only.\n\nHerikaServer and StobeServer updates are disabled in the Distro Updates section.\n\nAre you sure?";
+            : "This will update Dwemer Distro only.\n\nAll server updates are disabled in the Distro Updates section.\n\nAre you sure?";
 
         if (requireConfirmation &&
             MessageBox.Show(confirmText, "Update System", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -731,14 +769,12 @@ echo "CHIM-MCP installed and enabled."
             {
                 SetStobeStatus("Updating...", "White");
             }
+            if (includeDialectic)
+            {
+                SetDialecticStatus("Updating...", "White");
+            }
 
-            AppendLog(includeHerika && includeStobe
-                ? "Starting full system update..." + Environment.NewLine
-                : includeHerika
-                    ? "Starting core system update + HerikaServer update..." + Environment.NewLine
-                    : includeStobe
-                        ? "Starting core system update + StobeServer update..." + Environment.NewLine
-                        : "Starting core system update (HerikaServer and StobeServer skipped)..." + Environment.NewLine);
+            AppendLog("Starting system update for the selected server components..." + Environment.NewLine);
             AppendLog("Preparing update steps..." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
@@ -760,13 +796,22 @@ echo "CHIM-MCP installed and enabled."
                 }
             }
 
-            AppendLog(Environment.NewLine + (includeHerika || includeStobe
+            if (includeDialectic)
+            {
+                AppendLog(Environment.NewLine + "Prepare DialecticServer branch" + Environment.NewLine, "green");
+                if (!await SwitchDialecticServerBranchAsync(targetDialectic).ConfigureAwait(false))
+                {
+                    return false;
+                }
+            }
+
+            AppendLog(Environment.NewLine + (includeHerika || includeStobe || includeDialectic
                 ? "STEP 3: Run DwemerDistro core update and component update"
                 : "STEP 1: Run DwemerDistro core update") + Environment.NewLine, "green");
             AppendLog("Executing update script..." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var serverUpdateRequested = includeHerika || includeStobe;
+            var serverUpdateRequested = includeHerika || includeStobe || includeDialectic;
             var gwsFlags = new List<string>();
             if (!includeHerika)
             {
@@ -775,6 +820,10 @@ echo "CHIM-MCP installed and enabled."
             if (!includeStobe)
             {
                 gwsFlags.Add("--skip-stobe");
+            }
+            if (!includeDialectic)
+            {
+                gwsFlags.Add("--skip-dialectic");
             }
 
             var gwsCommand = "/usr/local/bin/update_gws";
@@ -837,6 +886,10 @@ echo "CHIM-MCP installed and enabled."
                 {
                     statusParts.Add($"StobeServer: {await GetStobeServerCurrentBranchAsync().ConfigureAwait(false) ?? "unknown"}");
                 }
+                if (includeDialectic)
+                {
+                    statusParts.Add($"DialecticServer: {await GetDialecticServerCurrentBranchAsync().ConfigureAwait(false) ?? "unknown"}");
+                }
 
                 if (serverUpdateRequested && serverUpdateComplete)
                 {
@@ -848,7 +901,7 @@ echo "CHIM-MCP installed and enabled."
                 }
                 else
                 {
-                    AppendLog("Distro update completed successfully. HerikaServer and StobeServer updates were skipped." + Environment.NewLine, "green");
+                    AppendLog("Distro update completed successfully. Server updates were skipped." + Environment.NewLine, "green");
                 }
             }
             else
@@ -872,6 +925,7 @@ echo "CHIM-MCP installed and enabled."
             });
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         }
     }
 
@@ -991,6 +1045,87 @@ echo "CHIM-MCP installed and enabled."
         return true;
     }
 
+    private async Task<bool> SwitchDialecticServerBranchAsync(string targetBranch)
+    {
+        if (targetBranch is not ("dialectic" or "dev" or "unstable"))
+        {
+            AppendLog($"Invalid DialecticServer branch selection: '{targetBranch}'. Expected dialectic, dev, or unstable.{Environment.NewLine}", "red");
+            return false;
+        }
+
+        if (!await EnsureDialecticServerRepoExistsAsync(targetBranch).ConfigureAwait(false))
+        {
+            return false;
+        }
+
+        var currentBranch = await GetDialecticServerCurrentBranchAsync().ConfigureAwait(false);
+        if (currentBranch == targetBranch)
+        {
+            AppendLog($"DialecticServer already on branch '{targetBranch}'." + Environment.NewLine);
+            return true;
+        }
+
+        AppendLog($"Switching DialecticServer branch to '{targetBranch}'..." + Environment.NewLine);
+        var result = await _wsl.RunBashAsync(
+            "cd /var/www/html/DialecticServer && " +
+            "git stash push -u -m 'Auto-stash before switching branch' >/dev/null 2>&1 || true; " +
+            "git fetch origin && " +
+            $"git checkout -B {targetBranch} origin/{targetBranch}",
+            line => AppendLog(line),
+            loginShell: false,
+            lineBuffered: true).ConfigureAwait(false);
+
+        if (!result.Succeeded)
+        {
+            AppendLog($"Failed to switch DialecticServer branch to '{targetBranch}'." + Environment.NewLine, "red");
+            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
+            return false;
+        }
+
+        AppendLog($"Successfully switched DialecticServer to '{targetBranch}'." + Environment.NewLine, "green");
+        return true;
+    }
+
+    private async Task<bool> EnsureDialecticServerRepoExistsAsync(string targetBranch)
+    {
+        AppendLog("Checking DialecticServer repository state..." + Environment.NewLine);
+        var result = await _wsl.RunBashAsync(
+            "set -e; repo_path=/var/www/html/DialecticServer; backup_path=''; state=EXISTS; mkdir -p /var/www/html; " +
+            "if [ -d \"$repo_path\" ] && [ ! -d \"$repo_path/.git\" ]; then " +
+            "backup_path=\"${repo_path}.pre-git-$(date -u +%Y%m%d%H%M%S)\"; mv \"$repo_path\" \"$backup_path\"; state=MIGRATED:$backup_path; fi; " +
+            "if [ ! -d \"$repo_path/.git\" ]; then " +
+            $"if ! git clone -b {targetBranch} https://github.com/Dwemer-Dynamics/DialecticServer.git \"$repo_path\" 1>&2; then " +
+            "rm -rf \"$repo_path\"; if [ -n \"$backup_path\" ]; then mv \"$backup_path\" \"$repo_path\"; fi; exit 1; fi; " +
+            "if [ -z \"$backup_path\" ]; then state=CLONED; fi; fi; " +
+            "if [ -n \"$backup_path\" ] && [ -d \"$backup_path\" ]; then " +
+            "for relative_path in conf/conf.php conf/character_map.json; do " +
+            "if [ -e \"$backup_path/$relative_path\" ]; then mkdir -p \"$repo_path/$(dirname \"$relative_path\")\"; cp -a \"$backup_path/$relative_path\" \"$repo_path/$relative_path\"; fi; done; " +
+            "for relative_path in uploads data/voices soundcache log; do if [ -d \"$backup_path/$relative_path\" ]; then mkdir -p \"$repo_path/$relative_path\"; cp -a \"$backup_path/$relative_path/.\" \"$repo_path/$relative_path/\"; fi; done; " +
+            "find \"$backup_path/conf\" -maxdepth 1 -type f -name 'conf_*.php' -exec cp -a {} \"$repo_path/conf/\" \\; 2>/dev/null || true; fi; " +
+            "echo \"$state\"",
+            line => AppendLog(line),
+            loginShell: false,
+            lineBuffered: true).ConfigureAwait(false);
+
+        if (!result.Succeeded)
+        {
+            AppendLog("Failed to prepare DialecticServer repository." + Environment.NewLine, "red");
+            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
+            return false;
+        }
+
+        if (result.StandardOutput.Contains("MIGRATED:", StringComparison.OrdinalIgnoreCase))
+        {
+            AppendLog("Migrated the existing DialecticServer deployment into a managed Git checkout while preserving runtime data." + Environment.NewLine, "yellow");
+        }
+        else if (result.StandardOutput.Contains("CLONED", StringComparison.OrdinalIgnoreCase))
+        {
+            AppendLog($"Installed DialecticServer on branch '{targetBranch}'." + Environment.NewLine, "green");
+        }
+
+        return true;
+    }
+
     private async Task<string?> GetCurrentBranchAsync(CancellationToken cancellationToken = default)
     {
         var result = await _wsl.RunBashAsync(
@@ -1004,6 +1139,15 @@ echo "CHIM-MCP installed and enabled."
     {
         var result = await _wsl.RunBashAsync(
                 "cd /var/www/html/StobeServer && git rev-parse --abbrev-ref HEAD",
+                cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        return result.Succeeded ? result.StandardOutput.Trim() : null;
+    }
+
+    private async Task<string?> GetDialecticServerCurrentBranchAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await _wsl.RunBashAsync(
+                "cd /var/www/html/DialecticServer && git rev-parse --abbrev-ref HEAD",
                 cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         return result.Succeeded ? result.StandardOutput.Trim() : null;
@@ -1197,7 +1341,7 @@ echo "CHIM-MCP installed and enabled."
     {
         var result = await _wsl.RunDistroAsUserAsync(
             "root",
-            new[] { "bash", "-lc", "mkdir -p /home/dwemer; if [ ! -f /home/dwemer/.update_include_herika ]; then echo 1 > /home/dwemer/.update_include_herika; fi; if [ ! -f /home/dwemer/.update_include_stobe ]; then echo 1 > /home/dwemer/.update_include_stobe; fi; sed -n '1p' /home/dwemer/.update_include_herika; sed -n '1p' /home/dwemer/.update_include_stobe" },
+            new[] { "bash", "-lc", "mkdir -p /home/dwemer; if [ ! -f /home/dwemer/.update_include_herika ]; then echo 1 > /home/dwemer/.update_include_herika; fi; if [ ! -f /home/dwemer/.update_include_stobe ]; then echo 1 > /home/dwemer/.update_include_stobe; fi; if [ ! -f /home/dwemer/.update_include_dialectic ]; then echo 1 > /home/dwemer/.update_include_dialectic; fi; sed -n '1p' /home/dwemer/.update_include_herika; sed -n '1p' /home/dwemer/.update_include_stobe; sed -n '1p' /home/dwemer/.update_include_dialectic" },
             cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
@@ -1207,6 +1351,7 @@ echo "CHIM-MCP installed and enabled."
             {
                 IncludeHerikaServerUpdate = true;
                 IncludeStobeServerUpdate = true;
+                IncludeDialecticServerUpdate = true;
             });
             return;
         }
@@ -1216,6 +1361,7 @@ echo "CHIM-MCP installed and enabled."
         {
             IncludeHerikaServerUpdate = lines.ElementAtOrDefault(0) != "0";
             IncludeStobeServerUpdate = lines.ElementAtOrDefault(1) != "0";
+            IncludeDialecticServerUpdate = lines.ElementAtOrDefault(2) != "0";
         });
     }
 
@@ -1223,9 +1369,10 @@ echo "CHIM-MCP installed and enabled."
     {
         var herika = IncludeHerikaServerUpdate ? "1" : "0";
         var stobe = IncludeStobeServerUpdate ? "1" : "0";
+        var dialectic = IncludeDialecticServerUpdate ? "1" : "0";
         var result = await _wsl.RunDistroAsUserAsync(
             "root",
-            new[] { "bash", "-lc", $"echo {herika} > /home/dwemer/.update_include_herika && echo {stobe} > /home/dwemer/.update_include_stobe" })
+            new[] { "bash", "-lc", $"echo {herika} > /home/dwemer/.update_include_herika && echo {stobe} > /home/dwemer/.update_include_stobe && echo {dialectic} > /home/dwemer/.update_include_dialectic" })
             .ConfigureAwait(false);
 
         if (!result.Succeeded)
@@ -1384,7 +1531,9 @@ echo "CHIM-MCP installed and enabled."
             ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/HerikaServer && git status --short --branch\"",
                 () => _wsl.RunBashAsync("cd /var/www/html/HerikaServer && git status --short --branch")),
             ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/StobeServer && git status --short --branch\"",
-                () => _wsl.RunBashAsync("cd /var/www/html/StobeServer && git status --short --branch"))
+                () => _wsl.RunBashAsync("cd /var/www/html/StobeServer && git status --short --branch")),
+            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/DialecticServer && git status --short --branch\"",
+                () => _wsl.RunBashAsync("cd /var/www/html/DialecticServer && git status --short --branch"))
         };
 
         foreach (var (display, run) in diagnosticCommands)
@@ -1512,6 +1661,11 @@ echo "CHIM-MCP installed and enabled."
             ("StobeServer stobe_import", "/var/www/html/StobeServer/log/stobe_import.log"),
             ("StobeServer output_from_llm", "/var/www/html/StobeServer/log/output_from_llm.log"),
             ("StobeServer context_sent_to_llm", "/var/www/html/StobeServer/log/context_sent_to_llm.log"),
+            ("DialecticServer dialectic", "/var/www/html/DialecticServer/log/dialectic.log"),
+            ("DialecticServer service", "/var/www/html/DialecticServer/log/service.log"),
+            ("DialecticServer manager", "/var/www/html/DialecticServer/log/manager.log"),
+            ("DialecticServer output_from_llm", "/var/www/html/DialecticServer/log/output_from_llm.log"),
+            ("DialecticServer context_sent_to_llm", "/var/www/html/DialecticServer/log/context_sent_to_llm.log"),
             ("Apache error", "/var/log/apache2/error.log"),
             ("Apache vhost access", "/var/log/apache2/other_vhosts_access.log"),
             ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
@@ -1794,7 +1948,7 @@ echo "CHIM-MCP installed and enabled."
     private async Task AddDatabaseSchemaDiagnosticsAsync(List<string> lines)
     {
         lines.Add("Database Schema Diagnostics");
-        lines.Add("These checks are read-only and compare the live database_versioning table with update versions declared in HerikaServer and StobeServer.");
+        lines.Add("These checks are read-only and cover HerikaServer, StobeServer, and DialecticServer database state.");
         lines.Add("");
 
         var command = """
@@ -1833,6 +1987,14 @@ if [ -f /var/www/html/StobeServer/debug/db_updates.php ]; then
   grep -oE "applyPatch\('[^']+', *[0-9]+" /var/www/html/StobeServer/debug/db_updates.php | sed -E "s/applyPatch\('([^']+)', *([0-9]+)/\1|\2/" | sort -t '|' -k1,1 -k2,2nr | sort -t '|' -k1,1 -u
 else
   echo "StobeServer update file missing"
+fi
+echo
+echo "== DialecticServer database state =="
+if psql -h localhost -U dwemer -d dialectic -X -At -v ON_ERROR_STOP=1 -P pager=off -c "SELECT 1;" >/dev/null 2>&1; then
+  psql -h localhost -U dwemer -d dialectic -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT tablename, version FROM public.database_versioning ORDER BY tablename;"
+  psql -h localhost -U dwemer -d dialectic -X -v ON_ERROR_STOP=1 -P pager=off -c "SELECT table_schema, COUNT(*) AS table_count FROM information_schema.tables WHERE table_schema IN ('public', 'dialectic_meta') AND table_type = 'BASE TABLE' GROUP BY table_schema ORDER BY table_schema;"
+else
+  echo "Dialectic database unavailable"
 fi
 echo
 echo "== Common Oghma integrity checks =="
@@ -2647,6 +2809,7 @@ fi
             using var timeoutCts = new CancellationTokenSource(StartupVersionCheckTimeout);
             await CheckForUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
             await CheckStobeServerUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
+            await CheckDialecticServerUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -2927,7 +3090,9 @@ fi
 
     private bool NeedsServerStatusRefresh()
     {
-        return StatusNeedsRefresh(_herikaStatusText) || StatusNeedsRefresh(_stobeStatusText);
+        return StatusNeedsRefresh(_herikaStatusText) ||
+               StatusNeedsRefresh(_stobeStatusText) ||
+               StatusNeedsRefresh(_dialecticStatusText);
     }
 
     private static bool StatusNeedsRefresh(string text)
@@ -3242,6 +3407,41 @@ fi
         }
     }
 
+    private async Task CheckDialecticServerUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        SetDialecticStatus("Checking...", "White");
+        var currentBranch = await GetDialecticServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
+        if (currentBranch is "dialectic" or "dev" or "unstable")
+        {
+            RunOnUi(() => TargetDialecticBranch = currentBranch);
+        }
+
+        var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/DialecticServer/.version.txt", cancellationToken).ConfigureAwait(false);
+        var semanticVersion = await ReadWslFileFirstLineAsync("/var/www/html/DialecticServer/.version_number.txt", cancellationToken).ConfigureAwait(false);
+        var gitVersion = currentBranch is null
+            ? null
+            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/DialecticServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
+
+        var statusText = BuildServerVersionStatusText(
+            "dialectic",
+            currentBranch,
+            FormatDateVersion(currentVersion),
+            semanticVersion);
+
+        if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
+        {
+            SetDialecticStatus(statusText, CompareVersions(currentVersion, gitVersion) < 0 ? "Red" : "LimeGreen");
+        }
+        else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
+        {
+            SetDialecticStatus(statusText, "LimeGreen");
+        }
+        else
+        {
+            SetDialecticStatus(BuildServerVersionStatusText("dialectic", currentBranch, null, null), "Yellow");
+        }
+    }
+
     private void RunCommandInNewWindow(string command)
     {
         try
@@ -3398,6 +3598,7 @@ fi
 
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         }
         catch (Exception ex)
         {
@@ -3439,6 +3640,12 @@ fi
                 "/var/www/html/StobeServer",
                 [".version_number.txt", "versionnumber.txt"],
                 [".version.txt", "version.txt"]),
+            "dialectic" or "dialecticserver" => new RollbackServerConfig(
+                "dialectic",
+                "DialecticServer",
+                "/var/www/html/DialecticServer",
+                [".version_number.txt"],
+                [".version.txt"]),
             _ => new RollbackServerConfig(
                 "herika",
                 "HerikaServer",
@@ -3840,6 +4047,15 @@ fi
         string RunAsUser = LauncherConstants.DistroUser)
     {
         public string LogPath => $"/home/dwemer/.dwemerdistro/logs/components/{Key}.log";
+    }
+
+    private void SetDialecticStatus(string text, string color)
+    {
+        RunOnUi(() =>
+        {
+            DialecticStatusText = text;
+            DialecticStatusColor = color;
+        });
     }
 
     private sealed record RollbackServerConfig(

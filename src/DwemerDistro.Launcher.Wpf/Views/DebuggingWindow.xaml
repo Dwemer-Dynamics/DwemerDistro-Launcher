@@ -435,6 +435,34 @@
                 <Border Margin="0,0,0,12"
                         Padding="14"
                         Background="#262626"
+                        BorderBrush="#FFB641"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0"
+                                    Margin="0,0,16,0">
+                            <TextBlock Text="Rollback DialecticServer"
+                                       Style="{StaticResource ActionCardTitle}" />
+                            <TextBlock Text="Open rollback controls for DialecticServer when you need to revert a recent server change."
+                                       Style="{StaticResource ActionCardDescription}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="1"
+                                Content="Open"
+                                Command="{Binding OpenDialecticRollbackCommand}"
+                                Style="{StaticResource WarningActionButton}"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
                         BorderBrush="#7B4B14"
                         BorderThickness="1"
                         CornerRadius="6">

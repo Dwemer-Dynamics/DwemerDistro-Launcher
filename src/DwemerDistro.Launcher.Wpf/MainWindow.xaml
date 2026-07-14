@@ -409,6 +409,38 @@
                             </StackPanel>
                         </Border>
 
+                        <Border Margin="0,8,0,0"
+                                Padding="10"
+                                Background="#262626"
+                                BorderBrush="#FFB641"
+                                BorderThickness="1"
+                                CornerRadius="6">
+                            <StackPanel>
+                                <TextBlock Text="DialecticServer"
+                                           Style="{StaticResource SmallLabel}" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="92" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <CheckBox Grid.Column="0"
+                                              Content="Include"
+                                              IsChecked="{Binding IncludeDialecticServerUpdate}"
+                                              Command="{Binding SaveUpdateIncludeCommand}"
+                                              Style="{StaticResource UpdateIncludeCheckBox}" />
+                                    <ComboBox Grid.Column="1"
+                                              ItemsSource="{Binding DialecticBranches}"
+                                              SelectedItem="{Binding TargetDialecticBranch}" />
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding DialecticStatusText}"
+                                               Foreground="{Binding DialecticStatusColor}"
+                                               VerticalAlignment="Center"
+                                               TextWrapping="Wrap" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
                     </StackPanel>
                 </Border>
 
@@ -575,6 +607,7 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <Button Grid.Row="0"
@@ -627,6 +660,31 @@
                             </Button>
                             <Button Grid.Row="1"
                                     Grid.Column="0"
+                                    Grid.ColumnSpan="2"
+                                    Command="{Binding OpenDialecticCommand}"
+                                    Style="{StaticResource BaseControlButton}"
+                                    HorizontalContentAlignment="Center"
+                                    Background="#FFB641"
+                                    BorderBrush="#FFD08A"
+                                    Margin="0,0,0,6">
+                                <Button.Content>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Source="Assets/dialectic-icon.png"
+                                               Width="14"
+                                               Height="14"
+                                               Stretch="Uniform"
+                                               Margin="0,0,8,0" />
+                                        <TextBlock Text="DIALECTIC"
+                                                   Foreground="#1A1A1A"
+                                                   FontFamily="Trebuchet MS"
+                                                   FontSize="11"
+                                                   FontWeight="Bold"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button.Content>
+                            </Button>
+                            <Button Grid.Row="2"
+                                    Grid.Column="0"
                                     Command="{Binding OpenWikiCommand}"
                                     Style="{StaticResource BaseControlButton}"
                                     HorizontalContentAlignment="Center"
@@ -663,7 +721,7 @@
                                     </StackPanel>
                                 </Button.Content>
                             </Button>
-                            <Button Grid.Row="1"
+                            <Button Grid.Row="2"
                                     Grid.Column="1"
                                     Command="{Binding OpenDiscordCommand}"
                                     Style="{StaticResource BaseControlButton}"
