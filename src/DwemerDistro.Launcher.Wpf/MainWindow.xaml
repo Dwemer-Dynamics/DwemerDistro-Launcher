@@ -348,7 +348,7 @@
                         <Border Margin="0,10,0,0"
                                 Padding="10"
                                 Background="#262626"
-                                BorderBrush="#4B4B4B"
+                                BorderBrush="#F27C11"
                                 BorderThickness="1"
                                 CornerRadius="6">
                             <StackPanel>
@@ -380,7 +380,7 @@
                         <Border Margin="0,8,0,0"
                                 Padding="10"
                                 Background="#262626"
-                                BorderBrush="#4B4B4B"
+                                BorderBrush="#E6B76C"
                                 BorderThickness="1"
                                 CornerRadius="6">
                             <StackPanel>
