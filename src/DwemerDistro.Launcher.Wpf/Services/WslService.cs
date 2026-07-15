@@ -93,7 +93,10 @@ public sealed class WslService(ProcessRunner processRunner)
     {
         // wsl.exe can expand unescaped $VARS before bash receives the command.
         // Escape dollar signs so bash sees and expands them inside the distro.
-        var safeCommand = (bashCommand ?? string.Empty).Replace("$", "\\$");
+        var normalizedCommand = (bashCommand ?? string.Empty)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        var safeCommand = normalizedCommand.Replace("$", "\\$", StringComparison.Ordinal);
         var shellMode = loginShell ? "-lc" : "-c";
         var shellArgs = lineBuffered
             ? new[] { "stdbuf", "-oL", "-eL", "bash", shellMode, safeCommand }

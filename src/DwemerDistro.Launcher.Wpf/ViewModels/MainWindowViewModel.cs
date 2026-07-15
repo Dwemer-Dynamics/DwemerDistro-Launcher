@@ -2014,6 +2014,13 @@ echo "CHIM-MCP installed and enabled."
         return Regex.Replace(text ?? string.Empty, @"hf_[A-Za-z0-9_-]{20,}", "hf_[redacted]");
     }
 
+    private static string UsePostgresPeerAuthentication(string command)
+    {
+        return command
+            .Replace("export PGPASSWORD=dwemer", "unset PGPASSWORD", StringComparison.Ordinal)
+            .Replace("psql -h localhost -U dwemer", "psql -h /var/run/postgresql -U postgres", StringComparison.Ordinal);
+    }
+
     private async Task AddDatabaseSchemaDiagnosticsAsync(List<string> lines)
     {
         lines.Add("Database Schema Diagnostics");
@@ -2077,10 +2084,12 @@ else
 fi
 """;
 
+        command = UsePostgresPeerAuthentication(command);
         lines.Add("$ wsl database schema diagnostics");
         try
         {
-            var result = await _wsl.RunBashAsync(command).ConfigureAwait(false);
+            var result = await _wsl.RunBashAsync(
+                command, user: "postgres", loginShell: false).ConfigureAwait(false);
             lines.Add(result.StandardOutput);
             if (!string.IsNullOrWhiteSpace(result.StandardError))
             {
@@ -2179,10 +2188,12 @@ else
 fi
 """;
 
+        command = UsePostgresPeerAuthentication(command);
         lines.Add("$ wsl connector diagnostics");
         try
         {
-            var result = await _wsl.RunBashAsync(command).ConfigureAwait(false);
+            var result = await _wsl.RunBashAsync(
+                command, user: "postgres", loginShell: false).ConfigureAwait(false);
             lines.Add(SanitizeDiagnosticText(result.StandardOutput));
             if (!string.IsNullOrWhiteSpace(result.StandardError))
             {
