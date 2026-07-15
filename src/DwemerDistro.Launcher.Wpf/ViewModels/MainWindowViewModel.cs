@@ -1525,6 +1525,8 @@ echo "CHIM-MCP installed and enabled."
             ""
         };
 
+        await AddServerVersionDiagnosticsAsync(lines).ConfigureAwait(false);
+
         var diagnosticCommands = new (string Display, Func<Task<CommandResult>> Run)[]
         {
             ("wsl -l -v", () => _wsl.RunWslAsync(new[] { "-l", "-v" })),
@@ -1566,6 +1568,69 @@ echo "CHIM-MCP installed and enabled."
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
         OpenFolder(outputDir);
+    }
+
+    private async Task AddServerVersionDiagnosticsAsync(List<string> lines)
+    {
+        lines.Add("Installed Server Versions");
+        lines.Add("Release metadata and exact Git commits for the currently installed servers.");
+        lines.Add("");
+
+        foreach (var serverKey in new[] { "herika", "stobe", "dialectic" })
+        {
+            var config = GetRollbackServerConfig(serverKey);
+            lines.Add($"--- {config.DisplayName} ---");
+
+            try
+            {
+                var (dateVersion, dateVersionFile) = await ReadFirstServerVersionFileAsync(
+                        config.RepoPath,
+                        config.VersionTextFiles)
+                    .ConfigureAwait(false);
+                var (releaseVersion, releaseVersionFile) = await ReadFirstServerVersionFileAsync(
+                        config.RepoPath,
+                        config.VersionNumberFiles)
+                    .ConfigureAwait(false);
+                var commitResult = await _wsl.RunBashAsync(
+                        $"git -C {EscapeForSingleQuotedBash(config.RepoPath)} rev-parse HEAD 2>/dev/null",
+                        loginShell: false)
+                    .ConfigureAwait(false);
+                var gitCommit = commitResult.Succeeded && !string.IsNullOrWhiteSpace(commitResult.StandardOutput)
+                    ? commitResult.StandardOutput.Trim()
+                    : null;
+
+                lines.Add($"Date Version: {dateVersion ?? "[missing or unavailable]"}{FormatVersionSource(dateVersionFile)}");
+                lines.Add($"Release Version: {releaseVersion ?? "[missing or unavailable]"}{FormatVersionSource(releaseVersionFile)}");
+                lines.Add($"Git Commit: {gitCommit ?? "[missing or unavailable]"}");
+            }
+            catch (Exception ex)
+            {
+                lines.Add($"[unavailable] {SanitizeDiagnosticText(ex.Message)}");
+            }
+
+            lines.Add("");
+        }
+    }
+
+    private async Task<(string? Value, string? FileName)> ReadFirstServerVersionFileAsync(
+        string repoPath,
+        IEnumerable<string> fileNames)
+    {
+        foreach (var fileName in fileNames)
+        {
+            var value = await ReadWslFileFirstLineAsync($"{repoPath}/{fileName}").ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return (value, fileName);
+            }
+        }
+
+        return (null, null);
+    }
+
+    private static string FormatVersionSource(string? fileName)
+    {
+        return string.IsNullOrWhiteSpace(fileName) ? string.Empty : $" ({fileName})";
     }
 
     private async Task AddPermissionDiagnosticsAsync(List<string> lines)
