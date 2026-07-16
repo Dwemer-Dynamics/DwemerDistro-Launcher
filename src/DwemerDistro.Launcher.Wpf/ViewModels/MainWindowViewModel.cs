@@ -1912,9 +1912,13 @@ echo "CHIM-MCP installed and enabled."
             @"%USERPROFILE%\Documents\My Games\FalloutNV\NVSE\dialectic.log",
             @"%USERPROFILE%\Documents\My Games\FalloutNV\dialectic.log",
             @"%ProgramFiles(x86)%\Steam\steamapps\common\Fallout New Vegas\dialectic.log",
+            @"%ProgramFiles(x86)%\Steam\steamapps\common\Fallout New Vegas\Data\NVSE\Plugins\dialectic.log",
             @"%ProgramFiles%\Steam\steamapps\common\Fallout New Vegas\dialectic.log",
+            @"%ProgramFiles%\Steam\steamapps\common\Fallout New Vegas\Data\NVSE\Plugins\dialectic.log",
             @"%ProgramFiles(x86)%\GOG Galaxy\Games\Fallout New Vegas\dialectic.log",
+            @"%ProgramFiles(x86)%\GOG Galaxy\Games\Fallout New Vegas\Data\NVSE\Plugins\dialectic.log",
             @"%ProgramFiles%\GOG Galaxy\Games\Fallout New Vegas\dialectic.log",
+            @"%ProgramFiles%\GOG Galaxy\Games\Fallout New Vegas\Data\NVSE\Plugins\dialectic.log",
             Path.GetFullPath("dialectic.log")
         };
 
@@ -1930,7 +1934,9 @@ echo "CHIM-MCP installed and enabled."
 
         foreach (var steamLibrary in GetSteamLibraryPaths())
         {
-            candidates.Add(Path.Combine(steamLibrary, "steamapps", "common", "Fallout New Vegas", "dialectic.log"));
+            var gameRoot = Path.Combine(steamLibrary, "steamapps", "common", "Fallout New Vegas");
+            candidates.Add(Path.Combine(gameRoot, "dialectic.log"));
+            candidates.Add(Path.Combine(gameRoot, "Data", "NVSE", "Plugins", "dialectic.log"));
         }
 
         return candidates
@@ -1953,8 +1959,12 @@ echo "CHIM-MCP installed and enabled."
             {
                 candidates.Add(Path.Combine(instancePath, "overwrite", "Root", "dialectic.log"));
                 candidates.Add(Path.Combine(instancePath, "overwrite", "dialectic.log"));
-                candidates.Add(Path.Combine(instancePath, "mods", "Dialectic_dev", "dialectic.log"));
-                candidates.Add(Path.Combine(instancePath, "mods", "Dialectic_dev", "NVSE", "Plugins", "dialectic.log"));
+                foreach (var modName in new[] { "Dialectic_dev", "Dialectic" })
+                {
+                    candidates.Add(Path.Combine(instancePath, "mods", modName, "dialectic.log"));
+                    candidates.Add(Path.Combine(instancePath, "mods", modName, "NVSE", "Plugins", "dialectic.log"));
+                    candidates.Add(Path.Combine(instancePath, "mods", modName, "Data", "NVSE", "Plugins", "dialectic.log"));
+                }
             }
         }
         catch (UnauthorizedAccessException)
