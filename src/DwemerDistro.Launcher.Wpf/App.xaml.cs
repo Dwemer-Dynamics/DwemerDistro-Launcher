@@ -20,6 +20,12 @@ public partial class App : Application
 
         LauncherLogService.Startup($"Launcher startup {LauncherConstants.LauncherVersion}.");
 
+        if (e.Args.Contains("--plugin-broker-once", StringComparer.OrdinalIgnoreCase))
+        {
+            _ = RunPluginBrokerOnceAsync();
+            return;
+        }
+
         var mutexName = BuildInstallScopedMutexName();
         _instanceMutex = new Mutex(initiallyOwned: true, mutexName, out _ownsInstanceMutex);
         if (!_ownsInstanceMutex)
@@ -41,6 +47,24 @@ public partial class App : Application
         var window = new MainWindow();
         MainWindow = window;
         window.Show();
+    }
+
+    private async Task RunPluginBrokerOnceAsync()
+    {
+        try
+        {
+            var processRunner = new ProcessRunner();
+            var wsl = new WslService(processRunner);
+            await using var broker = new PluginPackageBrokerService(wsl, message => LauncherLogService.Startup(message.TrimEnd()));
+            var count = await broker.RunOnceAsync().ConfigureAwait(false);
+            LauncherLogService.Startup($"Unified plugin broker one-shot completed with {count} job(s).");
+            Dispatcher.Invoke(() => Shutdown(0));
+        }
+        catch (Exception error)
+        {
+            LauncherLogService.Startup("Unified plugin broker one-shot failed.", error);
+            Dispatcher.Invoke(() => Shutdown(1));
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

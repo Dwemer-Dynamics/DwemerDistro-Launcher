@@ -67,6 +67,7 @@ echo "CHIM-MCP installed and enabled."
     private readonly WslService _wsl;
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly LauncherUpdateService _launcherUpdateService;
+    private readonly PluginPackageBrokerService _pluginPackageBroker;
     private readonly SemaphoreSlim _componentInstallGate = new(1, 1);
 
     private TcpProxyService? _tcpProxyService;
@@ -108,6 +109,7 @@ echo "CHIM-MCP installed and enabled."
         _dispatcher = Application.Current.Dispatcher;
         _wsl = new WslService(_processRunner);
         _launcherUpdateService = new LauncherUpdateService(_httpClient, _processRunner);
+        _pluginPackageBroker = new PluginPackageBrokerService(_wsl, text => AppendLog(text));
         _startAnimationTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(500)
@@ -382,6 +384,7 @@ echo "CHIM-MCP installed and enabled."
     {
         LauncherLogService.Startup("MainWindowViewModel initialization started.");
         StartProxyAndDiscovery();
+        _pluginPackageBroker.Start();
         await RunStartupStepAsync("Load MCP setting", LoadMcpEnabledAsync, StartupSettingsTimeout).ConfigureAwait(true);
         await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
@@ -397,6 +400,7 @@ echo "CHIM-MCP installed and enabled."
         LauncherLogService.Startup("Launcher shutdown started.");
         _startAnimationTimer.Stop();
         _serverStatusRetryTimer.Stop();
+        await _pluginPackageBroker.StopAsync().ConfigureAwait(false);
         await (_tcpProxyService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         await (_discoveryService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         _processRunner.TryKill(_serverProcess);
