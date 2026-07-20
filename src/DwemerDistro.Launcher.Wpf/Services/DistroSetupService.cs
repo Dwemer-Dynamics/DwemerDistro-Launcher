@@ -65,13 +65,6 @@ runuser -u dwemer -- bash -lc "
 set -e
 cd /home/dwemer
 
-if [ ! -d pocket-tts/.git ]; then
-    rm -rf pocket-tts
-    git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
-else
-    git -C pocket-tts pull --ff-only || echo 'Skipping pocket-tts update; local changes or divergent history.'
-fi
-
 if [ ! -d parakeet-api-server/.git ]; then
     rm -rf parakeet-api-server
     git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
@@ -90,6 +83,35 @@ fi
 
 echo "Distro preparation complete."
 """;
+    private const string PocketTtsAudioCppInstallCommand = """
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export DEBIAN_PRIORITY=critical
+export APT_LISTCHANGES_FRONTEND=none
+export NEEDRESTART_MODE=a
+export UCF_FORCE_CONFFOLD=1
+export GIT_TERMINAL_PROMPT=0
+
+if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
+    echo "Hugging Face token is required for Pocket-TTS. Save it in Quickstart and retry."
+    exit 22
+fi
+
+if [ ! -x /usr/local/bin/install_audiocpp_pockettts ]; then
+    echo "The audio.cpp Pocket-TTS installer is missing. Update DwemerDistro in Quickstart and retry."
+    exit 23
+fi
+
+BUILD_PARALLEL="${BUILD_PARALLEL:-2}" /usr/local/bin/install_audiocpp_pockettts 12.8
+
+ln -sfn /home/dwemer/audio.cpp/start-audiocpp-pockettts.sh /home/dwemer/audio.cpp/start.sh
+chown -h dwemer:dwemer /home/dwemer/audio.cpp/start.sh
+
+# Keep the legacy Python install available, but prevent it from starting beside audio.cpp.
+rm -f /home/dwemer/pocket-tts/start.sh
+
+echo "Pocket-TTS audio.cpp installed and enabled in GPU / CUDA mode."
+""";
     private const string PocketTtsInstallCommand = """
 set -e
 export PIP_NO_INPUT=1
@@ -100,8 +122,6 @@ if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
     echo "Hugging Face token is required for Pocket-TTS. Save it in Quickstart and retry."
     exit 22
 fi
-
-export HF_TOKEN="$(cat /home/dwemer/.cache/huggingface/token 2>/dev/null || true)"
 
 mkdir -p /home/dwemer
 cd /home/dwemer
@@ -122,21 +142,13 @@ fi
 . venv/bin/activate
 python -m pip install --upgrade pip wheel setuptools
 
-if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
-    python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu128
-else
-    python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
-fi
+python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
 
 python -m pip install -e .
 
-if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
-    ln -sf /home/dwemer/pocket-tts/start-gpu.sh /home/dwemer/pocket-tts/start.sh
-    echo "Pocket-TTS installed and enabled in GPU / CUDA mode."
-else
-    ln -sf /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
-    echo "Pocket-TTS installed and enabled in CPU mode."
-fi
+ln -sf /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
+rm -f /home/dwemer/audio.cpp/start.sh
+echo "Pocket-TTS installed and enabled in CPU mode."
 """;
     private const string MinimeInstallCommand = """
 set -e
@@ -228,6 +240,7 @@ tokens = (
     "dpkg --configure",
     "python -m pip install",
     "pip install",
+    "/usr/local/bin/install_audiocpp_pockettts",
     "git clone https://github.com/Dwemer-Dynamics/pocket-tts",
     "git clone https://github.com/Dwemer-Dynamics/parakeet-api-server",
 )
@@ -262,9 +275,15 @@ PY
             "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
             ["-d", LauncherConstants.DistroName, "--", "bash", "-lc", CudaInstallCommand]),
         new(
+            "audiocpp",
+            "Pocket-TTS audio.cpp",
+            "CUDA Pocket-TTS runtime",
+            "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file() and Path('/home/dwemer/audio.cpp/start.sh').exists()",
+            ["-d", LauncherConstants.DistroName, "--", "bash", "-lc", PocketTtsAudioCppInstallCommand]),
+        new(
             "pockettts",
             "Pocket-TTS",
-            "Cloned voice engine",
+            "CPU Pocket-TTS runtime",
             "Path('/home/dwemer/pocket-tts/venv/bin/python').exists() and Path('/home/dwemer/pocket-tts/start.sh').exists()",
             ["-d", LauncherConstants.DistroName, "-u", LauncherConstants.DistroUser, "--", "bash", "-lc", PocketTtsInstallCommand]),
         new(
@@ -300,8 +319,8 @@ PY
             "NVIDIA GPU",
             "pockettts",
             "Pocket-TTS",
-            "Installs CUDA, Pocket-TTS cloned voices, Minime/TXT2VEC, and Parakeet for GPU-backed setup.",
-            ["cuda", "pockettts", "minime", "parakeet"]),
+            "Installs CUDA-backed Pocket-TTS audio.cpp, Minime/TXT2VEC, and Parakeet.",
+            ["cuda", "audiocpp", "minime", "parakeet"]),
         new(
             SetupPresetKey.AmdCpu,
             "AMD / CPU",
@@ -309,7 +328,7 @@ PY
             "AMD GPU or CPU",
             "pockettts",
             "Pocket-TTS",
-            "Installs Pocket-TTS cloned voices, Minime/TXT2VEC, and Parakeet without CUDA.",
+            "Installs Python Pocket-TTS, Minime/TXT2VEC, and Parakeet without CUDA.",
             ["pockettts", "minime", "parakeet"])
     ];
 
