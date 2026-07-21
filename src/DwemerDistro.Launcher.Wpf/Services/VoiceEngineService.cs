@@ -216,10 +216,10 @@ pockettts_audio_cpp = (
 if engine == "chatterbox":
     herika_driver = "chatterbox"
     herika_label = "ddistro chatterbox"
-    herika_url = "http://127.0.0.1:8020"
+    herika_url = "http://127.0.0.1:8023"
     stobe_type = "chatterbox"
     stobe_name = "Chatterbox Default"
-    stobe_url = "http://127.0.0.1:8020"
+    stobe_url = "http://127.0.0.1:8023"
     stobe_match_provider = True
     display = "Chatterbox"
 elif engine == "omnivoice":
@@ -234,10 +234,10 @@ elif engine == "omnivoice":
 else:
     herika_driver = "pockettts"
     herika_label = "Pocket TTS audio.cpp" if pockettts_audio_cpp else "ddistro pockettts"
-    herika_url = "http://127.0.0.1:8086" if pockettts_audio_cpp else "http://127.0.0.1:8020"
+    herika_url = "http://127.0.0.1:8086" if pockettts_audio_cpp else "http://127.0.0.1:8024"
     stobe_type = "pocket_tts"
     stobe_name = "Pocket TTS audio.cpp" if pockettts_audio_cpp else "Pocket TTS Default"
-    stobe_url = "http://127.0.0.1:8086" if pockettts_audio_cpp else "http://127.0.0.1:8020"
+    stobe_url = "http://127.0.0.1:8086" if pockettts_audio_cpp else "http://127.0.0.1:8024"
     stobe_match_provider = True
     display = "Pocket-TTS audio.cpp" if pockettts_audio_cpp else "Pocket-TTS"
 

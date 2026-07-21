@@ -463,6 +463,27 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("    except OSError:");
         builder.AppendLine("        return False");
         builder.AppendLine();
+        builder.AppendLine("def provider_status(installed, enabled, port, expected_provider, label):");
+        builder.AppendLine("    if not installed:");
+        builder.AppendLine("        return make_status(False, 'Not installed', f'Dedicated local service port: 127.0.0.1:{port}.', WARN)");
+        builder.AppendLine("    try:");
+        builder.AppendLine("        with urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=2) as response:");
+        builder.AppendLine("            health = json.loads(response.read().decode('utf-8', errors='replace'))");
+        builder.AppendLine("        actual_provider = str(health.get('provider') or '').strip().lower()");
+        builder.AppendLine("        if response.status == 200 and actual_provider == expected_provider:");
+        builder.AppendLine("            runtime = str(health.get('runtime') or 'unknown')");
+        builder.AppendLine("            device = str(health.get('device') or 'unknown')");
+        builder.AppendLine("            return make_status(True, 'Healthy', f'{label} {runtime}; device {device}; port {port}.', GOOD)");
+        builder.AppendLine("        actual = actual_provider or 'unknown service'");
+        builder.AppendLine("        return make_status(True, 'Port conflict', f'Expected {label} on {port}, but /health reported {actual}.', BAD)");
+        builder.AppendLine("    except Exception:");
+        builder.AppendLine("        pass");
+        builder.AppendLine("    if is_port_open(port):");
+        builder.AppendLine("        return make_status(True, 'Port conflict', f'Port {port} is open but did not identify as {label}.', BAD)");
+        builder.AppendLine("    if not enabled:");
+        builder.AppendLine("        return make_status(True, 'Installed / disabled', f'{label} is installed and reserved for port {port}.', WARN)");
+        builder.AppendLine("    return make_status(True, 'Installed', f'{label} is enabled but is not running on port {port}.', WARN)");
+        builder.AppendLine();
         builder.AppendLine("def last_omnivoice_error(log_path):");
         builder.AppendLine("    try:");
         builder.AppendLine("        lines = log_path.read_text(encoding='utf-8', errors='replace').splitlines()");
@@ -568,6 +589,14 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             if (string.Equals(item.Key, "omnivoice", StringComparison.OrdinalIgnoreCase))
             {
                 builder.AppendLine(": omnivoice_status(),");
+            }
+            else if (string.Equals(item.Key, "chatterbox", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.AppendLine(": provider_status(Path('/home/dwemer/chatterbox/venv/bin/python').exists(), Path('/home/dwemer/chatterbox/start.sh').exists(), 8023, 'chatterbox', 'Chatterbox'),");
+            }
+            else if (string.Equals(item.Key, "pockettts", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.AppendLine(": provider_status(Path('/home/dwemer/pocket-tts/venv/bin/python').exists(), Path('/home/dwemer/pocket-tts/start.sh').exists(), 8024, 'pockettts', 'PocketTTS Python'),");
             }
             else
             {
@@ -697,14 +726,14 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "pockettts",
                 title: "Pocket-TTS (CPU / Python)",
-                description: "Legacy Python Pocket-TTS runtime for AMD or CPU-only systems. Runs on port 8020.",
-                installCheckExpression: "Path('/home/dwemer/pocket-tts/venv/bin/python').exists() and Path('/home/dwemer/pocket-tts/start.sh').exists()",
+                description: "Python Pocket-TTS runtime for AMD or CPU-only systems. Uses its dedicated port 8024.",
+                installCheckExpression: "Path('/home/dwemer/pocket-tts/venv/bin/python').exists()",
                 primaryCommand: CreateInstallCommand("pockettts"),
                 supportsAmdCpu: true),
             CreateItem(
                 key: "chatterbox",
                 title: "Chatterbox",
-                description: "High-quality multilingual TTS with voice cloning. Shares port 8020 with XTTS and PocketTTS.",
+                description: "High-quality multilingual TTS with voice cloning. Uses its dedicated port 8023.",
                 installCheckExpression: "Path('/home/dwemer/chatterbox/venv').exists()",
                 primaryCommand: CreateInstallCommand("chatterbox"),
                 supportsNvidiaCuda: true,

@@ -1798,8 +1798,8 @@ echo "CHIM-MCP installed and enabled."
             (
                 "Chatterbox API voice inventory",
                 "if command -v curl >/dev/null 2>&1; then " +
-                "echo 'GET /health'; curl -sS --max-time 5 http://127.0.0.1:8020/health 2>&1 || true; " +
-                "echo; echo 'GET /speakers_list_extended'; curl -sS --max-time 5 http://127.0.0.1:8020/speakers_list_extended 2>&1 || true; " +
+                "echo 'GET /health'; curl -sS --max-time 5 http://127.0.0.1:8023/health 2>&1 || true; " +
+                "echo; echo 'GET /speakers_list_extended'; curl -sS --max-time 5 http://127.0.0.1:8023/speakers_list_extended 2>&1 || true; " +
                 "else echo '[missing] curl'; fi"
             ),
             (

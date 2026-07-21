@@ -83,7 +83,7 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 | Local Whisper | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/remote-faster-whisper/ddistro_install.sh` |
 | Parakeet | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/parakeet-api-server/ddistro_install.sh` |
 | Pocket-TTS (GPU / audio.cpp) | NVIDIA Quickstart runs `/usr/local/bin/install_audiocpp_pockettts 12.8` and enables `/home/dwemer/audio.cpp/start.sh` on port `8086`. |
-| Pocket-TTS (CPU / Python) | AMD / CPU Quickstart installs `/home/dwemer/pocket-tts` and enables its CPU start script on port `8020`. |
+| Pocket-TTS (CPU / Python) | AMD / CPU Quickstart installs `/home/dwemer/pocket-tts` and enables its CPU start script on dedicated port `8024`. |
 
 ## Configuration
 
