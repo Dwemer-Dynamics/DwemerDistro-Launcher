@@ -598,6 +598,10 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             {
                 builder.AppendLine(": provider_status(Path('/home/dwemer/pocket-tts/venv/bin/python').exists(), Path('/home/dwemer/pocket-tts/start.sh').exists(), 8024, 'pockettts', 'PocketTTS Python'),");
             }
+            else if (string.Equals(item.Key, "melotts", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.AppendLine(": provider_status(Path('/home/dwemer/python-melotts/bin/python').exists(), Path('/home/dwemer/MeloTTS/start.sh').exists(), 8084, 'melotts', 'MeloTTS'),");
+            }
             else
             {
                 builder.Append(": make_status(bool(");
@@ -757,7 +761,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "melotts",
                 title: "MeloTTS",
-                description: "Fast TTS option for lightweight setups with low overhead and strong CPU support.",
+                description: "Fast TTS option for lightweight setups with low overhead and strong CPU support. Uses port 8084.",
                 installCheckExpression: "Path('/home/dwemer/python-melotts').exists()",
                 primaryCommand: CreateInstallCommand("melotts"),
                 supportsNvidiaCuda: true,
