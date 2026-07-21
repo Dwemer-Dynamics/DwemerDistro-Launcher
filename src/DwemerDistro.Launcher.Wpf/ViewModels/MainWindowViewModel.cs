@@ -3919,7 +3919,7 @@ fi
             "mimic3" => new(
                 "mimic3",
                 "Mimic3",
-                "/home/dwemer/mimic3/ddistro_install.sh",
+                "/usr/local/bin/install_mimic3",
                 "[ -x /home/dwemer/python-mimic3/bin/python ]"),
             "parakeet" => new(
                 "parakeet",
