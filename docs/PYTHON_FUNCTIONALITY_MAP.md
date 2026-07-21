@@ -82,7 +82,8 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 | Piper-TTS | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/piper/ddistro_install.sh` |
 | Local Whisper | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/remote-faster-whisper/ddistro_install.sh` |
 | Parakeet | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/parakeet-api-server/ddistro_install.sh` |
-| PockeTTS | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/pocket-tts/ddistro_install.sh` |
+| Pocket-TTS (GPU / audio.cpp) | NVIDIA Quickstart runs `/usr/local/bin/install_audiocpp_pockettts 12.8` and enables `/home/dwemer/audio.cpp/start.sh` on port `8086`. |
+| Pocket-TTS (CPU / Python) | AMD / CPU Quickstart installs `/home/dwemer/pocket-tts` and enables its CPU start script on port `8020`. |
 
 ## Configuration
 
@@ -105,7 +106,8 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 | MeloTTS log | `/home/dwemer/MeloTTS/melo/log.txt` |
 | XTTS log | `/home/dwemer/xtts-api-server/log.txt` |
 | Chatterbox log | `/home/dwemer/chatterbox/log.txt` |
-| PockeTTS log | `/home/dwemer/pocket-tts/log.txt` |
+| Pocket-TTS audio.cpp log | `/home/dwemer/audio.cpp/server.log` |
+| Pocket-TTS Python log | `/home/dwemer/pocket-tts/log.txt` |
 | Local Whisper log | `/home/dwemer/remote-faster-whisper/log.txt` |
 | Piper log | `/home/dwemer/piper/log.txt` |
 | Parakeet log | `/home/dwemer/parakeet-api-server/log.txt` |

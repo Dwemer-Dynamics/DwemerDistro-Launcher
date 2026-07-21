@@ -150,7 +150,7 @@ echo "CHIM-MCP installed and enabled."
         OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"));
         ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"));
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"));
-        ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/pocket-tts/log.txt"));
+        ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""));
         ViewOmniVoiceLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/omnivoice-tts/logs/server.log"));
         ViewMeloTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/MeloTTS/melo/log.txt"));
         ViewPiperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/piper/log.txt"));
@@ -1740,6 +1740,7 @@ echo "CHIM-MCP installed and enabled."
             ("Apache vhost access", "/var/log/apache2/other_vhosts_access.log"),
             ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
             ("Chatterbox", "/home/dwemer/chatterbox/log.txt"),
+            ("Pocket-TTS audio.cpp", "/home/dwemer/audio.cpp/server.log"),
             ("Pocket-TTS", "/home/dwemer/pocket-tts/log.txt"),
             ("OmniVoice", "/home/dwemer/omnivoice-tts/logs/server.log"),
             ("Minime and TXT2VEC", "/home/dwemer/minime-t5/log.txt"),
@@ -3835,18 +3836,54 @@ fi
                 "CHIM-MCP",
                 ChimMcpInstallScript,
                 "[ -f /home/dwemer/CHIM-MCP/dist/index.js ]"),
+            "audiocpp" => new(
+                "audiocpp",
+                "Pocket-TTS (GPU / audio.cpp)",
+                """
+                if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
+                    echo "Hugging Face token is required for Pocket-TTS. Save it in Quickstart and retry."
+                    exit 22
+                fi
+                if [ ! -x /usr/local/bin/install_audiocpp_pockettts ]; then
+                    echo "The audio.cpp Pocket-TTS installer is missing. Update DwemerDistro and retry."
+                    exit 23
+                fi
+                BUILD_PARALLEL="${BUILD_PARALLEL:-2}" /usr/local/bin/install_audiocpp_pockettts 12.8
+                ln -sfn /home/dwemer/audio.cpp/start-audiocpp-pockettts.sh /home/dwemer/audio.cpp/start.sh
+                chown -h dwemer:dwemer /home/dwemer/audio.cpp/start.sh
+                rm -f /home/dwemer/pocket-tts/start.sh
+                """,
+                "[ -x /home/dwemer/audio.cpp/build/bin/audiocpp_server ] && [ -e /home/dwemer/audio.cpp/start.sh ]",
+                "root"),
             "pockettts" => new(
                 "pockettts",
-                "Pocket-TTS",
+                "Pocket-TTS (CPU / Python)",
                 """
+                if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
+                    echo "Hugging Face token is required for Pocket-TTS. Save it in Quickstart and retry."
+                    exit 22
+                fi
+                export PIP_NO_INPUT=1
+                export PIP_DISABLE_PIP_VERSION_CHECK=1
                 cd /home/dwemer
                 if [ ! -d pocket-tts/.git ]; then
                     rm -rf pocket-tts
                     git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
+                else
+                    git -C pocket-tts pull --ff-only
                 fi
-                /home/dwemer/pocket-tts/ddistro_install.sh
+                cd /home/dwemer/pocket-tts
+                if [ ! -d venv ]; then
+                    python3 -m venv venv
+                fi
+                . venv/bin/activate
+                python -m pip install --upgrade pip wheel setuptools
+                python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+                python -m pip install -e .
+                ln -sfn /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
+                rm -f /home/dwemer/audio.cpp/start.sh
                 """,
-                "[ -x /home/dwemer/pocket-tts/venv/bin/python ]"),
+                "[ -x /home/dwemer/pocket-tts/venv/bin/python ] && [ -e /home/dwemer/pocket-tts/start.sh ]"),
             "chatterbox" => new(
                 "chatterbox",
                 "Chatterbox",

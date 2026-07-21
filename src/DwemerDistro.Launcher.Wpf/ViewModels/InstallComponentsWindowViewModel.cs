@@ -34,8 +34,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))", "start"),
         new("parakeet", "Parakeet STT", "/home/dwemer/parakeet-api-server", "/home/dwemer/parakeet-api-server/conf.sh", "Path('/home/dwemer/parakeet-api-server/venv').is_dir()", "start"),
         new("chatterbox", "Chatterbox", "/home/dwemer/chatterbox", "/home/dwemer/chatterbox/conf.sh", "Path('/home/dwemer/chatterbox/venv').is_dir()", "start"),
-        new("audiocpp", "Pocket-TTS audio.cpp", "/home/dwemer/audio.cpp", "/home/dwemer/audio.cpp/conf.sh", "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file()", "start"),
-        new("pockettts", "Pocket-TTS", "/home/dwemer/pocket-tts", "/home/dwemer/pocket-tts/conf.sh", "Path('/home/dwemer/pocket-tts/venv').is_dir()", "start"),
+        new("audiocpp", "Pocket-TTS (GPU / audio.cpp)", "/home/dwemer/audio.cpp", "/home/dwemer/audio.cpp/conf.sh", "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file()", "start"),
+        new("pockettts", "Pocket-TTS (CPU / Python)", "/home/dwemer/pocket-tts", "/home/dwemer/pocket-tts/conf.sh", "Path('/home/dwemer/pocket-tts/venv').is_dir()", "start"),
         new("omnivoice", "Multilingual OmniVoice TTS", "/home/dwemer/omnivoice-tts", "/home/dwemer/omnivoice-tts/conf.sh", "Path('/home/dwemer/omnivoice-tts/venv').is_dir()", "omnivoice")
     ];
     private static readonly IReadOnlyDictionary<string, ConfigurableComponentDefinition> ConfigurableComponentsByKey =
@@ -688,12 +688,18 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             "Text-to-Speech Engines",
             allItems,
             CreateItem(
+                key: "audiocpp",
+                title: "Pocket-TTS (GPU / audio.cpp)",
+                description: "Recommended Pocket-TTS runtime for NVIDIA GPUs. Runs the CUDA C++ server on port 8086.",
+                installCheckExpression: "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file() and Path('/home/dwemer/audio.cpp/start.sh').exists()",
+                primaryCommand: CreateInstallCommand("audiocpp"),
+                supportsNvidiaCuda: true),
+            CreateItem(
                 key: "pockettts",
-                title: "Pocket-TTS",
-                description: "Compact TTS that supports voice samples and can run in CPU or GPU mode depending on your configuration.",
-                installCheckExpression: "Path('/home/dwemer/pocket-tts/venv').exists()",
+                title: "Pocket-TTS (CPU / Python)",
+                description: "Legacy Python Pocket-TTS runtime for AMD or CPU-only systems. Runs on port 8020.",
+                installCheckExpression: "Path('/home/dwemer/pocket-tts/venv/bin/python').exists() and Path('/home/dwemer/pocket-tts/start.sh').exists()",
                 primaryCommand: CreateInstallCommand("pockettts"),
-                supportsNvidiaCuda: true,
                 supportsAmdCpu: true),
             CreateItem(
                 key: "chatterbox",
