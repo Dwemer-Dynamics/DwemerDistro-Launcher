@@ -1798,8 +1798,10 @@ echo "CHIM-MCP installed and enabled."
             (
                 "Chatterbox API voice inventory",
                 "if command -v curl >/dev/null 2>&1; then " +
-                "echo 'GET /health'; curl -sS --max-time 5 http://127.0.0.1:8023/health 2>&1 || true; " +
-                "echo; echo 'GET /speakers_list_extended'; curl -sS --max-time 5 http://127.0.0.1:8023/speakers_list_extended 2>&1 || true; " +
+                "port=$(tr -d '[:space:]' </home/dwemer/chatterbox/.dwemerdistro-port 2>/dev/null || echo 8020); " +
+                "case \"$port\" in ''|*[!0-9]*) port=8020;; esac; " +
+                "echo \"Configured port: $port\"; echo 'GET /provider_info'; curl -sS --max-time 5 http://127.0.0.1:$port/provider_info 2>&1 || true; " +
+                "echo; echo 'GET /speakers_list_extended'; curl -sS --max-time 5 http://127.0.0.1:$port/speakers_list_extended 2>&1 || true; " +
                 "else echo '[missing] curl'; fi"
             ),
             (
@@ -3866,6 +3868,10 @@ fi
                 export PIP_NO_INPUT=1
                 export PIP_DISABLE_PIP_VERSION_CHECK=1
                 cd /home/dwemer
+                POCKETTTS_FRESH=0
+                if [ ! -d pocket-tts/venv ]; then
+                    POCKETTTS_FRESH=1
+                fi
                 if [ ! -d pocket-tts/.git ]; then
                     rm -rf pocket-tts
                     git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
@@ -3873,6 +3879,13 @@ fi
                     git -C pocket-tts pull --ff-only
                 fi
                 cd /home/dwemer/pocket-tts
+                if [ ! -f .dwemerdistro-port ]; then
+                    if [ "$POCKETTTS_FRESH" -eq 1 ]; then
+                        printf '8024\n' > .dwemerdistro-port
+                    else
+                        printf '8020\n' > .dwemerdistro-port
+                    fi
+                fi
                 if [ ! -d venv ]; then
                     python3 -m venv venv
                 fi

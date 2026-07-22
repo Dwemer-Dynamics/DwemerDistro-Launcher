@@ -126,6 +126,11 @@ fi
 mkdir -p /home/dwemer
 cd /home/dwemer
 
+POCKETTTS_FRESH=0
+if [ ! -d /home/dwemer/pocket-tts/venv ]; then
+    POCKETTTS_FRESH=1
+fi
+
 if [ ! -d /home/dwemer/pocket-tts/.git ]; then
     rm -rf /home/dwemer/pocket-tts
     git clone https://github.com/Dwemer-Dynamics/pocket-tts /home/dwemer/pocket-tts
@@ -134,6 +139,14 @@ else
 fi
 
 cd /home/dwemer/pocket-tts
+
+if [ ! -f .dwemerdistro-port ]; then
+    if [ "$POCKETTTS_FRESH" -eq 1 ]; then
+        printf '8024\n' > .dwemerdistro-port
+    else
+        printf '8020\n' > .dwemerdistro-port
+    fi
+fi
 
 if [ ! -d venv ]; then
     python3 -m venv venv
