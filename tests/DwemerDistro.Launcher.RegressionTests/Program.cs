@@ -35,11 +35,17 @@ try
         "A completed update into 3.1.13 must show the notice for an existing setup.");
     Assert(notice!.Message.Contains("do not need to reinstall", StringComparison.OrdinalIgnoreCase),
         "The notice must state that reinstalling TTS is unnecessary.");
-    foreach (var port in new[] { "8020", "8023", "8024", "8086" })
-    {
-        Assert(notice.Message.Contains(port, StringComparison.Ordinal),
-            $"The notice must explain port {port}.");
-    }
+    Assert(notice.Message.Contains("If your TTS is working, you do not need to reinstall anything", StringComparison.OrdinalIgnoreCase),
+        "The notice must lead with the no-action path.");
+    Assert(notice.Message.Contains("Configure Installed Components", StringComparison.Ordinal),
+        "The notice must explain where to reinstall an affected service.");
+    Assert(notice.Message.Contains("TTS Studio", StringComparison.Ordinal),
+        "The notice must explain where to re-apply the connector.");
+    Assert(notice.Message.Contains("Chatterbox", StringComparison.Ordinal)
+           && notice.Message.Contains("Python PocketTTS", StringComparison.Ordinal),
+        "The notice must identify the services that may need reinstalling.");
+    Assert(notice.Message.Contains("XTTS and PocketTTS audio.cpp do not need to be reinstalled", StringComparison.Ordinal),
+        "The notice must exclude unaffected services from reinstall instructions.");
 
     Assert(service.TryAcknowledge(notice, out var error),
         "Acknowledging the notice failed: " + error);

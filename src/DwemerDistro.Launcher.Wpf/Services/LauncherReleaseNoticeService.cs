@@ -35,15 +35,12 @@ public sealed class LauncherReleaseNoticeService
 
         return new LauncherReleaseNotice(
             DedicatedTtsPortsNoticeKey,
-            "Speech Service Port Update",
-            "Local speech services now use dedicated ports to improve detection and prevent connector conflicts.\n\n" +
-            "- XTTS remains on port 8020.\n" +
-            "- New Chatterbox installations use port 8023.\n" +
-            "- New Python PocketTTS installations use port 8024.\n" +
-            "- PocketTTS audio.cpp remains on port 8086.\n" +
-            "- Existing installations continue using their current saved port.\n\n" +
-            "You do not need to reinstall your TTS service or manually change a working connector.\n\n" +
-            "If your voice engine stops connecting, open TTS Studio or Configure Installed Components and re-apply your selected engine. Moving an existing service to its dedicated port is optional.");
+            "TTS Update",
+            "If your TTS is working, you do not need to reinstall anything.\n\n" +
+            "Only reinstall if Chatterbox or Python PocketTTS stopped connecting, or if you want to move an older installation to its new port:\n\n" +
+            "1. Open Configure Installed Components and reinstall that TTS service.\n" +
+            "2. Open TTS Studio and re-apply the connector.\n\n" +
+            "XTTS and PocketTTS audio.cpp do not need to be reinstalled.");
     }
 
     public bool TryAcknowledge(LauncherReleaseNotice notice, out string? error)
