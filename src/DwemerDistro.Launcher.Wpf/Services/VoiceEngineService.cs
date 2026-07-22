@@ -192,6 +192,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 engine = (sys.argv[1] if len(sys.argv) > 1 else "pockettts").strip().lower()
@@ -208,21 +209,80 @@ def read_omnivoice_language():
     return language or "en"
 
 active_language = read_omnivoice_language() if engine == "omnivoice" else "en"
-pockettts_audio_cpp = (
-    Path("/home/dwemer/audio.cpp/build/bin/audiocpp_server").is_file()
-    and Path("/home/dwemer/audio.cpp/start.sh").exists()
-)
+def audio_cpp_available():
+    if not (
+        Path("/home/dwemer/audio.cpp/build/bin/audiocpp_server").is_file()
+        and Path("/home/dwemer/audio.cpp/start.sh").exists()
+    ):
+        return False
+    try:
+        for path in ("/health", "/v1/models"):
+            with urllib.request.urlopen("http://127.0.0.1:8086" + path, timeout=3) as response:
+                json.loads(response.read().decode("utf-8", errors="replace"))
+        return True
+    except Exception:
+        return False
+
+pockettts_audio_cpp = engine == "pockettts" and audio_cpp_available()
+
+def read_saved_port(path, fallback):
+    try:
+        value = int(Path(path).read_text(encoding="utf-8").strip())
+        return value if 1 <= value <= 65535 else fallback
+    except (OSError, TypeError, ValueError):
+        return fallback
+
+def identify_provider(port):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/provider_info", timeout=3) as response:
+            data = json.loads(response.read().decode("utf-8", errors="replace"))
+        provider = str(data.get("provider") or "").strip().lower()
+        if provider in ("pocket_tts", "pocket-tts"):
+            provider = "pockettts"
+        if provider:
+            return provider
+    except Exception:
+        pass
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/openapi.json", timeout=3) as response:
+            document = json.loads(response.read().decode("utf-8", errors="replace"))
+        title = str((document.get("info") or {}).get("title") or "").strip().lower()
+        paths = set((document.get("paths") or {}).keys())
+        if "/languages" in paths or "/get_models_list" in paths:
+            return "xtts"
+        if "chatterbox" in title or ({"/sample/{file_name}", "/speakers_list_extended"} <= paths):
+            return "chatterbox"
+        if "/tts_to_audio_form" in paths or ({"/tts_to_audio", "/voices/{voice_id}"} <= paths):
+            return "pockettts"
+    except Exception:
+        pass
+    return ""
+
+def resolve_local_provider(expected, port_file, dedicated_port, legacy_port=8020):
+    configured = read_saved_port(port_file, legacy_port)
+    candidates = []
+    for port in (configured, dedicated_port, legacy_port):
+        if port not in candidates:
+            candidates.append(port)
+    for port in candidates:
+        if identify_provider(port) == expected:
+            return port, None
+    return configured, f"{expected} is not running on configured, dedicated, or legacy ports"
 
 if engine == "chatterbox":
+    selected_port, service_error = resolve_local_provider(
+        "chatterbox", "/home/dwemer/chatterbox/.dwemerdistro-port", 8023
+    )
     herika_driver = "chatterbox"
     herika_label = "ddistro chatterbox"
-    herika_url = "http://127.0.0.1:8020"
+    herika_url = f"http://127.0.0.1:{selected_port}"
     stobe_type = "chatterbox"
     stobe_name = "Chatterbox Default"
-    stobe_url = "http://127.0.0.1:8020"
+    stobe_url = herika_url
     stobe_match_provider = True
     display = "Chatterbox"
 elif engine == "omnivoice":
+    service_error = None if identify_provider(8021) == "omnivoice" else "omnivoice is not running on port 8021"
     herika_driver = "omnivoice"
     herika_label = "OmniVoice Default"
     herika_url = "http://127.0.0.1:8021"
@@ -232,12 +292,15 @@ elif engine == "omnivoice":
     stobe_match_provider = False
     display = "Multilingual OmniVoice"
 else:
+    selected_port, service_error = (8086, None) if pockettts_audio_cpp else resolve_local_provider(
+        "pockettts", "/home/dwemer/pocket-tts/.dwemerdistro-port", 8024
+    )
     herika_driver = "pockettts"
     herika_label = "Pocket TTS audio.cpp" if pockettts_audio_cpp else "ddistro pockettts"
-    herika_url = "http://127.0.0.1:8086" if pockettts_audio_cpp else "http://127.0.0.1:8020"
+    herika_url = f"http://127.0.0.1:{selected_port}"
     stobe_type = "pocket_tts"
     stobe_name = "Pocket TTS audio.cpp" if pockettts_audio_cpp else "Pocket TTS Default"
-    stobe_url = "http://127.0.0.1:8086" if pockettts_audio_cpp else "http://127.0.0.1:8020"
+    stobe_url = herika_url
     stobe_match_provider = True
     display = "Pocket-TTS audio.cpp" if pockettts_audio_cpp else "Pocket-TTS"
 
@@ -246,6 +309,12 @@ TARGETS = [
     {"targetName": "STOBE / Kenshi", "databaseName": "stobe"},
     {"targetName": "Dialectic / Fallout NV", "databaseName": "dialectic"},
 ]
+database_override = os.environ.get("DWEMER_TTS_APPLY_DATABASES", "").split()
+if database_override:
+    TARGETS = [
+        {"targetName": database_name, "databaseName": database_name}
+        for database_name in database_override
+    ]
 
 def psql(db, sql):
     env = os.environ.copy()
@@ -282,16 +351,19 @@ def apply_herika_style(db):
             "fallback_female": fallback_female,
         }))
     else:
-        metadata = sql_literal(json.dumps({
+        metadata_data = {
             "_title": display + " (DwemerDistro quickstart)",
-            "api_format": "audio_cpp" if pockettts_audio_cpp else "legacy",
-            "model": "pocket-tts" if pockettts_audio_cpp else "",
             "voiceid": {"type": "string"},
             "language": {"type": "select", "values": [active_language]},
             "voicelogic": {"type": "select", "values": ["voicetype", "name"]},
             "fallback_male": {"type": "string", "default": fallback_male},
             "fallback_female": {"type": "string", "default": fallback_female},
-        }))
+        }
+        if engine == "pockettts":
+            metadata_data["api_format"] = "audio_cpp" if pockettts_audio_cpp else "legacy"
+            if pockettts_audio_cpp:
+                metadata_data["model"] = "pocket-tts"
+        metadata = sql_literal(json.dumps(metadata_data))
     managed_labels = {
         "pockettts": ["ddistro pockettts", "pocket tts audio.cpp", "pocket tts default"],
         "chatterbox": ["ddistro chatterbox", "chatterbox default"],
@@ -299,7 +371,7 @@ def apply_herika_style(db):
     }.get(herika_driver, [herika_label])
     managed_labels_sql = ", ".join(sql_literal(value.lower()) for value in managed_labels)
     managed_match = f"driver = {driver} AND LOWER(label) IN ({managed_labels_sql})"
-    connector_id = f"(SELECT id FROM core_tts_connector WHERE {managed_match} ORDER BY id LIMIT 1)"
+    connector_id = f"(SELECT id FROM core_tts_connector WHERE {managed_match} ORDER BY CASE WHEN LOWER(label) = LOWER({label}) THEN 0 ELSE 1 END, id LIMIT 1)"
     statements = [f"""
 INSERT INTO core_tts_connector(driver, label, metadata, api_badge_id, url, voice_field)
 SELECT {driver}, {label}, {metadata}::jsonb, NULL, {url}, 'voiceid'
@@ -312,7 +384,7 @@ SET label = {label},
     metadata = {metadata}::jsonb,
     url = {url},
     voice_field = 'voiceid'
-WHERE {managed_match};
+WHERE id = {connector_id};
 """]
 
     profile_columns, _ = columns_for(db, "core_profiles")
@@ -348,9 +420,7 @@ def apply_stobe_style(db):
     url = sql_literal(stobe_url)
     fallback_male = "default_male" if engine == "omnivoice" else "male1"
     fallback_female = "default_female" if engine == "omnivoice" else "female1"
-    config = sql_literal(json.dumps({
-        "api_format": "audio_cpp" if pockettts_audio_cpp else "legacy",
-        "model": "pocket-tts" if pockettts_audio_cpp else "",
+    config_data = {
         "language": active_language,
         "fallback_male": fallback_male,
         "fallback_female": fallback_female,
@@ -362,7 +432,12 @@ def apply_stobe_style(db):
         "top_p": 0.85,
         "top_k": 50,
         "enable_text_splitting": True,
-    }))
+    }
+    if engine == "pockettts":
+        config_data["api_format"] = "audio_cpp" if pockettts_audio_cpp else "legacy"
+        if pockettts_audio_cpp:
+            config_data["model"] = "pocket-tts"
+    config = sql_literal(json.dumps(config_data))
     match_clause = f"LOWER(name) = LOWER({name})"
     if stobe_match_provider:
         match_clause = f"{match_clause} OR connector_type = {provider}"
@@ -406,6 +481,16 @@ WHERE {" OR ".join(profile_conditions)};
 statuses = []
 for target in TARGETS:
     db = target["databaseName"]
+    if service_error:
+        statuses.append({
+            "targetName": target["targetName"],
+            "databaseName": db,
+            "applied": False,
+            "skipped": True,
+            "statusText": "Voice service unavailable",
+            "error": service_error,
+        })
+        continue
     columns, error = columns_for(db, "core_tts_connector")
     if error:
         statuses.append({
