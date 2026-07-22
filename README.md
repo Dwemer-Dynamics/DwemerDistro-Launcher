@@ -21,6 +21,51 @@ It keeps WSL distro management in the launcher, but separates launcher binary up
 - `docs/PORTING_CHECKLIST.md` - current parity tracking
 - `docs/UPDATES.md` - launcher release/update flow
 
+## Default Port Map
+
+These are the current DwemerDistro defaults. Most users do not need to open or configure these ports manually. A port only listens when its component is installed and running, and WSL may make the same service available through Windows `localhost`.
+
+### Local Voice and AI Services
+
+| Port | Service | Purpose |
+| ---: | --- | --- |
+| `8020` | XTTS | Default local XTTS API. This is also the compatibility port for older Chatterbox or Python PocketTTS installations. |
+| `8021` | OmniVoice | Optional local OmniVoice TTS API. |
+| `8022` | Parakeet | Local speech-to-text API. |
+| `8023` | Chatterbox | Dedicated port used by current Chatterbox installations. |
+| `8024` | PocketTTS (Python) | Dedicated CPU/AMD PocketTTS API used by current installations. |
+| `8082` | Minime/TXT2VEC | Local text embedding and vector service. |
+| `8084` | MeloTTS | Optional local MeloTTS API. |
+| `8086` | PocketTTS (audio.cpp) | NVIDIA/CUDA PocketTTS API used by the recommended GPU quick setup. |
+
+Cartesia and Inworld are cloud TTS providers, so they do not reserve a local DwemerDistro port.
+
+Fresh installs give each local TTS service its own port. Existing Chatterbox or Python PocketTTS installations can continue using legacy port `8020`; the launcher checks the provider identity instead of assuming that every service on `8020` is XTTS. Reinstall that TTS component and re-apply its connector in TTS Studio only if you want to move it to its dedicated port.
+
+### Game Servers and Launcher Routing
+
+| Port | Service | Purpose |
+| ---: | --- | --- |
+| `7135` | Launcher discovery | Tells supported game clients which WSL server address and port to use. |
+| `7513` | Skyrim TCP proxy | Windows loopback proxy to the CHIM server on port `8081`. |
+| `8081` | CHIM / Skyrim | Canonical CHIM web and API server. |
+| `8083` | Stobe / Kenshi | Canonical Stobe web and API server. |
+| `8085` | Legacy/development Apache listener | Kept by some existing distro images for compatibility; the launcher does not use it as Dialectic's canonical URL. |
+| `8087` | Starfield | Reserved for the Starfield server. |
+| `8088` | Dialectic / Fallout New Vegas | Canonical Dialectic web and API server. |
+| `8089` | Reign | Reserved for the Reign server. |
+
+### Internal Runtime Services
+
+| Port | Service | Purpose |
+| ---: | --- | --- |
+| `5432` | PostgreSQL | Shared local database used by the server applications. |
+| `12345` | CHIM background listener | Internal CHIM background-service communication and heartbeat. |
+| `12346` | Stobe background listener | Internal Stobe background-service communication and heartbeat. |
+| `12347` | Dialectic background listener | Internal Dialectic background-service communication and heartbeat. |
+
+The older `NetPortRedirection.ps1` helper only lists a subset of ports and is not the authoritative map for current launcher installs.
+
 ## Build
 
 ```powershell
