@@ -279,7 +279,6 @@ if engine == "chatterbox":
     stobe_type = "chatterbox"
     stobe_name = "Chatterbox Default"
     stobe_url = herika_url
-    stobe_match_provider = True
     display = "Chatterbox"
 elif engine == "omnivoice":
     service_error = None if identify_provider(8021) == "omnivoice" else "omnivoice is not running on port 8021"
@@ -289,7 +288,6 @@ elif engine == "omnivoice":
     stobe_type = "omnivoice"
     stobe_name = "OmniVoice Default"
     stobe_url = "http://127.0.0.1:8021"
-    stobe_match_provider = False
     display = "Multilingual OmniVoice"
 else:
     selected_port, service_error = (8086, None) if pockettts_audio_cpp else resolve_local_provider(
@@ -301,7 +299,6 @@ else:
     stobe_type = "pocket_tts"
     stobe_name = "Pocket TTS audio.cpp" if pockettts_audio_cpp else "Pocket TTS Default"
     stobe_url = herika_url
-    stobe_match_provider = True
     display = "Pocket-TTS audio.cpp" if pockettts_audio_cpp else "Pocket-TTS"
 
 TARGETS = [
@@ -438,9 +435,13 @@ def apply_stobe_style(db):
         if pockettts_audio_cpp:
             config_data["model"] = "pocket-tts"
     config = sql_literal(json.dumps(config_data))
-    match_clause = f"LOWER(name) = LOWER({name})"
-    if stobe_match_provider:
-        match_clause = f"{match_clause} OR connector_type = {provider}"
+    managed_names = {
+        "pocket_tts": ["Pocket TTS Default", "Pocket TTS audio.cpp"],
+        "chatterbox": ["Chatterbox Default"],
+        "omnivoice": ["OmniVoice Default"],
+    }.get(stobe_type, [stobe_name])
+    managed_names_sql = ", ".join(sql_literal(value.lower()) for value in managed_names)
+    match_clause = f"LOWER(name) IN ({managed_names_sql})"
     connector_id = f"(SELECT id FROM core_tts_connector WHERE {match_clause} ORDER BY CASE WHEN LOWER(name) = LOWER({name}) THEN 0 ELSE 1 END, id LIMIT 1)"
     statements = [f"""
 UPDATE core_tts_connector

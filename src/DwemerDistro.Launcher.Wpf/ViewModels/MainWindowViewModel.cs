@@ -67,6 +67,7 @@ echo "CHIM-MCP installed and enabled."
     private readonly WslService _wsl;
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly LauncherUpdateService _launcherUpdateService;
+    private readonly LauncherReleaseNoticeService _launcherReleaseNoticeService;
     private readonly SemaphoreSlim _componentInstallGate = new(1, 1);
 
     private TcpProxyService? _tcpProxyService;
@@ -108,6 +109,7 @@ echo "CHIM-MCP installed and enabled."
         _dispatcher = Application.Current.Dispatcher;
         _wsl = new WslService(_processRunner);
         _launcherUpdateService = new LauncherUpdateService(_httpClient, _processRunner);
+        _launcherReleaseNoticeService = new LauncherReleaseNoticeService();
         _startAnimationTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(500)
@@ -407,12 +409,15 @@ echo "CHIM-MCP installed and enabled."
     {
         LauncherLogService.Startup("First-time setup startup check started.");
 
+        var shouldShowFirstRunSetup = false;
         try
         {
             using var probeCts = new CancellationTokenSource(StartupFirstRunProbeTimeout);
-            if (!await ShouldShowFirstRunSetupAsync(probeCts.Token).ConfigureAwait(false))
+            shouldShowFirstRunSetup = await ShouldShowFirstRunSetupAsync(probeCts.Token).ConfigureAwait(false);
+            if (!shouldShowFirstRunSetup)
             {
                 LauncherLogService.Startup("First-time setup startup check completed: not needed.");
+                ShowPendingDedicatedTtsPortsNotice();
                 return;
             }
         }
@@ -428,6 +433,8 @@ echo "CHIM-MCP installed and enabled."
             AppendLog($"First-time setup check failed: {ex.Message}{Environment.NewLine}", "yellow");
             return;
         }
+
+        SuppressDedicatedTtsPortsNoticeForFirstRunSetup();
 
         try
         {
@@ -451,6 +458,49 @@ echo "CHIM-MCP installed and enabled."
 
         LauncherLogService.Startup("Opening first-time setup from startup check.");
         OpenFirstRunSetupWindow();
+    }
+
+    private void ShowPendingDedicatedTtsPortsNotice()
+    {
+        var currentVersion = _launcherUpdateService.GetCurrentVersion();
+        var notice = _launcherReleaseNoticeService.GetPendingDedicatedTtsPortsNotice(currentVersion);
+        if (notice is null)
+        {
+            return;
+        }
+
+        RunOnUi(() =>
+        {
+            MessageBox.Show(
+                notice.Message,
+                notice.Title,
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+
+            if (!_launcherReleaseNoticeService.TryAcknowledge(notice, out var error))
+            {
+                LauncherLogService.Startup($"Could not acknowledge launcher release notice '{notice.Key}': {error}");
+            }
+        });
+    }
+
+    private void SuppressDedicatedTtsPortsNoticeForFirstRunSetup()
+    {
+        var currentVersion = _launcherUpdateService.GetCurrentVersion();
+        var notice = _launcherReleaseNoticeService.GetPendingDedicatedTtsPortsNotice(currentVersion);
+        if (notice is null)
+        {
+            return;
+        }
+
+        if (_launcherReleaseNoticeService.TryAcknowledge(notice, out var error))
+        {
+            LauncherLogService.Startup($"Suppressed launcher release notice '{notice.Key}' because first-time setup is required.");
+        }
+        else
+        {
+            LauncherLogService.Startup($"Could not suppress launcher release notice '{notice.Key}': {error}");
+        }
     }
 
     public Task<bool> ShouldShowFirstRunSetupAsync(CancellationToken cancellationToken = default)
