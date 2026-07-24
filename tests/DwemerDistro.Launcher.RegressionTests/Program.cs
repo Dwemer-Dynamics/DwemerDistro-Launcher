@@ -1,4 +1,5 @@
 using DwemerDistro.Launcher.Wpf.Services;
+using DwemerDistro.Launcher.Wpf.ViewModels;
 
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
 var installDirectory = Path.Combine(root, "install");
@@ -61,6 +62,10 @@ try
         "First-run suppression could not acknowledge the notice: " + error);
     Assert(firstRunService.GetPendingDedicatedTtsPortsNotice(targetVersion) is null,
         "First-run suppression must prevent the notice on later launches.");
+
+    Assert(InstallComponentsWindowViewModel.BuildMeloTtsProbeEntry() ==
+            ": provider_status(Path('/home/dwemer/python-melotts/bin/python').exists(), Path('/home/dwemer/MeloTTS/start.sh').exists(), Path('/home/dwemer/MeloTTS'), 8084, 'melotts', 'MeloTTS'),",
+        "The MeloTTS component probe must pass its base path before the dedicated port.");
 
     Console.WriteLine("Launcher release notice regression tests: OK");
     return 0;

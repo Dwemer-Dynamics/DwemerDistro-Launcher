@@ -429,6 +429,11 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
     }
 
+    internal static string BuildMeloTtsProbeEntry()
+    {
+        return ": provider_status(Path('/home/dwemer/python-melotts/bin/python').exists(), Path('/home/dwemer/MeloTTS/start.sh').exists(), Path('/home/dwemer/MeloTTS'), 8084, 'melotts', 'MeloTTS'),";
+    }
+
     private string BuildProbeScript()
     {
         var builder = new StringBuilder();
@@ -630,7 +635,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             }
             else if (string.Equals(item.Key, "melotts", StringComparison.OrdinalIgnoreCase))
             {
-                builder.AppendLine(": provider_status(Path('/home/dwemer/python-melotts/bin/python').exists(), Path('/home/dwemer/MeloTTS/start.sh').exists(), 8084, 'melotts', 'MeloTTS'),");
+                builder.AppendLine(BuildMeloTtsProbeEntry());
             }
             else
             {
