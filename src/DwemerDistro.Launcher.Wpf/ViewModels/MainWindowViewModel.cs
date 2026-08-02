@@ -389,7 +389,6 @@ echo "CHIM-MCP installed and enabled."
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Launcher update check", cancellationToken => CheckLauncherUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueServerStatusRefresh();
         LauncherLogService.Startup("MainWindowViewModel initialization completed.");
     }
@@ -417,6 +416,7 @@ echo "CHIM-MCP installed and enabled."
             if (!shouldShowFirstRunSetup)
             {
                 LauncherLogService.Startup("First-time setup startup check completed: not needed.");
+                QueueLauncherUpdateCheck();
                 ShowPendingDedicatedTtsPortsNotice();
                 return;
             }
@@ -425,12 +425,14 @@ echo "CHIM-MCP installed and enabled."
         {
             LauncherLogService.Startup($"First-time setup startup check timed out after {StartupFirstRunProbeTimeout.TotalSeconds:0} seconds.");
             AppendLog("First-time setup check timed out. Open Debugging > First-Time Setup if this is a fresh install." + Environment.NewLine, "yellow");
+            QueueLauncherUpdateCheck();
             return;
         }
         catch (Exception ex)
         {
             LauncherLogService.Startup("First-time setup startup check failed.", ex);
             AppendLog($"First-time setup check failed: {ex.Message}{Environment.NewLine}", "yellow");
+            QueueLauncherUpdateCheck();
             return;
         }
 
@@ -458,6 +460,14 @@ echo "CHIM-MCP installed and enabled."
 
         LauncherLogService.Startup("Opening first-time setup from startup check.");
         OpenFirstRunSetupWindow();
+    }
+
+    private void QueueLauncherUpdateCheck()
+    {
+        QueueBackgroundTask(
+            "Launcher update check",
+            cancellationToken => CheckLauncherUpdatesAsync(cancellationToken),
+            StartupVersionCheckTimeout);
     }
 
     private void ShowPendingDedicatedTtsPortsNotice()
@@ -510,6 +520,7 @@ echo "CHIM-MCP installed and enabled."
 
     public async Task<bool> TryApplyLauncherUpdateBeforeFirstRunSetupAsync(CancellationToken cancellationToken = default)
     {
+        LauncherReleaseInfo? update = null;
         try
         {
             SetLauncherUpdateState("Launcher update: checking before setup...", "White", false, "Checking...");
@@ -517,7 +528,7 @@ echo "CHIM-MCP installed and enabled."
             var currentVersion = _launcherUpdateService.GetCurrentVersion().ToString(3);
             RunOnUi(() => LauncherVersionText = $"Launcher Version: {currentVersion}");
 
-            var update = await _launcherUpdateService.CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
+            update = await _launcherUpdateService.CheckForUpdatesAsync(cancellationToken).ConfigureAwait(false);
             _pendingLauncherUpdate = update;
             if (update is null)
             {
@@ -541,7 +552,7 @@ echo "CHIM-MCP installed and enabled."
             {
                 var statusText = $"Downloading launcher update before setup... {progress}%";
                 SetLauncherUpdateState(statusText, "White", false, $"Update {progress}%");
-            }, cancellationToken).ConfigureAwait(false);
+            }).ConfigureAwait(false);
 
             AppendLog("Launcher update downloaded. Closing launcher to apply update before first-time setup..." + Environment.NewLine, "green");
             _launcherUpdateService.StartUpdaterAndExit(packagePath);
@@ -554,12 +565,12 @@ echo "CHIM-MCP installed and enabled."
         }
         catch (Exception ex)
         {
-            _pendingLauncherUpdate = null;
+            _pendingLauncherUpdate = update;
             SetLauncherUpdateState(
-                "Launcher update before setup failed. Continuing setup.",
+                "Launcher update before setup failed. Retry when ready.",
                 "Yellow",
-                false,
-                "Check Again");
+                true,
+                "Retry Update");
             AppendLog($"Launcher update before first-time setup failed: {ex.Message}{Environment.NewLine}", "yellow");
             return false;
         }
