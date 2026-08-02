@@ -11,10 +11,15 @@ public sealed class OnboardingStateService
         PropertyNameCaseInsensitive = true
     };
 
-    public string StatePath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DwemerDistro",
-        "onboarding.json");
+    public OnboardingStateService(string? statePath = null)
+    {
+        StatePath = statePath ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DwemerDistro",
+            "onboarding.json");
+    }
+
+    public string StatePath { get; }
 
     public async Task<OnboardingState> LoadAsync(CancellationToken cancellationToken = default)
     {
@@ -64,6 +69,21 @@ public sealed class OnboardingStateService
 
         return SaveAsync(state, cancellationToken);
     }
+
+    public Task MarkSkippedAsync(
+        SetupPresetKey preset,
+        CancellationToken cancellationToken = default)
+    {
+        var state = new OnboardingState
+        {
+            Version = 1,
+            Skipped = true,
+            SkippedAtUtc = DateTimeOffset.UtcNow,
+            SelectedPreset = preset.ToString()
+        };
+
+        return SaveAsync(state, cancellationToken);
+    }
 }
 
 public sealed class OnboardingState
@@ -73,6 +93,10 @@ public sealed class OnboardingState
     public bool Completed { get; set; }
 
     public DateTimeOffset? CompletedAtUtc { get; set; }
+
+    public bool Skipped { get; set; }
+
+    public DateTimeOffset? SkippedAtUtc { get; set; }
 
     public DateTimeOffset? LastReadyUtc { get; set; }
 

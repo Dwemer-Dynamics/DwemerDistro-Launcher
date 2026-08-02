@@ -67,7 +67,28 @@ try
             ": provider_status(Path('/home/dwemer/python-melotts/bin/python').exists(), Path('/home/dwemer/MeloTTS/start.sh').exists(), Path('/home/dwemer/MeloTTS'), 8084, 'melotts', 'MeloTTS'),",
         "The MeloTTS component probe must pass its base path before the dedicated port.");
 
-    Console.WriteLine("Launcher release notice regression tests: OK");
+    var onboardingStatePath = Path.Combine(root, "onboarding.json");
+    var onboarding = new OnboardingStateService(onboardingStatePath);
+    await onboarding.MarkSkippedAsync(SetupPresetKey.AmdCpu);
+
+    var skipped = await onboarding.LoadAsync();
+    Assert(skipped.Skipped, "Skip Quick Setup must persist the skipped state.");
+    Assert(!skipped.Completed, "Skipping Quick Setup must not claim setup was completed.");
+    Assert(skipped.SkippedAtUtc is not null, "Skipping Quick Setup must record when it was skipped.");
+    Assert(skipped.SelectedPreset == SetupPresetKey.AmdCpu.ToString(),
+        "Skipping Quick Setup must preserve the selected preset.");
+    Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
+        "A skipped setup must not reopen QuickStart.");
+
+    await onboarding.MarkCompletedAsync(SetupPresetKey.NvidiaGpu, "pockettts", false, true);
+    var completed = await onboarding.LoadAsync();
+    Assert(completed.Completed, "Completed setup must persist the completed state.");
+    Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
+    Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
+        "A completed setup must not reopen QuickStart.");
+    Assert(LauncherConstants.LauncherVersion == "3.2.2", "Launcher constants must report version 3.2.2.");
+
+    Console.WriteLine("Launcher regression tests: OK");
     return 0;
 }
 finally

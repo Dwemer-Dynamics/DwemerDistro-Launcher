@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Threading;
 using DwemerDistro.Launcher.Wpf.Services;
 using Application = System.Windows.Application;
+using MessageBox = System.Windows.MessageBox;
 
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
@@ -467,8 +468,17 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }).ConfigureAwait(true);
     }
 
-    public static async Task<bool> ShouldShowFirstRunSetupAsync(CancellationToken cancellationToken = default)
+    public static async Task<bool> ShouldShowFirstRunSetupAsync(
+        CancellationToken cancellationToken = default,
+        OnboardingStateService? onboardingState = null)
     {
+        onboardingState ??= new OnboardingStateService();
+        var state = await onboardingState.LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (state.Completed || state.Skipped)
+        {
+            return false;
+        }
+
         var processRunner = new ProcessRunner();
         var wsl = new WslService(processRunner);
         var hardwareDetection = new HardwareDetectionService(processRunner);
@@ -591,8 +601,22 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
-        CurrentStepIndex = ReadyStepIndex;
-        await PrepareReadyAsync().ConfigureAwait(true);
+        try
+        {
+            await _onboardingState.MarkSkippedAsync(_selectedPreset.Key).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Quickstart could not save the skip preference.", ex);
+            MessageBox.Show(
+                $"Quick Setup could not be disabled.\n\n{ex.Message}",
+                "DwemerDistro Quickstart",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        RequestClose?.Invoke();
     }
 
     private void Back()
