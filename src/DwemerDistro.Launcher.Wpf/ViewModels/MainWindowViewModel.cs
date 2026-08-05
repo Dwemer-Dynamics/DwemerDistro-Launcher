@@ -1524,25 +1524,53 @@ echo "CHIM-MCP installed and enabled."
             "else echo 'Neither ddistro_doctor nor fix_ddistro_permissions is installed. Run Update System first.'; exit 127; fi; " +
             "fi";
 
-        var result = await _wsl.RunBashAsync(command, text => AppendLog(text), user: "root", loginShell: false, lineBuffered: true).ConfigureAwait(true);
-        if (result.Succeeded)
+        var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(true);
+        var outputDir = GetDiagnosticsOutputDirectory();
+        var outputPath = Path.Combine(outputDir, $"distro-doctor-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+        var report = new StringBuilder()
+            .AppendLine("DwemerDistro Doctor Report")
+            .AppendLine($"Launcher Version: {LauncherConstants.LauncherVersion}")
+            .AppendLine($"Generated: {DateTimeOffset.Now}")
+            .AppendLine($"Mode: {doctorMode.TrimStart('-')}")
+            .AppendLine($"Exit Code: {result.ExitCode}")
+            .AppendLine()
+            .AppendLine("Standard Output")
+            .AppendLine(result.StandardOutput.TrimEnd());
+
+        if (!string.IsNullOrWhiteSpace(result.StandardError))
         {
-            AppendLog("Distro Doctor completed successfully." + Environment.NewLine, "green");
+            report
+                .AppendLine()
+                .AppendLine("Standard Error")
+                .AppendLine(result.StandardError.TrimEnd());
+        }
+
+        try
+        {
+            Directory.CreateDirectory(outputDir);
+            await File.WriteAllTextAsync(outputPath, report.ToString()).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Distro Doctor report could not be saved: {ex.Message}{Environment.NewLine}", "red");
             MessageBox.Show(
-                "Distro Doctor completed successfully. Review the launcher log for warnings and details.",
+                $"Distro Doctor finished, but its report could not be saved.\n\n{ex.Message}",
                 "Distro Doctor",
                 MessageBoxButton.OK,
-                MessageBoxImage.Information);
+                MessageBoxImage.Error);
             return;
         }
 
-        var error = GetCommandError(result);
-        AppendLog($"Distro Doctor failed: {error}{Environment.NewLine}", "red");
-        MessageBox.Show(
-            $"Distro Doctor failed.\n\n{error}",
-            "Distro Doctor",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
+        if (result.Succeeded)
+        {
+            AppendLog($"Distro Doctor completed successfully. Report: {outputPath}{Environment.NewLine}", "green");
+        }
+        else
+        {
+            AppendLog($"Distro Doctor reported failures. Report: {outputPath}{Environment.NewLine}", "red");
+        }
+
+        OpenFolder(outputDir);
     }
 
     private async Task CleanLogsAsync()
@@ -1623,12 +1651,19 @@ echo "CHIM-MCP installed and enabled."
         await AddDatabaseSchemaDiagnosticsAsync(lines).ConfigureAwait(false);
         await AddConnectorDiagnosticsAsync(lines).ConfigureAwait(false);
 
-        var outputDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "DwemerDistro-Diagnostics");
+        var outputDir = GetDiagnosticsOutputDirectory();
         Directory.CreateDirectory(outputDir);
         var outputPath = Path.Combine(outputDir, $"diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
         OpenFolder(outputDir);
+    }
+
+    private static string GetDiagnosticsOutputDirectory()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            "DwemerDistro-Diagnostics");
     }
 
     private async Task AddServerVersionDiagnosticsAsync(List<string> lines)
