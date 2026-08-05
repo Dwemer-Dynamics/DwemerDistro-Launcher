@@ -86,7 +86,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.2.2", "Launcher constants must report version 3.2.2.");
+    Assert(LauncherConstants.LauncherVersion == "3.2.3", "Launcher constants must report version 3.2.3.");
 
     Console.WriteLine("Launcher regression tests: OK");
     return 0;
