@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using DwemerDistro.Launcher.Wpf.Models;
@@ -76,7 +77,60 @@ internal sealed partial class DistroDoctorService(WslService wsl)
                 .AppendLine(result.StandardError.TrimEnd());
         }
 
+        var failureSummary = BuildFailureSummary(result);
+        if (!string.IsNullOrEmpty(failureSummary))
+        {
+            report
+                .AppendLine()
+                .Append(failureSummary);
+        }
+
         return report.ToString();
+    }
+
+    public static string BuildFailureSummary(CommandResult result)
+    {
+        var failures = ReadTaggedLines(result.StandardOutput, "[FAIL]")
+            .Concat(ReadTaggedLines(result.StandardError, "[FAIL]"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var finalSummary = ParseFinalSummary(result.StandardOutput);
+
+        if (failures.Count == 0 && (!result.Succeeded || finalSummary?.Failed > 0))
+        {
+            failures.Add(finalSummary?.Failed > 0
+                ? $"[FAIL] Doctor reported {finalSummary.Failed} failed check(s). Review the preceding output for details."
+                : $"[FAIL] Doctor exited with code {result.ExitCode}. Review the preceding output for details.");
+        }
+
+        if (failures.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var summary = new StringBuilder()
+            .AppendLine("================ FAILURE SUMMARY ================");
+        foreach (var failure in failures)
+        {
+            summary.AppendLine(failure);
+        }
+
+        return summary
+            .AppendLine("=================================================")
+            .ToString();
+    }
+
+    private static IEnumerable<string> ReadTaggedLines(string output, string tag)
+    {
+        using var reader = new StringReader(output ?? string.Empty);
+        while (reader.ReadLine() is { } line)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith(tag, StringComparison.OrdinalIgnoreCase))
+            {
+                yield return trimmed;
+            }
+        }
     }
 
     [GeneratedRegex(

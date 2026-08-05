@@ -130,6 +130,7 @@ internal sealed class DistroDoctorViewModel : ObservableObject
                 var missingMessage = $"{LauncherConstants.DistroName} is not currently installed.";
                 AppendOutput($"[FAIL] {missingMessage}{Environment.NewLine}");
                 var missingResult = new CommandResult(1, _displayLog.ToString(), string.Empty);
+                AppendFailureSummary(missingResult);
                 _report = DistroDoctorService.BuildReport(IsRepairMode, missingResult);
                 StatusText = "Distro not installed";
                 StatusBrush = FailureBrush;
@@ -137,6 +138,7 @@ internal sealed class DistroDoctorViewModel : ObservableObject
             }
 
             var result = await _doctorService.RunAsync(IsRepairMode, AppendOutput).ConfigureAwait(true);
+            AppendFailureSummary(result);
             _report = DistroDoctorService.BuildReport(IsRepairMode, result);
             ApplyResultStatus(result);
         }
@@ -144,6 +146,7 @@ internal sealed class DistroDoctorViewModel : ObservableObject
         {
             AppendOutput($"[FAIL] {ex.Message}{Environment.NewLine}");
             var failureResult = new CommandResult(1, _displayLog.ToString(), ex.ToString());
+            AppendFailureSummary(failureResult);
             _report = DistroDoctorService.BuildReport(IsRepairMode, failureResult);
             StatusText = "Doctor failed to run";
             StatusBrush = FailureBrush;
@@ -153,6 +156,15 @@ internal sealed class DistroDoctorViewModel : ObservableObject
             IsRunning = false;
             OnPropertyChanged(nameof(CanDownloadLog));
             DownloadLogCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private void AppendFailureSummary(CommandResult result)
+    {
+        var failureSummary = DistroDoctorService.BuildFailureSummary(result);
+        if (!string.IsNullOrEmpty(failureSummary))
+        {
+            AppendOutput($"{Environment.NewLine}{failureSummary}");
         }
     }
 
