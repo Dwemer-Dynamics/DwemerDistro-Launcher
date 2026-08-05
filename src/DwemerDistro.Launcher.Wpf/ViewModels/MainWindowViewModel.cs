@@ -160,7 +160,7 @@ echo "CHIM-MCP installed and enabled."
         ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"));
         ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"));
         FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync);
-        DistroDoctorCommand = new AsyncRelayCommand(RunDistroDoctorAsync);
+        DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow);
         ReclaimDistroDiskSpaceCommand = new AsyncRelayCommand(ReclaimDistroDiskSpaceAsync);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync());
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher);
@@ -373,7 +373,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand ViewParakeetLogsCommand { get; }
     public RelayCommand ViewApacheLogsCommand { get; }
     public AsyncRelayCommand FixWslDnsCommand { get; }
-    public AsyncRelayCommand DistroDoctorCommand { get; }
+    public RelayCommand DistroDoctorCommand { get; }
     public AsyncRelayCommand ReclaimDistroDiskSpaceCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
@@ -1482,95 +1482,17 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private async Task RunDistroDoctorAsync()
+    private void OpenDistroDoctorWindow()
     {
-        if (!await _wsl.DistroExistsAsync().ConfigureAwait(true))
+        var owner = Application.Current.Windows
+            .OfType<DebuggingWindow>()
+            .FirstOrDefault(window => window.IsActive)
+            ?? Application.Current.MainWindow;
+        var window = new DistroDoctorWindow(new DistroDoctorViewModel(_wsl))
         {
-            MessageBox.Show(
-                $"{LauncherConstants.DistroName} is not currently installed.",
-                "Distro Doctor",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-            return;
-        }
-
-        var choice = MessageBox.Show(
-            "Distro Doctor checks common DwemerDistro runtime issues: permissions, Apache, PostgreSQL, required tools, CHIM Background Life service, service ports, disk space, and recent server logs.\n\nChoose Yes to check and repair safe issues.\nChoose No to check only.\nChoose Cancel to do nothing.",
-            "Distro Doctor",
-            MessageBoxButton.YesNoCancel,
-            MessageBoxImage.Question);
-
-        if (choice == MessageBoxResult.Cancel)
-        {
-            AppendLog("Distro Doctor canceled." + Environment.NewLine);
-            return;
-        }
-
-        var doctorMode = choice == MessageBoxResult.Yes ? "--repair" : "--check";
-        var actionLabel = choice == MessageBoxResult.Yes ? "check and repair" : "check only";
-
-        AppendLog($"Starting Distro Doctor ({actionLabel})..." + Environment.NewLine);
-        var command =
-            "if [ -x /usr/local/bin/ddistro_doctor ]; then " +
-            $"/usr/local/bin/ddistro_doctor {doctorMode}; " +
-            "elif [ -f /home/dwemer/dwemerdistro/bin/ddistro_doctor ]; then " +
-            $"bash /home/dwemer/dwemerdistro/bin/ddistro_doctor {doctorMode}; " +
-            "else " +
-            "echo 'ddistro_doctor is not installed. Falling back to permission helper only.'; " +
-            "if [ -x /usr/local/bin/fix_ddistro_permissions ]; then " +
-            $"/usr/local/bin/fix_ddistro_permissions {doctorMode}; " +
-            "elif [ -f /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions ]; then " +
-            $"bash /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions {doctorMode}; " +
-            "else echo 'Neither ddistro_doctor nor fix_ddistro_permissions is installed. Run Update System first.'; exit 127; fi; " +
-            "fi";
-
-        var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(true);
-        var outputDir = GetDiagnosticsOutputDirectory();
-        var outputPath = Path.Combine(outputDir, $"distro-doctor-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
-        var report = new StringBuilder()
-            .AppendLine("DwemerDistro Doctor Report")
-            .AppendLine($"Launcher Version: {LauncherConstants.LauncherVersion}")
-            .AppendLine($"Generated: {DateTimeOffset.Now}")
-            .AppendLine($"Mode: {doctorMode.TrimStart('-')}")
-            .AppendLine($"Exit Code: {result.ExitCode}")
-            .AppendLine()
-            .AppendLine("Standard Output")
-            .AppendLine(result.StandardOutput.TrimEnd());
-
-        if (!string.IsNullOrWhiteSpace(result.StandardError))
-        {
-            report
-                .AppendLine()
-                .AppendLine("Standard Error")
-                .AppendLine(result.StandardError.TrimEnd());
-        }
-
-        try
-        {
-            Directory.CreateDirectory(outputDir);
-            await File.WriteAllTextAsync(outputPath, report.ToString()).ConfigureAwait(true);
-        }
-        catch (Exception ex)
-        {
-            AppendLog($"Distro Doctor report could not be saved: {ex.Message}{Environment.NewLine}", "red");
-            MessageBox.Show(
-                $"Distro Doctor finished, but its report could not be saved.\n\n{ex.Message}",
-                "Distro Doctor",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
-            return;
-        }
-
-        if (result.Succeeded)
-        {
-            AppendLog($"Distro Doctor completed successfully. Report: {outputPath}{Environment.NewLine}", "green");
-        }
-        else
-        {
-            AppendLog($"Distro Doctor reported failures. Report: {outputPath}{Environment.NewLine}", "red");
-        }
-
-        OpenFolder(outputDir);
+            Owner = owner
+        };
+        window.ShowDialog();
     }
 
     private async Task CleanLogsAsync()
@@ -1651,19 +1573,12 @@ echo "CHIM-MCP installed and enabled."
         await AddDatabaseSchemaDiagnosticsAsync(lines).ConfigureAwait(false);
         await AddConnectorDiagnosticsAsync(lines).ConfigureAwait(false);
 
-        var outputDir = GetDiagnosticsOutputDirectory();
+        var outputDir = DiagnosticReportPaths.OutputDirectory;
         Directory.CreateDirectory(outputDir);
         var outputPath = Path.Combine(outputDir, $"diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
         OpenFolder(outputDir);
-    }
-
-    private static string GetDiagnosticsOutputDirectory()
-    {
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
-            "DwemerDistro-Diagnostics");
     }
 
     private async Task AddServerVersionDiagnosticsAsync(List<string> lines)
