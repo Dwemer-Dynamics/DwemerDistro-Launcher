@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
 using DwemerDistro.Launcher.Wpf.Services;
+using DwemerDistro.Launcher.Wpf.ViewModels;
 using Application = System.Windows.Application;
 using MessageBox = System.Windows.MessageBox;
 using DispatcherUnhandledExceptionEventArgs = System.Windows.Threading.DispatcherUnhandledExceptionEventArgs;
@@ -14,11 +15,19 @@ public partial class App : Application
     private Mutex? _instanceMutex;
     private bool _ownsInstanceMutex;
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
         LauncherLogService.Startup($"Launcher startup {LauncherConstants.LauncherVersion}.");
+
+        if (e.Args.Contains("--generate-diagnostics", StringComparer.OrdinalIgnoreCase))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var openOutputFolder = e.Args.Contains("--open-output-folder", StringComparer.OrdinalIgnoreCase);
+            await GenerateDiagnosticsAndExitAsync(openOutputFolder);
+            return;
+        }
 
         var mutexName = BuildInstallScopedMutexName();
         _instanceMutex = new Mutex(initiallyOwned: true, mutexName, out _ownsInstanceMutex);
@@ -41,6 +50,38 @@ public partial class App : Application
         var window = new MainWindow();
         MainWindow = window;
         window.Show();
+    }
+
+    // Runs diagnostic collection without opening the launcher window or taking its instance mutex.
+    private async Task GenerateDiagnosticsAndExitAsync(bool openOutputFolder)
+    {
+        const string semaphoreName = "Local\\DwemerDistro.Diagnostics";
+        using var diagnosticSemaphore = new Semaphore(initialCount: 1, maximumCount: 1, semaphoreName);
+        if (!diagnosticSemaphore.WaitOne(0))
+        {
+            LauncherLogService.Startup("Diagnostic generation stopped because another report is already being created.");
+            Shutdown(3);
+            return;
+        }
+
+        try
+        {
+            var viewModel = new MainWindowViewModel();
+            var outputPath = await viewModel.GenerateDiagnosticsAsync(
+                requireConfirmation: false,
+                openOutputFolder: openOutputFolder);
+            LauncherLogService.Startup($"Diagnostic file created: {outputPath}");
+            Shutdown(string.IsNullOrWhiteSpace(outputPath) ? 1 : 0);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Diagnostic generation failed.", ex);
+            Shutdown(1);
+        }
+        finally
+        {
+            diagnosticSemaphore.Release();
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
