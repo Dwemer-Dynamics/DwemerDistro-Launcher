@@ -363,7 +363,7 @@
                 <ScrollViewer x:Name="SettingsLandmark" VerticalScrollBarVisibility="Auto" Padding="18,16,18,12">
                     <StackPanel>
                         <TextBlock Text="SETTINGS" Style="{StaticResource GameCenter.Heading}" />
-                        <TextBlock Text="Launcher preferences, setup, diagnostics, backups, recovery tools, and logs."
+                        <TextBlock Text="Launcher preferences, setup, diagnostics, and backups."
                                    Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,16" />
                         <TextBlock Text="SETUP" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,10" />
                         <WrapPanel>
@@ -382,12 +382,6 @@
                             <Button Command="{Binding ImportDistroCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Import Distro Backup" />
                             <Button Command="{Binding CleanLogsCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Clean All Logs" />
                         </WrapPanel>
-                        <TextBlock Text="ROLLBACK" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
-                        <WrapPanel>
-                            <Button Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Rollback HerikaServer" />
-                            <Button Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Rollback StobeServer" />
-                            <Button Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Rollback DialecticServer" />
-                        </WrapPanel>
                         <Border Style="{StaticResource GameCenter.Card}" Margin="0,10,0,0">
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -403,17 +397,6 @@
                                           VerticalAlignment="Center" />
                             </Grid>
                         </Border>
-                        <TextBlock Text="VIEW LOGS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,22,0,10" />
-                        <WrapPanel>
-                            <Button Command="{Binding ViewXttsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Dwemer Distro XTTS" />
-                            <Button Command="{Binding ViewChatterboxLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Chatterbox" />
-                            <Button Command="{Binding ViewPocketTtsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="PocketTTS" />
-                            <Button Command="{Binding ViewMeloTtsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="MeloTTS" />
-                            <Button Command="{Binding ViewPiperLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Piper" />
-                            <Button Command="{Binding ViewLocalWhisperLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="LocalWhisper" />
-                            <Button Command="{Binding ViewParakeetLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Parakeet" />
-                            <Button Command="{Binding ViewApacheLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Apache" />
-                        </WrapPanel>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
