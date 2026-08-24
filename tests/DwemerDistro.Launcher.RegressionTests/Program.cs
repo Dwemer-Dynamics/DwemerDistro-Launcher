@@ -112,6 +112,15 @@ try
            && MainWindowViewModel.MapServerBranchToChoice("unstable", "stobe") == "Dev",
         "Existing production and development branches must map back to visible choices.");
 
+    Assert(InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(false, false),
+        "Leaving Components with nothing running must release the page so its visual tree can be collected.");
+    Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(true, false),
+        "The Components page must stay mounted while Components is the selected destination.");
+    Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(false, true),
+        "A running install or configuration run must keep the Components page mounted.");
+    Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(true, true),
+        "A running operation on the open Components page must never release it.");
+
     Console.WriteLine("Launcher regression tests: OK");
     return 0;
 }

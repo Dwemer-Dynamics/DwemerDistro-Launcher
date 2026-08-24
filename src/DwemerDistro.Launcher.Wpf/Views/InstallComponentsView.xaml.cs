@@ -22,7 +22,7 @@ public partial class InstallComponentsView : System.Windows.Controls.UserControl
         }
 
         _initialized = true;
-        await viewModel.InitializeAsync().ConfigureAwait(true);
+        await viewModel.AttachAsync().ConfigureAwait(true);
     }
 
     private async void EditHuggingFaceTokenButton_Click(object sender, RoutedEventArgs e)

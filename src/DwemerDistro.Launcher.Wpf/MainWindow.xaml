@@ -4,7 +4,6 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        xmlns:views="clr-namespace:DwemerDistro.Launcher.Wpf.Views"
         mc:Ignorable="d"
         Title="DWEMER DISTRO"
         Icon="Assets/DwemerDistro.ico"
@@ -208,7 +207,8 @@
 
         <TabControl x:Name="MainTabs" Grid.Row="2" Grid.Column="1" Background="Transparent" BorderThickness="0" Padding="0"
                     MinHeight="0" ClipToBounds="True"
-                    KeyboardNavigation.TabNavigation="Continue">
+                    KeyboardNavigation.TabNavigation="Continue"
+                    SelectionChanged="MainTabs_SelectionChanged">
             <TabControl.Resources>
                 <Style TargetType="TabItem"><Setter Property="Visibility" Value="Collapsed" /></Style>
             </TabControl.Resources>
@@ -371,7 +371,9 @@
                                 Style="{StaticResource GameCenter.Button}" HorizontalAlignment="Right" />
                     </Grid>
                     <Border Grid.Row="1" Style="{StaticResource GameCenter.Card}" Padding="0" ClipToBounds="True">
-                        <views:InstallComponentsView x:Name="SetupComponentsView" MinHeight="0" />
+                        <!-- Empty until Components opens. MainWindow builds the page on entry and
+                             drops it on exit so its visual tree can be collected. -->
+                        <ContentControl x:Name="SetupComponentsHost" MinHeight="0" Focusable="False" />
                     </Border>
                 </Grid>
             </TabItem>

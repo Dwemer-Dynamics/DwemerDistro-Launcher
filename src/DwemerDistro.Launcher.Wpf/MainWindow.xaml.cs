@@ -12,6 +12,7 @@ using System.Windows.Media;
 using System.Windows.Shell;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
+using DwemerDistro.Launcher.Wpf.Views;
 using Brushes = System.Windows.Media.Brushes;
 using MessageBox = System.Windows.MessageBox;
 
@@ -20,10 +21,11 @@ namespace DwemerDistro.Launcher.Wpf;
 public partial class MainWindow : Window
 {
     private const int WmGetMinMaxInfo = 0x0024;
+    private const int ComponentsTabIndex = 1;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private static readonly Regex UrlRegex = new(@"https?://[^\s]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private readonly MainWindowViewModel _viewModel = new();
-    private readonly InstallComponentsWindowViewModel _componentsViewModel;
+    private InstallComponentsWindowViewModel? _componentsViewModel;
     private readonly Paragraph _outputParagraph = new();
     private int _renderedOutputLength;
     private bool _isConsoleExpanded;
@@ -31,10 +33,8 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
-        _componentsViewModel = new InstallComponentsWindowViewModel(_viewModel);
         InitializeComponent();
         DataContext = _viewModel;
-        SetupComponentsView.DataContext = _componentsViewModel;
         SourceInitialized += MainWindow_SourceInitialized;
         OutputRichTextBox.Document = new FlowDocument(_outputParagraph)
         {
@@ -87,6 +87,86 @@ public partial class MainWindow : Window
         }
 
         _ = Dispatcher.BeginInvoke(() => RenderOutputText(_viewModel.OutputText));
+    }
+
+    private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // Branch combo boxes and other nested selectors bubble their own SelectionChanged
+        // through the TabControl, and the control raises this once during XAML load before
+        // the host exists. Only a real tab switch may move the Components page.
+        if (SetupComponentsHost is null || !ReferenceEquals(e.OriginalSource, MainTabs))
+        {
+            return;
+        }
+
+        UpdateComponentsPageLifetime();
+    }
+
+    private void ComponentsViewModel_ActiveOperationsCompleted(object? sender, EventArgs e)
+    {
+        if (!ReferenceEquals(sender, _componentsViewModel))
+        {
+            return;
+        }
+
+        // An install or configuration run held the page open. Retry the unload now that it
+        // has finished, in case the user moved to another destination while it ran.
+        _ = Dispatcher.BeginInvoke(UpdateComponentsPageLifetime);
+    }
+
+    private void UpdateComponentsPageLifetime()
+    {
+        if (SetupComponentsHost is null)
+        {
+            return;
+        }
+
+        var componentsSelected = MainTabs.SelectedIndex == ComponentsTabIndex;
+        if (componentsSelected)
+        {
+            if (SetupComponentsHost.Content is null)
+            {
+                var viewModel = new InstallComponentsWindowViewModel(_viewModel);
+                viewModel.ActiveOperationsCompleted += ComponentsViewModel_ActiveOperationsCompleted;
+                _componentsViewModel = viewModel;
+                SetupComponentsHost.Content = new InstallComponentsView
+                {
+                    DataContext = viewModel,
+                    MinHeight = 0
+                };
+            }
+
+            return;
+        }
+
+        var componentsViewModel = _componentsViewModel;
+        if (SetupComponentsHost.Content is null
+            || componentsViewModel is null
+            || !InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(
+                componentsSelected,
+                componentsViewModel.HasActiveOperation))
+        {
+            return;
+        }
+
+        // Alt+M and the Settings shortcut switch destinations without moving focus first.
+        // Hand focus to the tab region before the page goes, so keyboard users land in the
+        // destination they picked and no discarded control stays focused.
+        if (SetupComponentsHost.IsKeyboardFocusWithin)
+        {
+            Keyboard.Focus(MainTabs);
+        }
+
+        componentsViewModel.Detach();
+        componentsViewModel.ActiveOperationsCompleted -= ComponentsViewModel_ActiveOperationsCompleted;
+        SetupComponentsHost.Content = null;
+        _componentsViewModel = null;
+
+        // Let the discarded page be reclaimed without pausing navigation. This is only useful
+        // after both the visual tree and its view model have been detached.
+        _ = Dispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.ApplicationIdle,
+            () => GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: false, compacting: false));
     }
 
     private void DestinationNav_Checked(object sender, RoutedEventArgs e)
