@@ -1,5 +1,6 @@
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
+using DwemerDistro.Launcher.Wpf.Models;
 
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
 var installDirectory = Path.Combine(root, "install");
@@ -87,6 +88,18 @@ try
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
     Assert(LauncherConstants.LauncherVersion == "3.2.4", "Launcher constants must report version 3.2.4.");
+
+    var gameCatalog = GameProfile.CreateCatalog();
+    Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
+        "The Game Center rail must expose exactly three unique game profiles.");
+    Assert(gameCatalog.All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
+                                   && game.RailImageSource.EndsWith("-rail.jpg", StringComparison.Ordinal)),
+        "Every game profile must use local hero and rail artwork.");
+
+    var keyedPreferences = MainWindowViewModel.ParseUpdateIncludeSettings(
+        "herika=0\nstobe=\ndialectic=1\n");
+    Assert(!keyedPreferences.Herika && keyedPreferences.Stobe && keyedPreferences.Dialectic,
+        "An empty update preference must not shift the following game's value.");
 
     Console.WriteLine("Launcher regression tests: OK");
     return 0;

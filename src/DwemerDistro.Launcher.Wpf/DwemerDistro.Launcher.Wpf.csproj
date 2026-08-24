@@ -18,9 +18,11 @@
     <None Remove="Assets\*.png" />
     <None Remove="Assets\*.gif" />
     <None Remove="Assets\*.ico" />
+    <None Remove="Assets\GameCenter\*.jpg" />
     <Resource Include="Assets\*.png" />
     <Resource Include="Assets\*.gif" />
     <Resource Include="Assets\*.ico" />
+    <Resource Include="Assets\GameCenter\*.jpg" />
   </ItemGroup>
 
   <Target Name="GenerateLauncherSecrets" BeforeTargets="CoreCompile">

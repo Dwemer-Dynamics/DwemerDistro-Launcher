@@ -30,6 +30,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
     private const string DashboardAutoOpenWarningColor = "#FFB641";
     private const string DashboardAutoOpenErrorColor = "#FF8A80";
+    private const string UpdateIncludeNeutralColor = "#C8C8C8";
+    private const string UpdateIncludeSuccessColor = "#8FD694";
+    private const string UpdateIncludeErrorColor = "#FF8A80";
     private const string ChimMcpInstallScript = """
 set -e
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
@@ -74,6 +77,7 @@ echo "CHIM-MCP installed and enabled."
     private readonly LauncherUpdateService _launcherUpdateService;
     private readonly LauncherReleaseNoticeService _launcherReleaseNoticeService;
     private readonly SemaphoreSlim _componentInstallGate = new(1, 1);
+    private readonly object _updateIncludeSaveSync = new();
 
     private TcpProxyService? _tcpProxyService;
     private DiscoveryService? _discoveryService;
@@ -101,6 +105,14 @@ echo "CHIM-MCP installed and enabled."
     private bool _includeHerikaServerUpdate = true;
     private bool _includeStobeServerUpdate = true;
     private bool _includeDialecticServerUpdate = true;
+    private bool _lastSavedIncludeHerikaServerUpdate = true;
+    private bool _lastSavedIncludeStobeServerUpdate = true;
+    private bool _lastSavedIncludeDialecticServerUpdate = true;
+    private bool _isUpdateIncludeReady;
+    private bool _isUpdateIncludeSaveRunning;
+    private bool _updateIncludeSaveRequested;
+    private string _updateIncludeStatusText = "Checking saved update preferences...";
+    private string _updateIncludeStatusColor = UpdateIncludeNeutralColor;
     private bool _dashboardAutoOpenEnabled = true;
     private bool _lastSavedDashboardAutoOpenEnabled = true;
     private bool _isDashboardAutoOpenReady;
@@ -113,6 +125,7 @@ echo "CHIM-MCP installed and enabled."
     private int _startAnimationDots;
     private bool _isServerStatusRefreshInProgress;
     private LauncherReleaseInfo? _pendingLauncherUpdate;
+    private GameProfile _selectedGame;
 
     public MainWindowViewModel()
     {
@@ -134,6 +147,8 @@ echo "CHIM-MCP installed and enabled."
         HerikaBranches = new ObservableCollection<string>(new[] { "aiagent", "dev", "unstable" });
         StobeBranches = new ObservableCollection<string>(new[] { "stobe", "dev", "unstable" });
         DialecticBranches = new ObservableCollection<string>(new[] { "dialectic", "dev", "unstable" });
+        GameProfiles = new ObservableCollection<GameProfile>(GameProfile.CreateCatalog());
+        _selectedGame = GameProfiles[0];
 
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
@@ -144,7 +159,7 @@ echo "CHIM-MCP installed and enabled."
         InstallComponentsCommand = new RelayCommand(OpenInstallComponentsWindow);
         OpenDebuggingCommand = new RelayCommand(OpenDebuggingWindow);
         SaveMcpEnabledCommand = new AsyncRelayCommand(SaveMcpEnabledAsync);
-        SaveUpdateIncludeCommand = new AsyncRelayCommand(SaveUpdateIncludeSettingsAsync);
+        SaveUpdateIncludeCommand = new RelayCommand(QueueUpdateIncludeSave, () => IsUpdateIncludeReady);
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
         OpenChimCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.ChimNexusUrl));
         OpenStobeCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.StobeNexusUrl));
@@ -317,6 +332,30 @@ echo "CHIM-MCP installed and enabled."
         set => SetProperty(ref _includeDialecticServerUpdate, value);
     }
 
+    public bool IsUpdateIncludeReady
+    {
+        get => _isUpdateIncludeReady;
+        private set
+        {
+            if (SetProperty(ref _isUpdateIncludeReady, value))
+            {
+                SaveUpdateIncludeCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string UpdateIncludeStatusText
+    {
+        get => _updateIncludeStatusText;
+        private set => SetProperty(ref _updateIncludeStatusText, value);
+    }
+
+    public string UpdateIncludeStatusColor
+    {
+        get => _updateIncludeStatusColor;
+        private set => SetProperty(ref _updateIncludeStatusColor, value);
+    }
+
     public bool DashboardAutoOpenEnabled
     {
         get => _dashboardAutoOpenEnabled;
@@ -368,6 +407,13 @@ echo "CHIM-MCP installed and enabled."
     public ObservableCollection<string> HerikaBranches { get; }
     public ObservableCollection<string> StobeBranches { get; }
     public ObservableCollection<string> DialecticBranches { get; }
+    public ObservableCollection<GameProfile> GameProfiles { get; }
+
+    public GameProfile SelectedGame
+    {
+        get => _selectedGame;
+        set => SetProperty(ref _selectedGame, value);
+    }
 
     public AsyncRelayCommand StartServerCommand { get; }
     public AsyncRelayCommand StopServerCommand { get; }
@@ -378,7 +424,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand InstallComponentsCommand { get; }
     public RelayCommand OpenDebuggingCommand { get; }
     public AsyncRelayCommand SaveMcpEnabledCommand { get; }
-    public AsyncRelayCommand SaveUpdateIncludeCommand { get; }
+    public RelayCommand SaveUpdateIncludeCommand { get; }
     public AsyncRelayCommand SaveDashboardAutoOpenCommand { get; }
     public RelayCommand OpenChimCommand { get; }
     public RelayCommand OpenStobeCommand { get; }
@@ -1431,46 +1477,212 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task LoadUpdateIncludeSettingsAsync(CancellationToken cancellationToken = default)
     {
-        var result = await _wsl.RunDistroAsUserAsync(
-            "root",
-            new[] { "bash", "-lc", "mkdir -p /home/dwemer; if [ ! -f /home/dwemer/.update_include_herika ]; then echo 1 > /home/dwemer/.update_include_herika; fi; if [ ! -f /home/dwemer/.update_include_stobe ]; then echo 1 > /home/dwemer/.update_include_stobe; fi; if [ ! -f /home/dwemer/.update_include_dialectic ]; then echo 1 > /home/dwemer/.update_include_dialectic; fi; sed -n '1p' /home/dwemer/.update_include_herika; sed -n '1p' /home/dwemer/.update_include_stobe; sed -n '1p' /home/dwemer/.update_include_dialectic" },
-            cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        RunOnUi(() =>
+        {
+            IsUpdateIncludeReady = false;
+            SetUpdateIncludeStatus("Checking saved update preferences...", UpdateIncludeNeutralColor);
+        });
+
+        CommandResult result;
+        try
+        {
+            result = await _wsl.RunBashAsync(
+                    "set -e; mkdir -p /home/dwemer; " +
+                    "read_setting() { key=\"$1\"; file=\"$2\"; if [ ! -f \"$file\" ]; then printf '1\\n' > \"$file\"; fi; value=$(sed -n '1p' \"$file\"); case \"$value\" in 0|1) ;; *) value=1; printf '1\\n' > \"$file\" ;; esac; printf '%s=%s\\n' \"$key\" \"$value\"; }; " +
+                    "read_setting herika /home/dwemer/.update_include_herika; " +
+                    "read_setting stobe /home/dwemer/.update_include_stobe; " +
+                    "read_setting dialectic /home/dwemer/.update_include_dialectic",
+                    user: "root",
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            ApplyUpdateIncludeLoadFailure();
+            throw;
+        }
 
         if (!result.Succeeded)
         {
-            RunOnUi(() =>
-            {
-                IncludeHerikaServerUpdate = true;
-                IncludeStobeServerUpdate = true;
-                IncludeDialecticServerUpdate = true;
-            });
-            return;
+            ApplyUpdateIncludeLoadFailure();
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(result.StandardError)
+                    ? "The update preferences could not be read."
+                    : result.StandardError.Trim());
         }
 
-        var lines = result.StandardOutput.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var settings = ParseUpdateIncludeSettings(result.StandardOutput);
         RunOnUi(() =>
         {
-            IncludeHerikaServerUpdate = lines.ElementAtOrDefault(0) != "0";
-            IncludeStobeServerUpdate = lines.ElementAtOrDefault(1) != "0";
-            IncludeDialecticServerUpdate = lines.ElementAtOrDefault(2) != "0";
+            _lastSavedIncludeHerikaServerUpdate = settings.Herika;
+            _lastSavedIncludeStobeServerUpdate = settings.Stobe;
+            _lastSavedIncludeDialecticServerUpdate = settings.Dialectic;
+            IncludeHerikaServerUpdate = settings.Herika;
+            IncludeStobeServerUpdate = settings.Stobe;
+            IncludeDialecticServerUpdate = settings.Dialectic;
+            IsUpdateIncludeReady = true;
+            SetUpdateIncludeStatus(string.Empty, UpdateIncludeNeutralColor);
         });
     }
 
-    private async Task SaveUpdateIncludeSettingsAsync()
+    public static (bool Herika, bool Stobe, bool Dialectic) ParseUpdateIncludeSettings(string output)
     {
-        var herika = IncludeHerikaServerUpdate ? "1" : "0";
-        var stobe = IncludeStobeServerUpdate ? "1" : "0";
-        var dialectic = IncludeDialecticServerUpdate ? "1" : "0";
-        var result = await _wsl.RunDistroAsUserAsync(
-            "root",
-            new[] { "bash", "-lc", $"echo {herika} > /home/dwemer/.update_include_herika && echo {stobe} > /home/dwemer/.update_include_stobe && echo {dialectic} > /home/dwemer/.update_include_dialectic" })
-            .ConfigureAwait(false);
-
-        if (!result.Succeeded)
+        var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.TrimEntries))
         {
-            AppendLog($"Failed to save update include settings: {result.StandardError}{Environment.NewLine}", "red");
+            var separator = line.IndexOf('=');
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            settings[line[..separator].Trim()] = line[(separator + 1)..].Trim();
         }
+
+        return (
+            ReadUpdateIncludeValue(settings, "herika"),
+            ReadUpdateIncludeValue(settings, "stobe"),
+            ReadUpdateIncludeValue(settings, "dialectic"));
+    }
+
+    private static bool ReadUpdateIncludeValue(IReadOnlyDictionary<string, string> settings, string key)
+    {
+        return !settings.TryGetValue(key, out var value) || value != "0";
+    }
+
+    private void ApplyUpdateIncludeLoadFailure()
+    {
+        RunOnUi(() =>
+        {
+            _lastSavedIncludeHerikaServerUpdate = true;
+            _lastSavedIncludeStobeServerUpdate = true;
+            _lastSavedIncludeDialecticServerUpdate = true;
+            IncludeHerikaServerUpdate = true;
+            IncludeStobeServerUpdate = true;
+            IncludeDialecticServerUpdate = true;
+            IsUpdateIncludeReady = false;
+            SetUpdateIncludeStatus(
+                "Update preferences are unavailable. Start the distro, then reopen the launcher.",
+                UpdateIncludeErrorColor);
+        });
+    }
+
+    private void QueueUpdateIncludeSave()
+    {
+        if (!IsUpdateIncludeReady)
+        {
+            return;
+        }
+
+        lock (_updateIncludeSaveSync)
+        {
+            _updateIncludeSaveRequested = true;
+            if (_isUpdateIncludeSaveRunning)
+            {
+                return;
+            }
+
+            _isUpdateIncludeSaveRunning = true;
+        }
+
+        _ = ProcessUpdateIncludeSaveQueueAsync();
+    }
+
+    // Coalesce rapid checkbox changes while guaranteeing the newest state is written last.
+    private async Task ProcessUpdateIncludeSaveQueueAsync()
+    {
+        try
+        {
+            while (IsUpdateIncludeReady)
+            {
+                lock (_updateIncludeSaveSync)
+                {
+                    if (!_updateIncludeSaveRequested)
+                    {
+                        return;
+                    }
+
+                    _updateIncludeSaveRequested = false;
+                }
+
+                var desiredHerika = IncludeHerikaServerUpdate;
+                var desiredStobe = IncludeStobeServerUpdate;
+                var desiredDialectic = IncludeDialecticServerUpdate;
+                RunOnUi(() => SetUpdateIncludeStatus("Saving update preferences...", UpdateIncludeNeutralColor));
+
+                CommandResult result;
+                try
+                {
+                    var herika = desiredHerika ? "1" : "0";
+                    var stobe = desiredStobe ? "1" : "0";
+                    var dialectic = desiredDialectic ? "1" : "0";
+                    result = await _wsl.RunDistroAsUserAsync(
+                            "root",
+                            new[] { "bash", "-lc", $"printf '%s\\n' {herika} > /home/dwemer/.update_include_herika && printf '%s\\n' {stobe} > /home/dwemer/.update_include_stobe && printf '%s\\n' {dialectic} > /home/dwemer/.update_include_dialectic" })
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    RestoreUpdateIncludeAfterSaveFailure(ex.Message);
+                    return;
+                }
+
+                if (!result.Succeeded)
+                {
+                    RestoreUpdateIncludeAfterSaveFailure(result.StandardError);
+                    return;
+                }
+
+                RunOnUi(() =>
+                {
+                    _lastSavedIncludeHerikaServerUpdate = desiredHerika;
+                    _lastSavedIncludeStobeServerUpdate = desiredStobe;
+                    _lastSavedIncludeDialecticServerUpdate = desiredDialectic;
+                    SetUpdateIncludeStatus("Update preferences saved.", UpdateIncludeSuccessColor);
+                });
+            }
+        }
+        finally
+        {
+            var restart = false;
+            lock (_updateIncludeSaveSync)
+            {
+                _isUpdateIncludeSaveRunning = false;
+                restart = _updateIncludeSaveRequested && IsUpdateIncludeReady;
+                if (restart)
+                {
+                    _isUpdateIncludeSaveRunning = true;
+                }
+            }
+
+            if (restart)
+            {
+                _ = ProcessUpdateIncludeSaveQueueAsync();
+            }
+        }
+    }
+
+    private void RestoreUpdateIncludeAfterSaveFailure(string? details)
+    {
+        lock (_updateIncludeSaveSync)
+        {
+            _updateIncludeSaveRequested = false;
+        }
+        RunOnUi(() =>
+        {
+            IncludeHerikaServerUpdate = _lastSavedIncludeHerikaServerUpdate;
+            IncludeStobeServerUpdate = _lastSavedIncludeStobeServerUpdate;
+            IncludeDialecticServerUpdate = _lastSavedIncludeDialecticServerUpdate;
+            SetUpdateIncludeStatus("Could not save. Reverted to the last saved choices.", UpdateIncludeErrorColor);
+        });
+        var reason = string.IsNullOrWhiteSpace(details) ? string.Empty : $": {details.Trim()}";
+        AppendLog($"Failed to save update preferences{reason}{Environment.NewLine}", "red");
+    }
+
+    private void SetUpdateIncludeStatus(string text, string color)
+    {
+        UpdateIncludeStatusText = text;
+        UpdateIncludeStatusColor = color;
     }
 
     private async Task LoadDashboardAutoOpenAsync(CancellationToken cancellationToken = default)
