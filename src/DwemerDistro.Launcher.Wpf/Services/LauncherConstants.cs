@@ -18,7 +18,7 @@ public static class LauncherConstants
     public const int DialecticServerPort = 8088;
     public const int ReignServerPort = 8089;
 
-    public const string WikiUrl = "https://dwemerdynamics.hostwiki.io/";
+    public const string WikiUrl = "https://dwemerdynamics.com/index.html";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";
     public const string ChimNexusFilesUrl = "https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files";
     public const string StobeNexusFilesUrl = "https://www.nexusmods.com/kenshi/mods/1891?tab=files";
