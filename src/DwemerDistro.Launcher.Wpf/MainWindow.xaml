@@ -39,6 +39,23 @@
             <Setter Property="MinWidth" Value="168" />
             <Setter Property="MinHeight" Value="36" />
         </Style>
+        <!-- Settings rows: one full-width card per setting, stacked vertically. The title and
+             wrapped explanation take the flexible column so descriptions stay readable down to
+             the 980px minimum width; the action stays compact in the Auto column. -->
+        <Style x:Key="GameCenter.SettingRow" TargetType="Border" BasedOn="{StaticResource GameCenter.Card}">
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+        <Style x:Key="GameCenter.SettingRowTitle" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.SectionHeading}">
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="GameCenter.SettingRowDescription" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+            <Setter Property="Margin" Value="0,4,0,0" />
+        </Style>
+        <Style x:Key="GameCenter.SettingRowButton" TargetType="Button" BasedOn="{StaticResource GameCenter.PrimaryButton}">
+            <Setter Property="MinWidth" Value="104" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
         <Style x:Key="GameCenter.HeroUpdateCheckBox" TargetType="CheckBox" BasedOn="{StaticResource GameCenter.CheckBox}">
             <Setter Property="Visibility" Value="Collapsed" />
             <Setter Property="HorizontalAlignment" Value="Right" />
@@ -361,40 +378,193 @@
 
             <TabItem Header="Settings">
                 <ScrollViewer x:Name="SettingsLandmark" VerticalScrollBarVisibility="Auto" Padding="18,16,18,12">
+                    <!-- Every setting lives in this one StackPanel as a full-width SettingRow card:
+                         title plus explanation on the left, a single compact action on the right.
+                         Section headings break the list up but never split it into columns. -->
                     <StackPanel>
                         <TextBlock Text="SETTINGS" Style="{StaticResource GameCenter.Heading}" />
                         <TextBlock Text="Launcher preferences, setup, diagnostics, and backups."
                                    Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,16" />
+
                         <TextBlock Text="SETUP" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,10" />
-                        <WrapPanel>
-                            <Button Command="{Binding OpenFirstRunSetupCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Quick Setup" />
-                            <Button Command="{Binding OpenCudaConfigCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Configure CUDA" />
-                        </WrapPanel>
-                        <TextBlock Text="DIAGNOSTICS AND MAINTENANCE" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
-                        <WrapPanel>
-                            <Button Command="{Binding GenerateDiagnosticsCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Create Diagnostic File" />
-                            <Button Command="{Binding DistroDoctorCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Run Distro Doctor" />
-                            <Button Command="{Binding OpenTerminalCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Open Terminal" />
-                            <Button Command="{Binding ViewMemoryUsageCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="View Memory Usage" />
-                            <Button Command="{Binding FixWslDnsCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Fix WSL DNS" />
-                            <Button Command="{Binding ReclaimDistroDiskSpaceCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Reclaim Disk Space" />
-                            <Button Command="{Binding ExportDistroCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Export Distro Backup" />
-                            <Button Command="{Binding ImportDistroCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Import Distro Backup" />
-                            <Button Command="{Binding CleanLogsCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Clean All Logs" />
-                        </WrapPanel>
-                        <Border Style="{StaticResource GameCenter.Card}" Margin="0,10,0,0">
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="Dwemer Dashboard WebUI" Style="{StaticResource GameCenter.SectionHeading}" />
-                                    <TextBlock Text="Open the Dashboard when the distro starts. Applies on the next server start."
-                                               Style="{StaticResource GameCenter.Caption}" Margin="0,4,14,0" />
-                                    <TextBlock Text="{Binding DashboardAutoOpenStatusText}" Foreground="{Binding DashboardAutoOpenStatusColor}"
-                                               Margin="0,5,14,0" TextWrapping="Wrap" />
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="First-Time Setup" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Open the guided setup flow for fresh installs or when you want to rerun the quickstart checks."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open" Command="{Binding OpenFirstRunSetupCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Open first-time setup"
+                                        AutomationProperties.HelpText="Open the guided setup flow for fresh installs or when you want to rerun the quickstart checks." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Configure CUDA GPU" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Open CUDA setup and repair tools when NVIDIA GPU support needs to be installed or fixed."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open" Command="{Binding OpenCudaConfigCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Open CUDA GPU configuration"
+                                        AutomationProperties.HelpText="Open CUDA setup and repair tools when NVIDIA GPU support needs to be installed or fixed." />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="DIAGNOSTICS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Create Diagnostic File" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Collect launcher, distro, and service troubleshooting data into a single diagnostic output."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Run" Command="{Binding GenerateDiagnosticsCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Create diagnostic file"
+                                        AutomationProperties.HelpText="Collect launcher, distro, and service troubleshooting data into a single diagnostic output." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Open Terminal" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Launch a shell inside the distro for manual inspection, package checks, or direct commands."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open" Command="{Binding OpenTerminalCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Open terminal"
+                                        AutomationProperties.HelpText="Launch a shell inside the distro for manual inspection, package checks, or direct commands." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Distro Doctor" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Check and repair common distro issues including permissions, Apache, Background Life, ports, disk space, and recent logs."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Run" Command="{Binding DistroDoctorCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Run distro doctor"
+                                        AutomationProperties.HelpText="Check and repair common distro issues including permissions, Apache, Background Life, ports, disk space, and recent logs." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="View Memory Usage" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Open live resource usage inside WSL to inspect RAM, CPU, and process pressure."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open" Command="{Binding ViewMemoryUsageCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="View memory usage"
+                                        AutomationProperties.HelpText="Open live resource usage inside WSL to inspect RAM, CPU, and process pressure." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Fix WSL DNS (GitHub)" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Repair common WSL DNS issues that block GitHub downloads, updates, or package installs."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Repair" Command="{Binding FixWslDnsCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Fix WSL DNS for GitHub"
+                                        AutomationProperties.HelpText="Repair common WSL DNS issues that block GitHub downloads, updates, or package installs." />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="MAINTENANCE AND BACKUPS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Reclaim Distro Disk Space" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Compact and recover unused WSL disk space after large installs, updates, or cleanup work."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Run" Command="{Binding ReclaimDistroDiskSpaceCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Reclaim distro disk space"
+                                        AutomationProperties.HelpText="Compact and recover unused WSL disk space after large installs, updates, or cleanup work." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Export Distro Backup" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Create a backup of the distro before major updates, installs, or configuration changes."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Export" Command="{Binding ExportDistroCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Export distro backup"
+                                        AutomationProperties.HelpText="Create a backup of the distro before major updates, installs, or configuration changes." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Import Distro Backup" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Restore a previously exported distro backup. Use this when you need to roll the full distro state back."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Import" Command="{Binding ImportDistroCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Import distro backup"
+                                        AutomationProperties.HelpText="Restore a previously exported distro backup. Use this when you need to roll the full distro state back." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Clean All Logs" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Clear accumulated service and Apache logs so fresh troubleshooting runs start with clean output."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Clean" Command="{Binding CleanLogsCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Clean all logs"
+                                        AutomationProperties.HelpText="Clear accumulated service and Apache logs so fresh troubleshooting runs start with clean output." />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="STARTUP OPTIONS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Dwemer Dashboard WebUI" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Open the Dwemer Dashboard when the server starts. Turn this off for headless or remote setups. Applies on the next server start."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
                                 </StackPanel>
                                 <CheckBox Grid.Column="1" Content="Open on start" IsChecked="{Binding DashboardAutoOpenEnabled}"
                                           Command="{Binding SaveDashboardAutoOpenCommand}" Style="{StaticResource GameCenter.CheckBox}"
-                                          VerticalAlignment="Center" />
+                                          VerticalAlignment="Center"
+                                          AutomationProperties.Name="Open Dwemer Dashboard on server start"
+                                          AutomationProperties.HelpText="When checked, starting the DwemerDistro server opens the Dwemer Dashboard WebUI in your default browser on this PC. Leave it unchecked for headless or remote use. The change applies on the next server start." />
+                                <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding DashboardAutoOpenStatusText}"
+                                           Foreground="{Binding DashboardAutoOpenStatusColor}"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" />
                             </Grid>
                         </Border>
                     </StackPanel>
