@@ -6,10 +6,15 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
 
+        <!-- Burgundy action. Rounded 8px corners plus a 1px border match the shared
+             GameCenter button tiers so the embedded page reads as one launcher.
+             Hover, pressed, and disabled colors live in Style.Triggers so the gray
+             tiers below can restate them without duplicating the template. -->
         <Style x:Key="PrimaryActionButton" TargetType="Button">
             <Setter Property="Background" Value="#5E0505" />
             <Setter Property="Foreground" Value="White" />
-            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="BorderBrush" Value="#8C1C1C" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="Margin" Value="0,0,10,0" />
             <Setter Property="FontFamily" Value="Trebuchet MS" />
@@ -17,29 +22,64 @@
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="MinWidth" Value="110" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="ButtonBorder"
-                                Background="{TemplateBinding Background}"
-                                CornerRadius="6">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"
-                                              Margin="{TemplateBinding Padding}" />
-                        </Border>
+                        <Grid>
+                            <Border x:Name="ButtonBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="8"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter x:Name="ButtonContent"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}" />
+                            </Border>
+                            <Border x:Name="FocusRing"
+                                    Margin="2"
+                                    CornerRadius="6"
+                                    BorderBrush="White"
+                                    BorderThickness="1"
+                                    Visibility="Collapsed"
+                                    IsHitTestVisible="False"
+                                    SnapsToDevicePixels="True" />
+                        </Grid>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="Background" Value="#4A0404" />
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonContent" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <TranslateTransform Y="1" />
+                                    </Setter.Value>
+                                </Setter>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.55" />
+                                <Setter Property="Cursor" Value="Arrow" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#4A0404" />
+                    <Setter Property="BorderBrush" Value="#C9A227" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#3F0303" />
+                    <Setter Property="BorderBrush" Value="#FFD700" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
+        <!-- Install / Reinstall keeps its distinctive pill shape and content-driven fills. -->
         <Style x:Key="InstallActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
             <Setter Property="Background" Value="#2F8F3A" />
             <Setter Property="MinWidth" Value="128" />
@@ -74,15 +114,35 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <!-- Hold the pill on its own fill; the template above owns every state color. -->
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#2F8F3A" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#2F8F3A" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
+        <!-- Gray tiers: same rounded bordered shell, charcoal fill. -->
         <Style x:Key="SecondaryActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
             <Setter Property="Background" Value="#404040" />
+            <Setter Property="BorderBrush" Value="#747474" />
             <Setter Property="Margin" Value="0,8,0,0" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#4C4C4C" />
+                    <Setter Property="BorderBrush" Value="#C9A227" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#333333" />
+                    <Setter Property="BorderBrush" Value="#FFD700" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
-        <Style x:Key="CompactActionButton" TargetType="Button" BasedOn="{StaticResource PrimaryActionButton}">
-            <Setter Property="Background" Value="#404040" />
+        <Style x:Key="CompactActionButton" TargetType="Button" BasedOn="{StaticResource SecondaryActionButton}">
             <Setter Property="Padding" Value="10,6" />
             <Setter Property="Margin" Value="8,0,0,0" />
             <Setter Property="MinWidth" Value="86" />

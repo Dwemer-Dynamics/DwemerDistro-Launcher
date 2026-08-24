@@ -1316,7 +1316,7 @@ echo "CHIM-MCP installed and enabled."
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
             var comparison = CompareVersions(currentVersion, gitVersion);
-            SetHerikaStatus(statusText, comparison < 0 ? "Red" : "LimeGreen");
+            SetHerikaStatus(statusText, comparison < 0 ? "Yellow" : "LimeGreen");
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
@@ -1355,7 +1355,7 @@ echo "CHIM-MCP installed and enabled."
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
             var comparison = CompareVersions(currentVersion, gitVersion);
-            SetStobeStatus(statusText, comparison < 0 ? "Red" : "LimeGreen");
+            SetStobeStatus(statusText, comparison < 0 ? "Yellow" : "LimeGreen");
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
@@ -3962,7 +3962,7 @@ fi
 
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
-            SetDialecticStatus(statusText, CompareVersions(currentVersion, gitVersion) < 0 ? "Red" : "LimeGreen");
+            SetDialecticStatus(statusText, CompareVersions(currentVersion, gitVersion) < 0 ? "Yellow" : "LimeGreen");
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {

@@ -6,7 +6,7 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:views="clr-namespace:DwemerDistro.Launcher.Wpf.Views"
         mc:Ignorable="d"
-        Title="Dwemer Launcher"
+        Title="DWEMER DISTRO"
         Icon="Assets/DwemerDistro.ico"
         Width="1280"
         Height="820"
@@ -74,25 +74,25 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Margin="12,0" VerticalAlignment="Center">
                     <Image Source="Assets/DwemerDistro.png" Width="20" Height="20" Margin="0,0,9,0" />
-                    <TextBlock Text="DWEMER LAUNCHER" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock Text="DWEMER DISTRO" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
                 <Button Grid.Column="1"
                         Content="—"
                         Style="{StaticResource GameCenter.CaptionButton}"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        AutomationProperties.Name="Minimize Dwemer Launcher"
+                        AutomationProperties.Name="Minimize Dwemer Distro"
                         Click="MinimizeButton_Click" />
                 <Button Grid.Column="2"
                         Content="□"
                         Style="{StaticResource GameCenter.CaptionButton}"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        AutomationProperties.Name="Maximize or restore Dwemer Launcher"
+                        AutomationProperties.Name="Maximize or restore Dwemer Distro"
                         Click="MaximizeButton_Click" />
                 <Button Grid.Column="3"
                         Content="✕"
                         Style="{StaticResource GameCenter.CaptionCloseButton}"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        AutomationProperties.Name="Close Dwemer Launcher"
+                        AutomationProperties.Name="Close Dwemer Distro"
                         Click="CloseButton_Click" />
             </Grid>
         </Border>
@@ -111,8 +111,7 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <StackPanel>
-                    <Image Source="Assets/dd_title.png" Height="62" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,4,4,10" />
-                    <TextBlock Text="LAUNCHER" Foreground="{DynamicResource GameCenter.Gold}" FontSize="12" FontWeight="Bold" Margin="5,0,0,12" />
+                    <Image Source="Assets/dd_title.png" Height="62" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,4,4,16" />
                 </StackPanel>
                 <StackPanel x:Name="UtilityLandmark" Grid.Row="1" KeyboardNavigation.TabNavigation="Local">
                     <Button Style="{StaticResource GameCenter.UtilityButton}" Click="OpenSettingsDestination_Click"
@@ -512,7 +511,32 @@
                                 <Border Background="#50000000" />
                                 <StackPanel Margin="12,10" VerticalAlignment="Bottom">
                                     <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="Bold" />
-                                    <TextBlock Text="{Binding GameTitle}" FontSize="9" Foreground="#E0E0E0" TextTrimming="CharacterEllipsis" />
+                                    <!-- Live branch | date version | semantic version for this product.
+                                         The rail item's DataContext is the GameProfile, so each card reaches
+                                         the matching MainWindowViewModel status through the window. -->
+                                    <TextBlock FontSize="9"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                <Setter Property="Foreground" Value="#E0E0E0" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Key}" Value="CHIM">
+                                                        <Setter Property="Text" Value="{Binding DataContext.HerikaStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                        <Setter Property="Foreground" Value="{Binding DataContext.HerikaStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Key}" Value="STOBE">
+                                                        <Setter Property="Text" Value="{Binding DataContext.StobeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                        <Setter Property="Foreground" Value="{Binding DataContext.StobeStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Key}" Value="DIALECTIC">
+                                                        <Setter Property="Text" Value="{Binding DataContext.DialecticStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                        <Setter Property="Foreground" Value="{Binding DataContext.DialecticStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                 </StackPanel>
                             </Grid>
                         </Grid>

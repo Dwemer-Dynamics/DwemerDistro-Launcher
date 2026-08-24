@@ -59,16 +59,19 @@
     </Style>
 
     <!-- Neutral charcoal button. Every other tier derives from this template so hover,
-         pressed, focus, and disabled feedback stay identical across the launcher. -->
+         pressed, focus, and disabled feedback stay identical across the launcher.
+         Rounded 8px corners, bold Trebuchet MS, and a 34px floor carry over the
+         visual character of the pre-Game-Center launcher controls. -->
     <Style x:Key="GameCenter.Button" TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Padding" Value="12,6" />
-        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="MinHeight" Value="34" />
+        <Setter Property="FontFamily" Value="Trebuchet MS" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontWeight" Value="Bold" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
@@ -80,7 +83,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="3"
+                                CornerRadius="8"
                                 SnapsToDevicePixels="True">
                             <ContentPresenter x:Name="Content"
                                               HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
@@ -93,14 +96,14 @@
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground"
                                                 Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}, FallbackValue=White}" />
-                                        <Setter Property="FontFamily" Value="Segoe UI" />
+                                        <Setter Property="FontFamily" Value="Trebuchet MS" />
                                     </Style>
                                 </ContentPresenter.Resources>
                             </ContentPresenter>
                         </Border>
                         <Border x:Name="FocusRing"
                                 Margin="2"
-                                CornerRadius="2"
+                                CornerRadius="6"
                                 BorderBrush="{DynamicResource GameCenter.Focus}"
                                 BorderThickness="1"
                                 Visibility="Collapsed"
@@ -287,15 +290,65 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Window chrome buttons: square, borderless, no gold accent. -->
-    <Style x:Key="GameCenter.CaptionButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+    <!-- Window chrome buttons: square, borderless, no gold accent. These keep their own
+         template so the rounded, bold Trebuchet treatment of GameCenter.Button never
+         reaches the caption glyphs. -->
+    <Style x:Key="GameCenter.CaptionButton" TargetType="Button">
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderBrush" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="MinHeight" Value="0" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Cursor" Value="Hand" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="0"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True">
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground"
+                                                Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}, FallbackValue=White}" />
+                                        <Setter Property="FontFamily" Value="Segoe UI" />
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
+                        </Border>
+                        <Border x:Name="FocusRing"
+                                Margin="2"
+                                BorderBrush="{DynamicResource GameCenter.Focus}"
+                                BorderThickness="1"
+                                Visibility="Collapsed"
+                                IsHitTestVisible="False"
+                                SnapsToDevicePixels="True" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Border" Property="Opacity" Value="0.45" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
