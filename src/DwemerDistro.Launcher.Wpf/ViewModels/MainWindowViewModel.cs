@@ -99,7 +99,7 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
     private string _launcherUpdateButtonText = "Check Update";
-    private string _distroUpdateButtonText = "Update";
+    private string _distroUpdateButtonText = "Update All";
     private bool _isDistroUpdateInProgress;
     private bool _mcpEnabled = true;
     private bool _includeHerikaServerUpdate = true;
@@ -119,9 +119,9 @@ echo "CHIM-MCP installed and enabled."
     private string _dashboardAutoOpenStatusText = "Checking saved preference...";
     private string _dashboardAutoOpenStatusColor = DashboardAutoOpenNeutralColor;
     private bool _canUpdateLauncher;
-    private string _targetHerikaBranch = "aiagent";
-    private string _targetStobeBranch = "stobe";
-    private string _targetDialecticBranch = "dialectic";
+    private string _targetHerikaBranch = "Main";
+    private string _targetStobeBranch = "Main";
+    private string _targetDialecticBranch = "Main";
     private int _startAnimationDots;
     private bool _isServerStatusRefreshInProgress;
     private LauncherReleaseInfo? _pendingLauncherUpdate;
@@ -144,9 +144,9 @@ echo "CHIM-MCP installed and enabled."
         };
         _serverStatusRetryTimer.Tick += async (_, _) => await RetryServerStatusChecksAsync().ConfigureAwait(true);
 
-        HerikaBranches = new ObservableCollection<string>(new[] { "aiagent", "dev", "unstable" });
-        StobeBranches = new ObservableCollection<string>(new[] { "stobe", "dev", "unstable" });
-        DialecticBranches = new ObservableCollection<string>(new[] { "dialectic", "dev", "unstable" });
+        HerikaBranches = new ObservableCollection<string>(new[] { "Main", "Dev" });
+        StobeBranches = new ObservableCollection<string>(new[] { "Main", "Dev" });
+        DialecticBranches = new ObservableCollection<string>(new[] { "Main", "Dev" });
         GameProfiles = new ObservableCollection<GameProfile>(GameProfile.CreateCatalog());
         _selectedGame = GameProfiles[0];
 
@@ -876,9 +876,9 @@ echo "CHIM-MCP installed and enabled."
         var includeHerika = IncludeHerikaServerUpdate;
         var includeStobe = IncludeStobeServerUpdate;
         var includeDialectic = IncludeDialecticServerUpdate;
-        var targetHerika = NormalizeBranch(TargetHerikaBranch, "aiagent", "aiagent", "dev", "unstable");
-        var targetStobe = NormalizeBranch(TargetStobeBranch, "stobe", "stobe", "dev", "unstable");
-        var targetDialectic = NormalizeBranch(TargetDialecticBranch, "dialectic", "dialectic", "dev", "unstable");
+        var targetHerika = ResolveServerBranchChoice(TargetHerikaBranch, "aiagent");
+        var targetStobe = ResolveServerBranchChoice(TargetStobeBranch, "stobe");
+        var targetDialectic = ResolveServerBranchChoice(TargetDialecticBranch, "dialectic");
 
         var confirmText = includeHerika || includeStobe || includeDialectic
             ? "This will update the Dwemer Distro and selected server components.\n\n" +
@@ -1059,7 +1059,7 @@ echo "CHIM-MCP installed and enabled."
             RunOnUi(() =>
             {
                 IsDistroUpdateInProgress = false;
-                DistroUpdateButtonText = "Update";
+                DistroUpdateButtonText = "Update All";
             });
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
@@ -1069,9 +1069,9 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task<bool> SwitchHerikaServerBranchAsync(string targetBranch)
     {
-        if (targetBranch is not ("aiagent" or "dev" or "unstable"))
+        if (targetBranch is not ("aiagent" or "dev"))
         {
-            AppendLog($"Invalid branch selection: '{targetBranch}'. Expected aiagent, dev, or unstable.{Environment.NewLine}", "red");
+            AppendLog($"Invalid branch selection: '{targetBranch}'. Expected aiagent or dev.{Environment.NewLine}", "red");
             return false;
         }
 
@@ -1105,9 +1105,9 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task<bool> SwitchStobeServerBranchAsync(string targetBranch)
     {
-        if (targetBranch is not ("stobe" or "dev" or "unstable"))
+        if (targetBranch is not ("stobe" or "dev"))
         {
-            AppendLog($"Invalid StobeServer branch selection: '{targetBranch}'. Expected stobe, dev, or unstable.{Environment.NewLine}", "red");
+            AppendLog($"Invalid StobeServer branch selection: '{targetBranch}'. Expected stobe or dev.{Environment.NewLine}", "red");
             return false;
         }
 
@@ -1185,9 +1185,9 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task<bool> SwitchDialecticServerBranchAsync(string targetBranch)
     {
-        if (targetBranch is not ("dialectic" or "dev" or "unstable"))
+        if (targetBranch is not ("dialectic" or "dev"))
         {
-            AppendLog($"Invalid DialecticServer branch selection: '{targetBranch}'. Expected dialectic, dev, or unstable.{Environment.NewLine}", "red");
+            AppendLog($"Invalid DialecticServer branch selection: '{targetBranch}'. Expected dialectic or dev.{Environment.NewLine}", "red");
             return false;
         }
 
@@ -1295,9 +1295,10 @@ echo "CHIM-MCP installed and enabled."
     {
         SetHerikaStatus("Checking...", "White");
         var currentBranch = await GetCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
-        if (currentBranch is "aiagent" or "dev" or "unstable")
+        var branchChoice = MapServerBranchToChoice(currentBranch, "aiagent");
+        if (branchChoice is not null)
         {
-            RunOnUi(() => TargetHerikaBranch = currentBranch);
+            RunOnUi(() => TargetHerikaBranch = branchChoice);
         }
 
         var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/HerikaServer/.version.txt", cancellationToken).ConfigureAwait(false);
@@ -1331,9 +1332,10 @@ echo "CHIM-MCP installed and enabled."
     {
         SetStobeStatus("Checking...", "White");
         var currentBranch = await GetStobeServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
-        if (currentBranch is "stobe" or "dev" or "unstable")
+        var branchChoice = MapServerBranchToChoice(currentBranch, "stobe");
+        if (branchChoice is not null)
         {
-            RunOnUi(() => TargetStobeBranch = currentBranch);
+            RunOnUi(() => TargetStobeBranch = branchChoice);
         }
 
         var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/StobeServer/.version.txt", cancellationToken).ConfigureAwait(false);
@@ -3940,9 +3942,10 @@ fi
     {
         SetDialecticStatus("Checking...", "White");
         var currentBranch = await GetDialecticServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
-        if (currentBranch is "dialectic" or "dev" or "unstable")
+        var branchChoice = MapServerBranchToChoice(currentBranch, "dialectic");
+        if (branchChoice is not null)
         {
-            RunOnUi(() => TargetDialecticBranch = currentBranch);
+            RunOnUi(() => TargetDialecticBranch = branchChoice);
         }
 
         var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/DialecticServer/.version.txt", cancellationToken).ConfigureAwait(false);
@@ -4510,10 +4513,23 @@ fi
         _startAnimationDots = (_startAnimationDots % 3) + 1;
     }
 
-    private static string NormalizeBranch(string value, string fallback, params string[] allowed)
+    public static string ResolveServerBranchChoice(string? choice, string mainBranch)
     {
-        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
-        return allowed.Contains(normalized) ? normalized : fallback;
+        return string.Equals(choice?.Trim(), "Dev", StringComparison.OrdinalIgnoreCase)
+            ? "dev"
+            : mainBranch;
+    }
+
+    public static string? MapServerBranchToChoice(string? branch, string mainBranch)
+    {
+        if (string.Equals(branch?.Trim(), mainBranch, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Main";
+        }
+
+        return branch?.Trim().ToLowerInvariant() is "dev" or "unstable"
+            ? "Dev"
+            : null;
     }
 
     private static string? FormatDateVersion(string? version)

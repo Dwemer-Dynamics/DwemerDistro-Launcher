@@ -167,12 +167,9 @@ public partial class MainWindow : Window
 
         var compact = ActualWidth > 0 && ActualWidth < 1120;
         UpdateSetupViewport();
-        AutomationProperties.SetName(
-            ToggleConsoleButton,
-            _isConsoleExpanded ? "Collapse output console" : "Expand output console");
-        ToggleConsoleButton.Content = _isConsoleExpanded
-            ? "HIDE OUTPUT CONSOLE  ·  Ctrl+`"
-            : "OUTPUT CONSOLE  ·  Ctrl+`";
+        var toggleLabel = _isConsoleExpanded ? "Hide Output" : "Expand Output";
+        AutomationProperties.SetName(ToggleConsoleButton, toggleLabel);
+        ToggleConsoleButton.Content = toggleLabel;
 
         if (!_isConsoleExpanded)
         {
@@ -216,13 +213,6 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key == Key.Oem3)
-        {
-            ToggleConsole();
-            e.Handled = true;
-            return;
-        }
-
         if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0)
         {
             var key = e.SystemKey == Key.None ? e.Key : e.SystemKey;

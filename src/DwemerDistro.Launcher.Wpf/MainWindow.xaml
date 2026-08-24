@@ -6,7 +6,7 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:views="clr-namespace:DwemerDistro.Launcher.Wpf.Views"
         mc:Ignorable="d"
-        Title="Dwemer Game Center"
+        Title="Dwemer Launcher"
         Icon="Assets/DwemerDistro.ico"
         Width="1280"
         Height="820"
@@ -28,22 +28,20 @@
     </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <Style x:Key="GameCenter.ComboBox" TargetType="ComboBox">
-            <Setter Property="Foreground" Value="Black" />
-            <Setter Property="Background" Value="#ECEFF1" />
-            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
-            <Setter Property="MinWidth" Value="120" />
-            <Setter Property="MinHeight" Value="32" />
-            <Setter Property="Padding" Value="8,4" />
-        </Style>
         <Style x:Key="GameCenter.ActionCardButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
             <Setter Property="HorizontalContentAlignment" Value="Left" />
-            <Setter Property="Margin" Value="0,0,10,10" />
-            <Setter Property="MinWidth" Value="210" />
-            <Setter Property="MinHeight" Value="54" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="MinWidth" Value="196" />
+            <Setter Property="MinHeight" Value="40" />
         </Style>
         <Style x:Key="GameCenter.LogButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ActionCardButton}">
-            <Setter Property="MinWidth" Value="190" />
+            <Setter Property="MinWidth" Value="168" />
+            <Setter Property="MinHeight" Value="36" />
+        </Style>
+        <Style x:Key="GameCenter.HeroUpdateCheckBox" TargetType="CheckBox" BasedOn="{StaticResource GameCenter.CheckBox}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
         </Style>
     </Window.Resources>
 
@@ -53,7 +51,7 @@
             <RowDefinition Height="62" />
             <RowDefinition Height="*" />
             <RowDefinition x:Name="ConsoleRow" Height="38" />
-            <RowDefinition Height="148" />
+            <RowDefinition Height="124" />
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="178" />
@@ -76,28 +74,25 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Margin="12,0" VerticalAlignment="Center">
                     <Image Source="Assets/DwemerDistro.png" Width="20" Height="20" Margin="0,0,9,0" />
-                    <TextBlock Text="DWEMER GAME CENTER" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <TextBlock Text="DWEMER LAUNCHER" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
                 <Button Grid.Column="1"
                         Content="—"
-                        Style="{StaticResource GameCenter.UtilityButton}"
-                        HorizontalContentAlignment="Center"
+                        Style="{StaticResource GameCenter.CaptionButton}"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        AutomationProperties.Name="Minimize Dwemer Game Center"
+                        AutomationProperties.Name="Minimize Dwemer Launcher"
                         Click="MinimizeButton_Click" />
                 <Button Grid.Column="2"
                         Content="□"
-                        Style="{StaticResource GameCenter.UtilityButton}"
-                        HorizontalContentAlignment="Center"
+                        Style="{StaticResource GameCenter.CaptionButton}"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        AutomationProperties.Name="Maximize or restore Dwemer Game Center"
+                        AutomationProperties.Name="Maximize or restore Dwemer Launcher"
                         Click="MaximizeButton_Click" />
                 <Button Grid.Column="3"
                         Content="✕"
-                        Style="{StaticResource GameCenter.UtilityButton}"
-                        HorizontalContentAlignment="Center"
+                        Style="{StaticResource GameCenter.CaptionCloseButton}"
                         shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        AutomationProperties.Name="Close Dwemer Game Center"
+                        AutomationProperties.Name="Close Dwemer Launcher"
                         Click="CloseButton_Click" />
             </Grid>
         </Border>
@@ -117,7 +112,7 @@
                 </Grid.RowDefinitions>
                 <StackPanel>
                     <Image Source="Assets/dd_title.png" Height="62" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,4,4,10" />
-                    <TextBlock Text="GAME CENTER" Foreground="{DynamicResource GameCenter.Gold}" FontSize="12" FontWeight="Bold" Margin="5,0,0,12" />
+                    <TextBlock Text="LAUNCHER" Foreground="{DynamicResource GameCenter.Gold}" FontSize="12" FontWeight="Bold" Margin="5,0,0,12" />
                 </StackPanel>
                 <StackPanel x:Name="UtilityLandmark" Grid.Row="1" KeyboardNavigation.TabNavigation="Local">
                     <Button Style="{StaticResource GameCenter.UtilityButton}" Click="OpenSettingsDestination_Click"
@@ -179,10 +174,15 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="{Binding DistroUpdateButtonText}" Command="{Binding UpdateAllCommand}"
+                            Style="{StaticResource GameCenter.AccentButton}" MinWidth="112" Margin="0,0,6,0"
+                            AutomationProperties.Name="{Binding DistroUpdateButtonText}"
+                            AutomationProperties.HelpText="Update the Dwemer Distro products that are included in updates." />
                     <Button Content="{Binding StartButtonText}" Command="{Binding StartServerCommand}"
-                            Style="{StaticResource GameCenter.SuccessButton}" MinWidth="150" Margin="0,0,8,0"
+                            Style="{StaticResource GameCenter.SuccessButton}" MinWidth="132" Margin="0,0,6,0"
+                            AutomationProperties.Name="{Binding StartButtonText}"
                             AutomationProperties.HelpText="Start the complete Dwemer Distro stack." />
-                    <Button Content="Stop" Command="{Binding StopServerCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,8,0" />
+                    <Button Content="Stop" Command="{Binding StopServerCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,6,0" />
                     <Button Content="Force Stop" Command="{Binding ForceStopServerCommand}" Style="{StaticResource GameCenter.DangerButton}" />
                 </StackPanel>
             </Grid>
@@ -229,9 +229,67 @@
                                     <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource GameCenter.Gold}"
                                                FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="{Binding DistroUpdateButtonText}" Command="{Binding UpdateAllCommand}"
-                                        Style="{StaticResource GameCenter.PrimaryButton}" MinWidth="130" VerticalAlignment="Center"
-                                        AutomationProperties.Name="Update selected Dwemer Distro products" />
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="12,0,0,0">
+                                    <Grid>
+                                        <CheckBox x:Name="HeroChimUpdateCheckBox" Content="Updates"
+                                                  IsChecked="{Binding IncludeHerikaServerUpdate}"
+                                                  IsEnabled="{Binding IsUpdateIncludeReady}"
+                                                  Command="{Binding SaveUpdateIncludeCommand}"
+                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
+                                                  AutomationProperties.Name="Include CHIM in updates"
+                                                  ToolTip="{Binding UpdateIncludeStatusText}"
+                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
+                                            <CheckBox.Style>
+                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="CHIM">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </CheckBox.Style>
+                                        </CheckBox>
+                                        <CheckBox x:Name="HeroStobeUpdateCheckBox" Content="Updates"
+                                                  IsChecked="{Binding IncludeStobeServerUpdate}"
+                                                  IsEnabled="{Binding IsUpdateIncludeReady}"
+                                                  Command="{Binding SaveUpdateIncludeCommand}"
+                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
+                                                  AutomationProperties.Name="Include STOBE in updates"
+                                                  ToolTip="{Binding UpdateIncludeStatusText}"
+                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
+                                            <CheckBox.Style>
+                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </CheckBox.Style>
+                                        </CheckBox>
+                                        <CheckBox x:Name="HeroDialecticUpdateCheckBox" Content="Updates"
+                                                  IsChecked="{Binding IncludeDialecticServerUpdate}"
+                                                  IsEnabled="{Binding IsUpdateIncludeReady}"
+                                                  Command="{Binding SaveUpdateIncludeCommand}"
+                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
+                                                  AutomationProperties.Name="Include Dialectic in updates"
+                                                  ToolTip="{Binding UpdateIncludeStatusText}"
+                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
+                                            <CheckBox.Style>
+                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </CheckBox.Style>
+                                        </CheckBox>
+                                    </Grid>
+                                    <TextBlock Text="Include this product when Update runs."
+                                               Style="{StaticResource GameCenter.Caption}" FontSize="11"
+                                               MaxWidth="200" TextAlignment="Right" Margin="0,4,0,0" />
+                                </StackPanel>
                             </Grid>
                         </Grid>
                     </Border>
@@ -249,7 +307,10 @@
                                     <TextBlock Text="CHIM / HerikaServer" FontWeight="SemiBold" FontSize="16" />
                                     <TextBlock Text="{Binding HerikaStatusText}" Foreground="{Binding HerikaStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
                                     <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                    <ComboBox ItemsSource="{Binding HerikaBranches}" SelectedItem="{Binding TargetHerikaBranch}" Style="{StaticResource GameCenter.ComboBox}" />
+                                    <ComboBox ItemsSource="{Binding HerikaBranches}" SelectedItem="{Binding TargetHerikaBranch}"
+                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                              AutomationProperties.Name="HerikaServer update branch"
+                                              AutomationProperties.HelpText="Branch used the next time this product updates." />
                                     <Button Content="Open CHIM" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8" />
                                     <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
@@ -257,7 +318,10 @@
                                     <TextBlock Text="STOBE / StobeServer" FontWeight="SemiBold" FontSize="16" />
                                     <TextBlock Text="{Binding StobeStatusText}" Foreground="{Binding StobeStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
                                     <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                    <ComboBox ItemsSource="{Binding StobeBranches}" SelectedItem="{Binding TargetStobeBranch}" Style="{StaticResource GameCenter.ComboBox}" />
+                                    <ComboBox ItemsSource="{Binding StobeBranches}" SelectedItem="{Binding TargetStobeBranch}"
+                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                              AutomationProperties.Name="StobeServer update branch"
+                                              AutomationProperties.HelpText="Branch used the next time this product updates." />
                                     <Button Content="Open STOBE" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8" />
                                     <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
@@ -265,7 +329,10 @@
                                     <TextBlock Text="Dialectic / DialecticServer" FontWeight="SemiBold" FontSize="16" />
                                     <TextBlock Text="{Binding DialecticStatusText}" Foreground="{Binding DialecticStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
                                     <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                    <ComboBox ItemsSource="{Binding DialecticBranches}" SelectedItem="{Binding TargetDialecticBranch}" Style="{StaticResource GameCenter.ComboBox}" />
+                                    <ComboBox ItemsSource="{Binding DialecticBranches}" SelectedItem="{Binding TargetDialecticBranch}"
+                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                              AutomationProperties.Name="DialecticServer update branch"
+                                              AutomationProperties.HelpText="Branch used the next time this product updates." />
                                     <Button Content="Open Dialectic" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8" />
                                     <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
@@ -361,8 +428,31 @@
             <TabItem Header="Logs">
                 <ScrollViewer x:Name="LogsLandmark" VerticalScrollBarVisibility="Auto" Padding="18,16,18,12">
                     <StackPanel>
-                        <TextBlock Text="LIVE LOGS" Style="{StaticResource GameCenter.Heading}" />
-                        <TextBlock Text="Open a live service log in a terminal window." Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,16" />
+                        <TextBlock Text="LOGS" Style="{StaticResource GameCenter.Heading}" />
+                        <TextBlock Text="Collect a debugging bundle, or open a live service log in a terminal window."
+                                   Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,14" />
+                        <Border Style="{StaticResource GameCenter.Card}" BorderBrush="{DynamicResource GameCenter.Gold}" Margin="0,0,0,20">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="DISTRO DEBUGGING LOGS" Style="{StaticResource GameCenter.SectionHeading}" />
+                                    <TextBlock Text="Bundles distro diagnostics into a single file to share when asking for support."
+                                               Style="{StaticResource GameCenter.Caption}" Margin="0,4,16,0" />
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Content="Generate Distro Debugging Logs"
+                                        Command="{Binding GenerateDiagnosticsCommand}"
+                                        Style="{StaticResource GameCenter.PrimaryButton}"
+                                        MinWidth="238" MinHeight="40" VerticalAlignment="Center"
+                                        AutomationProperties.Name="Generate distro debugging logs"
+                                        AutomationProperties.HelpText="Create a diagnostic file with distro logs and system details." />
+                            </Grid>
+                        </Border>
+                        <TextBlock Text="LIVE LOGS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,4" />
+                        <TextBlock Text="Open a live service log in a terminal window." Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,12" />
                         <WrapPanel>
                             <Button Command="{Binding ViewXttsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Dwemer Distro XTTS" />
                             <Button Command="{Binding ViewChatterboxLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Chatterbox" />
@@ -383,9 +473,9 @@
                 BorderBrush="{DynamicResource GameCenter.BorderStrong}" BorderThickness="0,1,0,0" Panel.ZIndex="10">
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="38" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                <Button x:Name="ToggleConsoleButton" Content="OUTPUT CONSOLE  ·  Ctrl+`"
+                <Button x:Name="ToggleConsoleButton" Content="Expand Output"
                         Style="{StaticResource GameCenter.UtilityButton}" HorizontalContentAlignment="Left" Padding="18,8"
-                        AutomationProperties.Name="Expand output console" Click="ToggleConsoleButton_Click" />
+                        AutomationProperties.Name="Expand Output" Click="ToggleConsoleButton_Click" />
                 <RichTextBox x:Name="OutputRichTextBox" Grid.Row="1" Margin="14,0,14,12" Padding="10" IsReadOnly="True"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                              Background="#090909" Foreground="White" BorderBrush="{DynamicResource GameCenter.Border}"
@@ -406,8 +496,7 @@
                 </ListBox.ItemsPanel>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Grid Height="118">
-                            <Grid.RowDefinitions><RowDefinition Height="76" /><RowDefinition Height="42" /></Grid.RowDefinitions>
+                        <Grid Height="96">
                             <Grid ClipToBounds="True" Background="#151515">
                                 <Image Source="{Binding RailImageSource}" Stretch="UniformToFill">
                                     <Image.Style>
@@ -422,57 +511,10 @@
                                     </Image.Style>
                                 </Image>
                                 <Border Background="#50000000" />
-                                <StackPanel Margin="12" VerticalAlignment="Bottom">
-                                    <TextBlock Text="{Binding Name}" FontSize="17" FontWeight="Bold" />
+                                <StackPanel Margin="12,10" VerticalAlignment="Bottom">
+                                    <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="Bold" />
                                     <TextBlock Text="{Binding GameTitle}" FontSize="9" Foreground="#E0E0E0" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                            </Grid>
-                            <Grid Grid.Row="1" Margin="12,0">
-                                <CheckBox x:Name="ChimUpdateCheckBox" Content="Updates"
-                                          IsChecked="{Binding DataContext.IncludeHerikaServerUpdate, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          IsEnabled="{Binding DataContext.IsUpdateIncludeReady, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          Command="{Binding DataContext.SaveUpdateIncludeCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                          AutomationProperties.Name="Include CHIM in updates"
-                                          ToolTip="{Binding DataContext.UpdateIncludeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          AutomationProperties.HelpText="{Binding DataContext.UpdateIncludeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}">
-                                    <CheckBox.Style>
-                                        <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.CheckBox}">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                            <Style.Triggers><DataTrigger Binding="{Binding Key}" Value="CHIM"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
-                                        </Style>
-                                    </CheckBox.Style>
-                                </CheckBox>
-                                <CheckBox x:Name="StobeUpdateCheckBox" Content="Updates"
-                                          IsChecked="{Binding DataContext.IncludeStobeServerUpdate, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          IsEnabled="{Binding DataContext.IsUpdateIncludeReady, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          Command="{Binding DataContext.SaveUpdateIncludeCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                          AutomationProperties.Name="Include STOBE in updates"
-                                          ToolTip="{Binding DataContext.UpdateIncludeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          AutomationProperties.HelpText="{Binding DataContext.UpdateIncludeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}">
-                                    <CheckBox.Style>
-                                        <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.CheckBox}">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                            <Style.Triggers><DataTrigger Binding="{Binding Key}" Value="STOBE"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
-                                        </Style>
-                                    </CheckBox.Style>
-                                </CheckBox>
-                                <CheckBox x:Name="DialecticUpdateCheckBox" Content="Updates"
-                                          IsChecked="{Binding DataContext.IncludeDialecticServerUpdate, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          IsEnabled="{Binding DataContext.IsUpdateIncludeReady, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          Command="{Binding DataContext.SaveUpdateIncludeCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                          AutomationProperties.Name="Include Dialectic in updates"
-                                          ToolTip="{Binding DataContext.UpdateIncludeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
-                                          AutomationProperties.HelpText="{Binding DataContext.UpdateIncludeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}">
-                                    <CheckBox.Style>
-                                        <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.CheckBox}">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                            <Style.Triggers><DataTrigger Binding="{Binding Key}" Value="DIALECTIC"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
-                                        </Style>
-                                    </CheckBox.Style>
-                                </CheckBox>
                             </Grid>
                         </Grid>
                     </DataTemplate>

@@ -91,7 +91,7 @@ try
 
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
-        "The Game Center rail must expose exactly three unique game profiles.");
+        "The launcher rail must expose exactly three unique game profiles.");
     Assert(gameCatalog.All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
                                    && game.RailImageSource.EndsWith("-rail.jpg", StringComparison.Ordinal)),
         "Every game profile must use local hero and rail artwork.");
@@ -100,6 +100,17 @@ try
         "herika=0\nstobe=\ndialectic=1\n");
     Assert(!keyedPreferences.Herika && keyedPreferences.Stobe && keyedPreferences.Dialectic,
         "An empty update preference must not shift the following game's value.");
+
+    Assert(MainWindowViewModel.ResolveServerBranchChoice("Main", "aiagent") == "aiagent"
+           && MainWindowViewModel.ResolveServerBranchChoice("Main", "stobe") == "stobe"
+           && MainWindowViewModel.ResolveServerBranchChoice("Main", "dialectic") == "dialectic",
+        "The Main branch choice must resolve to each server's production branch.");
+    Assert(MainWindowViewModel.ResolveServerBranchChoice("Dev", "aiagent") == "dev",
+        "The Dev branch choice must resolve to dev.");
+    Assert(MainWindowViewModel.MapServerBranchToChoice("stobe", "stobe") == "Main"
+           && MainWindowViewModel.MapServerBranchToChoice("dev", "stobe") == "Dev"
+           && MainWindowViewModel.MapServerBranchToChoice("unstable", "stobe") == "Dev",
+        "Existing production and development branches must map back to visible choices.");
 
     Console.WriteLine("Launcher regression tests: OK");
     return 0;
