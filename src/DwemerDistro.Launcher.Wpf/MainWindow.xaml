@@ -164,9 +164,9 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel x:Name="NavigationLandmark" Orientation="Horizontal" VerticalAlignment="Stretch">
-                    <RadioButton x:Name="LibraryNavButton" GroupName="Destination" Content="_LIBRARY" IsChecked="True"
+                    <RadioButton x:Name="LibraryNavButton" GroupName="Destination" Content="_MODS" IsChecked="True"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="0" Checked="DestinationNav_Checked" />
-                    <RadioButton x:Name="SetupNavButton" GroupName="Destination" Content="SET_UP"
+                    <RadioButton x:Name="SetupNavButton" GroupName="Destination" Content="_COMPONENTS"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="1" Checked="DestinationNav_Checked" />
                     <RadioButton x:Name="SettingsNavButton" GroupName="Destination" Content="_SETTINGS"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="2" Checked="DestinationNav_Checked" />
@@ -195,7 +195,7 @@
                 <Style TargetType="TabItem"><Setter Property="Visibility" Value="Collapsed" /></Style>
             </TabControl.Resources>
 
-            <TabItem Header="Library">
+            <TabItem Header="Mods">
                 <Grid x:Name="LibraryLandmark" Margin="18,16,18,12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2.15*" />
@@ -344,13 +344,13 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Setup">
+            <TabItem Header="Components">
                 <Grid x:Name="SetupLandmark" Margin="18,16,18,12" MinHeight="0" ClipToBounds="True">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="SETUP" Style="{StaticResource GameCenter.Heading}" />
+                            <TextBlock Text="COMPONENTS" Style="{StaticResource GameCenter.Heading}" />
                             <TextBlock Text="Install services and configure the distro for this PC. Component checks load only when this page opens."
                                        Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" />
                         </StackPanel>

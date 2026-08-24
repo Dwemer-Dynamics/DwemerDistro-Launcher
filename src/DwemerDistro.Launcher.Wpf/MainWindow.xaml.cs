@@ -234,10 +234,10 @@ public partial class MainWindow : Window
             case Key.NumPad3:
                 GameRail.SelectedIndex = 2;
                 return true;
-            case Key.L:
+            case Key.M:
                 LibraryNavButton.IsChecked = true;
                 return true;
-            case Key.U:
+            case Key.C:
                 SetupNavButton.IsChecked = true;
                 return true;
             case Key.S:
