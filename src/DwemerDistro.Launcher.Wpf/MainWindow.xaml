@@ -295,13 +295,8 @@
 
                     <Border Grid.Column="2" Style="{StaticResource GameCenter.Card}">
                         <Grid>
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="SERVER DETAILS" Style="{StaticResource GameCenter.SectionHeading}" />
-                                <TextBlock Text="Status, branch, and product actions for the selected game."
-                                           Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,14" />
-                            </StackPanel>
-                            <Grid Grid.Row="1">
+                            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid>
                                 <StackPanel x:Name="ChimDetails" Visibility="Collapsed">
                                     <TextBlock Text="CHIM / HerikaServer" FontWeight="SemiBold" FontSize="16" />
                                     <TextBlock Text="{Binding HerikaStatusText}" Foreground="{Binding HerikaStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
@@ -336,7 +331,7 @@
                                     <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
                             </Grid>
-                            <TextBlock Grid.Row="2" Text="{Binding UpdateIncludeStatusText}" Foreground="{Binding UpdateIncludeStatusColor}"
+                            <TextBlock Grid.Row="1" Text="{Binding UpdateIncludeStatusText}" Foreground="{Binding UpdateIncludeStatusColor}"
                                        TextWrapping="Wrap" Margin="0,12,0,0" />
                         </Grid>
                     </Border>
