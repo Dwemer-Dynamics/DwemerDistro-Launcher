@@ -1647,18 +1647,27 @@ echo "CHIM-MCP installed and enabled."
         AppendLog(result.Succeeded ? "Logs cleaned." + Environment.NewLine : "Failed to clean logs." + Environment.NewLine, result.Succeeded ? "green" : "red");
     }
 
-    private async Task GenerateDiagnosticsAsync()
+    private Task GenerateDiagnosticsAsync()
     {
-        var confirmed = MessageBox.Show(
-            "The diagnostic file will include recent launcher output, service logs, LLM request/response logs, and local game plugin logs when available.\n\nContinue?",
-            "Create Diagnostic File",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
+        return GenerateDiagnosticsAsync(requireConfirmation: true, openOutputFolder: true);
+    }
 
-        if (confirmed != MessageBoxResult.Yes)
+    // Creates the same support report for both the launcher UI and the headless CHIM command.
+    internal async Task<string?> GenerateDiagnosticsAsync(bool requireConfirmation, bool openOutputFolder)
+    {
+        if (requireConfirmation)
         {
-            AppendLog("Diagnostic file creation canceled." + Environment.NewLine);
-            return;
+            var confirmed = MessageBox.Show(
+                "The diagnostic file will include recent launcher output, service logs, LLM request/response logs, and local game plugin logs when available.\n\nContinue?",
+                "Create Diagnostic File",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirmed != MessageBoxResult.Yes)
+            {
+                AppendLog("Diagnostic file creation canceled." + Environment.NewLine);
+                return null;
+            }
         }
 
         AppendLog("Generating diagnostic summary..." + Environment.NewLine);
@@ -1709,10 +1718,15 @@ echo "CHIM-MCP installed and enabled."
 
         var outputDir = DiagnosticReportPaths.OutputDirectory;
         Directory.CreateDirectory(outputDir);
-        var outputPath = Path.Combine(outputDir, $"diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+        var outputPath = DiagnosticReportPaths.CreateTimestampedPath("diagnostics");
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
-        OpenFolder(outputDir);
+        if (openOutputFolder)
+        {
+            OpenFolder(outputDir);
+        }
+
+        return outputPath;
     }
 
     private async Task AddServerVersionDiagnosticsAsync(List<string> lines)
