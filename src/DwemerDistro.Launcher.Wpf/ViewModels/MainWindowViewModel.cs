@@ -25,6 +25,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static readonly TimeSpan StartupFirstRunProbeTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan StartupLauncherUpdateTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StartupVersionCheckTimeout = TimeSpan.FromSeconds(20);
+    private const string DashboardAutoOpenFlagPath = "/home/dwemer/.dashboard_autoopen";
+    private const string DashboardAutoOpenNeutralColor = "#C8C8C8";
+    private const string DashboardAutoOpenSuccessColor = "#8FD694";
+    private const string DashboardAutoOpenWarningColor = "#FFB641";
+    private const string DashboardAutoOpenErrorColor = "#FF8A80";
     private const string ChimMcpInstallScript = """
 set -e
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
@@ -96,6 +101,11 @@ echo "CHIM-MCP installed and enabled."
     private bool _includeHerikaServerUpdate = true;
     private bool _includeStobeServerUpdate = true;
     private bool _includeDialecticServerUpdate = true;
+    private bool _dashboardAutoOpenEnabled = true;
+    private bool _lastSavedDashboardAutoOpenEnabled = true;
+    private bool _isDashboardAutoOpenReady;
+    private string _dashboardAutoOpenStatusText = "Checking saved preference...";
+    private string _dashboardAutoOpenStatusColor = DashboardAutoOpenNeutralColor;
     private bool _canUpdateLauncher;
     private string _targetHerikaBranch = "aiagent";
     private string _targetStobeBranch = "stobe";
@@ -135,6 +145,7 @@ echo "CHIM-MCP installed and enabled."
         OpenDebuggingCommand = new RelayCommand(OpenDebuggingWindow);
         SaveMcpEnabledCommand = new AsyncRelayCommand(SaveMcpEnabledAsync);
         SaveUpdateIncludeCommand = new AsyncRelayCommand(SaveUpdateIncludeSettingsAsync);
+        SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
         OpenChimCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.ChimNexusUrl));
         OpenStobeCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.StobeNexusUrl));
         OpenDialecticCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DialecticServerUiUrl));
@@ -306,6 +317,24 @@ echo "CHIM-MCP installed and enabled."
         set => SetProperty(ref _includeDialecticServerUpdate, value);
     }
 
+    public bool DashboardAutoOpenEnabled
+    {
+        get => _dashboardAutoOpenEnabled;
+        set => SetProperty(ref _dashboardAutoOpenEnabled, value);
+    }
+
+    public string DashboardAutoOpenStatusText
+    {
+        get => _dashboardAutoOpenStatusText;
+        private set => SetProperty(ref _dashboardAutoOpenStatusText, value);
+    }
+
+    public string DashboardAutoOpenStatusColor
+    {
+        get => _dashboardAutoOpenStatusColor;
+        private set => SetProperty(ref _dashboardAutoOpenStatusColor, value);
+    }
+
     public bool CanUpdateLauncher
     {
         get => _canUpdateLauncher;
@@ -350,6 +379,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenDebuggingCommand { get; }
     public AsyncRelayCommand SaveMcpEnabledCommand { get; }
     public AsyncRelayCommand SaveUpdateIncludeCommand { get; }
+    public AsyncRelayCommand SaveDashboardAutoOpenCommand { get; }
     public RelayCommand OpenChimCommand { get; }
     public RelayCommand OpenStobeCommand { get; }
     public RelayCommand OpenDialecticCommand { get; }
@@ -386,6 +416,7 @@ echo "CHIM-MCP installed and enabled."
         StartProxyAndDiscovery();
         await RunStartupStepAsync("Load MCP setting", LoadMcpEnabledAsync, StartupSettingsTimeout).ConfigureAwait(true);
         await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
+        await RunStartupStepAsync("Load dashboard auto-open setting", LoadDashboardAutoOpenAsync, StartupSettingsTimeout).ConfigureAwait(true);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
@@ -424,7 +455,7 @@ echo "CHIM-MCP installed and enabled."
         catch (OperationCanceledException)
         {
             LauncherLogService.Startup($"First-time setup startup check timed out after {StartupFirstRunProbeTimeout.TotalSeconds:0} seconds.");
-            AppendLog("First-time setup check timed out. Open Debugging > First-Time Setup if this is a fresh install." + Environment.NewLine, "yellow");
+            AppendLog("First-time setup check timed out. Open Settings > First-Time Setup if this is a fresh install." + Environment.NewLine, "yellow");
             QueueLauncherUpdateCheck();
             return;
         }
@@ -1440,6 +1471,109 @@ echo "CHIM-MCP installed and enabled."
         {
             AppendLog($"Failed to save update include settings: {result.StandardError}{Environment.NewLine}", "red");
         }
+    }
+
+    private async Task LoadDashboardAutoOpenAsync(CancellationToken cancellationToken = default)
+    {
+        RunOnUi(() => SetDashboardAutoOpenStatus("Checking saved preference...", DashboardAutoOpenNeutralColor));
+
+        CommandResult result;
+        try
+        {
+            result = await _wsl.RunDistroAsUserAsync(
+                "root",
+                new[] { "bash", "-lc", $"mkdir -p /home/dwemer; if [ ! -f {DashboardAutoOpenFlagPath} ]; then echo 1 > {DashboardAutoOpenFlagPath}; fi; sed -n '1p' {DashboardAutoOpenFlagPath}" },
+                cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            ApplyDashboardAutoOpenLoadFallback();
+            throw;
+        }
+
+        if (!result.Succeeded)
+        {
+            ApplyDashboardAutoOpenLoadFallback();
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(result.StandardError)
+                    ? "The dashboard auto-open preference could not be read."
+                    : result.StandardError.Trim());
+        }
+
+        var enabled = result.StandardOutput.Trim() != "0";
+        RunOnUi(() =>
+        {
+            _lastSavedDashboardAutoOpenEnabled = enabled;
+            DashboardAutoOpenEnabled = enabled;
+            _isDashboardAutoOpenReady = true;
+            SetDashboardAutoOpenStatus(string.Empty, DashboardAutoOpenNeutralColor);
+            SaveDashboardAutoOpenCommand.RaiseCanExecuteChanged();
+        });
+    }
+
+    private void ApplyDashboardAutoOpenLoadFallback()
+    {
+        RunOnUi(() =>
+        {
+            _lastSavedDashboardAutoOpenEnabled = true;
+            DashboardAutoOpenEnabled = true;
+            _isDashboardAutoOpenReady = true;
+            SetDashboardAutoOpenStatus(
+                "Could not read the saved preference. Showing the default.",
+                DashboardAutoOpenWarningColor);
+            SaveDashboardAutoOpenCommand.RaiseCanExecuteChanged();
+        });
+    }
+
+    private async Task SaveDashboardAutoOpenAsync()
+    {
+        var desired = DashboardAutoOpenEnabled;
+        var value = desired ? "1" : "0";
+        RunOnUi(() => SetDashboardAutoOpenStatus("Saving...", DashboardAutoOpenNeutralColor));
+
+        CommandResult result;
+        try
+        {
+            result = await _wsl.RunDistroAsUserAsync(
+                "root",
+                new[] { "bash", "-lc", $"mkdir -p /home/dwemer && echo {value} > {DashboardAutoOpenFlagPath}" })
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            RestoreDashboardAutoOpenAfterSaveFailure(ex.Message);
+            return;
+        }
+
+        if (!result.Succeeded)
+        {
+            RestoreDashboardAutoOpenAfterSaveFailure(result.StandardError);
+            return;
+        }
+
+        RunOnUi(() =>
+        {
+            _lastSavedDashboardAutoOpenEnabled = desired;
+            SetDashboardAutoOpenStatus("Saved. Applies on the next server start.", DashboardAutoOpenSuccessColor);
+        });
+    }
+
+    private void RestoreDashboardAutoOpenAfterSaveFailure(string? details)
+    {
+        RunOnUi(() =>
+        {
+            DashboardAutoOpenEnabled = _lastSavedDashboardAutoOpenEnabled;
+            SetDashboardAutoOpenStatus("Could not save. Reverted to the last saved value.", DashboardAutoOpenErrorColor);
+        });
+        var reason = string.IsNullOrWhiteSpace(details) ? string.Empty : $": {details.Trim()}";
+        AppendLog($"Failed to save Dwemer Dashboard auto-open setting{reason}{Environment.NewLine}", "red");
+    }
+
+    private void SetDashboardAutoOpenStatus(string text, string color)
+    {
+        DashboardAutoOpenStatusText = text;
+        DashboardAutoOpenStatusColor = color;
     }
 
     private async Task FixWslDnsAsync()
