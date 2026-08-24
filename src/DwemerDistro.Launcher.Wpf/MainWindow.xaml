@@ -365,10 +365,8 @@
                             <TextBlock Text="Install services and configure the distro for this PC. Component checks load only when this page opens."
                                        Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" />
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <Button Content="Quick Setup" Command="{Binding OpenFirstRunSetupCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,8,0" />
-                            <Button Content="Configure CUDA" Command="{Binding OpenCudaConfigCommand}" Style="{StaticResource GameCenter.Button}" />
-                        </StackPanel>
+                        <Button Grid.Column="1" Content="Configure CUDA" Command="{Binding OpenCudaConfigCommand}"
+                                Style="{StaticResource GameCenter.Button}" HorizontalAlignment="Right" />
                     </Grid>
                     <Border Grid.Row="1" Style="{StaticResource GameCenter.Card}" Padding="0" ClipToBounds="True">
                         <views:InstallComponentsView x:Name="SetupComponentsView" MinHeight="0" />
