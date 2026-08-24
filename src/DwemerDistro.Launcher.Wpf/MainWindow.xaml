@@ -62,7 +62,7 @@
 
         <Border Grid.Row="0"
                 Grid.ColumnSpan="2"
-                Background="#0B0D10"
+                Background="#1A1A1A"
                 BorderBrush="{DynamicResource GameCenter.Border}"
                 BorderThickness="0,0,0,1"
                 MouseLeftButtonDown="Chrome_MouseLeftButtonDown"
@@ -105,7 +105,7 @@
         <Border Grid.Row="1"
                 Grid.RowSpan="4"
                 Grid.Column="0"
-                Background="#12151A"
+                Background="#242424"
                 BorderBrush="{DynamicResource GameCenter.Border}"
                 BorderThickness="0,0,1,0">
             <Grid Margin="10">
@@ -120,14 +120,40 @@
                     <TextBlock Text="GAME CENTER" Foreground="{DynamicResource GameCenter.Gold}" FontSize="12" FontWeight="Bold" Margin="5,0,0,12" />
                 </StackPanel>
                 <StackPanel x:Name="UtilityLandmark" Grid.Row="1" KeyboardNavigation.TabNavigation="Local">
-                    <Button Content="_Settings" Command="{Binding OpenDebuggingCommand}" Style="{StaticResource GameCenter.UtilityButton}"
-                            AutomationProperties.HelpText="Open launcher preferences in a separate window." />
-                    <Button Content="Server _Folder" Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" />
-                    <Button Content="Launcher _Update" Command="{Binding UpdateLauncherCommand}" Style="{StaticResource GameCenter.UtilityButton}" />
-                    <Button Content="_Wiki" Command="{Binding OpenWikiCommand}" Style="{StaticResource GameCenter.UtilityButton}" />
-                    <Button Content="_Discord" Command="{Binding OpenDiscordCommand}" Style="{StaticResource GameCenter.UtilityButton}" />
+                    <Button Style="{StaticResource GameCenter.UtilityButton}" Click="OpenSettingsDestination_Click"
+                            AutomationProperties.Name="Settings" AutomationProperties.HelpText="Open launcher settings.">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <AccessText Text="_Settings" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <AccessText Text="Server _Folder" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding OpenWikiCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Wiki">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <AccessText Text="_Wiki" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding OpenDiscordCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Discord">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8BD;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <AccessText Text="_Discord" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
                 <StackPanel Grid.Row="3" Margin="5,12,5,4">
+                    <Button Command="{Binding UpdateLauncherCommand}" Style="{StaticResource GameCenter.LauncherUpdateButton}"
+                            AutomationProperties.Name="{Binding LauncherUpdateButtonText}" Margin="0,0,0,10">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <TextBlock Text="{Binding LauncherUpdateButtonText}" />
+                        </StackPanel>
+                    </Button>
                     <TextBlock Text="{Binding LauncherVersionText}" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="10" />
                     <TextBlock Text="{Binding LauncherUpdateStatusText}" Foreground="{Binding LauncherUpdateStatusColor}"
                                FontSize="10" TextWrapping="Wrap" Margin="0,5,0,0" />
@@ -145,16 +171,16 @@
                 <StackPanel x:Name="NavigationLandmark" Orientation="Horizontal" VerticalAlignment="Stretch">
                     <RadioButton x:Name="LibraryNavButton" GroupName="Destination" Content="_LIBRARY" IsChecked="True"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="0" Checked="DestinationNav_Checked" />
-                    <RadioButton x:Name="SetupNavButton" GroupName="Destination" Content="_SETUP"
+                    <RadioButton x:Name="SetupNavButton" GroupName="Destination" Content="SET_UP"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="1" Checked="DestinationNav_Checked" />
-                    <RadioButton x:Name="MaintenanceNavButton" GroupName="Destination" Content="_MAINTENANCE"
+                    <RadioButton x:Name="SettingsNavButton" GroupName="Destination" Content="_SETTINGS"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="2" Checked="DestinationNav_Checked" />
                     <RadioButton x:Name="LogsNavButton" GroupName="Destination" Content="LO_GS"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="{Binding StartButtonText}" Command="{Binding StartServerCommand}"
-                            Style="{StaticResource GameCenter.PrimaryButton}" MinWidth="150" Margin="0,0,8,0"
+                            Style="{StaticResource GameCenter.SuccessButton}" MinWidth="150" Margin="0,0,8,0"
                             AutomationProperties.HelpText="Start the complete Dwemer Distro stack." />
                     <Button Content="Stop" Command="{Binding StopServerCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,8,0" />
                     <Button Content="Force Stop" Command="{Binding ForceStopServerCommand}" Style="{StaticResource GameCenter.DangerButton}" />
@@ -182,7 +208,7 @@
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <Grid Grid.Row="0" Background="#090A0D">
+                            <Grid Grid.Row="0" Background="#151515">
                                 <Image x:Name="HeroArt" Source="{Binding SelectedGame.HeroImageSource}" Stretch="Uniform"
                                        AutomationProperties.Name="{Binding SelectedGame.Name, StringFormat={}{0} artwork}" />
                                 <Border x:Name="HeroHighContrastFallback" Visibility="Collapsed"
@@ -202,7 +228,6 @@
                                     <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.Heading}" />
                                     <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource GameCenter.Gold}"
                                                FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
-                                    <TextBlock Text="{Binding SelectedGame.Description}" Style="{StaticResource GameCenter.Caption}" Margin="0,6,16,0" />
                                 </StackPanel>
                                 <Button Grid.Column="1" Content="{Binding DistroUpdateButtonText}" Command="{Binding UpdateAllCommand}"
                                         Style="{StaticResource GameCenter.PrimaryButton}" MinWidth="130" VerticalAlignment="Center"
@@ -274,12 +299,18 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Maintenance">
-                <ScrollViewer x:Name="MaintenanceLandmark" VerticalScrollBarVisibility="Auto" Padding="18,16,18,12">
+            <TabItem Header="Settings">
+                <ScrollViewer x:Name="SettingsLandmark" VerticalScrollBarVisibility="Auto" Padding="18,16,18,12">
                     <StackPanel>
-                        <TextBlock Text="MAINTENANCE" Style="{StaticResource GameCenter.Heading}" />
-                        <TextBlock Text="Diagnostics, backups, repairs, and distro recovery tools."
+                        <TextBlock Text="SETTINGS" Style="{StaticResource GameCenter.Heading}" />
+                        <TextBlock Text="Launcher preferences, setup, diagnostics, backups, recovery tools, and logs."
                                    Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,16" />
+                        <TextBlock Text="SETUP" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,10" />
+                        <WrapPanel>
+                            <Button Command="{Binding OpenFirstRunSetupCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Quick Setup" />
+                            <Button Command="{Binding OpenCudaConfigCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Configure CUDA" />
+                        </WrapPanel>
+                        <TextBlock Text="DIAGNOSTICS AND MAINTENANCE" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
                         <WrapPanel>
                             <Button Command="{Binding GenerateDiagnosticsCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Create Diagnostic File" />
                             <Button Command="{Binding DistroDoctorCommand}" Style="{StaticResource GameCenter.ActionCardButton}" Content="Run Distro Doctor" />
@@ -312,6 +343,17 @@
                                           VerticalAlignment="Center" />
                             </Grid>
                         </Border>
+                        <TextBlock Text="VIEW LOGS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,22,0,10" />
+                        <WrapPanel>
+                            <Button Command="{Binding ViewXttsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Dwemer Distro XTTS" />
+                            <Button Command="{Binding ViewChatterboxLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Chatterbox" />
+                            <Button Command="{Binding ViewPocketTtsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="PocketTTS" />
+                            <Button Command="{Binding ViewMeloTtsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="MeloTTS" />
+                            <Button Command="{Binding ViewPiperLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Piper" />
+                            <Button Command="{Binding ViewLocalWhisperLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="LocalWhisper" />
+                            <Button Command="{Binding ViewParakeetLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Parakeet" />
+                            <Button Command="{Binding ViewApacheLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Apache" />
+                        </WrapPanel>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -337,7 +379,7 @@
         </TabControl>
 
         <Border x:Name="ConsoleScrim" Grid.Row="2" Grid.Column="1" Background="#99000000" Visibility="Collapsed" Panel.ZIndex="9" />
-        <Border x:Name="ConsoleDockHost" Grid.Row="3" Grid.Column="1" Background="#0B0D10"
+        <Border x:Name="ConsoleDockHost" Grid.Row="3" Grid.Column="1" Background="#1A1A1A"
                 BorderBrush="{DynamicResource GameCenter.BorderStrong}" BorderThickness="0,1,0,0" Panel.ZIndex="10">
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="38" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -346,13 +388,13 @@
                         AutomationProperties.Name="Expand output console" Click="ToggleConsoleButton_Click" />
                 <RichTextBox x:Name="OutputRichTextBox" Grid.Row="1" Margin="14,0,14,12" Padding="10" IsReadOnly="True"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                             Background="#090A0C" Foreground="White" BorderBrush="{DynamicResource GameCenter.Border}"
+                             Background="#090909" Foreground="White" BorderBrush="{DynamicResource GameCenter.Border}"
                              BorderThickness="1" FontFamily="Consolas" FontSize="11"
                              AutomationProperties.Name="Dwemer Distro output console" />
             </Grid>
         </Border>
 
-        <Border Grid.Row="4" Grid.Column="1" Background="#0D0F13" BorderBrush="{DynamicResource GameCenter.Border}"
+        <Border Grid.Row="4" Grid.Column="1" Background="#1A1A1A" BorderBrush="{DynamicResource GameCenter.Border}"
                 BorderThickness="0,1,0,0" Padding="18,12">
             <ListBox x:Name="GameRail" ItemsSource="{Binding GameProfiles}" SelectedItem="{Binding SelectedGame}"
                      ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0"
@@ -366,7 +408,7 @@
                     <DataTemplate>
                         <Grid Height="118">
                             <Grid.RowDefinitions><RowDefinition Height="76" /><RowDefinition Height="42" /></Grid.RowDefinitions>
-                            <Grid ClipToBounds="True" Background="#090A0D">
+                            <Grid ClipToBounds="True" Background="#151515">
                                 <Image Source="{Binding RailImageSource}" Stretch="UniformToFill">
                                     <Image.Style>
                                         <Style TargetType="Image">

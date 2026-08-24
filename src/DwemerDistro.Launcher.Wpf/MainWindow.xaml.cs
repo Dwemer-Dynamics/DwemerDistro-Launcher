@@ -100,6 +100,11 @@ public partial class MainWindow : Window
         _ = Dispatcher.BeginInvoke(UpdateSetupViewport);
     }
 
+    private void OpenSettingsDestination_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsNavButton.IsChecked = true;
+    }
+
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSelectedGameDetails();
@@ -254,11 +259,11 @@ public partial class MainWindow : Window
             case Key.L:
                 LibraryNavButton.IsChecked = true;
                 return true;
-            case Key.S:
+            case Key.U:
                 SetupNavButton.IsChecked = true;
                 return true;
-            case Key.M:
-                MaintenanceNavButton.IsChecked = true;
+            case Key.S:
+                SettingsNavButton.IsChecked = true;
                 return true;
             case Key.G:
                 LogsNavButton.IsChecked = true;
@@ -276,7 +281,7 @@ public partial class MainWindow : Window
         FrameworkElement activePage = MainTabs.SelectedIndex switch
         {
             1 => (FrameworkElement)SetupLandmark,
-            2 => MaintenanceLandmark,
+            2 => SettingsLandmark,
             3 => LogsLandmark,
             _ => LibraryLandmark
         };
