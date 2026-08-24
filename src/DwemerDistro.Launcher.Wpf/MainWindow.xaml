@@ -243,7 +243,7 @@
                             <Grid Grid.Row="1" Margin="18,14">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <StackPanel>
-                                    <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.Heading}" />
+                                    <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.ModTitle}" />
                                     <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource GameCenter.Gold}"
                                                FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
                                 </StackPanel>
@@ -317,7 +317,7 @@
                             <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Grid>
                                 <StackPanel x:Name="ChimDetails" Visibility="Collapsed">
-                                    <TextBlock Text="CHIM / HerikaServer" FontWeight="SemiBold" FontSize="16" />
+                                    <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="CHIM" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / HerikaServer" /></TextBlock>
                                     <TextBlock Text="{Binding HerikaStatusText}" Foreground="{Binding HerikaStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
                                     <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                     <ComboBox ItemsSource="{Binding HerikaBranches}" SelectedItem="{Binding TargetHerikaBranch}"
@@ -328,7 +328,7 @@
                                     <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
                                 <StackPanel x:Name="StobeDetails" Visibility="Collapsed">
-                                    <TextBlock Text="STOBE / StobeServer" FontWeight="SemiBold" FontSize="16" />
+                                    <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="STOBE" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / StobeServer" /></TextBlock>
                                     <TextBlock Text="{Binding StobeStatusText}" Foreground="{Binding StobeStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
                                     <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                     <ComboBox ItemsSource="{Binding StobeBranches}" SelectedItem="{Binding TargetStobeBranch}"
@@ -339,7 +339,7 @@
                                     <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
                                 <StackPanel x:Name="DialecticDetails" Visibility="Collapsed">
-                                    <TextBlock Text="Dialectic / DialecticServer" FontWeight="SemiBold" FontSize="16" />
+                                    <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="Dialectic" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / DialecticServer" /></TextBlock>
                                     <TextBlock Text="{Binding DialecticStatusText}" Foreground="{Binding DialecticStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
                                     <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                     <ComboBox ItemsSource="{Binding DialecticBranches}" SelectedItem="{Binding TargetDialecticBranch}"
@@ -621,9 +621,9 @@
                 BorderBrush="{DynamicResource GameCenter.BorderStrong}" BorderThickness="0,1,0,0" Panel.ZIndex="10">
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="38" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                <Button x:Name="ToggleConsoleButton" Content="Expand Output"
+                <Button x:Name="ToggleConsoleButton" Content="Show Console"
                         Style="{StaticResource GameCenter.UtilityButton}" HorizontalContentAlignment="Left" Padding="18,8"
-                        AutomationProperties.Name="Expand Output" Click="ToggleConsoleButton_Click" />
+                        AutomationProperties.Name="Show Console" Click="ToggleConsoleButton_Click" />
                 <RichTextBox x:Name="OutputRichTextBox" Grid.Row="1" Margin="14,0,14,12" Padding="10" IsReadOnly="True"
                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                              Background="#090909" Foreground="White" BorderBrush="{DynamicResource GameCenter.Border}"
@@ -660,7 +660,7 @@
                                 </Image>
                                 <Border Background="#50000000" />
                                 <StackPanel Margin="12,10" VerticalAlignment="Bottom">
-                                    <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="Bold" />
+                                    <TextBlock Text="{Binding Name}" Style="{StaticResource GameCenter.ModCardTitle}" />
                                     <!-- Live branch | date version | semantic version for this product.
                                          The rail item's DataContext is the GameProfile, so each card reaches
                                          the matching MainWindowViewModel status through the window. -->

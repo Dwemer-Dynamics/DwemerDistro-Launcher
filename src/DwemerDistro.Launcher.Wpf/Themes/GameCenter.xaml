@@ -38,6 +38,94 @@
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
+    <!-- Brand title faces, packaged as Resource fonts in this assembly (see
+         Assets/Fonts/FONT-LICENSES.md). Each matches the title font the product's
+         own web UI declares, so nothing here relies on an installed system font. -->
+    <FontFamily x:Key="GameCenter.Font.Chim">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Magic Cards</FontFamily>
+    <FontFamily x:Key="GameCenter.Font.Stobe">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Mailart Rubberstamp</FontFamily>
+    <FontFamily x:Key="GameCenter.Font.Dialectic">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Monofonto</FontFamily>
+
+    <!-- Mod title beneath the hero art. DataContext is the view model, so the face
+         follows the current selection. The brand faces ship Regular only, so each
+         trigger drops the synthetic bold that would muddy them. The trailing
+         high-contrast trigger wins over the brand triggers (last match applies),
+         restoring the plain UI font when legibility matters more than branding. -->
+    <Style x:Key="GameCenter.ModTitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="FontSize" Value="22" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="CHIM">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="FontFamily" Value="Segoe UI" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Same treatment on the bottom game cards, where the DataContext is the
+         GameProfile itself rather than the view model. -->
+    <Style x:Key="GameCenter.ModCardTitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Key}" Value="CHIM">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Key}" Value="STOBE">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Key}" Value="DIALECTIC">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="FontFamily" Value="Segoe UI" />
+                <Setter Property="FontWeight" Value="Bold" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Mod-name run inside a "Name / ServerName" details heading. Only the name
+         is branded; the suffix stays in the surrounding UI font so the server it
+         maps to keeps reading as plain text. Exactly one details panel is visible
+         at a time and it always matches the selection, so keying off SelectedGame
+         keeps this to a single style. -->
+    <Style x:Key="GameCenter.ModNameRun" TargetType="Run">
+        <Setter Property="FontSize" Value="18" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="CHIM">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="FontFamily" Value="Segoe UI" />
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
     <Style x:Key="GameCenter.SectionHeading" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Setter Property="FontSize" Value="14" />

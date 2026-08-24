@@ -245,7 +245,7 @@ public partial class MainWindow : Window
         }
 
         var compact = ActualWidth > 0 && ActualWidth < 1120;
-        var toggleLabel = _isConsoleExpanded ? "Hide Output" : "Expand Output";
+        var toggleLabel = _isConsoleExpanded ? "Hide Console" : "Show Console";
         AutomationProperties.SetName(ToggleConsoleButton, toggleLabel);
         ToggleConsoleButton.Content = toggleLabel;
 
