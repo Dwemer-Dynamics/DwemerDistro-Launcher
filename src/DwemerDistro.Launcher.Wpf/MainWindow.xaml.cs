@@ -97,7 +97,6 @@ public partial class MainWindow : Window
         }
 
         MainTabs.SelectedIndex = index;
-        _ = Dispatcher.BeginInvoke(UpdateSetupViewport);
     }
 
     private void OpenSettingsDestination_Click(object sender, RoutedEventArgs e)
@@ -166,7 +165,6 @@ public partial class MainWindow : Window
         }
 
         var compact = ActualWidth > 0 && ActualWidth < 1120;
-        UpdateSetupViewport();
         var toggleLabel = _isConsoleExpanded ? "Hide Output" : "Expand Output";
         AutomationProperties.SetName(ToggleConsoleButton, toggleLabel);
         ToggleConsoleButton.Content = toggleLabel;
@@ -199,16 +197,6 @@ public partial class MainWindow : Window
         ConsoleDockHost.Height = double.NaN;
         ConsoleDockHost.VerticalAlignment = VerticalAlignment.Stretch;
         ConsoleScrim.Visibility = Visibility.Collapsed;
-    }
-
-    private void UpdateSetupViewport()
-    {
-        if (SetupComponentsView is null || MainTabs is null || MainTabs.ActualHeight <= 0)
-        {
-            return;
-        }
-
-        SetupComponentsView.Height = Math.Max(240, MainTabs.ActualHeight - 86);
     }
 
     private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)

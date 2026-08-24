@@ -97,9 +97,11 @@
         </Style>
     </UserControl.Resources>
 
-    <DockPanel Margin="14">
-        <Border DockPanel.Dock="Top"
-                Margin="0,0,0,12"
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled"
+                  Padding="14">
+        <StackPanel>
+        <Border Margin="0,0,0,12"
                 Padding="14"
                 Background="#1E1E1E"
                 BorderBrush="#565656"
@@ -314,73 +316,70 @@
                         </Grid>
                     </Border>
 
-                    <ScrollViewer MaxHeight="220"
-                                  VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding ConfigurableComponents}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border BorderBrush="#444444"
-                                            BorderThickness="1,0,1,1"
-                                            Padding="10,7">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="230" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="105" />
-                                            </Grid.ColumnDefinitions>
+                    <ItemsControl ItemsSource="{Binding ConfigurableComponents}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border BorderBrush="#444444"
+                                        BorderThickness="1,0,1,1"
+                                        Padding="10,7">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="230" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="105" />
+                                        </Grid.ColumnDefinitions>
 
-                                            <StackPanel Grid.Column="0"
-                                                        Orientation="Horizontal"
-                                                        VerticalAlignment="Center"
-                                                        Margin="0,0,12,0">
-                                                <Viewbox Width="16"
-                                                         Height="16"
-                                                         Margin="0,0,8,0">
-                                                    <Canvas Width="16"
-                                                            Height="16">
-                                                        <Ellipse Width="14"
-                                                                 Height="14"
-                                                                 Canvas.Left="1"
-                                                                 Canvas.Top="1"
-                                                                 Stroke="#61C46A"
-                                                                 StrokeThickness="1.4" />
-                                                        <Path Data="M 3.5 8 L 6.5 11 L 12.5 5"
-                                                              Stroke="#61C46A"
-                                                              StrokeThickness="1.8"
-                                                              StrokeStartLineCap="Round"
-                                                              StrokeEndLineCap="Round"
-                                                              StrokeLineJoin="Round" />
-                                                    </Canvas>
-                                                </Viewbox>
-                                                <TextBlock Text="{Binding Title}"
-                                                           Foreground="White"
-                                                           FontFamily="Trebuchet MS"
-                                                           FontSize="12"
-                                                           FontWeight="Bold"
-                                                           TextWrapping="Wrap" />
-                                            </StackPanel>
-
-                                            <TextBlock Grid.Column="1"
-                                                       Text="{Binding ConfigurationText}"
-                                                       Foreground="#D6D6D6"
+                                        <StackPanel Grid.Column="0"
+                                                    Orientation="Horizontal"
+                                                    VerticalAlignment="Center"
+                                                    Margin="0,0,12,0">
+                                            <Viewbox Width="16"
+                                                     Height="16"
+                                                     Margin="0,0,8,0">
+                                                <Canvas Width="16"
+                                                        Height="16">
+                                                    <Ellipse Width="14"
+                                                             Height="14"
+                                                             Canvas.Left="1"
+                                                             Canvas.Top="1"
+                                                             Stroke="#61C46A"
+                                                             StrokeThickness="1.4" />
+                                                    <Path Data="M 3.5 8 L 6.5 11 L 12.5 5"
+                                                          Stroke="#61C46A"
+                                                          StrokeThickness="1.8"
+                                                          StrokeStartLineCap="Round"
+                                                          StrokeEndLineCap="Round"
+                                                          StrokeLineJoin="Round" />
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="{Binding Title}"
+                                                       Foreground="White"
                                                        FontFamily="Trebuchet MS"
                                                        FontSize="12"
-                                                       TextWrapping="Wrap"
-                                                       VerticalAlignment="Center"
-                                                       Margin="0,0,12,0" />
+                                                       FontWeight="Bold"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
 
-                                            <Button Grid.Column="2"
-                                                    Content="{Binding ConfigureButtonText}"
-                                                    Command="{Binding ConfigureCommand}"
-                                                    Style="{StaticResource CompactActionButton}"
-                                                    HorizontalAlignment="Stretch"
-                                                    VerticalAlignment="Center" />
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding ConfigurationText}"
+                                                   Foreground="#D6D6D6"
+                                                   FontFamily="Trebuchet MS"
+                                                   FontSize="12"
+                                                   TextWrapping="Wrap"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,12,0" />
+
+                                        <Button Grid.Column="2"
+                                                Content="{Binding ConfigureButtonText}"
+                                                Command="{Binding ConfigureCommand}"
+                                                Style="{StaticResource CompactActionButton}"
+                                                HorizontalAlignment="Stretch"
+                                                VerticalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
 
                     <TextBlock Text="{Binding ConfigurableComponentsStatusText}"
                                Foreground="#BDBDBD"
@@ -395,105 +394,104 @@
             </StackPanel>
         </Border>
 
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding Sections}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <StackPanel>
-                            <TextBlock Text="{Binding Title}"
-                                       Style="{StaticResource SectionHeader}" />
+        <ItemsControl ItemsSource="{Binding Sections}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel>
+                        <TextBlock Text="{Binding Title}"
+                                   Style="{StaticResource SectionHeader}" />
 
-                            <ItemsControl ItemsSource="{Binding Items}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Margin="0,0,0,12"
-                                                Padding="14"
-                                                Background="#262626"
-                                                BorderBrush="#565656"
-                                                BorderThickness="1"
-                                                CornerRadius="6">
-                                            <Grid>
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                </Grid.RowDefinitions>
+                        <ItemsControl ItemsSource="{Binding Items}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,12"
+                                            Padding="14"
+                                            Background="#262626"
+                                            BorderBrush="#565656"
+                                            BorderThickness="1"
+                                            CornerRadius="6">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
 
-                                                <Grid Grid.Row="0">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
+                                            <Grid Grid.Row="0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
 
-                                                    <StackPanel Grid.Column="0"
-                                                                Margin="0,0,16,0">
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Text="{Binding Title}"
-                                                                       Foreground="White"
-                                                                       FontFamily="Trebuchet MS"
-                                                                       FontSize="15"
-                                                                       FontWeight="Bold"
-                                                                       VerticalAlignment="Center" />
-                                                            <Image Source="/Assets/nvidia.png"
-                                                                   Width="14"
-                                                                   Height="14"
-                                                                   Stretch="Uniform"
-                                                                   Margin="8,0,0,0"
-                                                                   VerticalAlignment="Center"
-                                                                   Visibility="{Binding SupportsNvidiaCuda, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                                            <Image Source="/Assets/amd.png"
-                                                                   Width="14"
-                                                                   Height="14"
-                                                                   Stretch="Uniform"
-                                                                   Margin="6,0,0,0"
-                                                                   VerticalAlignment="Center"
-                                                                   Visibility="{Binding SupportsAmdCpu, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                                        </StackPanel>
-                                                        <TextBlock Text="{Binding Description}"
-                                                                   Foreground="#DDDDDD"
+                                                <StackPanel Grid.Column="0"
+                                                            Margin="0,0,16,0">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Title}"
+                                                                   Foreground="White"
                                                                    FontFamily="Trebuchet MS"
-                                                                   TextWrapping="Wrap"
-                                                                   Margin="0,6,0,0" />
+                                                                   FontSize="15"
+                                                                   FontWeight="Bold"
+                                                                   VerticalAlignment="Center" />
+                                                        <Image Source="/Assets/nvidia.png"
+                                                               Width="14"
+                                                               Height="14"
+                                                               Stretch="Uniform"
+                                                               Margin="8,0,0,0"
+                                                               VerticalAlignment="Center"
+                                                               Visibility="{Binding SupportsNvidiaCuda, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                        <Image Source="/Assets/amd.png"
+                                                               Width="14"
+                                                               Height="14"
+                                                               Stretch="Uniform"
+                                                               Margin="6,0,0,0"
+                                                               VerticalAlignment="Center"
+                                                               Visibility="{Binding SupportsAmdCpu, Converter={StaticResource BoolToVisibilityConverter}}" />
                                                     </StackPanel>
-
-                                                    <Border Grid.Column="1"
-                                                            Background="{Binding StatusBackground}"
-                                                            CornerRadius="12"
-                                                            Padding="10,4"
-                                                            VerticalAlignment="Top">
-                                                        <TextBlock Text="{Binding StatusText}"
-                                                                   Foreground="{Binding StatusForeground}"
-                                                                   FontFamily="Trebuchet MS"
-                                                                   FontSize="11"
-                                                                   FontWeight="Bold" />
-                                                    </Border>
-                                                </Grid>
-
-                                                <StackPanel Grid.Row="1"
-                                                            Margin="0,14,0,0">
-                                                    <Button Content="{Binding PrimaryButtonText}"
-                                                            Command="{Binding PrimaryCommand}"
-                                                            Style="{StaticResource InstallActionButton}"
-                                                            HorizontalAlignment="Left" />
-                                                    <Button Content="{Binding SecondaryActionText}"
-                                                            Command="{Binding SecondaryActionCommand}"
-                                                            Style="{StaticResource SecondaryActionButton}"
-                                                            HorizontalAlignment="Left"
-                                                            Visibility="{Binding HasSecondaryAction, Converter={StaticResource BoolToVisibilityConverter}}" />
-                                                    <Button Content="{Binding TertiaryActionText}"
-                                                            Command="{Binding TertiaryActionCommand}"
-                                                            Style="{StaticResource SecondaryActionButton}"
-                                                            HorizontalAlignment="Left"
-                                                            Visibility="{Binding HasTertiaryAction, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                    <TextBlock Text="{Binding Description}"
+                                                               Foreground="#DDDDDD"
+                                                               FontFamily="Trebuchet MS"
+                                                               TextWrapping="Wrap"
+                                                               Margin="0,6,0,0" />
                                                 </StackPanel>
+
+                                                <Border Grid.Column="1"
+                                                        Background="{Binding StatusBackground}"
+                                                        CornerRadius="12"
+                                                        Padding="10,4"
+                                                        VerticalAlignment="Top">
+                                                    <TextBlock Text="{Binding StatusText}"
+                                                               Foreground="{Binding StatusForeground}"
+                                                               FontFamily="Trebuchet MS"
+                                                               FontSize="11"
+                                                               FontWeight="Bold" />
+                                                </Border>
                                             </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
-    </DockPanel>
+
+                                            <StackPanel Grid.Row="1"
+                                                        Margin="0,14,0,0">
+                                                <Button Content="{Binding PrimaryButtonText}"
+                                                        Command="{Binding PrimaryCommand}"
+                                                        Style="{StaticResource InstallActionButton}"
+                                                        HorizontalAlignment="Left" />
+                                                <Button Content="{Binding SecondaryActionText}"
+                                                        Command="{Binding SecondaryActionCommand}"
+                                                        Style="{StaticResource SecondaryActionButton}"
+                                                        HorizontalAlignment="Left"
+                                                        Visibility="{Binding HasSecondaryAction, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                <Button Content="{Binding TertiaryActionText}"
+                                                        Command="{Binding TertiaryActionCommand}"
+                                                        Style="{StaticResource SecondaryActionButton}"
+                                                        HorizontalAlignment="Left"
+                                                        Visibility="{Binding HasTertiaryAction, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>

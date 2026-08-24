@@ -356,8 +356,7 @@
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <Button Content="Quick Setup" Command="{Binding OpenFirstRunSetupCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,8,0" />
-                            <Button Content="Configure CUDA" Command="{Binding OpenCudaConfigCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,8,0" />
-                            <Button Content="Open Components Window" Command="{Binding InstallComponentsCommand}" Style="{StaticResource GameCenter.Button}" />
+                            <Button Content="Configure CUDA" Command="{Binding OpenCudaConfigCommand}" Style="{StaticResource GameCenter.Button}" />
                         </StackPanel>
                     </Grid>
                     <Border Grid.Row="1" Style="{StaticResource GameCenter.Card}" Padding="0" ClipToBounds="True">
