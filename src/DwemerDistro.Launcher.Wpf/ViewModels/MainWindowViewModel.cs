@@ -99,7 +99,7 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
     private string _launcherUpdateButtonText = "Check Update";
-    private string _distroUpdateButtonText = "Update All";
+    private string _distroUpdateButtonText = "Update Mods";
     private bool _isDistroUpdateInProgress;
     private bool _mcpEnabled = true;
     private bool _includeHerikaServerUpdate = true;
@@ -1059,7 +1059,7 @@ echo "CHIM-MCP installed and enabled."
             RunOnUi(() =>
             {
                 IsDistroUpdateInProgress = false;
-                DistroUpdateButtonText = "Update All";
+                DistroUpdateButtonText = "Update Mods";
             });
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
