@@ -302,7 +302,7 @@
                                             </CheckBox.Style>
                                         </CheckBox>
                                     </Grid>
-                                    <TextBlock Text="Include this product when Update runs."
+                                    <TextBlock Text="Include this mod when Update runs."
                                                Style="{StaticResource GameCenter.Caption}" FontSize="11"
                                                MaxWidth="200" TextAlignment="Right" Margin="0,4,0,0" />
                                 </StackPanel>
