@@ -1,7 +1,7 @@
 <Window x:Class="DwemerDistro.Launcher.Wpf.Views.DebuggingWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Debugging"
+        Title="Settings"
         Icon="/Assets/DwemerDistro.ico"
         Width="880"
         Height="920"
@@ -89,6 +89,64 @@
             <Setter Property="TextWrapping" Value="Wrap" />
             <Setter Property="Margin" Value="0,6,0,0" />
         </Style>
+
+        <Style x:Key="SettingCheckBox" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#E6E6E6" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Background="Transparent">
+                            <Border x:Name="CheckBoxBorder"
+                                    Width="17"
+                                    Height="17"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Background="#1D1D1D"
+                                    BorderBrush="#747474"
+                                    BorderThickness="1"
+                                    CornerRadius="3">
+                                <Path x:Name="CheckMark"
+                                      Width="10"
+                                      Height="8"
+                                      Data="M 1,4 L 4,7 L 9,1"
+                                      Stretch="Fill"
+                                      Stroke="White"
+                                      StrokeThickness="2"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      Visibility="Collapsed" />
+                            </Border>
+                            <ContentPresenter Margin="24,0,0,0"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckBoxBorder" Property="Background" Value="#2E7D39" />
+                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#62B26C" />
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#AFAFAF" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="White" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <DockPanel Margin="14">
@@ -100,12 +158,12 @@
                 BorderThickness="1"
                 CornerRadius="6">
             <StackPanel>
-                <TextBlock Text="Debugging Tools"
+                <TextBlock Text="Settings"
                            Foreground="White"
                            FontFamily="Trebuchet MS"
                            FontSize="18"
                            FontWeight="Bold" />
-                <TextBlock Text="Inspect logs, troubleshoot services, manage backups, and run maintenance tasks for the distro."
+                <TextBlock Text="Adjust launcher preferences, inspect logs, troubleshoot services, manage backups, and run maintenance tasks for the distro."
                            Foreground="#DDDDDD"
                            FontFamily="Trebuchet MS"
                            TextWrapping="Wrap"
@@ -144,6 +202,39 @@
                                 Style="{StaticResource PrimaryActionButton}"
                                 VerticalAlignment="Center" />
                     </Grid>
+                </Border>
+
+                <TextBlock Text="Startup Options"
+                           Style="{StaticResource SectionHeader}" />
+
+                <Border Margin="0,0,0,12"
+                        Padding="14"
+                        Background="#262626"
+                        BorderBrush="#565656"
+                        BorderThickness="1"
+                        CornerRadius="6">
+                    <StackPanel>
+                        <TextBlock Text="Dwemer Dashboard WebUI"
+                                   Style="{StaticResource ActionCardTitle}" />
+                        <TextBlock Text="Open the Dwemer Dashboard when the server starts. Turn this off for headless or remote setups. Applies on the next server start."
+                                   Style="{StaticResource ActionCardDescription}" />
+
+                        <CheckBox Content="Open on server start"
+                                  Style="{StaticResource SettingCheckBox}"
+                                  Margin="0,12,0,0"
+                                  IsChecked="{Binding DashboardAutoOpenEnabled}"
+                                  Command="{Binding SaveDashboardAutoOpenCommand}"
+                                  AutomationProperties.HelpText="When checked, starting the DwemerDistro server opens the Dwemer Dashboard WebUI in your default browser on this PC. Leave it unchecked for headless or remote use. The change applies on the next server start." />
+
+                        <TextBlock Text="{Binding DashboardAutoOpenStatusText, NotifyOnTargetUpdated=True}"
+                                   TargetUpdated="OnDashboardAutoOpenStatusUpdated"
+                                   Foreground="{Binding DashboardAutoOpenStatusColor}"
+                                   AutomationProperties.LiveSetting="Polite"
+                                   FontFamily="Trebuchet MS"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Margin="24,6,0,0" />
+                    </StackPanel>
                 </Border>
 
                 <TextBlock Text="Distro Maintenance"

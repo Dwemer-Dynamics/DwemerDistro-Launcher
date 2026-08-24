@@ -35,7 +35,7 @@ public partial class FirstRunSetupWindow : Window
         {
             LauncherLogService.Startup("First-time setup initialization timed out.");
             MessageBox.Show(
-                "First-time setup checks timed out. The launcher is still usable; retry setup after WSL finishes starting or run Distro Doctor from Debugging.",
+                "First-time setup checks timed out. The launcher is still usable; retry setup after WSL finishes starting or run Distro Doctor from Settings.",
                 "First-Time Setup",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
