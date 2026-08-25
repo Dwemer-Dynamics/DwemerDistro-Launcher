@@ -4,6 +4,8 @@ Source: `../DwemerDistro-Launcher/chim_launcher.py`
 
 Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 
+This is a historical map from the retired Python interface to the released WPF launcher. In WPF launcher 3.3.0, the main workflow is organized under the top-level **MODS**, **COMPONENTS**, **SETTINGS**, and **LOGS** pages.
+
 ## App Services
 
 | Python area | WPF/C# target |
@@ -18,15 +20,15 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 
 | Python UI group | WPF view model area |
 | --- | --- |
-| Server Controls | `ServerControlsViewModel` |
-| Updater | `UpdateViewModel` |
-| Server Configuration | `ConfigurationViewModel` |
-| External Links | simple commands in main view model |
-| Install Components menu | `ComponentsViewModel` |
-| Debugging menu | `DiagnosticsViewModel` |
-| Rollback menu | `RollbackViewModel` |
-| CUDA config menu | `GpuConfigViewModel` |
-| Update settings menu | `UpdateSettingsViewModel` |
+| Server Controls | persistent top action bar in `MainWindowViewModel` |
+| Updater | **MODS** page and `MainWindowViewModel` |
+| Server Configuration | **SETTINGS** and **COMPONENTS** pages |
+| External Links | left sidebar commands in `MainWindowViewModel` |
+| Install Components menu | top-level **COMPONENTS** page |
+| Debugging menu | **SETTINGS** tools and top-level **LOGS** page |
+| Rollback menu | product rollback actions on the **MODS** page |
+| CUDA config menu | **Configure CUDA** on the **COMPONENTS** page |
+| Update settings menu | branch selectors and per-mod **Updates** checkboxes on the **MODS** page |
 
 ## Server Lifecycle
 
@@ -89,7 +91,7 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 
 | Behavior | Current storage/command |
 | --- | --- |
-| Configure installed components | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/conf_services` |
+| Configure a component from the **COMPONENTS** page | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/conf_services` |
 | Open server folder | `\\wsl.localhost\DwemerAI4Skyrim3\var\www\html` |
 | Open Piper voices folder | `\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices` |
 | MCP flag | `/home/dwemer/.mcp_enabled` |
@@ -114,6 +116,6 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 | Apache error log | `/var/log/apache2/error.log` |
 | Clean logs | rotate selected files under `\\wsl.localhost\DwemerAI4Skyrim3\var\log` and HerikaServer logs |
 
-## Launcher Auto-Update Gap
+## Launcher Auto-Update
 
-The Python launcher has a launcher version constant but no full self-update flow for replacing `DwemerDistro.exe`. The WPF rewrite should add this as a first-class launcher-only update channel using a helper updater executable.
+The Python launcher had only a version constant. The released WPF launcher now checks GitHub Releases, downloads the launcher package, starts the helper updater, replaces the launcher files, and restarts into the new version. The launcher-only update control remains in the bottom-left corner and reads **Up To Date** when no release is waiting.
