@@ -20,9 +20,7 @@ public static class LauncherConstants
 
     public const string WikiUrl = "https://dwemerdynamics.com/index.html";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";
-    public const string ChimNexusFilesUrl = "https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files";
-    public const string StobeNexusFilesUrl = "https://www.nexusmods.com/kenshi/mods/1891?tab=files";
-    public const string ChimNexusUrl = "https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=description";
-    public const string StobeNexusUrl = "https://www.nexusmods.com/kenshi/mods/1891?tab=description";
+    public const string ChimServerUiUrl = "http://127.0.0.1:8081/HerikaServer/ui/";
+    public const string StobeServerUiUrl = "http://127.0.0.1:8083/StobeServer/ui/";
     public const string DialecticServerUiUrl = "http://127.0.0.1:8088/DialecticServer/ui/";
 }

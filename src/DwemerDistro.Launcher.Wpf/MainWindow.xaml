@@ -132,13 +132,6 @@
                     <Image Source="Assets/dd_title.png" Height="62" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,4,4,16" />
                 </StackPanel>
                 <StackPanel x:Name="UtilityLandmark" Grid.Row="1" KeyboardNavigation.TabNavigation="Local">
-                    <Button Style="{StaticResource GameCenter.UtilityButton}" Click="OpenSettingsDestination_Click"
-                            AutomationProperties.Name="Settings" AutomationProperties.HelpText="Open launcher settings.">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                            <AccessText Text="_Settings" />
-                        </StackPanel>
-                    </Button>
                     <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="22" />
@@ -324,7 +317,9 @@
                                               Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
                                               AutomationProperties.Name="HerikaServer update branch"
                                               AutomationProperties.HelpText="Branch used the next time this product updates." />
-                                    <Button Content="Open CHIM" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8" />
+                                    <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8"
+                                            AutomationProperties.Name="CHIM Webpage"
+                                            AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
                                     <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
                                 <StackPanel x:Name="StobeDetails" Visibility="Collapsed">
@@ -335,7 +330,9 @@
                                               Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
                                               AutomationProperties.Name="StobeServer update branch"
                                               AutomationProperties.HelpText="Branch used the next time this product updates." />
-                                    <Button Content="Open STOBE" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8" />
+                                    <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8"
+                                            AutomationProperties.Name="STOBE Webpage"
+                                            AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
                                     <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
                                 <StackPanel x:Name="DialecticDetails" Visibility="Collapsed">
@@ -346,7 +343,9 @@
                                               Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
                                               AutomationProperties.Name="DialecticServer update branch"
                                               AutomationProperties.HelpText="Branch used the next time this product updates." />
-                                    <Button Content="Open Dialectic" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8" />
+                                    <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,16,0,8"
+                                            AutomationProperties.Name="DIALECTIC Webpage"
+                                            AutomationProperties.HelpText="Open the DIALECTIC server webpage. If it is unavailable, the launcher can start the server first." />
                                     <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.Button}" />
                                 </StackPanel>
                             </Grid>

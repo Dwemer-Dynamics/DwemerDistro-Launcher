@@ -27,6 +27,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static readonly TimeSpan StartupFirstRunProbeTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan StartupLauncherUpdateTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StartupVersionCheckTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan ServerWebPageProbeTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ServerWebPageStartupTimeout = TimeSpan.FromSeconds(150);
+    private static readonly TimeSpan ServerWebPageStartupPollInterval = TimeSpan.FromSeconds(3);
     private const string DashboardAutoOpenFlagPath = "/home/dwemer/.dashboard_autoopen";
     private const string DashboardAutoOpenNeutralColor = "#C8C8C8";
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
@@ -160,9 +163,9 @@ echo "CHIM-MCP installed and enabled."
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
         SaveUpdateIncludeCommand = new RelayCommand(QueueUpdateIncludeSave, () => IsUpdateIncludeReady);
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
-        OpenChimCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.ChimNexusUrl));
-        OpenStobeCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.StobeNexusUrl));
-        OpenDialecticCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DialecticServerUiUrl));
+        OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"));
+        OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"));
+        OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
@@ -418,9 +421,9 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenFirstRunSetupCommand { get; }
     public RelayCommand SaveUpdateIncludeCommand { get; }
     public AsyncRelayCommand SaveDashboardAutoOpenCommand { get; }
-    public RelayCommand OpenChimCommand { get; }
-    public RelayCommand OpenStobeCommand { get; }
-    public RelayCommand OpenDialecticCommand { get; }
+    public AsyncRelayCommand OpenChimCommand { get; }
+    public AsyncRelayCommand OpenStobeCommand { get; }
+    public AsyncRelayCommand OpenDialecticCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
@@ -777,6 +780,139 @@ echo "CHIM-MCP installed and enabled."
                 IsServerStarting = false;
                 StartButtonText = "Start Server";
             }
+        }
+    }
+
+    internal static string? ResolveServerWebPageUrl(string? gameKey)
+    {
+        return gameKey switch
+        {
+            "CHIM" => LauncherConstants.ChimServerUiUrl,
+            "STOBE" => LauncherConstants.StobeServerUiUrl,
+            "DIALECTIC" => LauncherConstants.DialecticServerUiUrl,
+            _ => null
+        };
+    }
+
+    // A page that answers at all is good enough to open; only a server-side failure
+    // (or no answer) means the product is still coming up behind Apache.
+    internal static bool IsServerWebPageResponseUsable(HttpStatusCode statusCode)
+    {
+        return (int)statusCode < 500;
+    }
+
+    internal static bool ShouldOfferServerStart(bool isServerRunning, bool isServerStarting, bool canStartServer)
+    {
+        return !isServerRunning && !isServerStarting && canStartServer;
+    }
+
+    private async Task OpenServerWebPageAsync(string gameKey)
+    {
+        var url = ResolveServerWebPageUrl(gameKey);
+        if (url is null)
+        {
+            AppendLog($"No web page is configured for {gameKey}.{Environment.NewLine}", "yellow");
+            return;
+        }
+
+        // Probe the page itself so a stale IsServerRunning flag never blocks a reachable page.
+        if (await IsServerWebPageReachableAsync(url).ConfigureAwait(true))
+        {
+            _processRunner.OpenExternalUrl(url);
+            return;
+        }
+
+        if (IsServerRunning)
+        {
+            MessageBox.Show(
+                $"The server is running, but the {gameKey} Webpage is not responding.\n\n" +
+                "Wait a few moments and try again.",
+                $"{gameKey} Webpage",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        if (!ShouldOfferServerStart(IsServerRunning, IsServerStarting, StartServerCommand.CanExecute(null)))
+        {
+            MessageBox.Show(
+                $"The server is already starting, but the {gameKey} Webpage is not responding yet.\n\n" +
+                "Wait a few moments and try again.",
+                $"{gameKey} Webpage",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            $"The Dwemer Distro server is not running, so the {gameKey} Webpage is unavailable.\n\n" +
+            "Start the server now?",
+            $"{gameKey} Webpage",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (confirmed != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        StartServerCommand.Execute(null);
+        AppendLog($"Waiting up to {ServerWebPageStartupTimeout.TotalSeconds:0} seconds for the {gameKey} Webpage.{Environment.NewLine}");
+
+        if (await WaitForServerWebPageAsync(url).ConfigureAwait(true))
+        {
+            _processRunner.OpenExternalUrl(url);
+            return;
+        }
+
+        AppendLog($"The {gameKey} Webpage did not respond before the wait ended.{Environment.NewLine}", "yellow");
+        MessageBox.Show(
+            $"The server is still starting and the {gameKey} Webpage did not become available in time.\n\n" +
+            "Try opening it again in a few minutes.",
+            $"{gameKey} Webpage",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
+    // Bounded wait: polls on a fixed interval and gives up at ServerWebPageStartupTimeout.
+    private async Task<bool> WaitForServerWebPageAsync(string url)
+    {
+        var elapsed = Stopwatch.StartNew();
+        while (true)
+        {
+            if (await IsServerWebPageReachableAsync(url).ConfigureAwait(true))
+            {
+                return true;
+            }
+
+            if (elapsed.Elapsed + ServerWebPageStartupPollInterval >= ServerWebPageStartupTimeout)
+            {
+                return false;
+            }
+
+            if (elapsed.Elapsed >= ServerWebPageStartupPollInterval && !IsServerStarting && !IsServerRunning)
+            {
+                return false;
+            }
+
+            await Task.Delay(ServerWebPageStartupPollInterval).ConfigureAwait(true);
+        }
+    }
+
+    private async Task<bool> IsServerWebPageReachableAsync(string url)
+    {
+        try
+        {
+            using var probeCts = new CancellationTokenSource(ServerWebPageProbeTimeout);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, probeCts.Token)
+                .ConfigureAwait(false);
+            return IsServerWebPageResponseUsable(response.StatusCode);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or InvalidOperationException or UriFormatException)
+        {
+            return false;
         }
     }
 

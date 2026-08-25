@@ -208,11 +208,6 @@ public partial class MainWindow : Window
         MainTabs.SelectedIndex = index;
     }
 
-    private void OpenSettingsDestination_Click(object sender, RoutedEventArgs e)
-    {
-        SettingsNavButton.IsChecked = true;
-    }
-
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSelectedGameDetails();

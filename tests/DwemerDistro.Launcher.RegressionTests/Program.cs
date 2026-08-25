@@ -1,6 +1,7 @@
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using DwemerDistro.Launcher.Wpf.Models;
+using System.Net;
 
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
 var installDirectory = Path.Combine(root, "install");
@@ -120,6 +121,24 @@ try
         "A running install or configuration run must keep the Components page mounted.");
     Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(true, true),
         "A running operation on the open Components page must never release it.");
+
+    Assert(MainWindowViewModel.ResolveServerWebPageUrl("CHIM") == "http://127.0.0.1:8081/HerikaServer/ui/"
+           && MainWindowViewModel.ResolveServerWebPageUrl("STOBE") == "http://127.0.0.1:8083/StobeServer/ui/"
+           && MainWindowViewModel.ResolveServerWebPageUrl("DIALECTIC") == "http://127.0.0.1:8088/DialecticServer/ui/",
+        "Each mod webpage button must open that product's local web UI, not its Nexus page.");
+    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveServerWebPageUrl(game.Key) is not null),
+        "Every game profile on the rail must resolve to a webpage URL.");
+    Assert(MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.OK)
+           && MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.Unauthorized),
+        "A webpage that answers must count as reachable even when it demands a login.");
+    Assert(!MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.ServiceUnavailable),
+        "A server-side failure must count as unreachable so the launcher offers to start the server.");
+    Assert(MainWindowViewModel.ShouldOfferServerStart(false, false, true),
+        "An unavailable webpage must offer to start the server when it is stopped.");
+    Assert(!MainWindowViewModel.ShouldOfferServerStart(true, false, false)
+           && !MainWindowViewModel.ShouldOfferServerStart(false, true, false)
+           && !MainWindowViewModel.ShouldOfferServerStart(false, false, false),
+        "A webpage must not offer another start while the server is running, starting, or its start command is busy.");
 
     Assert(MainWindowViewModel.MaxConsoleLines == 3000,
         "Launcher session output and diagnostics must share the 3,000-line limit.");
