@@ -268,7 +268,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var compact = ActualWidth > 0 && ActualWidth < 1120;
+        // The fixed 220px console row only fits when the window is both wide and tall
+        // enough. Short windows clip the product Webpage/Rollback row, so overlay there too.
+        var compact = (ActualWidth > 0 && ActualWidth < 1120)
+            || (ActualHeight > 0 && ActualHeight < 760);
         var toggleLabel = _isConsoleExpanded ? "Hide Console" : "Show Console";
         AutomationProperties.SetName(ToggleConsoleButton, toggleLabel);
         ToggleConsoleButton.Content = toggleLabel;
