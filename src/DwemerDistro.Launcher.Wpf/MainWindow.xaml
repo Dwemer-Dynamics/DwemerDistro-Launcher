@@ -623,11 +623,9 @@
                 <Button x:Name="ToggleConsoleButton" Content="Show Console"
                         Style="{StaticResource GameCenter.UtilityButton}" HorizontalContentAlignment="Left" Padding="18,8"
                         AutomationProperties.Name="Show Console" Click="ToggleConsoleButton_Click" />
-                <RichTextBox x:Name="OutputRichTextBox" Grid.Row="1" Margin="14,0,14,12" Padding="10" IsReadOnly="True"
-                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                             Background="#090909" Foreground="White" BorderBrush="{DynamicResource GameCenter.Border}"
-                             BorderThickness="1" FontFamily="Consolas" FontSize="11"
-                             AutomationProperties.Name="Dwemer Distro output console" />
+                <!-- The console control is mounted only while expanded so its FlowDocument and
+                     accessibility tree do not stay resident during normal launcher use. -->
+                <ContentControl x:Name="OutputConsoleHost" Grid.Row="1" Focusable="False" />
             </Grid>
         </Border>
 

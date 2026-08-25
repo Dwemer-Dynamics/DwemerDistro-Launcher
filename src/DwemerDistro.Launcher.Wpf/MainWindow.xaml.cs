@@ -15,6 +15,7 @@ using DwemerDistro.Launcher.Wpf.ViewModels;
 using DwemerDistro.Launcher.Wpf.Views;
 using Brushes = System.Windows.Media.Brushes;
 using MessageBox = System.Windows.MessageBox;
+using RichTextBox = System.Windows.Controls.RichTextBox;
 
 namespace DwemerDistro.Launcher.Wpf;
 
@@ -26,7 +27,8 @@ public partial class MainWindow : Window
     private static readonly Regex UrlRegex = new(@"https?://[^\s]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private readonly MainWindowViewModel _viewModel = new();
     private InstallComponentsWindowViewModel? _componentsViewModel;
-    private readonly Paragraph _outputParagraph = new();
+    private Paragraph? _outputParagraph;
+    private RichTextBox? _outputRichTextBox;
     private int _renderedOutputLength;
     private int _renderedOutputGeneration = -1;
     private bool _isConsoleExpanded;
@@ -37,12 +39,6 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = _viewModel;
         SourceInitialized += MainWindow_SourceInitialized;
-        OutputRichTextBox.Document = new FlowDocument(_outputParagraph)
-        {
-            PagePadding = new Thickness(0)
-        };
-        OutputRichTextBox.Document.TextAlignment = TextAlignment.Left;
-        OutputRichTextBox.Document.Foreground = Brushes.White;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
     }
@@ -261,7 +257,7 @@ public partial class MainWindow : Window
         ApplyConsoleLayout();
         if (_isConsoleExpanded)
         {
-            OutputRichTextBox.ScrollToEnd();
+            _outputRichTextBox?.ScrollToEnd();
         }
     }
 
@@ -284,8 +280,7 @@ public partial class MainWindow : Window
 
         if (!_isConsoleExpanded)
         {
-            OutputRichTextBox.Visibility = Visibility.Collapsed;
-            _outputParagraph.Inlines.Clear();
+            ReleaseOutputConsole();
             _renderedOutputLength = 0;
             _renderedOutputGeneration = -1;
             ConsoleRow.Height = new GridLength(38);
@@ -297,7 +292,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        OutputRichTextBox.Visibility = Visibility.Visible;
+        EnsureOutputConsole();
         RenderOutputText(_viewModel.OutputText, _viewModel.OutputGeneration);
 
         if (compact)
@@ -317,6 +312,56 @@ public partial class MainWindow : Window
         ConsoleDockHost.Height = double.NaN;
         ConsoleDockHost.VerticalAlignment = VerticalAlignment.Stretch;
         ConsoleScrim.Visibility = Visibility.Collapsed;
+    }
+
+    // Build the document control only while the user is looking at console output.
+    private RichTextBox EnsureOutputConsole()
+    {
+        if (_outputRichTextBox is not null)
+        {
+            return _outputRichTextBox;
+        }
+
+        var paragraph = new Paragraph();
+        var output = new RichTextBox
+        {
+            Margin = new Thickness(14, 0, 14, 12),
+            Padding = new Thickness(10),
+            IsReadOnly = true,
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(9, 9, 9)),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(1),
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+            FontSize = 11,
+            Document = new FlowDocument(paragraph)
+            {
+                PagePadding = new Thickness(0),
+                TextAlignment = TextAlignment.Left,
+                Foreground = Brushes.White
+            }
+        };
+        output.SetResourceReference(System.Windows.Controls.Control.BorderBrushProperty, "GameCenter.Border");
+        ScrollViewer.SetVerticalScrollBarVisibility(output, ScrollBarVisibility.Auto);
+        ScrollViewer.SetHorizontalScrollBarVisibility(output, ScrollBarVisibility.Auto);
+        AutomationProperties.SetName(output, "Dwemer Distro output console");
+
+        _outputParagraph = paragraph;
+        _outputRichTextBox = output;
+        OutputConsoleHost.Content = output;
+        return output;
+    }
+
+    private void ReleaseOutputConsole()
+    {
+        _outputParagraph?.Inlines.Clear();
+        if (_outputRichTextBox is not null)
+        {
+            _outputRichTextBox.Document.Blocks.Clear();
+        }
+
+        OutputConsoleHost.Content = null;
+        _outputParagraph = null;
+        _outputRichTextBox = null;
     }
 
     private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -389,7 +434,7 @@ public partial class MainWindow : Window
             NavigationLandmark,
             activePage,
             GameRail,
-            _isConsoleExpanded ? OutputRichTextBox : ToggleConsoleButton
+            _isConsoleExpanded && _outputRichTextBox is not null ? _outputRichTextBox : ToggleConsoleButton
         };
 
         _landmarkIndex = reverse
@@ -550,14 +595,16 @@ public partial class MainWindow : Window
 
     private void RenderOutputText(string value, int generation)
     {
-        if (!_isConsoleExpanded)
+        var outputParagraph = _outputParagraph;
+        var output = _outputRichTextBox;
+        if (!_isConsoleExpanded || outputParagraph is null || output is null)
         {
             return;
         }
 
         if (string.IsNullOrEmpty(value))
         {
-            _outputParagraph.Inlines.Clear();
+            outputParagraph.Inlines.Clear();
             _renderedOutputLength = 0;
             _renderedOutputGeneration = generation;
             return;
@@ -565,7 +612,7 @@ public partial class MainWindow : Window
 
         if (generation != _renderedOutputGeneration || value.Length < _renderedOutputLength)
         {
-            _outputParagraph.Inlines.Clear();
+            outputParagraph.Inlines.Clear();
             _renderedOutputLength = 0;
             _renderedOutputGeneration = generation;
         }
@@ -576,20 +623,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        AppendFormattedText(appendedText);
+        AppendFormattedText(outputParagraph, appendedText);
         _renderedOutputLength = value.Length;
         _renderedOutputGeneration = generation;
-        OutputRichTextBox.ScrollToEnd();
+        output.ScrollToEnd();
     }
 
-    private void AppendFormattedText(string text)
+    private void AppendFormattedText(Paragraph outputParagraph, string text)
     {
         var lastIndex = 0;
         foreach (Match match in UrlRegex.Matches(text))
         {
             if (match.Index > lastIndex)
             {
-                _outputParagraph.Inlines.Add(new Run(text[lastIndex..match.Index]));
+                outputParagraph.Inlines.Add(new Run(text[lastIndex..match.Index]));
             }
 
             var url = match.Value.TrimEnd('.', ',', ';', ')', ']', '}');
@@ -603,18 +650,18 @@ public partial class MainWindow : Window
                     Foreground = Brushes.LightSkyBlue
                 };
                 hyperlink.Click += Hyperlink_Click;
-                _outputParagraph.Inlines.Add(hyperlink);
+                outputParagraph.Inlines.Add(hyperlink);
             }
             else
             {
-                _outputParagraph.Inlines.Add(new Run(match.Value));
+                outputParagraph.Inlines.Add(new Run(match.Value));
                 lastIndex = match.Index + match.Length;
                 continue;
             }
 
             if (!string.IsNullOrEmpty(trailing))
             {
-                _outputParagraph.Inlines.Add(new Run(trailing));
+                outputParagraph.Inlines.Add(new Run(trailing));
             }
 
             lastIndex = match.Index + match.Length;
@@ -622,7 +669,7 @@ public partial class MainWindow : Window
 
         if (lastIndex < text.Length)
         {
-            _outputParagraph.Inlines.Add(new Run(text[lastIndex..]));
+            outputParagraph.Inlines.Add(new Run(text[lastIndex..]));
         }
     }
 
