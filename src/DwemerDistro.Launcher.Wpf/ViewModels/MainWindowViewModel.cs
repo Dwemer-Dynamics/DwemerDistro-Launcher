@@ -21,15 +21,23 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 public sealed partial class MainWindowViewModel : ObservableObject
 {
+    internal const int MaxConsoleLines = 3000;
+    private const string ConsoleTrimNotice = "[Earlier console output trimmed.]";
     private static readonly TimeSpan StartupSettingsTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan StartupFirstRunProbeTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan StartupLauncherUpdateTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StartupVersionCheckTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan ServerWebPageProbeTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ServerWebPageStartupTimeout = TimeSpan.FromSeconds(150);
+    private static readonly TimeSpan ServerWebPageStartupPollInterval = TimeSpan.FromSeconds(3);
     private const string DashboardAutoOpenFlagPath = "/home/dwemer/.dashboard_autoopen";
     private const string DashboardAutoOpenNeutralColor = "#C8C8C8";
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
     private const string DashboardAutoOpenWarningColor = "#FFB641";
     private const string DashboardAutoOpenErrorColor = "#FF8A80";
+    private const string UpdateIncludeNeutralColor = "#C8C8C8";
+    private const string UpdateIncludeSuccessColor = "#8FD694";
+    private const string UpdateIncludeErrorColor = "#FF8A80";
     private const string ChimMcpInstallScript = """
 set -e
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
@@ -74,6 +82,7 @@ echo "CHIM-MCP installed and enabled."
     private readonly LauncherUpdateService _launcherUpdateService;
     private readonly LauncherReleaseNoticeService _launcherReleaseNoticeService;
     private readonly SemaphoreSlim _componentInstallGate = new(1, 1);
+    private readonly object _updateIncludeSaveSync = new();
 
     private TcpProxyService? _tcpProxyService;
     private DiscoveryService? _discoveryService;
@@ -82,6 +91,7 @@ echo "CHIM-MCP installed and enabled."
     private Window? _firstRunSetupWindow;
 
     private string _outputText = string.Empty;
+    private int _outputGeneration;
     private bool _isServerRunning;
     private bool _isServerStarting;
     private string _startButtonText = "Start Server";
@@ -95,24 +105,32 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
     private string _launcherUpdateButtonText = "Check Update";
-    private string _distroUpdateButtonText = "Update";
+    private string _distroUpdateButtonText = "Update Mods";
     private bool _isDistroUpdateInProgress;
-    private bool _mcpEnabled = true;
     private bool _includeHerikaServerUpdate = true;
     private bool _includeStobeServerUpdate = true;
     private bool _includeDialecticServerUpdate = true;
+    private bool _lastSavedIncludeHerikaServerUpdate = true;
+    private bool _lastSavedIncludeStobeServerUpdate = true;
+    private bool _lastSavedIncludeDialecticServerUpdate = true;
+    private bool _isUpdateIncludeReady;
+    private bool _isUpdateIncludeSaveRunning;
+    private bool _updateIncludeSaveRequested;
+    private string _updateIncludeStatusText = "Checking saved update preferences...";
+    private string _updateIncludeStatusColor = UpdateIncludeNeutralColor;
     private bool _dashboardAutoOpenEnabled = true;
     private bool _lastSavedDashboardAutoOpenEnabled = true;
     private bool _isDashboardAutoOpenReady;
     private string _dashboardAutoOpenStatusText = "Checking saved preference...";
     private string _dashboardAutoOpenStatusColor = DashboardAutoOpenNeutralColor;
     private bool _canUpdateLauncher;
-    private string _targetHerikaBranch = "aiagent";
-    private string _targetStobeBranch = "stobe";
-    private string _targetDialecticBranch = "dialectic";
+    private string _targetHerikaBranch = "Main";
+    private string _targetStobeBranch = "Main";
+    private string _targetDialecticBranch = "Main";
     private int _startAnimationDots;
     private bool _isServerStatusRefreshInProgress;
     private LauncherReleaseInfo? _pendingLauncherUpdate;
+    private GameProfile _selectedGame;
 
     public MainWindowViewModel()
     {
@@ -131,9 +149,11 @@ echo "CHIM-MCP installed and enabled."
         };
         _serverStatusRetryTimer.Tick += async (_, _) => await RetryServerStatusChecksAsync().ConfigureAwait(true);
 
-        HerikaBranches = new ObservableCollection<string>(new[] { "aiagent", "dev", "unstable" });
-        StobeBranches = new ObservableCollection<string>(new[] { "stobe", "dev", "unstable" });
-        DialecticBranches = new ObservableCollection<string>(new[] { "dialectic", "dev", "unstable" });
+        HerikaBranches = new ObservableCollection<string>(new[] { "Main", "Dev" });
+        StobeBranches = new ObservableCollection<string>(new[] { "Main", "Dev" });
+        DialecticBranches = new ObservableCollection<string>(new[] { "Main", "Dev" });
+        GameProfiles = new ObservableCollection<GameProfile>(GameProfile.CreateCatalog());
+        _selectedGame = GameProfiles[0];
 
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
@@ -141,14 +161,11 @@ echo "CHIM-MCP installed and enabled."
         UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync, () => !IsDistroUpdateInProgress);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
-        InstallComponentsCommand = new RelayCommand(OpenInstallComponentsWindow);
-        OpenDebuggingCommand = new RelayCommand(OpenDebuggingWindow);
-        SaveMcpEnabledCommand = new AsyncRelayCommand(SaveMcpEnabledAsync);
-        SaveUpdateIncludeCommand = new AsyncRelayCommand(SaveUpdateIncludeSettingsAsync);
+        SaveUpdateIncludeCommand = new RelayCommand(QueueUpdateIncludeSave, () => IsUpdateIncludeReady);
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
-        OpenChimCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.ChimNexusUrl));
-        OpenStobeCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.StobeNexusUrl));
-        OpenDialecticCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DialecticServerUiUrl));
+        OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"));
+        OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"));
+        OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
@@ -184,6 +201,8 @@ echo "CHIM-MCP installed and enabled."
         get => _outputText;
         private set => SetProperty(ref _outputText, value);
     }
+
+    internal int OutputGeneration => _outputGeneration;
 
     public bool IsServerRunning
     {
@@ -293,12 +312,6 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    public bool McpEnabled
-    {
-        get => _mcpEnabled;
-        set => SetProperty(ref _mcpEnabled, value);
-    }
-
     public bool IncludeHerikaServerUpdate
     {
         get => _includeHerikaServerUpdate;
@@ -315,6 +328,30 @@ echo "CHIM-MCP installed and enabled."
     {
         get => _includeDialecticServerUpdate;
         set => SetProperty(ref _includeDialecticServerUpdate, value);
+    }
+
+    public bool IsUpdateIncludeReady
+    {
+        get => _isUpdateIncludeReady;
+        private set
+        {
+            if (SetProperty(ref _isUpdateIncludeReady, value))
+            {
+                SaveUpdateIncludeCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string UpdateIncludeStatusText
+    {
+        get => _updateIncludeStatusText;
+        private set => SetProperty(ref _updateIncludeStatusText, value);
+    }
+
+    public string UpdateIncludeStatusColor
+    {
+        get => _updateIncludeStatusColor;
+        private set => SetProperty(ref _updateIncludeStatusColor, value);
     }
 
     public bool DashboardAutoOpenEnabled
@@ -368,6 +405,13 @@ echo "CHIM-MCP installed and enabled."
     public ObservableCollection<string> HerikaBranches { get; }
     public ObservableCollection<string> StobeBranches { get; }
     public ObservableCollection<string> DialecticBranches { get; }
+    public ObservableCollection<GameProfile> GameProfiles { get; }
+
+    public GameProfile SelectedGame
+    {
+        get => _selectedGame;
+        set => SetProperty(ref _selectedGame, value);
+    }
 
     public AsyncRelayCommand StartServerCommand { get; }
     public AsyncRelayCommand StopServerCommand { get; }
@@ -375,14 +419,11 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand UpdateAllCommand { get; }
     public RelayCommand OpenServerFolderCommand { get; }
     public RelayCommand OpenFirstRunSetupCommand { get; }
-    public RelayCommand InstallComponentsCommand { get; }
-    public RelayCommand OpenDebuggingCommand { get; }
-    public AsyncRelayCommand SaveMcpEnabledCommand { get; }
-    public AsyncRelayCommand SaveUpdateIncludeCommand { get; }
+    public RelayCommand SaveUpdateIncludeCommand { get; }
     public AsyncRelayCommand SaveDashboardAutoOpenCommand { get; }
-    public RelayCommand OpenChimCommand { get; }
-    public RelayCommand OpenStobeCommand { get; }
-    public RelayCommand OpenDialecticCommand { get; }
+    public AsyncRelayCommand OpenChimCommand { get; }
+    public AsyncRelayCommand OpenStobeCommand { get; }
+    public AsyncRelayCommand OpenDialecticCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
@@ -414,7 +455,6 @@ echo "CHIM-MCP installed and enabled."
     {
         LauncherLogService.Startup("MainWindowViewModel initialization started.");
         StartProxyAndDiscovery();
-        await RunStartupStepAsync("Load MCP setting", LoadMcpEnabledAsync, StartupSettingsTimeout).ConfigureAwait(true);
         await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
         await RunStartupStepAsync("Load dashboard auto-open setting", LoadDashboardAutoOpenAsync, StartupSettingsTimeout).ConfigureAwait(true);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
@@ -743,6 +783,139 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
+    internal static string? ResolveServerWebPageUrl(string? gameKey)
+    {
+        return gameKey switch
+        {
+            "CHIM" => LauncherConstants.ChimServerUiUrl,
+            "STOBE" => LauncherConstants.StobeServerUiUrl,
+            "DIALECTIC" => LauncherConstants.DialecticServerUiUrl,
+            _ => null
+        };
+    }
+
+    // A page that answers at all is good enough to open; only a server-side failure
+    // (or no answer) means the product is still coming up behind Apache.
+    internal static bool IsServerWebPageResponseUsable(HttpStatusCode statusCode)
+    {
+        return (int)statusCode < 500;
+    }
+
+    internal static bool ShouldOfferServerStart(bool isServerRunning, bool isServerStarting, bool canStartServer)
+    {
+        return !isServerRunning && !isServerStarting && canStartServer;
+    }
+
+    private async Task OpenServerWebPageAsync(string gameKey)
+    {
+        var url = ResolveServerWebPageUrl(gameKey);
+        if (url is null)
+        {
+            AppendLog($"No web page is configured for {gameKey}.{Environment.NewLine}", "yellow");
+            return;
+        }
+
+        // Probe the page itself so a stale IsServerRunning flag never blocks a reachable page.
+        if (await IsServerWebPageReachableAsync(url).ConfigureAwait(true))
+        {
+            _processRunner.OpenExternalUrl(url);
+            return;
+        }
+
+        if (IsServerRunning)
+        {
+            MessageBox.Show(
+                $"The server is running, but the {gameKey} Webpage is not responding.\n\n" +
+                "Wait a few moments and try again.",
+                $"{gameKey} Webpage",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        if (!ShouldOfferServerStart(IsServerRunning, IsServerStarting, StartServerCommand.CanExecute(null)))
+        {
+            MessageBox.Show(
+                $"The server is already starting, but the {gameKey} Webpage is not responding yet.\n\n" +
+                "Wait a few moments and try again.",
+                $"{gameKey} Webpage",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            $"The Dwemer Distro server is not running, so the {gameKey} Webpage is unavailable.\n\n" +
+            "Start the server now?",
+            $"{gameKey} Webpage",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        if (confirmed != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        StartServerCommand.Execute(null);
+        AppendLog($"Waiting up to {ServerWebPageStartupTimeout.TotalSeconds:0} seconds for the {gameKey} Webpage.{Environment.NewLine}");
+
+        if (await WaitForServerWebPageAsync(url).ConfigureAwait(true))
+        {
+            _processRunner.OpenExternalUrl(url);
+            return;
+        }
+
+        AppendLog($"The {gameKey} Webpage did not respond before the wait ended.{Environment.NewLine}", "yellow");
+        MessageBox.Show(
+            $"The server is still starting and the {gameKey} Webpage did not become available in time.\n\n" +
+            "Try opening it again in a few minutes.",
+            $"{gameKey} Webpage",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
+    // Bounded wait: polls on a fixed interval and gives up at ServerWebPageStartupTimeout.
+    private async Task<bool> WaitForServerWebPageAsync(string url)
+    {
+        var elapsed = Stopwatch.StartNew();
+        while (true)
+        {
+            if (await IsServerWebPageReachableAsync(url).ConfigureAwait(true))
+            {
+                return true;
+            }
+
+            if (elapsed.Elapsed + ServerWebPageStartupPollInterval >= ServerWebPageStartupTimeout)
+            {
+                return false;
+            }
+
+            if (elapsed.Elapsed >= ServerWebPageStartupPollInterval && !IsServerStarting && !IsServerRunning)
+            {
+                return false;
+            }
+
+            await Task.Delay(ServerWebPageStartupPollInterval).ConfigureAwait(true);
+        }
+    }
+
+    private async Task<bool> IsServerWebPageReachableAsync(string url)
+    {
+        try
+        {
+            using var probeCts = new CancellationTokenSource(ServerWebPageProbeTimeout);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            using var response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, probeCts.Token)
+                .ConfigureAwait(false);
+            return IsServerWebPageResponseUsable(response.StatusCode);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or InvalidOperationException or UriFormatException)
+        {
+            return false;
+        }
+    }
+
     private async Task StopServerAsync()
     {
         if (!IsServerRunning && !IsServerStarting)
@@ -830,9 +1003,9 @@ echo "CHIM-MCP installed and enabled."
         var includeHerika = IncludeHerikaServerUpdate;
         var includeStobe = IncludeStobeServerUpdate;
         var includeDialectic = IncludeDialecticServerUpdate;
-        var targetHerika = NormalizeBranch(TargetHerikaBranch, "aiagent", "aiagent", "dev", "unstable");
-        var targetStobe = NormalizeBranch(TargetStobeBranch, "stobe", "stobe", "dev", "unstable");
-        var targetDialectic = NormalizeBranch(TargetDialecticBranch, "dialectic", "dialectic", "dev", "unstable");
+        var targetHerika = ResolveServerBranchChoice(TargetHerikaBranch, "aiagent");
+        var targetStobe = ResolveServerBranchChoice(TargetStobeBranch, "stobe");
+        var targetDialectic = ResolveServerBranchChoice(TargetDialecticBranch, "dialectic");
 
         var confirmText = includeHerika || includeStobe || includeDialectic
             ? "This will update the Dwemer Distro and selected server components.\n\n" +
@@ -1013,7 +1186,7 @@ echo "CHIM-MCP installed and enabled."
             RunOnUi(() =>
             {
                 IsDistroUpdateInProgress = false;
-                DistroUpdateButtonText = "Update";
+                DistroUpdateButtonText = "Update Mods";
             });
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
@@ -1023,9 +1196,9 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task<bool> SwitchHerikaServerBranchAsync(string targetBranch)
     {
-        if (targetBranch is not ("aiagent" or "dev" or "unstable"))
+        if (targetBranch is not ("aiagent" or "dev"))
         {
-            AppendLog($"Invalid branch selection: '{targetBranch}'. Expected aiagent, dev, or unstable.{Environment.NewLine}", "red");
+            AppendLog($"Invalid branch selection: '{targetBranch}'. Expected aiagent or dev.{Environment.NewLine}", "red");
             return false;
         }
 
@@ -1059,9 +1232,9 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task<bool> SwitchStobeServerBranchAsync(string targetBranch)
     {
-        if (targetBranch is not ("stobe" or "dev" or "unstable"))
+        if (targetBranch is not ("stobe" or "dev"))
         {
-            AppendLog($"Invalid StobeServer branch selection: '{targetBranch}'. Expected stobe, dev, or unstable.{Environment.NewLine}", "red");
+            AppendLog($"Invalid StobeServer branch selection: '{targetBranch}'. Expected stobe or dev.{Environment.NewLine}", "red");
             return false;
         }
 
@@ -1139,9 +1312,9 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task<bool> SwitchDialecticServerBranchAsync(string targetBranch)
     {
-        if (targetBranch is not ("dialectic" or "dev" or "unstable"))
+        if (targetBranch is not ("dialectic" or "dev"))
         {
-            AppendLog($"Invalid DialecticServer branch selection: '{targetBranch}'. Expected dialectic, dev, or unstable.{Environment.NewLine}", "red");
+            AppendLog($"Invalid DialecticServer branch selection: '{targetBranch}'. Expected dialectic or dev.{Environment.NewLine}", "red");
             return false;
         }
 
@@ -1249,9 +1422,10 @@ echo "CHIM-MCP installed and enabled."
     {
         SetHerikaStatus("Checking...", "White");
         var currentBranch = await GetCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
-        if (currentBranch is "aiagent" or "dev" or "unstable")
+        var branchChoice = MapServerBranchToChoice(currentBranch, "aiagent");
+        if (branchChoice is not null)
         {
-            RunOnUi(() => TargetHerikaBranch = currentBranch);
+            RunOnUi(() => TargetHerikaBranch = branchChoice);
         }
 
         var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/HerikaServer/.version.txt", cancellationToken).ConfigureAwait(false);
@@ -1269,7 +1443,7 @@ echo "CHIM-MCP installed and enabled."
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
             var comparison = CompareVersions(currentVersion, gitVersion);
-            SetHerikaStatus(statusText, comparison < 0 ? "Red" : "LimeGreen");
+            SetHerikaStatus(statusText, comparison < 0 ? "Yellow" : "LimeGreen");
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
@@ -1285,9 +1459,10 @@ echo "CHIM-MCP installed and enabled."
     {
         SetStobeStatus("Checking...", "White");
         var currentBranch = await GetStobeServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
-        if (currentBranch is "stobe" or "dev" or "unstable")
+        var branchChoice = MapServerBranchToChoice(currentBranch, "stobe");
+        if (branchChoice is not null)
         {
-            RunOnUi(() => TargetStobeBranch = currentBranch);
+            RunOnUi(() => TargetStobeBranch = branchChoice);
         }
 
         var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/StobeServer/.version.txt", cancellationToken).ConfigureAwait(false);
@@ -1307,7 +1482,7 @@ echo "CHIM-MCP installed and enabled."
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
             var comparison = CompareVersions(currentVersion, gitVersion);
-            SetStobeStatus(statusText, comparison < 0 ? "Red" : "LimeGreen");
+            SetStobeStatus(statusText, comparison < 0 ? "Yellow" : "LimeGreen");
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
@@ -1402,75 +1577,214 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private async Task LoadMcpEnabledAsync(CancellationToken cancellationToken = default)
-    {
-        var result = await _wsl.RunDistroAsync(
-                new[] { "bash", "-lc", "if [ -f /home/dwemer/.mcp_enabled ]; then cat /home/dwemer/.mcp_enabled; else echo 1 > /home/dwemer/.mcp_enabled; echo 1; fi" },
-                cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        RunOnUi(() => McpEnabled = result.Succeeded ? result.StandardOutput.Trim() == "1" : true);
-    }
-
-    private async Task SaveMcpEnabledAsync()
-    {
-        var value = McpEnabled ? "1" : "0";
-        var result = await _wsl.RunDistroAsync(new[] { "bash", "-lc", $"echo {value} > /home/dwemer/.mcp_enabled" })
-            .ConfigureAwait(false);
-        if (result.Succeeded)
-        {
-            AppendLog(McpEnabled
-                    ? "MCP service enabled. Restart server to apply." + Environment.NewLine
-                    : "MCP service disabled. Restart server to apply." + Environment.NewLine,
-                McpEnabled ? "green" : "red");
-        }
-        else
-        {
-            AppendLog($"Failed to save MCP setting: {result.StandardError}{Environment.NewLine}", "red");
-        }
-    }
-
     private async Task LoadUpdateIncludeSettingsAsync(CancellationToken cancellationToken = default)
     {
-        var result = await _wsl.RunDistroAsUserAsync(
-            "root",
-            new[] { "bash", "-lc", "mkdir -p /home/dwemer; if [ ! -f /home/dwemer/.update_include_herika ]; then echo 1 > /home/dwemer/.update_include_herika; fi; if [ ! -f /home/dwemer/.update_include_stobe ]; then echo 1 > /home/dwemer/.update_include_stobe; fi; if [ ! -f /home/dwemer/.update_include_dialectic ]; then echo 1 > /home/dwemer/.update_include_dialectic; fi; sed -n '1p' /home/dwemer/.update_include_herika; sed -n '1p' /home/dwemer/.update_include_stobe; sed -n '1p' /home/dwemer/.update_include_dialectic" },
-            cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
+        RunOnUi(() =>
+        {
+            IsUpdateIncludeReady = false;
+            SetUpdateIncludeStatus("Checking saved update preferences...", UpdateIncludeNeutralColor);
+        });
+
+        CommandResult result;
+        try
+        {
+            result = await _wsl.RunBashAsync(
+                    "set -e; mkdir -p /home/dwemer; " +
+                    "read_setting() { key=\"$1\"; file=\"$2\"; if [ ! -f \"$file\" ]; then printf '1\\n' > \"$file\"; fi; value=$(sed -n '1p' \"$file\"); case \"$value\" in 0|1) ;; *) value=1; printf '1\\n' > \"$file\" ;; esac; printf '%s=%s\\n' \"$key\" \"$value\"; }; " +
+                    "read_setting herika /home/dwemer/.update_include_herika; " +
+                    "read_setting stobe /home/dwemer/.update_include_stobe; " +
+                    "read_setting dialectic /home/dwemer/.update_include_dialectic",
+                    user: "root",
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            ApplyUpdateIncludeLoadFailure();
+            throw;
+        }
 
         if (!result.Succeeded)
         {
-            RunOnUi(() =>
-            {
-                IncludeHerikaServerUpdate = true;
-                IncludeStobeServerUpdate = true;
-                IncludeDialecticServerUpdate = true;
-            });
-            return;
+            ApplyUpdateIncludeLoadFailure();
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(result.StandardError)
+                    ? "The update preferences could not be read."
+                    : result.StandardError.Trim());
         }
 
-        var lines = result.StandardOutput.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var settings = ParseUpdateIncludeSettings(result.StandardOutput);
         RunOnUi(() =>
         {
-            IncludeHerikaServerUpdate = lines.ElementAtOrDefault(0) != "0";
-            IncludeStobeServerUpdate = lines.ElementAtOrDefault(1) != "0";
-            IncludeDialecticServerUpdate = lines.ElementAtOrDefault(2) != "0";
+            _lastSavedIncludeHerikaServerUpdate = settings.Herika;
+            _lastSavedIncludeStobeServerUpdate = settings.Stobe;
+            _lastSavedIncludeDialecticServerUpdate = settings.Dialectic;
+            IncludeHerikaServerUpdate = settings.Herika;
+            IncludeStobeServerUpdate = settings.Stobe;
+            IncludeDialecticServerUpdate = settings.Dialectic;
+            IsUpdateIncludeReady = true;
+            SetUpdateIncludeStatus(string.Empty, UpdateIncludeNeutralColor);
         });
     }
 
-    private async Task SaveUpdateIncludeSettingsAsync()
+    public static (bool Herika, bool Stobe, bool Dialectic) ParseUpdateIncludeSettings(string output)
     {
-        var herika = IncludeHerikaServerUpdate ? "1" : "0";
-        var stobe = IncludeStobeServerUpdate ? "1" : "0";
-        var dialectic = IncludeDialecticServerUpdate ? "1" : "0";
-        var result = await _wsl.RunDistroAsUserAsync(
-            "root",
-            new[] { "bash", "-lc", $"echo {herika} > /home/dwemer/.update_include_herika && echo {stobe} > /home/dwemer/.update_include_stobe && echo {dialectic} > /home/dwemer/.update_include_dialectic" })
-            .ConfigureAwait(false);
-
-        if (!result.Succeeded)
+        var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.TrimEntries))
         {
-            AppendLog($"Failed to save update include settings: {result.StandardError}{Environment.NewLine}", "red");
+            var separator = line.IndexOf('=');
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            settings[line[..separator].Trim()] = line[(separator + 1)..].Trim();
         }
+
+        return (
+            ReadUpdateIncludeValue(settings, "herika"),
+            ReadUpdateIncludeValue(settings, "stobe"),
+            ReadUpdateIncludeValue(settings, "dialectic"));
+    }
+
+    private static bool ReadUpdateIncludeValue(IReadOnlyDictionary<string, string> settings, string key)
+    {
+        return !settings.TryGetValue(key, out var value) || value != "0";
+    }
+
+    private void ApplyUpdateIncludeLoadFailure()
+    {
+        RunOnUi(() =>
+        {
+            _lastSavedIncludeHerikaServerUpdate = true;
+            _lastSavedIncludeStobeServerUpdate = true;
+            _lastSavedIncludeDialecticServerUpdate = true;
+            IncludeHerikaServerUpdate = true;
+            IncludeStobeServerUpdate = true;
+            IncludeDialecticServerUpdate = true;
+            IsUpdateIncludeReady = false;
+            SetUpdateIncludeStatus(
+                "Update preferences are unavailable. Start the distro, then reopen the launcher.",
+                UpdateIncludeErrorColor);
+        });
+    }
+
+    private void QueueUpdateIncludeSave()
+    {
+        if (!IsUpdateIncludeReady)
+        {
+            return;
+        }
+
+        lock (_updateIncludeSaveSync)
+        {
+            _updateIncludeSaveRequested = true;
+            if (_isUpdateIncludeSaveRunning)
+            {
+                return;
+            }
+
+            _isUpdateIncludeSaveRunning = true;
+        }
+
+        _ = ProcessUpdateIncludeSaveQueueAsync();
+    }
+
+    // Coalesce rapid checkbox changes while guaranteeing the newest state is written last.
+    private async Task ProcessUpdateIncludeSaveQueueAsync()
+    {
+        try
+        {
+            while (IsUpdateIncludeReady)
+            {
+                lock (_updateIncludeSaveSync)
+                {
+                    if (!_updateIncludeSaveRequested)
+                    {
+                        return;
+                    }
+
+                    _updateIncludeSaveRequested = false;
+                }
+
+                var desiredHerika = IncludeHerikaServerUpdate;
+                var desiredStobe = IncludeStobeServerUpdate;
+                var desiredDialectic = IncludeDialecticServerUpdate;
+                RunOnUi(() => SetUpdateIncludeStatus("Saving update preferences...", UpdateIncludeNeutralColor));
+
+                CommandResult result;
+                try
+                {
+                    var herika = desiredHerika ? "1" : "0";
+                    var stobe = desiredStobe ? "1" : "0";
+                    var dialectic = desiredDialectic ? "1" : "0";
+                    result = await _wsl.RunDistroAsUserAsync(
+                            "root",
+                            new[] { "bash", "-lc", $"printf '%s\\n' {herika} > /home/dwemer/.update_include_herika && printf '%s\\n' {stobe} > /home/dwemer/.update_include_stobe && printf '%s\\n' {dialectic} > /home/dwemer/.update_include_dialectic" })
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    RestoreUpdateIncludeAfterSaveFailure(ex.Message);
+                    return;
+                }
+
+                if (!result.Succeeded)
+                {
+                    RestoreUpdateIncludeAfterSaveFailure(result.StandardError);
+                    return;
+                }
+
+                RunOnUi(() =>
+                {
+                    _lastSavedIncludeHerikaServerUpdate = desiredHerika;
+                    _lastSavedIncludeStobeServerUpdate = desiredStobe;
+                    _lastSavedIncludeDialecticServerUpdate = desiredDialectic;
+                    SetUpdateIncludeStatus("Update preferences saved.", UpdateIncludeSuccessColor);
+                });
+            }
+        }
+        finally
+        {
+            var restart = false;
+            lock (_updateIncludeSaveSync)
+            {
+                _isUpdateIncludeSaveRunning = false;
+                restart = _updateIncludeSaveRequested && IsUpdateIncludeReady;
+                if (restart)
+                {
+                    _isUpdateIncludeSaveRunning = true;
+                }
+            }
+
+            if (restart)
+            {
+                _ = ProcessUpdateIncludeSaveQueueAsync();
+            }
+        }
+    }
+
+    private void RestoreUpdateIncludeAfterSaveFailure(string? details)
+    {
+        lock (_updateIncludeSaveSync)
+        {
+            _updateIncludeSaveRequested = false;
+        }
+        RunOnUi(() =>
+        {
+            IncludeHerikaServerUpdate = _lastSavedIncludeHerikaServerUpdate;
+            IncludeStobeServerUpdate = _lastSavedIncludeStobeServerUpdate;
+            IncludeDialecticServerUpdate = _lastSavedIncludeDialecticServerUpdate;
+            SetUpdateIncludeStatus("Could not save. Reverted to the last saved choices.", UpdateIncludeErrorColor);
+        });
+        var reason = string.IsNullOrWhiteSpace(details) ? string.Empty : $": {details.Trim()}";
+        AppendLog($"Failed to save update preferences{reason}{Environment.NewLine}", "red");
+    }
+
+    private void SetUpdateIncludeStatus(string text, string color)
+    {
+        UpdateIncludeStatusText = text;
+        UpdateIncludeStatusColor = color;
     }
 
     private async Task LoadDashboardAutoOpenAsync(CancellationToken cancellationToken = default)
@@ -1618,13 +1932,9 @@ echo "CHIM-MCP installed and enabled."
 
     private void OpenDistroDoctorWindow()
     {
-        var owner = Application.Current.Windows
-            .OfType<DebuggingWindow>()
-            .FirstOrDefault(window => window.IsActive)
-            ?? Application.Current.MainWindow;
         var window = new DistroDoctorWindow(new DistroDoctorViewModel(_wsl))
         {
-            Owner = owner
+            Owner = Application.Current.MainWindow
         };
         window.ShowDialog();
     }
@@ -1841,16 +2151,14 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task AddLogDiagnosticsAsync(List<string> lines)
     {
-        const int maxLogLines = 3000;
-
         lines.Add("Log Diagnostics");
-        lines.Add($"Each log section contains up to the last {maxLogLines} lines.");
+        lines.Add($"Each log section contains up to the last {MaxConsoleLines} lines.");
         lines.Add("Missing or unreadable logs are noted inline instead of failing diagnostic creation.");
         lines.Add("");
 
-        AddLauncherSessionOutputDiagnostics(lines, maxLogLines);
-        await AddWslLogDiagnosticsAsync(lines, maxLogLines).ConfigureAwait(false);
-        AddLocalGameLogDiagnostics(lines, maxLogLines);
+        AddLauncherSessionOutputDiagnostics(lines, MaxConsoleLines);
+        await AddWslLogDiagnosticsAsync(lines, MaxConsoleLines).ConfigureAwait(false);
+        AddLocalGameLogDiagnostics(lines, MaxConsoleLines);
     }
 
     private void AddLauncherSessionOutputDiagnostics(List<string> lines, int maxLogLines)
@@ -3559,15 +3867,6 @@ fi
         }
     }
 
-    private void OpenInstallComponentsWindow()
-    {
-        var window = new InstallComponentsWindow(this)
-        {
-            Owner = Application.Current.MainWindow
-        };
-        window.Show();
-    }
-
     public void OpenFirstRunSetupWindow()
     {
         RunOnUi(() =>
@@ -3607,16 +3906,6 @@ fi
                     MessageBoxImage.Error);
             }
         });
-    }
-
-    private void OpenDebuggingWindow()
-    {
-        var window = new DebuggingWindow
-        {
-            Owner = Application.Current.MainWindow,
-            DataContext = this
-        };
-        window.Show();
     }
 
     private async Task OpenRollbackWindowAsync(string serverKey)
@@ -3728,9 +4017,10 @@ fi
     {
         SetDialecticStatus("Checking...", "White");
         var currentBranch = await GetDialecticServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
-        if (currentBranch is "dialectic" or "dev" or "unstable")
+        var branchChoice = MapServerBranchToChoice(currentBranch, "dialectic");
+        if (branchChoice is not null)
         {
-            RunOnUi(() => TargetDialecticBranch = currentBranch);
+            RunOnUi(() => TargetDialecticBranch = branchChoice);
         }
 
         var currentVersion = await ReadWslFileFirstLineAsync("/var/www/html/DialecticServer/.version.txt", cancellationToken).ConfigureAwait(false);
@@ -3747,7 +4037,7 @@ fi
 
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
-            SetDialecticStatus(statusText, CompareVersions(currentVersion, gitVersion) < 0 ? "Red" : "LimeGreen");
+            SetDialecticStatus(statusText, CompareVersions(currentVersion, gitVersion) < 0 ? "Yellow" : "LimeGreen");
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
@@ -4239,11 +4529,61 @@ fi
 
         if (_dispatcher.CheckAccess())
         {
-            OutputText += sanitized;
+            AppendSanitizedLog(sanitized);
             return;
         }
 
-        _ = _dispatcher.BeginInvoke(() => OutputText += sanitized, DispatcherPriority.Background);
+        _ = _dispatcher.BeginInvoke(() => AppendSanitizedLog(sanitized), DispatcherPriority.Background);
+    }
+
+    private void AppendSanitizedLog(string sanitized)
+    {
+        var appended = OutputText + sanitized;
+        var bounded = TrimConsoleOutput(appended);
+        if (!string.Equals(appended, bounded, StringComparison.Ordinal))
+        {
+            _outputGeneration++;
+        }
+
+        OutputText = bounded;
+    }
+
+    // Keep long-running server sessions bounded while preserving the newest complete output lines.
+    internal static string TrimConsoleOutput(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        var lineCount = value[^1] == '\n' ? 0 : 1;
+        foreach (var character in value)
+        {
+            if (character == '\n')
+            {
+                lineCount++;
+            }
+        }
+
+        if (lineCount <= MaxConsoleLines)
+        {
+            return value;
+        }
+
+        var linesToSkip = lineCount - MaxConsoleLines;
+        var retainedStart = 0;
+        for (var skipped = 0; skipped < linesToSkip; skipped++)
+        {
+            var newlineIndex = value.IndexOf('\n', retainedStart);
+            if (newlineIndex < 0)
+            {
+                return value;
+            }
+
+            retainedStart = newlineIndex + 1;
+        }
+
+        return ConsoleTrimNotice + Environment.NewLine + value[retainedStart..];
     }
 
     private void RunOnUi(Action action)
@@ -4298,10 +4638,23 @@ fi
         _startAnimationDots = (_startAnimationDots % 3) + 1;
     }
 
-    private static string NormalizeBranch(string value, string fallback, params string[] allowed)
+    public static string ResolveServerBranchChoice(string? choice, string mainBranch)
     {
-        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
-        return allowed.Contains(normalized) ? normalized : fallback;
+        return string.Equals(choice?.Trim(), "Dev", StringComparison.OrdinalIgnoreCase)
+            ? "dev"
+            : mainBranch;
+    }
+
+    public static string? MapServerBranchToChoice(string? branch, string mainBranch)
+    {
+        if (string.Equals(branch?.Trim(), mainBranch, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Main";
+        }
+
+        return branch?.Trim().ToLowerInvariant() is "dev" or "unstable"
+            ? "Dev"
+            : null;
     }
 
     private static string? FormatDateVersion(string? version)

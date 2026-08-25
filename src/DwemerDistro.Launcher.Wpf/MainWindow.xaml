@@ -3,786 +3,698 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
-        Title="Dwemer Distro"
+        Title="DWEMER DISTRO"
         Icon="Assets/DwemerDistro.ico"
-        Width="930"
-        Height="980"
-        MinWidth="880"
-        MinHeight="820"
-        MaxWidth="1460"
-        MaxHeight="1400"
+        Width="1280"
+        Height="820"
+        MinWidth="980"
+        MinHeight="680"
         ResizeMode="CanResize"
-        Background="#2C2C2C"
+        WindowStyle="None"
+        Background="{DynamicResource GameCenter.Window}"
+        BorderBrush="Black"
+        BorderThickness="1"
         Loaded="Window_Loaded"
-        Closing="Window_Closing">
+        Closing="Window_Closing"
+        SizeChanged="Window_SizeChanged"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="36"
+                            ResizeBorderThickness="7"
+                            GlassFrameThickness="0"
+                            CornerRadius="0"
+                            UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
     <Window.Resources>
-        <Style x:Key="BaseControlButton" TargetType="Button">
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="BorderBrush" Value="#4F545A" />
-            <Setter Property="Padding" Value="10,6" />
-            <Setter Property="Margin" Value="0,0,0,6" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
-            <Setter Property="FontSize" Value="11" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Cursor" Value="Hand" />
+        <Style x:Key="GameCenter.ActionCardButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
             <Setter Property="HorizontalContentAlignment" Value="Left" />
-            <Setter Property="MinHeight" Value="34" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="ButtonBorder"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8">
-                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                              VerticalAlignment="Center"
-                                              Margin="{TemplateBinding Padding}" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="#7E8791" />
-                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.95" />
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.88" />
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.55" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
+            <Setter Property="Margin" Value="0,0,8,8" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="MinWidth" Value="196" />
+            <Setter Property="MinHeight" Value="40" />
         </Style>
-
-        <Style x:Key="PrimaryControlButton" TargetType="Button" BasedOn="{StaticResource BaseControlButton}">
-            <Setter Property="Background" Value="#651010" />
-            <Setter Property="BorderBrush" Value="#8A2B2B" />
+        <Style x:Key="GameCenter.LogButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ActionCardButton}">
+            <Setter Property="MinWidth" Value="168" />
+            <Setter Property="MinHeight" Value="36" />
         </Style>
-
-        <Style x:Key="SecondaryControlButton" TargetType="Button" BasedOn="{StaticResource BaseControlButton}">
-            <Setter Property="Background" Value="#303338" />
-            <Setter Property="BorderBrush" Value="#4F545A" />
+        <!-- Settings rows: one full-width card per setting, stacked vertically. The title and
+             wrapped explanation take the flexible column so descriptions stay readable down to
+             the 980px minimum width; the action stays compact in the Auto column. -->
+        <Style x:Key="GameCenter.SettingRow" TargetType="Border" BasedOn="{StaticResource GameCenter.Card}">
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="Margin" Value="0,0,0,8" />
         </Style>
-
-        <Style x:Key="SuccessControlButton" TargetType="Button" BasedOn="{StaticResource BaseControlButton}">
-            <Setter Property="Background" Value="#2E7D39" />
-            <Setter Property="BorderBrush" Value="#4FA45B" />
-        </Style>
-
-        <Style x:Key="WarningControlButton" TargetType="Button" BasedOn="{StaticResource BaseControlButton}">
-            <Setter Property="Background" Value="#875315" />
-            <Setter Property="BorderBrush" Value="#B17A36" />
-        </Style>
-
-        <Style x:Key="DangerControlButton" TargetType="Button" BasedOn="{StaticResource BaseControlButton}">
-            <Setter Property="Background" Value="#B31717" />
-            <Setter Property="BorderBrush" Value="#E14A4A" />
-        </Style>
-
-        <Style x:Key="LauncherUpdateControlButton" TargetType="Button" BasedOn="{StaticResource BaseControlButton}">
-            <Setter Property="Background" Value="#303338" />
-            <Setter Property="BorderBrush" Value="#4F545A" />
-            <Style.Triggers>
-                <Trigger Property="IsEnabled" Value="True">
-                    <Setter Property="Background" Value="#2E7D39" />
-                    <Setter Property="BorderBrush" Value="#4FA45B" />
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="SectionCard" TargetType="Border">
-            <Setter Property="Background" Value="#1F1F1F" />
-            <Setter Property="BorderBrush" Value="#565656" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="6" />
-            <Setter Property="Padding" Value="12" />
-            <Setter Property="Margin" Value="0,0,0,10" />
-        </Style>
-
-        <Style x:Key="SectionTitle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="FontWeight" Value="Bold" />
-        </Style>
-
-        <Style x:Key="SectionCaption" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#CFCFCF" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
-            <Setter Property="FontSize" Value="10" />
+        <Style x:Key="GameCenter.SettingRowTitle" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.SectionHeading}">
             <Setter Property="TextWrapping" Value="Wrap" />
-            <Setter Property="Margin" Value="0,3,0,0" />
         </Style>
-
-        <Style x:Key="SmallLabel" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#D5D5D5" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
-            <Setter Property="FontSize" Value="10" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Margin" Value="0,0,0,6" />
+        <Style x:Key="GameCenter.SettingRowDescription" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+            <Setter Property="Margin" Value="0,4,0,0" />
         </Style>
-
-        <Style TargetType="TextBlock">
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
-        </Style>
-
-        <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
-            <Setter Property="FontSize" Value="10" />
-            <Setter Property="Margin" Value="0,0,6,0" />
+        <Style x:Key="GameCenter.SettingRowButton" TargetType="Button" BasedOn="{StaticResource GameCenter.PrimaryButton}">
+            <Setter Property="MinWidth" Value="104" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-
-        <Style x:Key="UpdateIncludeCheckBox" TargetType="CheckBox">
-            <Setter Property="Foreground" Value="#E6E6E6" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
-            <Setter Property="FontSize" Value="10" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Margin" Value="0,0,10,0" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="CheckBox">
-                        <Grid Background="Transparent">
-                            <Border x:Name="CheckBoxBorder"
-                                    Width="17"
-                                    Height="17"
-                                    HorizontalAlignment="Left"
-                                    VerticalAlignment="Center"
-                                    Background="#1D1D1D"
-                                    BorderBrush="#747474"
-                                    BorderThickness="1"
-                                    CornerRadius="3">
-                                <Path x:Name="CheckMark"
-                                      Width="10"
-                                      Height="8"
-                                      Data="M 1,4 L 4,7 L 9,1"
-                                      Stretch="Fill"
-                                      Stroke="White"
-                                      StrokeThickness="2"
-                                      StrokeStartLineCap="Round"
-                                      StrokeEndLineCap="Round"
-                                      StrokeLineJoin="Round"
-                                      Visibility="Collapsed" />
-                            </Border>
-                            <ContentPresenter Margin="24,0,0,0"
-                                              VerticalAlignment="Center"
-                                              RecognizesAccessKey="True" />
-                        </Grid>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="CheckBoxBorder" Property="Background" Value="#2E7D39" />
-                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#62B26C" />
-                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
-                            </Trigger>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="#AFAFAF" />
-                            </Trigger>
-                            <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="CheckBoxBorder" Property="BorderBrush" Value="White" />
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.5" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
-        <Style TargetType="ComboBox">
-            <Setter Property="Margin" Value="0,0,8,0" />
-            <Setter Property="Height" Value="26" />
-            <Setter Property="MinWidth" Value="92" />
+        <Style x:Key="GameCenter.HeroUpdateCheckBox" TargetType="CheckBox" BasedOn="{StaticResource GameCenter.CheckBox}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
         </Style>
     </Window.Resources>
 
-    <Grid Margin="12">
+    <Grid x:Name="ShellGrid" Background="{DynamicResource GameCenter.Window}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="36" />
+            <RowDefinition Height="62" />
+            <RowDefinition Height="*" />
+            <RowDefinition x:Name="ConsoleRow" Height="38" />
+            <RowDefinition Height="124" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="360" />
-            <ColumnDefinition Width="12" />
+            <ColumnDefinition Width="178" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <ScrollViewer Grid.Column="0"
-                      VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-                <Border Style="{StaticResource SectionCard}"
-                        Padding="12,10">
-                    <StackPanel>
-                        <Image Source="Assets/dd_title.png"
-                               Width="250"
-                               Stretch="Uniform"
-                               HorizontalAlignment="Center" />
-                    </StackPanel>
-                </Border>
+        <Border Grid.Row="0"
+                Grid.ColumnSpan="2"
+                Background="#1A1A1A"
+                BorderBrush="{DynamicResource GameCenter.Border}"
+                BorderThickness="0,0,0,1"
+                MouseLeftButtonDown="Chrome_MouseLeftButtonDown"
+                MouseRightButtonUp="Chrome_MouseRightButtonUp">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="46" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Margin="12,0" VerticalAlignment="Center">
+                    <Image Source="Assets/DwemerDistro.png" Width="20" Height="20" Margin="0,0,9,0" />
+                    <TextBlock Text="DWEMER DISTRO" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Grid.Column="1"
+                        Content="—"
+                        Style="{StaticResource GameCenter.CaptionButton}"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                        AutomationProperties.Name="Minimize Dwemer Distro"
+                        Click="MinimizeButton_Click" />
+                <Button Grid.Column="2"
+                        Content="□"
+                        Style="{StaticResource GameCenter.CaptionButton}"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                        AutomationProperties.Name="Maximize or restore Dwemer Distro"
+                        Click="MaximizeButton_Click" />
+                <Button Grid.Column="3"
+                        Content="✕"
+                        Style="{StaticResource GameCenter.CaptionCloseButton}"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True"
+                        AutomationProperties.Name="Close Dwemer Distro"
+                        Click="CloseButton_Click" />
+            </Grid>
+        </Border>
 
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
-                        <TextBlock Text="Startup"
-                                   Style="{StaticResource SectionTitle}" />
-                        <Button Command="{Binding StartServerCommand}"
-                                Style="{StaticResource SuccessControlButton}"
-                                Margin="0,10,0,6">
-                            <Button.Content>
-                                <StackPanel Orientation="Horizontal">
-                                    <Path Data="M 0 0 L 0 10 L 8 5 Z"
-                                          Fill="White"
-                                          Width="8"
-                                          Height="10"
-                                          Stretch="Fill"
-                                          Margin="0,0,8,0"
-                                          VerticalAlignment="Center" />
-                                    <TextBlock Text="{Binding StartButtonText}"
-                                               Foreground="White"
-                                               FontFamily="Trebuchet MS"
-                                               FontSize="11"
-                                               FontWeight="Bold"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button.Content>
-                        </Button>
-                        <Button Command="{Binding StopServerCommand}"
-                                Style="{StaticResource PrimaryControlButton}">
-                            <Button.Content>
-                                <StackPanel Orientation="Horizontal">
-                                    <Rectangle Width="9"
-                                               Height="9"
-                                               Fill="White"
-                                               RadiusX="1"
-                                               RadiusY="1"
-                                               Margin="0,0,8,0"
-                                               VerticalAlignment="Center" />
-                                    <TextBlock Text="Stop Server"
-                                               Foreground="White"
-                                               FontFamily="Trebuchet MS"
-                                               FontSize="11"
-                                               FontWeight="Bold"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button.Content>
-                        </Button>
-                        <Button Command="{Binding ForceStopServerCommand}"
-                                Style="{StaticResource DangerControlButton}"
-                                Margin="0,0,0,0">
-                            <Button.Content>
-                                <StackPanel Orientation="Horizontal">
-                                    <Viewbox Width="10"
-                                             Height="10"
-                                             Margin="0,0,8,0">
-                                        <Canvas Width="10"
-                                                Height="10">
-                                            <Path Data="M 1 1 L 9 9 M 9 1 L 1 9"
-                                                  Stroke="White"
-                                                  StrokeThickness="1.7"
-                                                  StrokeStartLineCap="Round"
-                                                  StrokeEndLineCap="Round" />
-                                        </Canvas>
-                                    </Viewbox>
-                                    <TextBlock Text="Force Stop Server"
-                                               Foreground="White"
-                                               FontFamily="Trebuchet MS"
-                                               FontSize="11"
-                                               FontWeight="Bold"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button.Content>
-                        </Button>
-                    </StackPanel>
-                </Border>
+        <Border Grid.Row="1"
+                Grid.RowSpan="4"
+                Grid.Column="0"
+                Background="#242424"
+                BorderBrush="{DynamicResource GameCenter.Border}"
+                BorderThickness="0,0,1,0">
+            <Grid Margin="10">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel>
+                    <Image Source="Assets/dd_title.png" Height="62" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,4,4,16" />
+                </StackPanel>
+                <StackPanel x:Name="UtilityLandmark" Grid.Row="1" KeyboardNavigation.TabNavigation="Local">
+                    <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <AccessText Text="Server _Folder" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding OpenWikiCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Wiki">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <AccessText Text="_Wiki" />
+                        </StackPanel>
+                    </Button>
+                    <Button Command="{Binding OpenDiscordCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Discord">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8BD;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <AccessText Text="_Discord" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+                <StackPanel Grid.Row="3" Margin="5,12,5,4">
+                    <Button Command="{Binding UpdateLauncherCommand}" Style="{StaticResource GameCenter.LauncherUpdateButton}"
+                            AutomationProperties.Name="{Binding LauncherUpdateButtonText}" Margin="0,0,0,10">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                            <TextBlock Text="{Binding LauncherUpdateButtonText}" />
+                        </StackPanel>
+                    </Button>
+                    <TextBlock Text="{Binding LauncherVersionText}" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="10" />
+                    <TextBlock Text="{Binding LauncherUpdateStatusText}" Foreground="{Binding LauncherUpdateStatusColor}"
+                               FontSize="10" TextWrapping="Wrap" Margin="0,5,0,0" />
+                </StackPanel>
+            </Grid>
+        </Border>
 
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
+        <Border Grid.Row="1" Grid.Column="1" Background="{DynamicResource GameCenter.Panel}"
+                BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="0,0,0,1">
+            <Grid Margin="18,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel x:Name="NavigationLandmark" Orientation="Horizontal" VerticalAlignment="Stretch">
+                    <RadioButton x:Name="LibraryNavButton" GroupName="Destination" Content="_MODS" IsChecked="True"
+                                 Style="{StaticResource GameCenter.NavButton}" Tag="0" Checked="DestinationNav_Checked" />
+                    <RadioButton x:Name="SetupNavButton" GroupName="Destination" Content="_COMPONENTS"
+                                 Style="{StaticResource GameCenter.NavButton}" Tag="1" Checked="DestinationNav_Checked" />
+                    <RadioButton x:Name="SettingsNavButton" GroupName="Destination" Content="_SETTINGS"
+                                 Style="{StaticResource GameCenter.NavButton}" Tag="2" Checked="DestinationNav_Checked" />
+                    <RadioButton x:Name="LogsNavButton" GroupName="Destination" Content="LO_GS"
+                                 Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="{Binding DistroUpdateButtonText}" Command="{Binding UpdateAllCommand}"
+                            Style="{StaticResource GameCenter.AccentButton}" MinWidth="112" Margin="0,0,6,0"
+                            AutomationProperties.Name="{Binding DistroUpdateButtonText}"
+                            AutomationProperties.HelpText="Update the Dwemer Distro products that are included in updates." />
+                    <Button Command="{Binding StartServerCommand}"
+                            Style="{StaticResource GameCenter.SuccessButton}" MinWidth="132" Margin="0,0,6,0"
+                            AutomationProperties.Name="{Binding StartButtonText}"
+                            AutomationProperties.HelpText="Start the complete Dwemer Distro stack.">
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Grid.Column="0"
-                                        Margin="0,0,10,0">
-                                <TextBlock Text="Distro Updates"
-                                           Style="{StaticResource SectionTitle}" />
-                            </StackPanel>
-
-                            <Button Grid.Column="1"
-                                    Command="{Binding UpdateAllCommand}"
-                                    Style="{StaticResource SuccessControlButton}"
-                                    HorizontalContentAlignment="Center"
-                                    MinWidth="96"
-                                    Margin="0,0,0,0"
-                                    VerticalAlignment="Center">
-                                <Button.Content>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Viewbox Width="12"
-                                                 Height="12"
-                                                 Margin="0,0,8,0">
-                                            <Canvas Width="12"
-                                                    Height="12">
-                                                <Path Data="M 6 1 L 6 7 M 3.5 4.5 L 6 7 L 8.5 4.5 M 2 10 L 10 10"
-                                                      Stroke="White"
-                                                      StrokeThickness="1.4"
-                                                      StrokeStartLineCap="Round"
-                                                      StrokeEndLineCap="Round"
-                                                      StrokeLineJoin="Round" />
-                                            </Canvas>
-                                        </Viewbox>
-                                        <TextBlock Text="{Binding DistroUpdateButtonText}"
-                                                   Foreground="White"
-                                                   FontFamily="Trebuchet MS"
-                                                   FontSize="11"
-                                                   FontWeight="Bold"
-                                                   VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button.Content>
-                            </Button>
+                            <!-- Hidden content reserves the widest animation state without changing accessibility text. -->
+                            <TextBlock Text="Server is Starting ..." Visibility="Hidden" />
+                            <TextBlock Text="{Binding StartButtonText}" HorizontalAlignment="Center" />
                         </Grid>
+                    </Button>
+                    <Button Content="Stop" Command="{Binding StopServerCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,6,0" />
+                    <Button Content="Force Stop" Command="{Binding ForceStopServerCommand}" Style="{StaticResource GameCenter.DangerButton}" />
+                </StackPanel>
+            </Grid>
+        </Border>
 
-                        <Border Margin="0,10,0,0"
-                                Padding="10"
-                                Background="#262626"
-                                BorderBrush="#F27C11"
-                                BorderThickness="1"
-                                CornerRadius="6">
-                            <StackPanel>
-                                <TextBlock Text="HerikaServer"
-                                           Style="{StaticResource SmallLabel}" />
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="92" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <CheckBox Grid.Column="0"
-                                              Content="Include"
-                                              IsChecked="{Binding IncludeHerikaServerUpdate}"
-                                              Command="{Binding SaveUpdateIncludeCommand}"
-                                              Style="{StaticResource UpdateIncludeCheckBox}" />
-                                    <ComboBox Grid.Column="1"
-                                              ItemsSource="{Binding HerikaBranches}"
-                                              SelectedItem="{Binding TargetHerikaBranch}" />
-                                    <TextBlock Grid.Column="2"
-                                               Text="{Binding HerikaStatusText}"
-                                               Foreground="{Binding HerikaStatusColor}"
-                                               VerticalAlignment="Center"
-                                               TextWrapping="Wrap" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
+        <TabControl x:Name="MainTabs" Grid.Row="2" Grid.Column="1" Background="Transparent" BorderThickness="0" Padding="0"
+                    MinHeight="0" ClipToBounds="True"
+                    KeyboardNavigation.TabNavigation="Continue"
+                    SelectionChanged="MainTabs_SelectionChanged">
+            <TabControl.Resources>
+                <Style TargetType="TabItem"><Setter Property="Visibility" Value="Collapsed" /></Style>
+            </TabControl.Resources>
 
-                        <Border Margin="0,8,0,0"
-                                Padding="10"
-                                Background="#262626"
-                                BorderBrush="#E6B76C"
-                                BorderThickness="1"
-                                CornerRadius="6">
-                            <StackPanel>
-                                <TextBlock Text="StobeServer"
-                                           Style="{StaticResource SmallLabel}" />
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="92" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <CheckBox Grid.Column="0"
-                                              Content="Include"
-                                              IsChecked="{Binding IncludeStobeServerUpdate}"
-                                              Command="{Binding SaveUpdateIncludeCommand}"
-                                              Style="{StaticResource UpdateIncludeCheckBox}" />
-                                    <ComboBox Grid.Column="1"
-                                              ItemsSource="{Binding StobeBranches}"
-                                              SelectedItem="{Binding TargetStobeBranch}" />
-                                    <TextBlock Grid.Column="2"
-                                               Text="{Binding StobeStatusText}"
-                                               Foreground="{Binding StobeStatusColor}"
-                                               VerticalAlignment="Center"
-                                               TextWrapping="Wrap" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <Border Margin="0,8,0,0"
-                                Padding="10"
-                                Background="#262626"
-                                BorderBrush="#FFB641"
-                                BorderThickness="1"
-                                CornerRadius="6">
-                            <StackPanel>
-                                <TextBlock Text="DialecticServer"
-                                           Style="{StaticResource SmallLabel}" />
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="92" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <CheckBox Grid.Column="0"
-                                              Content="Include"
-                                              IsChecked="{Binding IncludeDialecticServerUpdate}"
-                                              Command="{Binding SaveUpdateIncludeCommand}"
-                                              Style="{StaticResource UpdateIncludeCheckBox}" />
-                                    <ComboBox Grid.Column="1"
-                                              ItemsSource="{Binding DialecticBranches}"
-                                              SelectedItem="{Binding TargetDialecticBranch}" />
-                                    <TextBlock Grid.Column="2"
-                                               Text="{Binding DialecticStatusText}"
-                                               Foreground="{Binding DialecticStatusColor}"
-                                               VerticalAlignment="Center"
-                                               TextWrapping="Wrap" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
-                        <TextBlock Text="Server Configuration"
-                                   Style="{StaticResource SectionTitle}" />
-                        <Button Command="{Binding InstallComponentsCommand}"
-                                Style="{StaticResource PrimaryControlButton}"
-                                Margin="0,10,0,6">
-                            <Button.Content>
-                                <StackPanel Orientation="Horizontal">
-                                    <Viewbox Width="12"
-                                             Height="12"
-                                             Margin="0,0,8,0">
-                                        <Canvas Width="12"
-                                                Height="12">
-                                            <Path Data="M 4 1 L 4 3 M 8 1 L 8 3 M 3 3.2 L 9 3.2 L 9 7 L 7 7 L 7 10.5 L 5 10.5 L 5 7 L 3 7 Z"
-                                                  Stroke="White"
-                                                  StrokeThickness="1.3"
-                                                  StrokeStartLineCap="Round"
-                                                  StrokeEndLineCap="Round"
-                                                  StrokeLineJoin="Round" />
-                                        </Canvas>
-                                    </Viewbox>
-                                    <TextBlock Text="Components"
-                                               Foreground="White"
-                                               FontFamily="Trebuchet MS"
-                                               FontSize="11"
-                                               FontWeight="Bold"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button.Content>
-                        </Button>
-                        <Button Command="{Binding OpenServerFolderCommand}"
-                                Style="{StaticResource PrimaryControlButton}">
-                            <Button.Content>
-                                <StackPanel Orientation="Horizontal">
-                                    <Viewbox Width="12"
-                                             Height="12"
-                                             Margin="0,0,8,0">
-                                        <Canvas Width="12"
-                                                Height="12">
-                                            <Path Data="M 1 3 L 4.5 3 L 5.8 4.6 L 11 4.6 L 11 10.5 L 1 10.5 Z"
-                                                  Fill="White" />
-                                        </Canvas>
-                                    </Viewbox>
-                                    <TextBlock Text="Open Server Folder"
-                                               Foreground="White"
-                                               FontFamily="Trebuchet MS"
-                                               FontSize="11"
-                                               FontWeight="Bold"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button.Content>
-                        </Button>
-                        <Button Command="{Binding OpenDebuggingCommand}"
-                                Style="{StaticResource PrimaryControlButton}"
-                                Margin="0,0,0,0">
-                            <Button.Content>
-                                <StackPanel Orientation="Horizontal">
-                                    <Viewbox Width="12"
-                                             Height="12"
-                                             Margin="0,0,8,0">
-                                        <Canvas Width="12"
-                                                Height="12">
-                                            <Ellipse Width="8.6"
-                                                     Height="8.6"
-                                                     Stroke="White"
-                                                     StrokeThickness="1.15"
-                                                     Canvas.Left="1.7"
-                                                     Canvas.Top="1.7" />
-                                            <Ellipse Width="4.2"
-                                                     Height="4.2"
-                                                     Stroke="White"
-                                                     StrokeThickness="1.15"
-                                                     Canvas.Left="3.9"
-                                                     Canvas.Top="3.9" />
-                                            <Path Data="M 6 0.5 L 6 2.2 M 6 9.8 L 6 11.5 M 0.5 6 L 2.2 6 M 9.8 6 L 11.5 6 M 2.1 2.1 L 3.3 3.3 M 8.7 8.7 L 9.9 9.9 M 9.9 2.1 L 8.7 3.3 M 3.3 8.7 L 2.1 9.9"
-                                                  Stroke="White"
-                                                  StrokeThickness="1.3"
-                                                  StrokeStartLineCap="Round"
-                                                  StrokeEndLineCap="Round" />
-                                        </Canvas>
-                                    </Viewbox>
-                                    <TextBlock Text="Settings"
-                                               Foreground="White"
-                                               FontFamily="Trebuchet MS"
-                                               FontSize="11"
-                                               FontWeight="Bold"
-                                               VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button.Content>
-                        </Button>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
+            <TabItem Header="Mods">
+                <Grid x:Name="LibraryLandmark" Margin="18,16,18,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2.15*" />
+                        <ColumnDefinition Width="14" />
+                        <ColumnDefinition Width="1*" MinWidth="280" />
+                    </Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource GameCenter.Card}" Padding="0" ClipToBounds="True">
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Grid.Column="0"
-                                        Margin="0,0,10,0">
-                                <TextBlock Text="Launcher Updates"
-                                           Style="{StaticResource SectionTitle}" />
-                            </StackPanel>
-
-                            <Button Grid.Column="1"
-                                    Command="{Binding UpdateLauncherCommand}"
-                                    Style="{StaticResource LauncherUpdateControlButton}"
-                                    IsEnabled="{Binding CanUpdateLauncher}"
-                                    HorizontalContentAlignment="Center"
-                                    Width="124"
-                                    Margin="0,0,0,0"
-                                    VerticalAlignment="Center">
-                                <Button.Content>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Viewbox Width="12"
-                                                 Height="12"
-                                                 Margin="0,0,8,0">
-                                            <Canvas Width="12"
-                                                    Height="12">
-                                                <Path Data="M 6 1 L 6 7 M 3.5 4.5 L 6 7 L 8.5 4.5 M 2 10 L 10 10"
-                                                      Stroke="White"
-                                                      StrokeThickness="1.4"
-                                                      StrokeStartLineCap="Round"
-                                                      StrokeEndLineCap="Round"
-                                                      StrokeLineJoin="Round" />
-                                            </Canvas>
-                                        </Viewbox>
-                                        <TextBlock Text="{Binding LauncherUpdateButtonText}"
-                                                   Foreground="White"
-                                                   FontFamily="Trebuchet MS"
-                                                   FontSize="11"
-                                                   FontWeight="Bold"
-                                                   VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button.Content>
-                            </Button>
-                        </Grid>
-
-                        <TextBlock Text="{Binding LauncherVersionText}"
-                                   Style="{StaticResource SmallLabel}"
-                                   Margin="0,10,0,4" />
-                        <TextBlock Text="{Binding LauncherUpdateStatusText}"
-                                   Foreground="{Binding LauncherUpdateStatusColor}"
-                                   Style="{StaticResource SectionCaption}" />
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource SectionCard}">
-                    <StackPanel>
-                        <TextBlock Text="External Links"
-                                   Style="{StaticResource SectionTitle}" />
-
-                        <Grid Margin="0,10,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-
-                            <Button Grid.Row="0"
-                                    Grid.Column="0"
-                                    Command="{Binding OpenChimCommand}"
-                                    Style="{StaticResource BaseControlButton}"
-                                    HorizontalContentAlignment="Center"
-                                    Background="#F27C11"
-                                    BorderBrush="#F5A24D"
-                                    Margin="0,0,6,6">
-                                <Button.Content>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="Assets/chim-icon.png"
-                                               Width="14"
-                                               Height="14"
-                                               Stretch="Uniform"
-                                               Margin="0,0,8,0" />
-                                        <TextBlock Text="CHIM"
-                                                   Foreground="White"
-                                                   FontFamily="Trebuchet MS"
-                                                   FontSize="11"
-                                                   FontWeight="Bold"
-                                                   VerticalAlignment="Center" />
+                            <Grid Grid.Row="0" Background="#151515">
+                                <Image x:Name="HeroArt" Source="{Binding SelectedGame.HeroImageSource}" Stretch="Uniform"
+                                       AutomationProperties.Name="{Binding SelectedGame.Name, StringFormat={}{0} artwork}" />
+                                <Border x:Name="HeroHighContrastFallback" Visibility="Collapsed"
+                                        Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+                                        BorderBrush="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" BorderThickness="2">
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding SelectedGame.Name}" Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"
+                                                   FontSize="34" FontWeight="Bold" HorizontalAlignment="Center" />
+                                        <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"
+                                                   Margin="0,8,0,0" TextWrapping="Wrap" TextAlignment="Center" />
                                     </StackPanel>
-                                </Button.Content>
-                            </Button>
-                            <Button Grid.Row="0"
-                                    Grid.Column="1"
-                                    Command="{Binding OpenStobeCommand}"
-                                    Style="{StaticResource BaseControlButton}"
-                                    HorizontalContentAlignment="Center"
-                                    Background="#B9934B"
-                                    BorderBrush="#DFC184"
-                                    Margin="6,0,0,6">
-                                <Button.Content>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="Assets/stobe-icon.png"
-                                               Width="14"
-                                               Height="14"
-                                               Stretch="Uniform"
-                                               Margin="0,0,8,0" />
-                                        <TextBlock Text="STOBE"
-                                                   Foreground="White"
-                                                   FontFamily="Trebuchet MS"
-                                                   FontSize="11"
-                                                   FontWeight="Bold"
-                                                   VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button.Content>
-                            </Button>
-                            <Button Grid.Row="1"
-                                    Grid.Column="0"
-                                    Command="{Binding OpenDialecticCommand}"
-                                    Style="{StaticResource BaseControlButton}"
-                                    HorizontalContentAlignment="Center"
-                                    Background="#FFB641"
-                                    BorderBrush="#FFD08A"
-                                    Margin="0,0,6,6">
-                                <Button.Content>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="Assets/dialectic-icon.png"
-                                               Width="14"
-                                               Height="14"
-                                               Stretch="Uniform"
-                                               Margin="0,0,8,0" />
-                                        <TextBlock Text="DIALECTIC"
-                                                   Foreground="White"
-                                                   FontFamily="Trebuchet MS"
-                                                   FontSize="11"
-                                                   FontWeight="Bold"
-                                                   VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button.Content>
-                            </Button>
-                            <Button Grid.Row="2"
-                                    Grid.Column="0"
-                                    Grid.ColumnSpan="2"
-                                    Command="{Binding OpenWikiCommand}"
-                                    Style="{StaticResource BaseControlButton}"
-                                    HorizontalContentAlignment="Center"
-                                    Background="#4A4F57"
-                                    BorderBrush="#707782"
-                                    Margin="0">
-                                <Button.Content>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Viewbox Width="14"
-                                                 Height="14"
-                                                 Margin="0,0,8,0">
-                                            <Canvas Width="14"
-                                                    Height="14">
-                                                <Ellipse Width="11"
-                                                         Height="11"
-                                                         Stroke="White"
-                                                         StrokeThickness="1.2"
-                                                         Canvas.Left="1.5"
-                                                         Canvas.Top="1.5" />
-                                                <Path Data="M 7 1.8 C 9.2 4.2 9.2 9.8 7 12.2 C 4.8 9.8 4.8 4.2 7 1.8 M 2 7 L 12 7 M 3 4.2 C 5.8 5.3 8.2 5.3 11 4.2 M 3 9.8 C 5.8 8.7 8.2 8.7 11 9.8"
-                                                      Stroke="White"
-                                                      StrokeThickness="1"
-                                                      StrokeStartLineCap="Round"
-                                                      StrokeEndLineCap="Round"
-                                                      StrokeLineJoin="Round" />
-                                            </Canvas>
-                                        </Viewbox>
-                                        <TextBlock Text="Wiki"
-                                                   Foreground="White"
-                                                   FontFamily="Trebuchet MS"
-                                                   FontSize="11"
-                                                   FontWeight="Bold"
-                                                   VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button.Content>
-                            </Button>
-                            <Button Grid.Row="1"
-                                    Grid.Column="1"
-                                    Command="{Binding OpenDiscordCommand}"
-                                    Style="{StaticResource BaseControlButton}"
-                                    HorizontalContentAlignment="Center"
-                                    Background="#5865F2"
-                                    BorderBrush="#7A85FF"
-                                    Margin="6,0,0,6">
-                                <Button.Content>
-                                    <StackPanel Orientation="Horizontal">
-                                        <Image Source="Assets/discord.png"
-                                               Width="14"
-                                               Height="14"
-                                               Stretch="Uniform"
-                                               Margin="0,0,8,0" />
-                                        <TextBlock Text="Discord"
-                                                   Foreground="White"
-                                                   FontFamily="Trebuchet MS"
-                                                   FontSize="11"
-                                                   FontWeight="Bold"
-                                                   VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button.Content>
-                            </Button>
+                                </Border>
+                            </Grid>
+                            <Grid Grid.Row="1" Margin="18,14">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.ModTitle}" />
+                                    <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource GameCenter.Gold}"
+                                               FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="12,0,0,0">
+                                    <Grid>
+                                        <CheckBox x:Name="HeroChimUpdateCheckBox" Content="Updates"
+                                                  IsChecked="{Binding IncludeHerikaServerUpdate}"
+                                                  IsEnabled="{Binding IsUpdateIncludeReady}"
+                                                  Command="{Binding SaveUpdateIncludeCommand}"
+                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
+                                                  AutomationProperties.Name="Include CHIM in updates"
+                                                  ToolTip="{Binding UpdateIncludeStatusText}"
+                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
+                                            <CheckBox.Style>
+                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="CHIM">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </CheckBox.Style>
+                                        </CheckBox>
+                                        <CheckBox x:Name="HeroStobeUpdateCheckBox" Content="Updates"
+                                                  IsChecked="{Binding IncludeStobeServerUpdate}"
+                                                  IsEnabled="{Binding IsUpdateIncludeReady}"
+                                                  Command="{Binding SaveUpdateIncludeCommand}"
+                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
+                                                  AutomationProperties.Name="Include STOBE in updates"
+                                                  ToolTip="{Binding UpdateIncludeStatusText}"
+                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
+                                            <CheckBox.Style>
+                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </CheckBox.Style>
+                                        </CheckBox>
+                                        <CheckBox x:Name="HeroDialecticUpdateCheckBox" Content="Updates"
+                                                  IsChecked="{Binding IncludeDialecticServerUpdate}"
+                                                  IsEnabled="{Binding IsUpdateIncludeReady}"
+                                                  Command="{Binding SaveUpdateIncludeCommand}"
+                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
+                                                  AutomationProperties.Name="Include Dialectic in updates"
+                                                  ToolTip="{Binding UpdateIncludeStatusText}"
+                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
+                                            <CheckBox.Style>
+                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </CheckBox.Style>
+                                        </CheckBox>
+                                    </Grid>
+                                    <TextBlock Text="Include this mod when Update runs."
+                                               Style="{StaticResource GameCenter.Caption}" FontSize="11"
+                                               MaxWidth="200" TextAlignment="Right" Margin="0,4,0,0" />
+                                </StackPanel>
+                            </Grid>
                         </Grid>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
+                    </Border>
 
-        <Border Grid.Column="2"
-                Background="#1E1E1E"
-                BorderBrush="#565656"
-                BorderThickness="1"
-                CornerRadius="6">
-            <DockPanel>
-                <Border DockPanel.Dock="Top"
-                        Background="#242424"
-                        BorderBrush="#565656"
-                        BorderThickness="0,0,0,1"
-                        Padding="12,9">
+                    <Border Grid.Column="2" Style="{StaticResource GameCenter.Card}">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid>
+                                <StackPanel x:Name="ChimDetails" Visibility="Collapsed">
+                                    <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="CHIM" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / HerikaServer" /></TextBlock>
+                                    <TextBlock Text="{Binding HerikaStatusText}" Foreground="{Binding HerikaStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
+                                    <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                    <ComboBox ItemsSource="{Binding HerikaBranches}" SelectedItem="{Binding TargetHerikaBranch}"
+                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                              AutomationProperties.Name="HerikaServer update branch"
+                                              AutomationProperties.HelpText="Branch used the next time this product updates." />
+                                    <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,8"
+                                            AutomationProperties.Name="CHIM Webpage"
+                                            AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
+                                    <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.Brand.ChimButton}" />
+                                </StackPanel>
+                                <StackPanel x:Name="StobeDetails" Visibility="Collapsed">
+                                    <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="STOBE" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / StobeServer" /></TextBlock>
+                                    <TextBlock Text="{Binding StobeStatusText}" Foreground="{Binding StobeStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
+                                    <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                    <ComboBox ItemsSource="{Binding StobeBranches}" SelectedItem="{Binding TargetStobeBranch}"
+                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                              AutomationProperties.Name="StobeServer update branch"
+                                              AutomationProperties.HelpText="Branch used the next time this product updates." />
+                                    <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,8"
+                                            AutomationProperties.Name="STOBE Webpage"
+                                            AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
+                                    <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.Brand.StobeButton}" />
+                                </StackPanel>
+                                <StackPanel x:Name="DialecticDetails" Visibility="Collapsed">
+                                    <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="Dialectic" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / DialecticServer" /></TextBlock>
+                                    <TextBlock Text="{Binding DialecticStatusText}" Foreground="{Binding DialecticStatusColor}" TextWrapping="Wrap" Margin="0,8,0,14" />
+                                    <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                    <ComboBox ItemsSource="{Binding DialecticBranches}" SelectedItem="{Binding TargetDialecticBranch}"
+                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                              AutomationProperties.Name="DialecticServer update branch"
+                                              AutomationProperties.HelpText="Branch used the next time this product updates." />
+                                    <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,8"
+                                            AutomationProperties.Name="DIALECTIC Webpage"
+                                            AutomationProperties.HelpText="Open the DIALECTIC server webpage. If it is unavailable, the launcher can start the server first." />
+                                    <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.Brand.DialecticButton}" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Grid.Row="1" Text="{Binding UpdateIncludeStatusText}" Foreground="{Binding UpdateIncludeStatusColor}"
+                                       TextWrapping="Wrap" Margin="0,12,0,0" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Components">
+                <Grid x:Name="SetupLandmark" Margin="18,16,18,12" MinHeight="0" ClipToBounds="True">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="COMPONENTS" Style="{StaticResource GameCenter.Heading}" />
+                            <TextBlock Text="Install services and configure the distro for this PC. Component checks load only when this page opens."
+                                       Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Configure CUDA" Command="{Binding OpenCudaConfigCommand}"
+                                Style="{StaticResource GameCenter.Button}" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Border Grid.Row="1" Style="{StaticResource GameCenter.Card}" Padding="0" ClipToBounds="True">
+                        <!-- Empty until Components opens. MainWindow builds the page on entry and
+                             drops it on exit so its visual tree can be collected. -->
+                        <ContentControl x:Name="SetupComponentsHost" MinHeight="0" Focusable="False" />
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Settings">
+                <ScrollViewer x:Name="SettingsLandmark" VerticalScrollBarVisibility="Auto" Padding="18,16,18,12">
+                    <!-- Every setting lives in this one StackPanel as a full-width SettingRow card:
+                         title plus explanation on the left, a single compact action on the right.
+                         Section headings break the list up but never split it into columns. -->
                     <StackPanel>
-                        <TextBlock Text="Output Console"
-                                   Foreground="White"
-                                   FontFamily="Trebuchet MS"
-                                   FontSize="13"
-                                   FontWeight="Bold" />
-                    </StackPanel>
-                </Border>
+                        <TextBlock Text="SETTINGS" Style="{StaticResource GameCenter.Heading}" />
+                        <TextBlock Text="Launcher preferences, setup, diagnostics, and backups."
+                                   Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,16" />
 
-                <RichTextBox x:Name="OutputRichTextBox"
-                             Background="#1E1E1E"
-                             Foreground="White"
-                             BorderThickness="0"
-                             FontFamily="Consolas"
-                             FontSize="13"
-                             IsReadOnly="True"
-                             IsDocumentEnabled="True"
-                             VerticalScrollBarVisibility="Auto"
-                             HorizontalScrollBarVisibility="Disabled" />
-            </DockPanel>
+                        <TextBlock Text="SETUP" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,10" />
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="First-Time Setup" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Open the guided setup flow for fresh installs or when you want to rerun the quickstart checks."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open" Command="{Binding OpenFirstRunSetupCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Open first-time setup"
+                                        AutomationProperties.HelpText="Open the guided setup flow for fresh installs or when you want to rerun the quickstart checks." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Configure CUDA GPU" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Open CUDA setup and repair tools when NVIDIA GPU support needs to be installed or fixed."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open" Command="{Binding OpenCudaConfigCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Open CUDA GPU configuration"
+                                        AutomationProperties.HelpText="Open CUDA setup and repair tools when NVIDIA GPU support needs to be installed or fixed." />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="DIAGNOSTICS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Create Diagnostic File" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Collect launcher, distro, and service troubleshooting data into a single diagnostic output."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Run" Command="{Binding GenerateDiagnosticsCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Create diagnostic file"
+                                        AutomationProperties.HelpText="Collect launcher, distro, and service troubleshooting data into a single diagnostic output." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Open Terminal" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Launch a shell inside the distro for manual inspection, package checks, or direct commands."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open" Command="{Binding OpenTerminalCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Open terminal"
+                                        AutomationProperties.HelpText="Launch a shell inside the distro for manual inspection, package checks, or direct commands." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Distro Doctor" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Check and repair common distro issues including permissions, Apache, Background Life, ports, disk space, and recent logs."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Run" Command="{Binding DistroDoctorCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Run distro doctor"
+                                        AutomationProperties.HelpText="Check and repair common distro issues including permissions, Apache, Background Life, ports, disk space, and recent logs." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="View Memory Usage" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Open live resource usage inside WSL to inspect RAM, CPU, and process pressure."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Open" Command="{Binding ViewMemoryUsageCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="View memory usage"
+                                        AutomationProperties.HelpText="Open live resource usage inside WSL to inspect RAM, CPU, and process pressure." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Fix WSL DNS (GitHub)" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Repair common WSL DNS issues that block GitHub downloads, updates, or package installs."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Repair" Command="{Binding FixWslDnsCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Fix WSL DNS for GitHub"
+                                        AutomationProperties.HelpText="Repair common WSL DNS issues that block GitHub downloads, updates, or package installs." />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="MAINTENANCE AND BACKUPS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Reclaim Distro Disk Space" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Compact and recover unused WSL disk space after large installs, updates, or cleanup work."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Run" Command="{Binding ReclaimDistroDiskSpaceCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Reclaim distro disk space"
+                                        AutomationProperties.HelpText="Compact and recover unused WSL disk space after large installs, updates, or cleanup work." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Export Distro Backup" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Create a backup of the distro before major updates, installs, or configuration changes."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Export" Command="{Binding ExportDistroCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Export distro backup"
+                                        AutomationProperties.HelpText="Create a backup of the distro before major updates, installs, or configuration changes." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Import Distro Backup" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Restore a previously exported distro backup. Use this when you need to roll the full distro state back."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Import" Command="{Binding ImportDistroCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Import distro backup"
+                                        AutomationProperties.HelpText="Restore a previously exported distro backup. Use this when you need to roll the full distro state back." />
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Clean All Logs" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Clear accumulated service and Apache logs so fresh troubleshooting runs start with clean output."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Clean" Command="{Binding CleanLogsCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}"
+                                        AutomationProperties.Name="Clean all logs"
+                                        AutomationProperties.HelpText="Clear accumulated service and Apache logs so fresh troubleshooting runs start with clean output." />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="STARTUP OPTIONS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <!-- Checkbox-led row: the row title is the checkbox label, so the box reads as
+                                 part of the setting name and clicking "Dwemer Dashboard WebUI" toggles it.
+                                 The description and status line indent 32px (24px box column + 8px gap) so
+                                 they hang under the label instead of under the box. -->
+                            <StackPanel>
+                                <CheckBox Content="Dwemer Dashboard WebUI" IsChecked="{Binding DashboardAutoOpenEnabled}"
+                                          Command="{Binding SaveDashboardAutoOpenCommand}" Style="{StaticResource GameCenter.SettingCheckBox}"
+                                          AutomationProperties.Name="Dwemer Dashboard WebUI, open on server start"
+                                          AutomationProperties.HelpText="When checked, starting the DwemerDistro server opens the Dwemer Dashboard WebUI in your default browser on this PC. Leave it unchecked for headless or remote use. The change applies on the next server start." />
+                                <TextBlock Text="Open the Dwemer Dashboard when the server starts. Turn this off for headless or remote setups. Applies on the next server start."
+                                           Style="{StaticResource GameCenter.SettingRowDescription}"
+                                           Margin="32,4,0,0" />
+                                <TextBlock Text="{Binding DashboardAutoOpenStatusText}"
+                                           Foreground="{Binding DashboardAutoOpenStatusColor}"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           FontSize="11" Margin="32,8,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Logs">
+                <ScrollViewer x:Name="LogsLandmark" VerticalScrollBarVisibility="Auto" Padding="18,16,18,12">
+                    <StackPanel>
+                        <TextBlock Text="LOGS" Style="{StaticResource GameCenter.Heading}" />
+                        <TextBlock Text="Collect a debugging bundle, or open a live service log in a terminal window."
+                                   Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,14" />
+                        <Border Style="{StaticResource GameCenter.Card}" BorderBrush="{DynamicResource GameCenter.Gold}" Margin="0,0,0,20">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="DISTRO DEBUGGING LOGS" Style="{StaticResource GameCenter.SectionHeading}" />
+                                    <TextBlock Text="Bundles distro diagnostics into a single file to share when asking for support."
+                                               Style="{StaticResource GameCenter.Caption}" Margin="0,4,16,0" />
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Content="Generate Distro Debugging Logs"
+                                        Command="{Binding GenerateDiagnosticsCommand}"
+                                        Style="{StaticResource GameCenter.PrimaryButton}"
+                                        MinWidth="238" MinHeight="40" VerticalAlignment="Center"
+                                        AutomationProperties.Name="Generate distro debugging logs"
+                                        AutomationProperties.HelpText="Create a diagnostic file with distro logs and system details." />
+                            </Grid>
+                        </Border>
+                        <TextBlock Text="LIVE LOGS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,4" />
+                        <TextBlock Text="Open a live service log in a terminal window." Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,12" />
+                        <WrapPanel>
+                            <Button Command="{Binding ViewXttsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Dwemer Distro XTTS" />
+                            <Button Command="{Binding ViewChatterboxLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Chatterbox" />
+                            <Button Command="{Binding ViewPocketTtsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="PocketTTS" />
+                            <Button Command="{Binding ViewMeloTtsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="MeloTTS" />
+                            <Button Command="{Binding ViewPiperLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Piper" />
+                            <Button Command="{Binding ViewLocalWhisperLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="LocalWhisper" />
+                            <Button Command="{Binding ViewParakeetLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Parakeet" />
+                            <Button Command="{Binding ViewApacheLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Apache" />
+                        </WrapPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border x:Name="ConsoleScrim" Grid.Row="2" Grid.Column="1" Background="#99000000" Visibility="Collapsed" Panel.ZIndex="9" />
+        <Border x:Name="ConsoleDockHost" Grid.Row="3" Grid.Column="1" Background="#1A1A1A"
+                BorderBrush="{DynamicResource GameCenter.BorderStrong}" BorderThickness="0,1,0,0" Panel.ZIndex="10">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="38" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Button x:Name="ToggleConsoleButton" Content="Show Console"
+                        Style="{StaticResource GameCenter.UtilityButton}" HorizontalContentAlignment="Left" Padding="18,8"
+                        AutomationProperties.Name="Show Console" Click="ToggleConsoleButton_Click" />
+                <!-- The console control is mounted only while expanded so its FlowDocument and
+                     accessibility tree do not stay resident during normal launcher use. -->
+                <ContentControl x:Name="OutputConsoleHost" Grid.Row="1" Focusable="False" />
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="4" Grid.Column="1" Background="#1A1A1A" BorderBrush="{DynamicResource GameCenter.Border}"
+                BorderThickness="0,1,0,0" Padding="18,12">
+            <ListBox x:Name="GameRail" ItemsSource="{Binding GameProfiles}" SelectedItem="{Binding SelectedGame}"
+                     ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                     KeyboardNavigation.DirectionalNavigation="Contained" SelectionChanged="GameRail_SelectionChanged"
+                     AutomationProperties.Name="Dwemer game selection">
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate><UniformGrid Rows="1" Columns="3" /></ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Height="96">
+                            <Grid ClipToBounds="True" Background="#151515">
+                                <Image Source="{Binding RailImageSource}" Stretch="UniformToFill">
+                                    <Image.Style>
+                                        <Style TargetType="Image">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Image.Style>
+                                </Image>
+                                <Border Background="#50000000" />
+                                <StackPanel Margin="12,10" VerticalAlignment="Bottom">
+                                    <TextBlock Text="{Binding Name}" Style="{StaticResource GameCenter.ModCardTitle}" />
+                                    <!-- Live branch | date version | semantic version for this product.
+                                         The rail item's DataContext is the GameProfile, so each card reaches
+                                         the matching MainWindowViewModel status through the window. -->
+                                    <TextBlock FontSize="9"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                <Setter Property="Foreground" Value="#E0E0E0" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Key}" Value="CHIM">
+                                                        <Setter Property="Text" Value="{Binding DataContext.HerikaStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                        <Setter Property="Foreground" Value="{Binding DataContext.HerikaStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Key}" Value="STOBE">
+                                                        <Setter Property="Text" Value="{Binding DataContext.StobeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                        <Setter Property="Foreground" Value="{Binding DataContext.StobeStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Key}" Value="DIALECTIC">
+                                                        <Setter Property="Text" Value="{Binding DataContext.DialecticStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                        <Setter Property="Foreground" Value="{Binding DataContext.DialecticStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
         </Border>
     </Grid>
 </Window>

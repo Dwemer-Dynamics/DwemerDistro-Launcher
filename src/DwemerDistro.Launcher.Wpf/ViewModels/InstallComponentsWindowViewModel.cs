@@ -15,6 +15,9 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private readonly List<InstallComponentItemViewModel> _allItems = [];
     private readonly Dictionary<string, HuggingFaceModelAccessViewModel> _modelAccessItemsByKey;
     private readonly SemaphoreSlim _componentProbeGate = new(1, 1);
+    private CancellationTokenSource? _passiveChecks;
+    private Task? _passiveCheckTask;
+    private int _activeOperationCount;
     private string _huggingFaceTokenStatusText = "Checking";
     private string _huggingFaceTokenDetailText = "Checking Hugging Face token...";
     private string _huggingFaceTokenStatusBackground = "#555555";
@@ -126,21 +129,132 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         private set => SetProperty(ref _huggingFaceTokenStatusForeground, value);
     }
 
-    public Task InitializeAsync()
+    public bool HasActiveOperation => _activeOperationCount > 0;
+
+    // Raised on the UI thread once the last install or configuration run finishes, so a page
+    // that was held open for that work can be released.
+    public event EventHandler? ActiveOperationsCompleted;
+
+    // The page is only safe to drop when the user is somewhere else and nothing is running.
+    // Callers must confirm the tab itself changed: nested selectors bubble SelectionChanged.
+    public static bool ShouldUnloadComponentsPage(bool isComponentsTabSelected, bool hasActiveOperation)
     {
-        return Task.WhenAll(RefreshInstalledStatesAsync(), RefreshHuggingFaceTokenStatusAsync());
+        return !isComponentsTabSelected && !hasActiveOperation;
     }
 
-    public async Task RefreshHuggingFaceTokenStatusAsync()
+    // The page is built when Components opens and thrown away when the user leaves, so the
+    // passive WSL probes are scoped to that mounted lifetime instead of the window's.
+    public Task AttachAsync()
     {
+        _passiveChecks?.Cancel();
+        _passiveChecks = new CancellationTokenSource();
+        _passiveCheckTask = InitializeAsync(_passiveChecks.Token);
+        return _passiveCheckTask;
+    }
+
+    public async Task DetachAsync()
+    {
+        var source = _passiveChecks;
+        var passiveCheckTask = _passiveCheckTask;
+        _passiveChecks = null;
+        _passiveCheckTask = null;
+        source?.Cancel();
+
+        try
+        {
+            if (passiveCheckTask is not null)
+            {
+                await passiveCheckTask.ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Leaving Components cancels its passive checks by design.
+        }
+        finally
+        {
+            source?.Dispose();
+        }
+    }
+
+    private async Task TrackOperationAsync(Func<Task> operation)
+    {
+        await TrackOperationAsync(async () =>
+        {
+            await operation().ConfigureAwait(true);
+            return true;
+        }).ConfigureAwait(true);
+    }
+
+    private async Task<T> TrackOperationAsync<T>(Func<Task<T>> operation)
+    {
+        BeginActiveOperation();
+        try
+        {
+            return await operation().ConfigureAwait(true);
+        }
+        finally
+        {
+            EndActiveOperation();
+        }
+    }
+
+    private void BeginActiveOperation()
+    {
+        if (Interlocked.Increment(ref _activeOperationCount) == 1)
+        {
+            OnPropertyChanged(nameof(HasActiveOperation));
+        }
+    }
+
+    private void EndActiveOperation()
+    {
+        if (Interlocked.Decrement(ref _activeOperationCount) != 0)
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(HasActiveOperation));
+        ActiveOperationsCompleted?.Invoke(this, EventArgs.Empty);
+    }
+
+    public Task RefreshHuggingFaceTokenStatusAsync()
+    {
+        return RefreshHuggingFaceTokenStatusAsync(PassiveCheckToken);
+    }
+
+    // Detached means no page is showing, so a passive check has nothing to report and must
+    // not start more WSL work. Installs and configuration runs hold the page open, so they
+    // always see the live token instead.
+    private CancellationToken PassiveCheckToken => _passiveChecks?.Token ?? new CancellationToken(canceled: true);
+
+    private Task InitializeAsync(CancellationToken cancellationToken)
+    {
+        return Task.WhenAll(
+            RefreshInstalledStatesAsync(cancellationToken),
+            RefreshHuggingFaceTokenStatusAsync(cancellationToken));
+    }
+
+    private async Task RefreshHuggingFaceTokenStatusAsync(CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
         SetHuggingFaceTokenCheckingState();
 
         try
         {
             using var timeout = new CancellationTokenSource(HuggingFaceTokenStatusTimeout);
-            await _huggingFaceToken.EnsureManagedTokenAsync(timeout.Token).ConfigureAwait(true);
-            var status = await _huggingFaceToken.GetStatusAsync(timeout.Token).ConfigureAwait(true);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            await _huggingFaceToken.EnsureManagedTokenAsync(linked.Token).ConfigureAwait(true);
+            var status = await _huggingFaceToken.GetStatusAsync(linked.Token).ConfigureAwait(true);
             ApplyHuggingFaceTokenStatus(status);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The page unloaded mid-check. It checks again the next time it opens.
         }
         catch (OperationCanceledException)
         {
@@ -148,6 +262,11 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             ApplyHuggingFaceTokenStatus(HuggingFaceTokenStatus.Unknown($"Hugging Face token check failed: {ex.Message}"));
         }
     }
@@ -165,40 +284,46 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
     }
 
-    public async Task<string?> SaveHuggingFaceTokenAsync(string token)
+    public Task<string?> SaveHuggingFaceTokenAsync(string token)
     {
-        try
+        return TrackOperationAsync<string?>(async () =>
         {
-            using var timeout = new CancellationTokenSource(HuggingFaceTokenWriteTimeout);
-            var result = await _huggingFaceToken.SaveTokenAsync(token, timeout.Token).ConfigureAwait(true);
-            return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
-        }
-        catch (OperationCanceledException)
-        {
-            return "Timed out while writing the Hugging Face token to WSL.";
-        }
-        catch (Exception ex)
-        {
-            return ex.Message;
-        }
+            try
+            {
+                using var timeout = new CancellationTokenSource(HuggingFaceTokenWriteTimeout);
+                var result = await _huggingFaceToken.SaveTokenAsync(token, timeout.Token).ConfigureAwait(true);
+                return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
+            }
+            catch (OperationCanceledException)
+            {
+                return "Timed out while writing the Hugging Face token to WSL.";
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        });
     }
 
-    public async Task<string?> ClearHuggingFaceTokenAsync()
+    public Task<string?> ClearHuggingFaceTokenAsync()
     {
-        try
+        return TrackOperationAsync<string?>(async () =>
         {
-            using var timeout = new CancellationTokenSource(HuggingFaceTokenWriteTimeout);
-            var result = await _huggingFaceToken.ClearTokenAsync(timeout.Token).ConfigureAwait(true);
-            return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
-        }
-        catch (OperationCanceledException)
-        {
-            return "Timed out while clearing the Hugging Face token from WSL.";
-        }
-        catch (Exception ex)
-        {
-            return ex.Message;
-        }
+            try
+            {
+                using var timeout = new CancellationTokenSource(HuggingFaceTokenWriteTimeout);
+                var result = await _huggingFaceToken.ClearTokenAsync(timeout.Token).ConfigureAwait(true);
+                return result.Succeeded ? null : HuggingFaceTokenService.BuildErrorText(result);
+            }
+            catch (OperationCanceledException)
+            {
+                return "Timed out while clearing the Hugging Face token from WSL.";
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        });
     }
 
     public void SetHuggingFaceTokenReplacedState()
@@ -314,9 +439,22 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
     }
 
-    private async Task RefreshInstalledStatesAsync()
+    private Task RefreshInstalledStatesAsync()
     {
-        await _componentProbeGate.WaitAsync().ConfigureAwait(true);
+        return RefreshInstalledStatesAsync(PassiveCheckToken);
+    }
+
+    private async Task RefreshInstalledStatesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _componentProbeGate.WaitAsync(cancellationToken).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
         try
         {
             ConfigurableComponentsStatusText = "Checking installed components...";
@@ -326,7 +464,12 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             }
 
             var probeScript = BuildProbeScript();
-            var result = await _wsl.RunBashAsync(probeScript, loginShell: false).ConfigureAwait(true);
+            var result = await _wsl.RunBashAsync(probeScript, loginShell: false, cancellationToken: cancellationToken).ConfigureAwait(true);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
             if (!result.Succeeded)
             {
                 SetComponentProbeUnavailable();
@@ -368,6 +511,10 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             }
 
             ApplyConfigurableComponents(payload.Configurable);
+        }
+        catch (OperationCanceledException)
+        {
+            // Leaving Components cancels the probe. The page re-probes when it opens again.
         }
         finally
         {
@@ -419,14 +566,17 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
         var command =
             $"wsl.exe -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"{definition.ScriptPath}\"";
-        try
+        await TrackOperationAsync(async () =>
         {
-            await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true);
-        }
-        finally
-        {
-            await RefreshInstalledStatesAsync().ConfigureAwait(true);
-        }
+            try
+            {
+                await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true);
+            }
+            finally
+            {
+                await RefreshInstalledStatesAsync().ConfigureAwait(true);
+            }
+        }).ConfigureAwait(true);
     }
 
     internal static string BuildMeloTtsProbeEntry()
@@ -711,11 +861,11 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
     private ICommand CreateInstallCommand(string componentKey)
     {
-        return new AsyncRelayCommand(async () =>
+        return new AsyncRelayCommand(() => TrackOperationAsync(async () =>
         {
             await _mainWindowViewModel.InstallComponentAsync(componentKey).ConfigureAwait(true);
             await RefreshInstalledStatesAsync().ConfigureAwait(true);
-        });
+        }));
     }
 
     private IEnumerable<InstallComponentSectionViewModel> BuildSections(

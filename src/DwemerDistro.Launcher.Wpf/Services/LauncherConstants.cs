@@ -2,7 +2,7 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public static class LauncherConstants
 {
-    public const string LauncherVersion = "3.2.4";
+    public const string LauncherVersion = "3.3.0";
     public const string LauncherRepoUrl = "https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher";
     public const string LauncherLatestReleaseApiUrl = "https://api.github.com/repos/Dwemer-Dynamics/DwemerDistro-Launcher/releases/latest";
     public const string LauncherExeName = "DwemerDistro.exe";
@@ -18,11 +18,9 @@ public static class LauncherConstants
     public const int DialecticServerPort = 8088;
     public const int ReignServerPort = 8089;
 
-    public const string WikiUrl = "https://dwemerdynamics.hostwiki.io/";
+    public const string WikiUrl = "https://dwemerdynamics.com/index.html";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";
-    public const string ChimNexusFilesUrl = "https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files";
-    public const string StobeNexusFilesUrl = "https://www.nexusmods.com/kenshi/mods/1891?tab=files";
-    public const string ChimNexusUrl = "https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=description";
-    public const string StobeNexusUrl = "https://www.nexusmods.com/kenshi/mods/1891?tab=description";
+    public const string ChimServerUiUrl = "http://127.0.0.1:8081/HerikaServer/ui/";
+    public const string StobeServerUiUrl = "http://127.0.0.1:8083/StobeServer/ui/";
     public const string DialecticServerUiUrl = "http://127.0.0.1:8088/DialecticServer/ui/";
 }

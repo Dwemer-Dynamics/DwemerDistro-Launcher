@@ -153,7 +153,7 @@ public sealed class InstallComponentItemViewModel : ObservableObject
     }
 }
 
-public sealed class InstallComponentSectionViewModel
+public sealed class InstallComponentSectionViewModel : ObservableObject
 {
     public InstallComponentSectionViewModel(string title, IEnumerable<InstallComponentItemViewModel> items)
     {

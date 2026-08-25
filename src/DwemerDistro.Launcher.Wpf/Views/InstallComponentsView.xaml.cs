@@ -1,34 +1,42 @@
 using System.Windows;
+using System.Windows.Controls;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using MessageBox = System.Windows.MessageBox;
 
 namespace DwemerDistro.Launcher.Wpf.Views;
 
-public partial class InstallComponentsWindow : Window
+public partial class InstallComponentsView : System.Windows.Controls.UserControl
 {
-    private readonly InstallComponentsWindowViewModel _viewModel;
+    private bool _initialized;
 
-    public InstallComponentsWindow(MainWindowViewModel mainWindowViewModel)
+    public InstallComponentsView()
     {
         InitializeComponent();
-        _viewModel = new InstallComponentsWindowViewModel(mainWindowViewModel);
-        DataContext = _viewModel;
-        Loaded += InstallComponentsWindow_Loaded;
     }
 
-    private async void InstallComponentsWindow_Loaded(object sender, RoutedEventArgs e)
+    private async void InstallComponentsView_Loaded(object sender, RoutedEventArgs e)
     {
-        Loaded -= InstallComponentsWindow_Loaded;
-        await _viewModel.InitializeAsync().ConfigureAwait(true);
+        if (_initialized || DataContext is not InstallComponentsWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        _initialized = true;
+        await viewModel.AttachAsync().ConfigureAwait(true);
     }
 
     private async void EditHuggingFaceTokenButton_Click(object sender, RoutedEventArgs e)
     {
+        if (DataContext is not InstallComponentsWindowViewModel viewModel)
+        {
+            return;
+        }
+
         try
         {
-            var window = new HuggingFaceTokenWindow()
+            var window = new HuggingFaceTokenWindow
             {
-                Owner = this
+                Owner = Window.GetWindow(this)
             };
 
             if (window.ShowDialog() != true)
@@ -37,8 +45,8 @@ public partial class InstallComponentsWindow : Window
             }
 
             var error = window.ShouldClearToken
-                ? await _viewModel.ClearHuggingFaceTokenAsync().ConfigureAwait(true)
-                : await _viewModel.SaveHuggingFaceTokenAsync(window.TokenValue).ConfigureAwait(true);
+                ? await viewModel.ClearHuggingFaceTokenAsync().ConfigureAwait(true)
+                : await viewModel.SaveHuggingFaceTokenAsync(window.TokenValue).ConfigureAwait(true);
 
             if (!string.IsNullOrWhiteSpace(error))
             {
@@ -52,12 +60,12 @@ public partial class InstallComponentsWindow : Window
 
             if (window.ShouldClearToken)
             {
-                _viewModel.SetHuggingFaceTokenClearedState();
+                viewModel.SetHuggingFaceTokenClearedState();
             }
             else
             {
-                _viewModel.SetHuggingFaceTokenReplacedState();
-                await _viewModel.RefreshHuggingFaceTokenStatusAsync().ConfigureAwait(true);
+                viewModel.SetHuggingFaceTokenReplacedState();
+                await viewModel.RefreshHuggingFaceTokenStatusAsync().ConfigureAwait(true);
             }
         }
         catch (Exception ex)

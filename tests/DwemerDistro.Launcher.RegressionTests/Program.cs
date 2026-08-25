@@ -1,5 +1,7 @@
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
+using DwemerDistro.Launcher.Wpf.Models;
+using System.Net;
 
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
 var installDirectory = Path.Combine(root, "install");
@@ -86,7 +88,75 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.2.4", "Launcher constants must report version 3.2.4.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.0", "Launcher constants must report version 3.3.0.");
+
+    var gameCatalog = GameProfile.CreateCatalog();
+    Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
+        "The launcher rail must expose exactly three unique game profiles.");
+    Assert(gameCatalog.All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
+                                   && game.RailImageSource.EndsWith("-rail.jpg", StringComparison.Ordinal)),
+        "Every game profile must use local hero and rail artwork.");
+
+    var keyedPreferences = MainWindowViewModel.ParseUpdateIncludeSettings(
+        "herika=0\nstobe=\ndialectic=1\n");
+    Assert(!keyedPreferences.Herika && keyedPreferences.Stobe && keyedPreferences.Dialectic,
+        "An empty update preference must not shift the following game's value.");
+
+    Assert(MainWindowViewModel.ResolveServerBranchChoice("Main", "aiagent") == "aiagent"
+           && MainWindowViewModel.ResolveServerBranchChoice("Main", "stobe") == "stobe"
+           && MainWindowViewModel.ResolveServerBranchChoice("Main", "dialectic") == "dialectic",
+        "The Main branch choice must resolve to each server's production branch.");
+    Assert(MainWindowViewModel.ResolveServerBranchChoice("Dev", "aiagent") == "dev",
+        "The Dev branch choice must resolve to dev.");
+    Assert(MainWindowViewModel.MapServerBranchToChoice("stobe", "stobe") == "Main"
+           && MainWindowViewModel.MapServerBranchToChoice("dev", "stobe") == "Dev"
+           && MainWindowViewModel.MapServerBranchToChoice("unstable", "stobe") == "Dev",
+        "Existing production and development branches must map back to visible choices.");
+
+    Assert(InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(false, false),
+        "Leaving Components with nothing running must release the page so its visual tree can be collected.");
+    Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(true, false),
+        "The Components page must stay mounted while Components is the selected destination.");
+    Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(false, true),
+        "A running install or configuration run must keep the Components page mounted.");
+    Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(true, true),
+        "A running operation on the open Components page must never release it.");
+
+    Assert(MainWindowViewModel.ResolveServerWebPageUrl("CHIM") == "http://127.0.0.1:8081/HerikaServer/ui/"
+           && MainWindowViewModel.ResolveServerWebPageUrl("STOBE") == "http://127.0.0.1:8083/StobeServer/ui/"
+           && MainWindowViewModel.ResolveServerWebPageUrl("DIALECTIC") == "http://127.0.0.1:8088/DialecticServer/ui/",
+        "Each mod webpage button must open that product's local web UI, not its Nexus page.");
+    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveServerWebPageUrl(game.Key) is not null),
+        "Every game profile on the rail must resolve to a webpage URL.");
+    Assert(MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.OK)
+           && MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.Unauthorized),
+        "A webpage that answers must count as reachable even when it demands a login.");
+    Assert(!MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.ServiceUnavailable),
+        "A server-side failure must count as unreachable so the launcher offers to start the server.");
+    Assert(MainWindowViewModel.ShouldOfferServerStart(false, false, true),
+        "An unavailable webpage must offer to start the server when it is stopped.");
+    Assert(!MainWindowViewModel.ShouldOfferServerStart(true, false, false)
+           && !MainWindowViewModel.ShouldOfferServerStart(false, true, false)
+           && !MainWindowViewModel.ShouldOfferServerStart(false, false, false),
+        "A webpage must not offer another start while the server is running, starting, or its start command is busy.");
+
+    Assert(MainWindowViewModel.MaxConsoleLines == 3000,
+        "Launcher session output and diagnostics must share the 3,000-line limit.");
+    var consoleAtLimit = string.Concat(Enumerable.Range(1, MainWindowViewModel.MaxConsoleLines)
+        .Select(index => $"line-{index}\n"));
+    Assert(MainWindowViewModel.TrimConsoleOutput(consoleAtLimit) == consoleAtLimit,
+        "Console output at the limit must remain byte-identical.");
+
+    var overflowingConsole = string.Concat(Enumerable.Range(1, 4000)
+        .Select(index => $"line-{index}\n"));
+    var trimmedConsole = MainWindowViewModel.TrimConsoleOutput(overflowingConsole);
+    Assert(trimmedConsole.StartsWith("[Earlier console output trimmed.]", StringComparison.Ordinal),
+        "Overflowing console output must explain that older lines were removed.");
+    Assert(trimmedConsole.EndsWith("line-4000\n", StringComparison.Ordinal),
+        "Console trimming must retain the newest output line.");
+    Assert(trimmedConsole.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length <=
+           MainWindowViewModel.MaxConsoleLines + 1,
+        "Console output must contain at most 3,000 data lines plus the trim notice.");
 
     Console.WriteLine("Launcher regression tests: OK");
     return 0;
