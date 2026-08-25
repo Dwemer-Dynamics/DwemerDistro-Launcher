@@ -121,6 +121,24 @@ try
     Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(true, true),
         "A running operation on the open Components page must never release it.");
 
+    Assert(MainWindowViewModel.MaxConsoleLines == 3000,
+        "Launcher session output and diagnostics must share the 3,000-line limit.");
+    var consoleAtLimit = string.Concat(Enumerable.Range(1, MainWindowViewModel.MaxConsoleLines)
+        .Select(index => $"line-{index}\n"));
+    Assert(MainWindowViewModel.TrimConsoleOutput(consoleAtLimit) == consoleAtLimit,
+        "Console output at the limit must remain byte-identical.");
+
+    var overflowingConsole = string.Concat(Enumerable.Range(1, 4000)
+        .Select(index => $"line-{index}\n"));
+    var trimmedConsole = MainWindowViewModel.TrimConsoleOutput(overflowingConsole);
+    Assert(trimmedConsole.StartsWith("[Earlier console output trimmed.]", StringComparison.Ordinal),
+        "Overflowing console output must explain that older lines were removed.");
+    Assert(trimmedConsole.EndsWith("line-4000\n", StringComparison.Ordinal),
+        "Console trimming must retain the newest output line.");
+    Assert(trimmedConsole.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length <=
+           MainWindowViewModel.MaxConsoleLines + 1,
+        "Console output must contain at most 3,000 data lines plus the trim notice.");
+
     Console.WriteLine("Launcher regression tests: OK");
     return 0;
 }

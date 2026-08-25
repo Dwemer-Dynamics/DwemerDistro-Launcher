@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private InstallComponentsWindowViewModel? _componentsViewModel;
     private readonly Paragraph _outputParagraph = new();
     private int _renderedOutputLength;
+    private int _renderedOutputGeneration = -1;
     private bool _isConsoleExpanded;
     private int _landmarkIndex = -1;
 
@@ -86,7 +87,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        _ = Dispatcher.BeginInvoke(() => RenderOutputText(_viewModel.OutputText));
+        if (_isConsoleExpanded)
+        {
+            var output = _viewModel.OutputText;
+            var generation = _viewModel.OutputGeneration;
+            _ = Dispatcher.BeginInvoke(() => RenderOutputText(output, generation));
+        }
     }
 
     private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -251,6 +257,10 @@ public partial class MainWindow : Window
 
         if (!_isConsoleExpanded)
         {
+            OutputRichTextBox.Visibility = Visibility.Collapsed;
+            _outputParagraph.Inlines.Clear();
+            _renderedOutputLength = 0;
+            _renderedOutputGeneration = -1;
             ConsoleRow.Height = new GridLength(38);
             Grid.SetRow(ConsoleDockHost, 3);
             Grid.SetRowSpan(ConsoleDockHost, 1);
@@ -259,6 +269,9 @@ public partial class MainWindow : Window
             ConsoleScrim.Visibility = Visibility.Collapsed;
             return;
         }
+
+        OutputRichTextBox.Visibility = Visibility.Visible;
+        RenderOutputText(_viewModel.OutputText, _viewModel.OutputGeneration);
 
         if (compact)
         {
@@ -508,19 +521,26 @@ public partial class MainWindow : Window
         public uint Flags;
     }
 
-    private void RenderOutputText(string value)
+    private void RenderOutputText(string value, int generation)
     {
+        if (!_isConsoleExpanded)
+        {
+            return;
+        }
+
         if (string.IsNullOrEmpty(value))
         {
             _outputParagraph.Inlines.Clear();
             _renderedOutputLength = 0;
+            _renderedOutputGeneration = generation;
             return;
         }
 
-        if (value.Length < _renderedOutputLength)
+        if (generation != _renderedOutputGeneration || value.Length < _renderedOutputLength)
         {
             _outputParagraph.Inlines.Clear();
             _renderedOutputLength = 0;
+            _renderedOutputGeneration = generation;
         }
 
         var appendedText = value[_renderedOutputLength..];
@@ -531,6 +551,7 @@ public partial class MainWindow : Window
 
         AppendFormattedText(appendedText);
         _renderedOutputLength = value.Length;
+        _renderedOutputGeneration = generation;
         OutputRichTextBox.ScrollToEnd();
     }
 

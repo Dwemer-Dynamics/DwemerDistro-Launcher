@@ -28,8 +28,28 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      - name: Verify source version
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ steps.version.outputs.value }}"
+          [xml]$project = Get-Content .\src\DwemerDistro.Launcher.Wpf\DwemerDistro.Launcher.Wpf.csproj
+          $projectVersion = [string]($project.Project.PropertyGroup.Version | Select-Object -First 1)
+          $constants = Get-Content -Raw .\src\DwemerDistro.Launcher.Wpf\Services\LauncherConstants.cs
+          $match = [regex]::Match($constants, 'LauncherVersion\s*=\s*"([^"]+)"')
+          if (-not $match.Success) {
+            throw "LauncherConstants.LauncherVersion could not be read."
+          }
+
+          $constantVersion = $match.Groups[1].Value
+          if ($tagVersion -ne $projectVersion -or $tagVersion -ne $constantVersion) {
+            throw "Version mismatch: tag=$tagVersion project=$projectVersion constant=$constantVersion"
+          }
+
       - name: Restore
         run: dotnet restore .\DwemerDistroLauncherWpf.sln
+
+      - name: Run launcher regression tests
+        run: dotnet run --project .\tests\DwemerDistro.Launcher.RegressionTests\DwemerDistro.Launcher.RegressionTests.csproj -c Release
 
       - name: Publish launcher
         run: >
@@ -61,6 +81,31 @@ jobs:
           New-Item -ItemType Directory -Force -Path .\artifacts\release | Out-Null
           Copy-Item .\artifacts\publish\updater\DwemerDistroUpdater.exe .\artifacts\publish\launcher\DwemerDistroUpdater.exe -Force
           Compress-Archive -Path .\artifacts\publish\launcher\* -DestinationPath .\artifacts\release\DwemerDistro-win-x64.zip -Force
+
+      - name: Verify release archive
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archivePath = Resolve-Path .\artifacts\release\DwemerDistro-win-x64.zip
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+          try {
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\\', '/') })
+            $required = @(
+              'DwemerDistro.exe',
+              'DwemerDistroUpdater.exe',
+              'Assets/Fonts/FONT-LICENSES.md',
+              'Assets/Fonts/OFL-Pelagiad.txt',
+              'Assets/Fonts/OFL-Rye.txt',
+              'Assets/Fonts/OFL-ShareTechMono.txt'
+            )
+            $missing = @($required | Where-Object { $_ -notin $entries })
+            if ($missing.Count -gt 0) {
+              throw "Release archive is missing required files: $($missing -join ', ')"
+            }
+          }
+          finally {
+            $archive.Dispose()
+          }
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2

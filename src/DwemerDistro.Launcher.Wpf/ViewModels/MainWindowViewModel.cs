@@ -21,6 +21,8 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 public sealed partial class MainWindowViewModel : ObservableObject
 {
+    internal const int MaxConsoleLines = 3000;
+    private const string ConsoleTrimNotice = "[Earlier console output trimmed.]";
     private static readonly TimeSpan StartupSettingsTimeout = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan StartupFirstRunProbeTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan StartupLauncherUpdateTimeout = TimeSpan.FromSeconds(25);
@@ -86,6 +88,7 @@ echo "CHIM-MCP installed and enabled."
     private Window? _firstRunSetupWindow;
 
     private string _outputText = string.Empty;
+    private int _outputGeneration;
     private bool _isServerRunning;
     private bool _isServerStarting;
     private string _startButtonText = "Start Server";
@@ -101,7 +104,6 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherUpdateButtonText = "Check Update";
     private string _distroUpdateButtonText = "Update Mods";
     private bool _isDistroUpdateInProgress;
-    private bool _mcpEnabled = true;
     private bool _includeHerikaServerUpdate = true;
     private bool _includeStobeServerUpdate = true;
     private bool _includeDialecticServerUpdate = true;
@@ -156,9 +158,6 @@ echo "CHIM-MCP installed and enabled."
         UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync, () => !IsDistroUpdateInProgress);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
-        InstallComponentsCommand = new RelayCommand(OpenInstallComponentsWindow);
-        OpenDebuggingCommand = new RelayCommand(OpenDebuggingWindow);
-        SaveMcpEnabledCommand = new AsyncRelayCommand(SaveMcpEnabledAsync);
         SaveUpdateIncludeCommand = new RelayCommand(QueueUpdateIncludeSave, () => IsUpdateIncludeReady);
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
         OpenChimCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.ChimNexusUrl));
@@ -199,6 +198,8 @@ echo "CHIM-MCP installed and enabled."
         get => _outputText;
         private set => SetProperty(ref _outputText, value);
     }
+
+    internal int OutputGeneration => _outputGeneration;
 
     public bool IsServerRunning
     {
@@ -308,12 +309,6 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    public bool McpEnabled
-    {
-        get => _mcpEnabled;
-        set => SetProperty(ref _mcpEnabled, value);
-    }
-
     public bool IncludeHerikaServerUpdate
     {
         get => _includeHerikaServerUpdate;
@@ -421,9 +416,6 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand UpdateAllCommand { get; }
     public RelayCommand OpenServerFolderCommand { get; }
     public RelayCommand OpenFirstRunSetupCommand { get; }
-    public RelayCommand InstallComponentsCommand { get; }
-    public RelayCommand OpenDebuggingCommand { get; }
-    public AsyncRelayCommand SaveMcpEnabledCommand { get; }
     public RelayCommand SaveUpdateIncludeCommand { get; }
     public AsyncRelayCommand SaveDashboardAutoOpenCommand { get; }
     public RelayCommand OpenChimCommand { get; }
@@ -460,7 +452,6 @@ echo "CHIM-MCP installed and enabled."
     {
         LauncherLogService.Startup("MainWindowViewModel initialization started.");
         StartProxyAndDiscovery();
-        await RunStartupStepAsync("Load MCP setting", LoadMcpEnabledAsync, StartupSettingsTimeout).ConfigureAwait(true);
         await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
         await RunStartupStepAsync("Load dashboard auto-open setting", LoadDashboardAutoOpenAsync, StartupSettingsTimeout).ConfigureAwait(true);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
@@ -1450,33 +1441,6 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private async Task LoadMcpEnabledAsync(CancellationToken cancellationToken = default)
-    {
-        var result = await _wsl.RunDistroAsync(
-                new[] { "bash", "-lc", "if [ -f /home/dwemer/.mcp_enabled ]; then cat /home/dwemer/.mcp_enabled; else echo 1 > /home/dwemer/.mcp_enabled; echo 1; fi" },
-                cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        RunOnUi(() => McpEnabled = result.Succeeded ? result.StandardOutput.Trim() == "1" : true);
-    }
-
-    private async Task SaveMcpEnabledAsync()
-    {
-        var value = McpEnabled ? "1" : "0";
-        var result = await _wsl.RunDistroAsync(new[] { "bash", "-lc", $"echo {value} > /home/dwemer/.mcp_enabled" })
-            .ConfigureAwait(false);
-        if (result.Succeeded)
-        {
-            AppendLog(McpEnabled
-                    ? "MCP service enabled. Restart server to apply." + Environment.NewLine
-                    : "MCP service disabled. Restart server to apply." + Environment.NewLine,
-                McpEnabled ? "green" : "red");
-        }
-        else
-        {
-            AppendLog($"Failed to save MCP setting: {result.StandardError}{Environment.NewLine}", "red");
-        }
-    }
-
     private async Task LoadUpdateIncludeSettingsAsync(CancellationToken cancellationToken = default)
     {
         RunOnUi(() =>
@@ -1832,13 +1796,9 @@ echo "CHIM-MCP installed and enabled."
 
     private void OpenDistroDoctorWindow()
     {
-        var owner = Application.Current.Windows
-            .OfType<DebuggingWindow>()
-            .FirstOrDefault(window => window.IsActive)
-            ?? Application.Current.MainWindow;
         var window = new DistroDoctorWindow(new DistroDoctorViewModel(_wsl))
         {
-            Owner = owner
+            Owner = Application.Current.MainWindow
         };
         window.ShowDialog();
     }
@@ -2055,16 +2015,14 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task AddLogDiagnosticsAsync(List<string> lines)
     {
-        const int maxLogLines = 3000;
-
         lines.Add("Log Diagnostics");
-        lines.Add($"Each log section contains up to the last {maxLogLines} lines.");
+        lines.Add($"Each log section contains up to the last {MaxConsoleLines} lines.");
         lines.Add("Missing or unreadable logs are noted inline instead of failing diagnostic creation.");
         lines.Add("");
 
-        AddLauncherSessionOutputDiagnostics(lines, maxLogLines);
-        await AddWslLogDiagnosticsAsync(lines, maxLogLines).ConfigureAwait(false);
-        AddLocalGameLogDiagnostics(lines, maxLogLines);
+        AddLauncherSessionOutputDiagnostics(lines, MaxConsoleLines);
+        await AddWslLogDiagnosticsAsync(lines, MaxConsoleLines).ConfigureAwait(false);
+        AddLocalGameLogDiagnostics(lines, MaxConsoleLines);
     }
 
     private void AddLauncherSessionOutputDiagnostics(List<string> lines, int maxLogLines)
@@ -3773,15 +3731,6 @@ fi
         }
     }
 
-    private void OpenInstallComponentsWindow()
-    {
-        var window = new InstallComponentsWindow(this)
-        {
-            Owner = Application.Current.MainWindow
-        };
-        window.Show();
-    }
-
     public void OpenFirstRunSetupWindow()
     {
         RunOnUi(() =>
@@ -3821,16 +3770,6 @@ fi
                     MessageBoxImage.Error);
             }
         });
-    }
-
-    private void OpenDebuggingWindow()
-    {
-        var window = new DebuggingWindow
-        {
-            Owner = Application.Current.MainWindow,
-            DataContext = this
-        };
-        window.Show();
     }
 
     private async Task OpenRollbackWindowAsync(string serverKey)
@@ -4454,11 +4393,61 @@ fi
 
         if (_dispatcher.CheckAccess())
         {
-            OutputText += sanitized;
+            AppendSanitizedLog(sanitized);
             return;
         }
 
-        _ = _dispatcher.BeginInvoke(() => OutputText += sanitized, DispatcherPriority.Background);
+        _ = _dispatcher.BeginInvoke(() => AppendSanitizedLog(sanitized), DispatcherPriority.Background);
+    }
+
+    private void AppendSanitizedLog(string sanitized)
+    {
+        var appended = OutputText + sanitized;
+        var bounded = TrimConsoleOutput(appended);
+        if (!string.Equals(appended, bounded, StringComparison.Ordinal))
+        {
+            _outputGeneration++;
+        }
+
+        OutputText = bounded;
+    }
+
+    // Keep long-running server sessions bounded while preserving the newest complete output lines.
+    internal static string TrimConsoleOutput(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        var lineCount = value[^1] == '\n' ? 0 : 1;
+        foreach (var character in value)
+        {
+            if (character == '\n')
+            {
+                lineCount++;
+            }
+        }
+
+        if (lineCount <= MaxConsoleLines)
+        {
+            return value;
+        }
+
+        var linesToSkip = lineCount - MaxConsoleLines;
+        var retainedStart = 0;
+        for (var skipped = 0; skipped < linesToSkip; skipped++)
+        {
+            var newlineIndex = value.IndexOf('\n', retainedStart);
+            if (newlineIndex < 0)
+            {
+                return value;
+            }
+
+            retainedStart = newlineIndex + 1;
+        }
+
+        return ConsoleTrimNotice + Environment.NewLine + value[retainedStart..];
     }
 
     private void RunOnUi(Action action)

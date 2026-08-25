@@ -38,12 +38,13 @@
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
-    <!-- Brand title faces, packaged as Resource fonts in this assembly (see
-         Assets/Fonts/FONT-LICENSES.md). Each matches the title font the product's
-         own web UI declares, so nothing here relies on an installed system font. -->
-    <FontFamily x:Key="GameCenter.Font.Chim">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Magic Cards</FontFamily>
-    <FontFamily x:Key="GameCenter.Font.Stobe">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Mailart Rubberstamp</FontFamily>
-    <FontFamily x:Key="GameCenter.Font.Dialectic">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Monofonto</FontFamily>
+    <!-- Brand title faces, packaged as Resource fonts in this assembly. Each is an
+         OFL-licensed face picked to echo the title look the product's own web UI uses,
+         so nothing here relies on an installed system font and nothing is downloaded at
+         runtime. Attribution and the full licence text live in Assets/Fonts. -->
+    <FontFamily x:Key="GameCenter.Font.Chim">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Pelagiad</FontFamily>
+    <FontFamily x:Key="GameCenter.Font.Stobe">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Rye</FontFamily>
+    <FontFamily x:Key="GameCenter.Font.Dialectic">pack://application:,,,/DwemerDistro;component/Assets/Fonts/#Share Tech Mono</FontFamily>
 
     <!-- Mod title beneath the hero art. DataContext is the view model, so the face
          follows the current selection. The brand faces ship Regular only, so each
@@ -523,6 +524,101 @@
                         <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
                             <Setter TargetName="Box" Property="BorderThickness" Value="2" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Checkbox for a Settings row where the row title IS the label, so the box sits to the
+         left of the title and clicking the title toggles the setting. Scoped to that layout on
+         purpose: it is larger (20x20 box in a 24x24 target) and carries the row-title type ramp,
+         neither of which suits the compact GameCenter.CheckBox used inline elsewhere. -->
+    <Style x:Key="GameCenter.SettingCheckBox" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <!-- Gap between the 24px box column and the label. Description text under the row
+             indents by 32 (24 + 8) to line up with the label rather than the box. -->
+        <Setter Property="Padding" Value="8,0,0,0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <!-- Always-present 1px ring so gaining focus never reflows the row. -->
+                    <Border x:Name="FocusRing"
+                            Background="Transparent"
+                            BorderBrush="Transparent"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="1">
+                        <!-- Column 0 is the 24x24 hit target; the visible 20x20 box centres in it. -->
+                        <Grid Background="Transparent" MinHeight="24">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="24" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="Box"
+                                    Width="20"
+                                    Height="20"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Background="{DynamicResource GameCenter.Window}"
+                                    BorderBrush="{DynamicResource GameCenter.BorderStrong}"
+                                    BorderThickness="1"
+                                    CornerRadius="3"
+                                    SnapsToDevicePixels="True">
+                                <Path x:Name="Check"
+                                      Width="12"
+                                      Height="9"
+                                      Data="M 1,4.5 L 4.5,8 L 11,1"
+                                      Stroke="White"
+                                      StrokeThickness="2"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"
+                                      Visibility="Collapsed" />
+                            </Border>
+                            <ContentPresenter Grid.Column="1"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True"
+                                              VerticalAlignment="Center">
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground"
+                                                Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type CheckBox}}, FallbackValue=White}" />
+                                        <Setter Property="FontFamily" Value="Segoe UI" />
+                                        <Setter Property="TextWrapping" Value="Wrap" />
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Box" Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                            <Setter TargetName="Check" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            <Setter TargetName="Box" Property="Opacity" Value="0.8" />
+                        </Trigger>
+                        <!-- Ring plus box outline: the label is the click target, so the focus
+                             cue has to read across the whole control, not just the box. -->
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Opacity" Value="0.5" />

@@ -550,24 +550,23 @@
 
                         <TextBlock Text="STARTUP OPTIONS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
                         <Border Style="{StaticResource GameCenter.SettingRow}">
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                <StackPanel Margin="0,0,16,0">
-                                    <TextBlock Text="Dwemer Dashboard WebUI" Style="{StaticResource GameCenter.SettingRowTitle}" />
-                                    <TextBlock Text="Open the Dwemer Dashboard when the server starts. Turn this off for headless or remote setups. Applies on the next server start."
-                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
-                                </StackPanel>
-                                <CheckBox Grid.Column="1" Content="Open on start" IsChecked="{Binding DashboardAutoOpenEnabled}"
-                                          Command="{Binding SaveDashboardAutoOpenCommand}" Style="{StaticResource GameCenter.CheckBox}"
-                                          VerticalAlignment="Center"
-                                          AutomationProperties.Name="Open Dwemer Dashboard on server start"
+                            <!-- Checkbox-led row: the row title is the checkbox label, so the box reads as
+                                 part of the setting name and clicking "Dwemer Dashboard WebUI" toggles it.
+                                 The description and status line indent 32px (24px box column + 8px gap) so
+                                 they hang under the label instead of under the box. -->
+                            <StackPanel>
+                                <CheckBox Content="Dwemer Dashboard WebUI" IsChecked="{Binding DashboardAutoOpenEnabled}"
+                                          Command="{Binding SaveDashboardAutoOpenCommand}" Style="{StaticResource GameCenter.SettingCheckBox}"
+                                          AutomationProperties.Name="Dwemer Dashboard WebUI, open on server start"
                                           AutomationProperties.HelpText="When checked, starting the DwemerDistro server opens the Dwemer Dashboard WebUI in your default browser on this PC. Leave it unchecked for headless or remote use. The change applies on the next server start." />
-                                <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding DashboardAutoOpenStatusText}"
+                                <TextBlock Text="Open the Dwemer Dashboard when the server starts. Turn this off for headless or remote setups. Applies on the next server start."
+                                           Style="{StaticResource GameCenter.SettingRowDescription}"
+                                           Margin="32,4,0,0" />
+                                <TextBlock Text="{Binding DashboardAutoOpenStatusText}"
                                            Foreground="{Binding DashboardAutoOpenStatusColor}"
                                            AutomationProperties.LiveSetting="Polite"
-                                           FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" />
-                            </Grid>
+                                           FontSize="11" Margin="32,8,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
                         </Border>
                     </StackPanel>
                 </ScrollViewer>

@@ -1,47 +1,78 @@
-# Bundled brand title fonts
+# Bundled brand title fonts — third-party attribution
 
-These faces are packaged into the launcher assembly as WPF `Resource` items and are
-used **only** for mod title text (hero title, bottom game cards, and the mod-name
+The launcher packages three typefaces into the assembly as WPF `Resource` items. They
+are used **only** for mod title text (hero title, bottom game cards, and the mod-name
 portion of the details headings). All other launcher text stays in the UI font.
 
-Each file is the same font this monorepo already redistributes in that product's own
-web UI, copied so the launcher has no dependency on a system-installed font and makes
-no runtime download.
+Every face here is licensed under the **SIL Open Font License, Version 1.1** (OFL), which
+permits bundling and redistribution with software. The complete upstream
+license text for each face ships next to this file and is copied beside the published
+binary (`Assets/Fonts/` in the release archive):
 
-## Magic Cards — CHIM
+| Face | Font file | License file |
+| --- | --- | --- |
+| Pelagiad | `Pelagiad.ttf` | `OFL-Pelagiad.txt` |
+| Rye | `Rye-Regular.ttf` | `OFL-Rye.txt` |
+| Share Tech Mono | `ShareTechMono-Regular.ttf` | `OFL-ShareTechMono.txt` |
 
-- File: `MagicCardsNormal.ttf`
-- WPF family name: `Magic Cards`
-- Copied from: `HerikaServer/ui/css/font/MagicCardsNormal.ttf`
-- Declared as the CHIM title face by `HerikaServer/ui/css/chim-theme.css`
-  (`@font-face { font-family: "MagicCards"; }`) and `hub-navigation.css`.
-- Name-table copyright: `(c)1998 Neale Davidson`. The file carries no embedded
-  license string. It is the Morrowind-style display face CHIM's UI already ships.
-- Alternative if a formally licensed replacement is required: **Pelagiad**
-  (SIL Open Font License 1.1, https://github.com/Isaskar/Pelagiad), a Magic
-  Cards-inspired face. Dropping `Pelagiad.ttf` plus its `OFL.txt` in this folder and
-  repointing `GameCenter.Font.Chim` in `Themes/GameCenter.xaml` is the only change
-  needed; no other code refers to the family name.
+No font file has been renamed in a way that touches a Reserved Font Name, subsetted,
+re-hinted, or otherwise modified — each is a byte-for-byte copy of the upstream release.
+None of them is sold on its own, and each ships bundled with this software, so the OFL
+conditions are satisfied.
 
-## Mailart Rubberstamp — STOBE
+## Pelagiad — CHIM titles
 
-- File: `MailartRubberstamp-Regular.otf`
-- WPF family name: `Mailart Rubberstamp`
-- Copied from: `StobeServer/ui/css/font/MailartRubberstamp-Regular.otf`
-- Declared as the STOBE title face by `StobeServer/ui/css/main.css`
-  (`--stobe-title-font: 'MailartRubberstamp', ...`).
-- Name-table copyright: `© 2004, 2013 K-Type (www.k-type.com)`, designed by
-  Keith Bates. No embedded license string.
+- File: `Pelagiad.ttf` (SHA-256 `b282ea043af32e15bab8cf9e01d9625c0fa5032761ffbc57d7a5f939098a7d92`)
+- WPF family name: `Pelagiad`
+- Source: <https://github.com/Isaskar/Pelagiad> — `Pelagiad.ttf` at commit
+  `f981301916d0e5a7ea9ce39d2af4e56df09677ca`
+- Copyright (c) 2015, Isak Larborn (isaskar.github.io/Pelagiad), with Reserved Font
+  Name "Pelagiad.ttf".
+- License: SIL Open Font License 1.1 — full text in `OFL-Pelagiad.txt`
+  (upstream `LICENSE.txt`).
+- Why this face: Pelagiad is the Morrowind-style display face used by OpenMW, so it
+  carries the same Elder Scrolls title feel CHIM's own web UI aims for, with a license
+  that permits redistribution.
 
-## Monofonto — DIALECTIC
+## Rye — STOBE titles
 
-- File: `MonofontoRg.otf`
-- WPF family name: `Monofonto`
-- Copied from: `DialecticServer/ui/css/font/MonofontoRg.otf`
-- Declared as the DIALECTIC title face by `DialecticServer/ui/css/main.css`
-  (`@font-face { font-family: 'Monofonto'; }`).
-- Name-table copyright: `Copyright (c) 1999-2022 Typodermic Fonts Inc.`, designed by
-  Ray Larabie (https://typodermicfonts.com). No embedded license string.
+- File: `Rye-Regular.ttf` (SHA-256 `b7edee5e615ae1b6b07e9d030c1309152bf3672a0e8a2a46293e273730f5adba`)
+- WPF family name: `Rye`
+- Source: <https://github.com/google/fonts> — `ofl/rye/Rye-Regular.ttf` at commit
+  `ec626514f79f831f1ab848a82114a0ce7e2d6372`
+- Copyright (c) 2011 by Sorkin Type Co (www.sorkintype.com), with Reserved Font Name
+  "Rye".
+- License: SIL Open Font License 1.1 — full text in `OFL-Rye.txt` (upstream
+  `ofl/rye/OFL.txt`).
+- Why this face: a heavy slab/woodtype display face, the closest redistributable match
+  for the stamped, weathered STOBE title look.
 
-None of the three files embed an OFL/licence block, so redistribution here rests on
-the same terms under which each server project already ships the identical file.
+## Share Tech Mono — DIALECTIC titles
+
+- File: `ShareTechMono-Regular.ttf` (SHA-256 `9ceab1f87414829af259c0f537573ae03ef7dd3147c0b27a36a1a0beb6732677`)
+- WPF family name: `Share Tech Mono`
+- Source: <https://github.com/google/fonts> — `ofl/sharetechmono/ShareTechMono-Regular.ttf`
+  at commit `ec626514f79f831f1ab848a82114a0ce7e2d6372`
+- Copyright (c) 2012, Carrois Type Design, Ralph du Carrois (post@carrois.com,
+  www.carrois.com), with Reserved Font Name 'Share'.
+- License: SIL Open Font License 1.1 — full text in `OFL-ShareTechMono.txt` (upstream
+  `ofl/sharetechmono/OFL.txt`).
+- Why this face: a narrow technical monospace, matching the terminal/monofonto
+  character DIALECTIC's own web UI uses, under a redistributable license.
+
+## Previously bundled faces (removed)
+
+`MagicCardsNormal.ttf`, `MailartRubberstamp-Regular.otf`, and `MonofontoRg.otf` were
+removed. Each was copied from a server project's web UI and carried only a name-table
+copyright with no embedded license grant, so none of them was clearly redistributable
+inside a published launcher binary. The three OFL faces above replace them and keep the
+per-mod title branding.
+
+## Changing a face
+
+Each face is referenced from exactly one place: the `GameCenter.Font.Chim`,
+`GameCenter.Font.Stobe`, and `GameCenter.Font.Dialectic` `FontFamily` resources in
+`Themes/GameCenter.xaml`. To swap one, drop the new `.ttf`/`.otf` and its license file
+in this folder, delete the old pair, and repoint that one resource — the fragment after
+`#` must be the font's family name as reported by
+`System.Windows.Media.GlyphTypeface.Win32FamilyNames`, not the file name.

@@ -20,18 +20,19 @@
     <None Remove="Assets\*.ico" />
     <None Remove="Assets\GameCenter\*.jpg" />
     <None Remove="Assets\Fonts\*.ttf" />
-    <None Remove="Assets\Fonts\*.otf" />
     <None Remove="Assets\Fonts\FONT-LICENSES.md" />
+    <None Remove="Assets\Fonts\OFL-*.txt" />
     <Resource Include="Assets\*.png" />
     <Resource Include="Assets\*.gif" />
     <Resource Include="Assets\*.ico" />
     <Resource Include="Assets\GameCenter\*.jpg" />
     <!-- Brand title faces are packaged into the assembly so the launcher never
-         depends on a system-installed font. FONT-LICENSES.md rides along with
-         them so the attribution ships wherever the binary does. -->
+         depends on a system-installed font. The attribution and the full OFL
+         licence text are copied out as loose files rather than embedded, so they
+         stay readable beside the published binary. -->
     <Resource Include="Assets\Fonts\*.ttf" />
-    <Resource Include="Assets\Fonts\*.otf" />
-    <Resource Include="Assets\Fonts\FONT-LICENSES.md" />
+    <Content Include="Assets\Fonts\FONT-LICENSES.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\OFL-*.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="GenerateLauncherSecrets" BeforeTargets="CoreCompile">
