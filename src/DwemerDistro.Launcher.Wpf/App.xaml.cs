@@ -2,6 +2,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
+using System.Windows.Interop;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using Application = System.Windows.Application;
@@ -46,6 +47,9 @@ public partial class App : Application
         DispatcherUnhandledException += App_DispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
         TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
+
+        // This mostly static launcher avoids a large per-process D3D allocation by rendering in software.
+        System.Windows.Media.RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
 
         var window = new MainWindow();
         MainWindow = window;
