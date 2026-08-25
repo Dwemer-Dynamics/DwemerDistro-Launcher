@@ -27,6 +27,23 @@
     <SolidColorBrush x:Key="GameCenter.CaptionClose" Color="#C42B1C" />
     <SolidColorBrush x:Key="GameCenter.Focus" Color="#FFFFFF" />
 
+    <!-- Product accents mirror the maintained Config panel theme variables. -->
+    <SolidColorBrush x:Key="GameCenter.Brand.Chim" Color="#F27C11" />
+    <SolidColorBrush x:Key="GameCenter.Brand.ChimBright" Color="#FF9738" />
+    <SolidColorBrush x:Key="GameCenter.Brand.ChimSoft" Color="#A95109" />
+    <SolidColorBrush x:Key="GameCenter.Brand.ChimTint" Color="#3D2A1B" />
+    <SolidColorBrush x:Key="GameCenter.Brand.ChimTintPressed" Color="#2F2117" />
+    <SolidColorBrush x:Key="GameCenter.Brand.Stobe" Color="#E6B76C" />
+    <SolidColorBrush x:Key="GameCenter.Brand.StobeBright" Color="#F4CD8A" />
+    <SolidColorBrush x:Key="GameCenter.Brand.StobeSoft" Color="#76562F" />
+    <SolidColorBrush x:Key="GameCenter.Brand.StobeTint" Color="#3C3529" />
+    <SolidColorBrush x:Key="GameCenter.Brand.StobeTintPressed" Color="#302B23" />
+    <SolidColorBrush x:Key="GameCenter.Brand.Dialectic" Color="#FFB641" />
+    <SolidColorBrush x:Key="GameCenter.Brand.DialecticBright" Color="#FFD27A" />
+    <SolidColorBrush x:Key="GameCenter.Brand.DialecticSoft" Color="#805814" />
+    <SolidColorBrush x:Key="GameCenter.Brand.DialecticTint" Color="#403521" />
+    <SolidColorBrush x:Key="GameCenter.Brand.DialecticTintPressed" Color="#312A1D" />
+
     <Style TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Setter Property="FontFamily" Value="Segoe UI" />
@@ -259,6 +276,77 @@
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.GoldTintPressed}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Brand outline: a secondary action that belongs to one mod, drawn in that mod's colour.
+         Same tier and geometry as the gold AccentButton above - charcoal fill, coloured outline
+         and label - so branding never promotes these to primary actions. Hover and pressed each
+         move two channels (the fill takes the brand tint and the outline brightens to the brand
+         tone), so the feedback survives if hue perception does not. Disabled drops the brand
+         entirely for the neutral muted treatment the launcher uses everywhere else, which reads
+         as "off" rather than as a dimmer shade of the same colour. Keyboard focus keeps the
+         white focus ring from the base template, so it stays visible over any brand tint. -->
+    <Style x:Key="GameCenter.Brand.ChimButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.ChimSoft}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.ChimTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.ChimBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.ChimTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.Brand.StobeButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.StobeSoft}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.StobeTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.StobeBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.StobeTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.Brand.DialecticButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.DialecticSoft}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.DialecticBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -812,19 +900,70 @@
                         <ContentPresenter />
                     </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
+                        <!-- Hover cue for items that are not the current selection. Scoped that way
+                             so hovering the selected card cannot repaint its brand frame gold. -->
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True" />
+                                <Condition Property="IsSelected" Value="False" />
+                            </MultiTrigger.Conditions>
                             <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
-                        </Trigger>
+                        </MultiTrigger>
+                        <!-- Selection thickens the frame here; its colour comes from the style's
+                             BorderBrush below, which the mod triggers set. This template no longer
+                             paints the selected frame itself, because a TargetName setter would
+                             outrank the templated value and flatten every mod back to one accent. -->
                         <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
                             <Setter TargetName="Border" Property="BorderThickness" Value="2" />
                         </Trigger>
-                        <Trigger Property="IsKeyboardFocused" Value="True">
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsKeyboardFocused" Value="True" />
+                                <Condition Property="IsSelected" Value="False" />
+                            </MultiTrigger.Conditions>
                             <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
-                        </Trigger>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="2" />
+                        </MultiTrigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsKeyboardFocused" Value="True" />
+                                <Condition Property="IsSelected" Value="True" />
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="3" />
+                        </MultiTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+        <!-- The selected card is framed in its own mod's brand colour rather than one shared
+             accent, matching the branded controls on that mod's page. Unselected cards keep the
+             neutral border set above. Gold stays the fallback for a profile these triggers do not
+             name, so a new mod still reads as selected before it has a colour of its own. -->
+        <Style.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding Key}" Value="CHIM" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding Key}" Value="STOBE" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding Key}" Value="DIALECTIC" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
     </Style>
 </ResourceDictionary>
