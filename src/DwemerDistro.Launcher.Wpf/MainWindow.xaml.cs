@@ -163,16 +163,34 @@ public partial class MainWindow : Window
             Keyboard.Focus(MainTabs);
         }
 
-        componentsViewModel.Detach();
+        var detachTask = componentsViewModel.DetachAsync();
         componentsViewModel.ActiveOperationsCompleted -= ComponentsViewModel_ActiveOperationsCompleted;
         SetupComponentsHost.Content = null;
         _componentsViewModel = null;
 
-        // Let the discarded page be reclaimed without pausing navigation. This is only useful
-        // after both the visual tree and its view model have been detached.
-        _ = Dispatcher.BeginInvoke(
-            System.Windows.Threading.DispatcherPriority.ApplicationIdle,
-            () => GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: false, compacting: false));
+        _ = ReclaimComponentsPageAsync(detachTask);
+    }
+
+    // Wait for canceled probes and their Loaded continuation to release the discarded visual tree.
+    private async Task ReclaimComponentsPageAsync(Task detachTask)
+    {
+        try
+        {
+            await detachTask.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Components cleanup failed after leaving the page.", ex);
+        }
+
+        if (Dispatcher.HasShutdownStarted)
+        {
+            return;
+        }
+
+        await Dispatcher.InvokeAsync(
+            () => GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: false, compacting: false),
+            System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
 
     private void DestinationNav_Checked(object sender, RoutedEventArgs e)

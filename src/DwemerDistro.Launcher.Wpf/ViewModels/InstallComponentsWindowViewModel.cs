@@ -16,6 +16,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private readonly Dictionary<string, HuggingFaceModelAccessViewModel> _modelAccessItemsByKey;
     private readonly SemaphoreSlim _componentProbeGate = new(1, 1);
     private CancellationTokenSource? _passiveChecks;
+    private Task? _passiveCheckTask;
     private int _activeOperationCount;
     private string _huggingFaceTokenStatusText = "Checking";
     private string _huggingFaceTokenDetailText = "Checking Hugging Face token...";
@@ -147,16 +148,33 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     {
         _passiveChecks?.Cancel();
         _passiveChecks = new CancellationTokenSource();
-        return InitializeAsync(_passiveChecks.Token);
+        _passiveCheckTask = InitializeAsync(_passiveChecks.Token);
+        return _passiveCheckTask;
     }
 
-    public void Detach()
+    public async Task DetachAsync()
     {
         var source = _passiveChecks;
+        var passiveCheckTask = _passiveCheckTask;
         _passiveChecks = null;
-        // Cancel without disposing: probes still in flight hold this token, and disposing
-        // underneath them would fault their cancellation registrations.
+        _passiveCheckTask = null;
         source?.Cancel();
+
+        try
+        {
+            if (passiveCheckTask is not null)
+            {
+                await passiveCheckTask.ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Leaving Components cancels its passive checks by design.
+        }
+        finally
+        {
+            source?.Dispose();
+        }
     }
 
     private async Task TrackOperationAsync(Func<Task> operation)
