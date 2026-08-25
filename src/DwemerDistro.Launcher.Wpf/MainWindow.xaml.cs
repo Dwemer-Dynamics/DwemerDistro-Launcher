@@ -165,6 +165,15 @@ public partial class MainWindow : Window
 
         var detachTask = componentsViewModel.DetachAsync();
         componentsViewModel.ActiveOperationsCompleted -= ComponentsViewModel_ActiveOperationsCompleted;
+        if (SetupComponentsHost.Content is FrameworkElement componentsView)
+        {
+            componentsView.DataContext = null;
+            if (componentsView is ContentControl componentsContent)
+            {
+                componentsContent.Content = null;
+            }
+        }
+
         SetupComponentsHost.Content = null;
         _componentsViewModel = null;
 
