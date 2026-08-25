@@ -280,17 +280,20 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Brand outline: a secondary action that belongs to one mod, drawn in that mod's colour.
-         Same tier and geometry as the gold AccentButton above - charcoal fill, coloured outline
-         and label - so branding never promotes these to primary actions. Hover and pressed each
-         move two channels (the fill takes the brand tint and the outline brightens to the brand
-         tone), so the feedback survives if hue perception does not. Disabled drops the brand
-         entirely for the neutral muted treatment the launcher uses everywhere else, which reads
-         as "off" rather than as a dimmer shade of the same colour. Keyboard focus keeps the
-         white focus ring from the base template, so it stays visible over any brand tint. -->
+    <!-- Brand filled: a secondary action that belongs to one mod, drawn in that mod's colour.
+         Resting fill is the deep Soft brand shade with the brand tone as its outline - the same
+         fill-plus-lighter-outline pairing the burgundy PrimaryButton uses - so the button reads
+         as a filled control at a glance instead of an empty outline, while the deep shade keeps
+         the white label above 5:1 contrast. Geometry matches the gold AccentButton, so branding
+         never promotes these to primary actions. Hover and pressed each move two channels (the
+         fill drops to the brand tint and the outline brightens to the brand tone), so the
+         feedback survives if hue perception does not. Disabled drops the brand entirely for the
+         neutral muted treatment the launcher uses everywhere else, which reads as "off" rather
+         than as a dimmer shade of the same colour. Keyboard focus keeps the white focus ring
+         from the base template, so it stays visible over the brand fill and over any tint. -->
     <Style x:Key="GameCenter.Brand.ChimButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
-        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.ChimSoft}" />
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.ChimSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -310,8 +313,8 @@
     </Style>
 
     <Style x:Key="GameCenter.Brand.StobeButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
-        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.StobeSoft}" />
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.StobeSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -331,8 +334,8 @@
     </Style>
 
     <Style x:Key="GameCenter.Brand.DialecticButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
-        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.DialecticSoft}" />
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
