@@ -1456,15 +1456,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             product.ApplyInstalledState(status?.IsInstalled == true, isStatusKnown: true);
         }
 
-        var installedCount = ProductChoices.Count(product => product.IsInstalled);
-        ProductStatusText = installedCount == 0
-            ? "No mods installed yet"
-            : $"{installedCount} of {ProductChoices.Count} installed";
-        ProductStatusBackground = installedCount == 0 ? StatusWarn : StatusGood;
-        OnPropertyChanged(nameof(HasSelectedProducts));
-        OnPropertyChanged(nameof(CanLeaveProductSelection));
-        OnPropertyChanged(nameof(InstallProductsButtonText));
-        RaiseCommandStates();
+        UpdateProductSelectionSummary();
     }
 
     /// <summary>
@@ -1499,12 +1491,27 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
                 SetupInstallProgress = 100;
                 SetupInstallProgressText = BuildProductInstallSummary(selected);
+                UpdateProductSelectionSummary();
             }
             finally
             {
                 IsInstallingProducts = false;
             }
         }).ConfigureAwait(true);
+    }
+
+    /// <summary>Refreshes the Choose Your Mods summary and command state after status or install changes.</summary>
+    private void UpdateProductSelectionSummary()
+    {
+        var installedCount = ProductChoices.Count(product => product.IsInstalled);
+        ProductStatusText = installedCount == 0
+            ? "No mods installed yet"
+            : $"{installedCount} of {ProductChoices.Count} installed";
+        ProductStatusBackground = installedCount == 0 ? StatusWarn : StatusGood;
+        OnPropertyChanged(nameof(HasSelectedProducts));
+        OnPropertyChanged(nameof(CanLeaveProductSelection));
+        OnPropertyChanged(nameof(InstallProductsButtonText));
+        RaiseCommandStates();
     }
 
     internal static string BuildProductInstallSummary(IReadOnlyList<QuickstartProductViewModel> attempted)

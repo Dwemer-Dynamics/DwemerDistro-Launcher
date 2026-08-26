@@ -152,6 +152,11 @@ public sealed class QuickstartProductViewModel : ObservableObject
         {
             _isInstalled = true;
             _isStatusKnown = true;
+            if (_isSelected)
+            {
+                _isSelected = false;
+                OnPropertyChanged(nameof(IsSelected));
+            }
         }
 
         RaiseDerivedState();

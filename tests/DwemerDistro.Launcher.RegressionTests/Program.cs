@@ -470,8 +470,9 @@ try
         gameCatalog.First(game => game.Key == "DIALECTIC"), ServerProduct.Dialectic, _ => Task.CompletedTask, _ => { });
     succeeded.IsSelected = true;
     succeeded.SetInstallState(QuickstartProductInstallState.Installed);
-    Assert(succeeded.IsInstalled && !succeeded.IsSelectable && succeeded.ToInstallResultKey() == "installed",
-        "A mod that installed before a later failure must stay installed and locked.");
+    Assert(succeeded.IsInstalled && !succeeded.IsSelectable && !succeeded.IsSelected
+           && succeeded.ToInstallResultKey() == "installed",
+        "A mod that installed before a later failure must clear its selection, stay installed, and remain locked.");
     Assert(FirstRunSetupViewModel.CanAdvanceFromProductSelection(new[] { succeeded }),
         "Quickstart may advance after every selected mod installs successfully.");
 
