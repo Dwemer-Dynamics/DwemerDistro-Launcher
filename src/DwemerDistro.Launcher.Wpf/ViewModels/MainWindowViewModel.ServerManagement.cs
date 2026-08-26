@@ -63,6 +63,37 @@ public sealed partial class MainWindowViewModel
         StobeManager = CreateServerManagerItem(ServerProduct.Stobe, "STOBE");
         DialecticManager = CreateServerManagerItem(ServerProduct.Dialectic, "DIALECTIC");
         ServerManagers = [HerikaManager, StobeManager, DialecticManager];
+
+        // The three items live for the window's lifetime, so watching each one's busy flag needs no
+        // detach: it is how one product's running operation disables the others' single-product
+        // update without any item having to know about its siblings.
+        foreach (var manager in ServerManagers)
+        {
+            manager.PropertyChanged += OnServerManagerPropertyChanged;
+        }
+    }
+
+    private void OnServerManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ServerManagerItemViewModel.IsBusy))
+        {
+            RefreshServerUpdateConflictState();
+            UpdateAllCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>
+    /// Blocks every product's single-product update while the Update Mods sweep or any one product's
+    /// install, update or repair is driving the manager. The running product is gated by its own busy
+    /// flag, so the block only has to describe "something else is happening".
+    /// </summary>
+    internal void RefreshServerUpdateConflictState()
+    {
+        var busy = IsDistroUpdateInProgress || ServerManagers.Any(manager => manager.IsBusy);
+        foreach (var manager in ServerManagers)
+        {
+            manager.IsConflictingOperationRunning = busy;
+        }
     }
 
     private ServerManagerItemViewModel CreateServerManagerItem(ServerProduct product, string gameKey)
@@ -71,6 +102,7 @@ public sealed partial class MainWindowViewModel
             product,
             gameKey,
             InstallServerAsync,
+            UpdateServerAsync,
             RepairServerAsync,
             UninstallServerAsync);
     }
@@ -152,6 +184,7 @@ public sealed partial class MainWindowViewModel
         OnPropertyChanged(nameof(IsHerikaUpdateIncludeEnabled));
         OnPropertyChanged(nameof(IsStobeUpdateIncludeEnabled));
         OnPropertyChanged(nameof(IsDialecticUpdateIncludeEnabled));
+        RefreshServerUpdateConflictState();
         OpenChimCommand.RaiseCanExecuteChanged();
         OpenStobeCommand.RaiseCanExecuteChanged();
         OpenDialecticCommand.RaiseCanExecuteChanged();
@@ -172,6 +205,26 @@ public sealed partial class MainWindowViewModel
         await RunServerOperationAsync(
                 item,
                 ServerOperation.Install,
+                item.SelectedBranchChannel)
+            .ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// The per-product update action on the Mods page. It runs the same manager update the Update
+    /// Mods sweep uses for this one product on its selected branch, and nothing else: the shared
+    /// distro and components update does not run, the other two servers are untouched, and the saved
+    /// Updates checkbox is neither read nor written.
+    /// </summary>
+    private async Task UpdateServerAsync(ServerManagerItemViewModel item)
+    {
+        if (!item.CanUpdate)
+        {
+            return;
+        }
+
+        await RunServerOperationAsync(
+                item,
+                ServerOperation.Update,
                 item.SelectedBranchChannel)
             .ConfigureAwait(true);
     }

@@ -347,7 +347,8 @@ try
     // --- Mods page state mapping ------------------------------------------------------------
 
     var herikaItem = new ServerManagerItemViewModel(
-        ServerProduct.Herika, "CHIM", _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask);
+        ServerProduct.Herika, "CHIM", _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask,
+        _ => Task.CompletedTask);
 
     herikaItem.ApplyVersionStatus("aiagent | 01-01-2026 | 1.2.3", "LimeGreen");
     herikaItem.ApplyStatus(stobeStatus with { Product = ServerProduct.Herika });
@@ -358,6 +359,8 @@ try
         "A not-installed product must read Not installed in the neutral grey, not the version colours.");
     Assert(!herikaItem.CanUseInstalledFeatures && herikaItem.CanInstall && !herikaItem.CanUninstall,
         "Webpage, rollback and the update checkbox must stay unreachable while nothing is installed.");
+    Assert(!herikaItem.CanUpdate,
+        "The single-product update must never be offered for a product that is not installed.");
 
     herikaItem.ApplyStatus(herikaStatus);
     Assert(herikaItem.ShowInstalledActions && !herikaItem.ShowNotInstalledActions && !herikaItem.ShowRepairActions,
@@ -366,6 +369,8 @@ try
         "An installed product must keep the existing green/yellow version status semantics.");
     Assert(herikaItem.CanUseInstalledFeatures && herikaItem.CanUninstall && !herikaItem.CanInstall,
         "An installed product must offer uninstall but never a second install.");
+    Assert(herikaItem.CanUpdate && herikaItem.UpdateCommand.CanExecute(null),
+        "An installed, idle product must offer its own update action.");
     Assert(herikaItem.SelectedBranch == "Main",
         "The reported production branch must map back to the Main branch choice.");
     Assert(herikaItem.LocationSummary.Contains("/var/www/html/HerikaServer", StringComparison.Ordinal)
@@ -380,6 +385,8 @@ try
         "Needs repair must read in the orange warning colour, not the installed green.");
     Assert(herikaItem.CanRepair && herikaItem.CanUninstall && !herikaItem.CanUseInstalledFeatures,
         "A needs-repair product must not expose webpage or rollback, but must stay uninstallable.");
+    Assert(!herikaItem.CanUpdate,
+        "A needs-repair product must be repaired, not updated over the top of a broken install.");
     Assert(herikaItem.SelectedBranch == "Dev",
         "A checked-out development branch must map back to the Dev branch choice.");
 
@@ -387,8 +394,10 @@ try
     Assert(herikaItem.IsBusy && herikaItem.StatusText == "Installing (Main)..."
            && herikaItem.StatusColor == ServerManagerItemViewModel.BusyColor,
         "A running operation must take over the status line without changing which actions exist.");
-    Assert(!herikaItem.CanRepair && !herikaItem.CanUninstall && !herikaItem.CanInstall,
+    Assert(!herikaItem.CanRepair && !herikaItem.CanUninstall && !herikaItem.CanInstall && !herikaItem.CanUpdate,
         "No second operation may start while one is running.");
+    Assert(herikaItem.UpdateActionHelpText.Contains("busy", StringComparison.OrdinalIgnoreCase),
+        "A product update disabled by its own running operation must explain why it is unavailable.");
 
     herikaItem.EndOperation("Last repair failed");
     Assert(!herikaItem.IsBusy && herikaItem.StatusText == "Last repair failed"
@@ -398,6 +407,55 @@ try
     herikaItem.ApplyStatusError("Server status unavailable");
     Assert(herikaItem.StatusText == "Server status unavailable",
         "A failed status probe must explain itself instead of silently claiming Not installed.");
+
+    // --- single-product update action -------------------------------------------------------
+
+    Assert(ServerManagerItemViewModel.BuildUpdateActionName(ServerProduct.Herika) == "Update CHIM"
+           && ServerManagerItemViewModel.BuildUpdateActionName(ServerProduct.Stobe) == "Update STOBE"
+           && ServerManagerItemViewModel.BuildUpdateActionName(ServerProduct.Dialectic) == "Update Dialectic",
+        "Each mod page must name its own update action after the rail product it is showing.");
+    Assert(Throws(() => ServerManagerItemViewModel.BuildUpdateActionName((ServerProduct)99)),
+        "An out-of-range product must never produce an update action label.");
+
+    herikaItem.ApplyStatus(herikaStatus);
+    Assert(herikaItem.CanUpdate, "The test precondition requires an installed, idle product.");
+    herikaItem.IsConflictingOperationRunning = true;
+    Assert(!herikaItem.CanUpdate && !herikaItem.UpdateCommand.CanExecute(null),
+        "A running Update Mods sweep or sibling server operation must disable the single-product update.");
+    Assert(herikaItem.UpdateActionHelpText.Contains("unavailable", StringComparison.OrdinalIgnoreCase),
+        "The disabled update action must say why it is unavailable, not just dim.");
+    Assert(herikaItem.CanUninstall && herikaItem.ShowInstalledActions,
+        "Blocking the single-product update must not disturb the existing install lifecycle actions.");
+
+    herikaItem.IsConflictingOperationRunning = false;
+    Assert(herikaItem.CanUpdate && herikaItem.UpdateActionHelpText.Contains("Main", StringComparison.Ordinal)
+           && herikaItem.UpdateActionHelpText.Contains("HerikaServer", StringComparison.Ordinal),
+        "The enabled update action must name the one server and the branch it will use.");
+
+    var individualUpdateInvoked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var individualUpdateCount = 0;
+    var individualUpdateItem = new ServerManagerItemViewModel(
+        ServerProduct.Stobe,
+        "STOBE",
+        _ => Task.CompletedTask,
+        _ =>
+        {
+            individualUpdateCount++;
+            individualUpdateInvoked.TrySetResult(true);
+            return Task.CompletedTask;
+        },
+        _ => Task.CompletedTask,
+        _ => Task.CompletedTask);
+    individualUpdateItem.ApplyStatus(stobeStatus with
+    {
+        State = ServerInstallState.Installed,
+        RepositoryState = ServerRepositoryState.Managed,
+        DatabasePresent = true
+    });
+    individualUpdateItem.UpdateCommand.Execute(null);
+    await individualUpdateInvoked.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    Assert(individualUpdateCount == 1,
+        "The individual update command must invoke only its product update delegate once.");
 
     Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "aiagent", "dev") == ServerBranchChannel.Main
            && ServerManagerItemViewModel.MapBranchToChannel("dev", "aiagent", "dev") == ServerBranchChannel.Dev

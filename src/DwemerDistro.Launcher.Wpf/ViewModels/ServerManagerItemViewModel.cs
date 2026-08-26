@@ -23,6 +23,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     internal const string ErrorColor = "#FF8A80";
 
     private readonly Func<ServerManagerItemViewModel, Task> _install;
+    private readonly Func<ServerManagerItemViewModel, Task> _update;
     private readonly Func<ServerManagerItemViewModel, Task> _repair;
     private readonly Func<ServerManagerItemViewModel, Task> _uninstall;
 
@@ -38,6 +39,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     private string _versionStatusColor = CheckingColor;
     private string _selectedBranch = "Main";
     private bool _isBusy;
+    private bool _isConflictingOperationRunning;
     private string? _busyText;
     private string? _errorText;
 
@@ -45,6 +47,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         ServerProduct product,
         string gameKey,
         Func<ServerManagerItemViewModel, Task> install,
+        Func<ServerManagerItemViewModel, Task> update,
         Func<ServerManagerItemViewModel, Task> repair,
         Func<ServerManagerItemViewModel, Task> uninstall)
     {
@@ -52,12 +55,15 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         GameKey = gameKey;
         DisplayName = ServerManagementService.GetDisplayName(product);
         PurgeToken = ServerManagementService.GetPurgeToken(product);
+        UpdateActionName = BuildUpdateActionName(product);
         Branches = new ObservableCollection<string>(new[] { "Main", "Dev" });
         _install = install;
+        _update = update;
         _repair = repair;
         _uninstall = uninstall;
 
         InstallCommand = new AsyncRelayCommand(() => _install(this), () => CanInstall);
+        UpdateCommand = new AsyncRelayCommand(() => _update(this), () => CanUpdate);
         RepairCommand = new AsyncRelayCommand(() => _repair(this), () => CanRepair);
         UninstallCommand = new AsyncRelayCommand(() => _uninstall(this), () => CanUninstall);
     }
@@ -71,9 +77,19 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
     public string PurgeToken { get; }
 
+    /// <summary>
+    /// Label for the single-product update action ("Update CHIM"). It names the rail product the
+    /// mod page is showing rather than the server binary, so it never reads as a second copy of the
+    /// top-level Update Mods sweep.
+    /// </summary>
+    public string UpdateActionName { get; }
+
     public ObservableCollection<string> Branches { get; }
 
     public AsyncRelayCommand InstallCommand { get; }
+
+    /// <summary>Updates this product alone, on its selected branch. Shared components stay untouched.</summary>
+    public AsyncRelayCommand UpdateCommand { get; }
 
     public AsyncRelayCommand RepairCommand { get; }
 
@@ -116,6 +132,14 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
     public bool CanRepair => _state == ServerInstallState.NeedsRepair && !_isBusy;
 
+    /// <summary>
+    /// The single-product update needs a confirmed install - the manager never installs a missing or
+    /// broken product - and must stay out of reach while the Update Mods sweep or another product's
+    /// operation is already driving the manager.
+    /// </summary>
+    public bool CanUpdate =>
+        _state == ServerInstallState.Installed && !_isBusy && !_isConflictingOperationRunning;
+
     /// <summary>A product with anything on disk can be purged; a clean absence cannot.</summary>
     public bool CanUninstall =>
         (_state == ServerInstallState.Installed || _state == ServerInstallState.NeedsRepair) && !_isBusy;
@@ -135,10 +159,35 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Set by the window while the Update Mods sweep or another product's install, update or repair
+    /// is in flight. It gates only the single-product update action; install, repair and uninstall
+    /// keep their existing lifecycle rules.
+    /// </summary>
+    public bool IsConflictingOperationRunning
+    {
+        get => _isConflictingOperationRunning;
+        set
+        {
+            if (SetProperty(ref _isConflictingOperationRunning, value))
+            {
+                OnPropertyChanged(nameof(CanUpdate));
+                OnPropertyChanged(nameof(UpdateActionHelpText));
+                UpdateCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
     public string SelectedBranch
     {
         get => _selectedBranch;
-        set => SetProperty(ref _selectedBranch, value);
+        set
+        {
+            if (SetProperty(ref _selectedBranch, value))
+            {
+                OnPropertyChanged(nameof(UpdateActionHelpText));
+            }
+        }
     }
 
     public ServerBranchChannel SelectedBranchChannel => ServerManagementService.ParseBranchChannel(_selectedBranch);
@@ -217,6 +266,42 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
     public string AccessibleStatusHelpText =>
         $"{DisplayName}: {StatusText}. {LocationSummary}";
+
+    /// <summary>
+    /// Says what the single-product update will do and, when it is unavailable, why - so a screen
+    /// reader landing on the disabled button hears a reason instead of only "dimmed".
+    /// </summary>
+    public string UpdateActionHelpText
+    {
+        get
+        {
+            if (_isBusy)
+            {
+                return $"{UpdateActionName} is unavailable while {DisplayName} is busy.";
+            }
+
+            if (_isConflictingOperationRunning)
+            {
+                return $"{UpdateActionName} is unavailable while another server update is running. " +
+                       "It stays available once that finishes.";
+            }
+
+            return $"Update only {DisplayName}, on the selected {SelectedBranch} branch. " +
+                   "The shared distro components, the other servers, and the Updates checkbox are left alone.";
+        }
+    }
+
+    /// <summary>Rail-facing label for the per-product update action.</summary>
+    internal static string BuildUpdateActionName(ServerProduct product)
+    {
+        return product switch
+        {
+            ServerProduct.Herika => "Update CHIM",
+            ServerProduct.Stobe => "Update STOBE",
+            ServerProduct.Dialectic => "Update Dialectic",
+            _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
+        };
+    }
 
     /// <summary>Applies a fresh status entry. A null entry means the probe did not list the product.</summary>
     public void ApplyStatus(ServerStatus? status)
@@ -335,13 +420,16 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowRepairActions));
         OnPropertyChanged(nameof(CanInstall));
         OnPropertyChanged(nameof(CanRepair));
+        OnPropertyChanged(nameof(CanUpdate));
         OnPropertyChanged(nameof(CanUninstall));
         OnPropertyChanged(nameof(CanUseInstalledFeatures));
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(StatusColor));
         OnPropertyChanged(nameof(LocationSummary));
         OnPropertyChanged(nameof(AccessibleStatusHelpText));
+        OnPropertyChanged(nameof(UpdateActionHelpText));
         InstallCommand.RaiseCanExecuteChanged();
+        UpdateCommand.RaiseCanExecuteChanged();
         RepairCommand.RaiseCanExecuteChanged();
         UninstallCommand.RaiseCanExecuteChanged();
     }

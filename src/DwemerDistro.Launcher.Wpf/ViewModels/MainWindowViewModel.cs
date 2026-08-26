@@ -160,7 +160,7 @@ echo "CHIM-MCP installed and enabled."
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
         ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
-        UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync, () => !IsDistroUpdateInProgress);
+        UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync, CanRunDistroUpdate);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
         SaveUpdateIncludeCommand = new RelayCommand(QueueUpdateIncludeSave, () => IsUpdateIncludeReady);
@@ -311,6 +311,9 @@ echo "CHIM-MCP installed and enabled."
             if (SetProperty(ref _isDistroUpdateInProgress, value))
             {
                 UpdateAllCommand.RaiseCanExecuteChanged();
+                // The Update Mods sweep drives the same server manager, so the per-product update
+                // actions have to stand down for as long as it runs.
+                RefreshServerUpdateConflictState();
             }
         }
     }
@@ -1024,9 +1027,9 @@ echo "CHIM-MCP installed and enabled."
         string sourceLabel,
         bool includeApplicationServers)
     {
-        if (IsDistroUpdateInProgress)
+        if (!CanRunDistroUpdate())
         {
-            AppendLog("Distro update is already running." + Environment.NewLine, "yellow");
+            AppendLog("Another server or distro update is already running." + Environment.NewLine, "yellow");
             return false;
         }
 
@@ -1104,6 +1107,12 @@ echo "CHIM-MCP installed and enabled."
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         }
+    }
+
+    /// <summary>Prevents Update Mods or Quickstart updates from overlapping a server operation.</summary>
+    private bool CanRunDistroUpdate()
+    {
+        return !IsDistroUpdateInProgress && !ServerManagers.Any(manager => manager.IsBusy);
     }
 
     private string BuildDistroUpdateConfirmation(IReadOnlyList<ServerManagerItemViewModel> productsToUpdate)
