@@ -520,6 +520,14 @@ try
            && sharedUpdateCommand.Contains("--skip-dialectic", StringComparison.Ordinal),
         "update_gws must skip every application server; the server manager owns those repositories.");
 
+    var systemUpdateCommand = MainWindowViewModel.BuildSystemUpdateCommand();
+    Assert(systemUpdateCommand.Contains("if [ ! -d .git ]; then git init", StringComparison.Ordinal)
+           && systemUpdateCommand.Contains("git remote add origin https://github.com/abeiro/dwemerdistro.git", StringComparison.Ordinal),
+        "Update System must bootstrap Git metadata for a freshly installed empty distro.");
+    Assert(systemUpdateCommand.Contains("git fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
+           && systemUpdateCommand.EndsWith(sharedUpdateCommand, StringComparison.Ordinal),
+        "Update System must update the distro checkout before running the server-free shared component update.");
+
     var modsUpdateConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([herikaItem, individualUpdateItem]);
     Assert(modsUpdateConfirmation.Contains("only the selected installed mods", StringComparison.Ordinal)
            && modsUpdateConfirmation.Contains("DwemerDistro and shared components will not be changed", StringComparison.Ordinal),

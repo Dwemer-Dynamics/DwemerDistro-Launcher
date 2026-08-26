@@ -31,6 +31,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static readonly TimeSpan ServerWebPageStartupTimeout = TimeSpan.FromSeconds(150);
     private static readonly TimeSpan ServerWebPageStartupPollInterval = TimeSpan.FromSeconds(3);
     private const string DashboardAutoOpenFlagPath = "/home/dwemer/.dashboard_autoopen";
+    private const string DistroRepositoryUrl = "https://github.com/abeiro/dwemerdistro.git";
     private const string DashboardAutoOpenNeutralColor = "#C8C8C8";
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
     private const string DashboardAutoOpenWarningColor = "#FFB641";
@@ -1238,10 +1239,7 @@ echo "CHIM-MCP installed and enabled."
     /// </summary>
     private async Task<bool> RunSharedDistroUpdateAsync()
     {
-        var bashCommand =
-            "cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main && " +
-            "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
-            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand();
+        var bashCommand = BuildSystemUpdateCommand();
 
         var sharedComponentsStarted = false;
         var result = await _wsl.RunBashAsync(bashCommand, line =>
@@ -1257,6 +1255,17 @@ echo "CHIM-MCP installed and enabled."
         }, loginShell: false, lineBuffered: true).ConfigureAwait(false);
 
         return result.Succeeded && sharedComponentsStarted;
+    }
+
+    /// <summary>Bootstraps the distro checkout when an empty-base installer ships source files without Git metadata.</summary>
+    internal static string BuildSystemUpdateCommand()
+    {
+        return
+            "cd /home/dwemer/dwemerdistro && " +
+            $"if [ ! -d .git ]; then git init && git remote add origin {DistroRepositoryUrl}; fi && " +
+            "git fetch origin && git reset --hard origin/main && " +
+            "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
+            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand();
     }
 
     private async Task<string?> GetCurrentBranchAsync(CancellationToken cancellationToken = default)
