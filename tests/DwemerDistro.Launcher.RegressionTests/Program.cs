@@ -520,6 +520,26 @@ try
            && sharedUpdateCommand.Contains("--skip-dialectic", StringComparison.Ordinal),
         "update_gws must skip every application server; the server manager owns those repositories.");
 
+    var modsUpdateConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([herikaItem, individualUpdateItem]);
+    Assert(modsUpdateConfirmation.Contains("only the selected installed mods", StringComparison.Ordinal)
+           && modsUpdateConfirmation.Contains("DwemerDistro and shared components will not be changed", StringComparison.Ordinal),
+        "Update Mods must clearly exclude DwemerDistro and shared components.");
+    Assert(modsUpdateConfirmation.Contains($"{herikaItem.DisplayName} target branch", StringComparison.Ordinal)
+           && modsUpdateConfirmation.Contains($"{individualUpdateItem.DisplayName} target branch", StringComparison.Ordinal),
+        "Update Mods must list every selected installed mod and its target branch.");
+
+    var systemUpdateConfirmation = MainWindowViewModel.BuildSystemUpdateConfirmation();
+    Assert(systemUpdateConfirmation.Contains("DwemerDistro and its shared components", StringComparison.Ordinal)
+           && systemUpdateConfirmation.Contains("Installed mods will not be changed", StringComparison.Ordinal),
+        "Update System must clearly exclude every installed mod server.");
+
+    Assert(MainWindowViewModel.CanRunUpdateOperation(false, false, [false, false, false]),
+        "Update actions must be available when every shared operation gate is idle.");
+    Assert(!MainWindowViewModel.CanRunUpdateOperation(true, false, [false, false, false])
+           && !MainWindowViewModel.CanRunUpdateOperation(false, true, [false, false, false])
+           && !MainWindowViewModel.CanRunUpdateOperation(false, false, [false, true, false]),
+        "A system update, component operation, or individual server operation must block every competing update action.");
+
     // --- Quickstart mod choices -------------------------------------------------------------
 
     var chimProfile = gameCatalog.First(game => game.Key == "CHIM");

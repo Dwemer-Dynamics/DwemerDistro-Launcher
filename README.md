@@ -18,7 +18,7 @@ It keeps WSL distro management in the launcher, but separates launcher binary up
 
 Fresh DwemerDistro packages contain no game servers. The Quickstart **Choose Your Mods** step installs any selected products from their Main branch; selecting none is valid. The Mods page then shows each server as Not installed, Installed, or Needs repair and exposes only the actions valid for that state.
 
-Uninstall is destructive. It requires the product-specific `PURGE-*` confirmation and removes that server's files and PostgreSQL database. It does not remove shared voice/components or another game server. **Update Mods** updates only installed products whose update checkbox is enabled; it never installs a missing server.
+Uninstall is destructive. It requires the product-specific `PURGE-*` confirmation and removes that server's files and PostgreSQL database. It does not remove shared voice/components or another game server. **Update Mods** updates only installed products whose update checkbox is enabled; it never installs a missing server. **Update System** on the Components page updates DwemerDistro and shared services without changing any installed mod server.
 
 ## Workspace
 

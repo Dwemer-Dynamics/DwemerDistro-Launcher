@@ -105,8 +105,10 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
     private string _launcherUpdateButtonText = "Check Update";
-    private string _distroUpdateButtonText = "Update Mods";
+    private string _modsUpdateButtonText = "Update Mods";
+    private string _systemUpdateButtonText = "Update System";
     private bool _isDistroUpdateInProgress;
+    private bool _isComponentsOperationInProgress;
     private bool _includeHerikaServerUpdate = true;
     private bool _includeStobeServerUpdate = true;
     private bool _includeDialecticServerUpdate = true;
@@ -160,7 +162,8 @@ echo "CHIM-MCP installed and enabled."
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
         ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
-        UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync, CanRunDistroUpdate);
+        UpdateModsCommand = new AsyncRelayCommand(UpdateModsAsync, CanUpdateMods);
+        UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
         SaveUpdateIncludeCommand = new RelayCommand(QueueUpdateIncludeSave, () => IsUpdateIncludeReady);
@@ -297,11 +300,30 @@ echo "CHIM-MCP installed and enabled."
         private set => SetProperty(ref _launcherUpdateButtonText, value);
     }
 
-    public string DistroUpdateButtonText
+    public string ModsUpdateButtonText
     {
-        get => _distroUpdateButtonText;
-        private set => SetProperty(ref _distroUpdateButtonText, value);
+        get => _modsUpdateButtonText;
+        private set => SetProperty(ref _modsUpdateButtonText, value);
     }
+
+    public string SystemUpdateButtonText
+    {
+        get => _systemUpdateButtonText;
+        private set => SetProperty(ref _systemUpdateButtonText, value);
+    }
+
+    public string UpdateModsHelpText => CanRunUpdateOperation()
+        ? GetProductsToUpdate().Count > 0
+            ? "Update installed mods whose Updates checkbox is enabled. DwemerDistro and shared components are not changed."
+            : "Install a mod and enable its Updates checkbox before using Update Mods."
+        : "Unavailable while another server, component, or system operation is running.";
+
+    public string UpdateSystemHelpText => CanRunUpdateOperation()
+        ? "Update DwemerDistro and shared components. Installed mods are not changed."
+        : "Unavailable while another server, component, or system operation is running.";
+
+    public bool IsComponentInteractionEnabled =>
+        !IsDistroUpdateInProgress && !ServerManagers.Any(manager => manager.IsBusy);
 
     public bool IsDistroUpdateInProgress
     {
@@ -310,9 +332,10 @@ echo "CHIM-MCP installed and enabled."
         {
             if (SetProperty(ref _isDistroUpdateInProgress, value))
             {
-                UpdateAllCommand.RaiseCanExecuteChanged();
-                // The Update Mods sweep drives the same server manager, so the per-product update
-                // actions have to stand down for as long as it runs.
+                RaiseUpdateCommandStates();
+                OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+                // Mod and system updates share the same WSL resources as the per-product actions,
+                // so those actions have to stand down for as long as either update runs.
                 RefreshServerUpdateConflictState();
             }
         }
@@ -445,7 +468,8 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand StartServerCommand { get; }
     public AsyncRelayCommand StopServerCommand { get; }
     public AsyncRelayCommand ForceStopServerCommand { get; }
-    public AsyncRelayCommand UpdateAllCommand { get; }
+    public AsyncRelayCommand UpdateModsCommand { get; }
+    public AsyncRelayCommand UpdateSystemCommand { get; }
     public RelayCommand OpenServerFolderCommand { get; }
     public RelayCommand OpenFirstRunSetupCommand { get; }
     public RelayCommand SaveUpdateIncludeCommand { get; }
@@ -1012,13 +1036,84 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private async Task UpdateAllAsync()
+    private async Task UpdateModsAsync()
     {
-        await RunDistroUpdateAsync(
-                requireConfirmation: true,
-                sourceLabel: "Distro Updates",
-                includeApplicationServers: true)
-            .ConfigureAwait(true);
+        if (!CanRunUpdateOperation())
+        {
+            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            return;
+        }
+
+        var productsToUpdate = GetProductsToUpdate();
+        if (productsToUpdate.Count == 0)
+        {
+            AppendLog(
+                "No installed, update-enabled mods are available. Check each mod's Updates checkbox." +
+                Environment.NewLine,
+                "yellow");
+            return;
+        }
+
+        if (MessageBox.Show(
+                BuildModsUpdateConfirmation(productsToUpdate),
+                "Update Mods",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            AppendLog("Mod update canceled." + Environment.NewLine);
+            return;
+        }
+
+        IsDistroUpdateInProgress = true;
+        ModsUpdateButtonText = "Updating Mods...";
+
+        try
+        {
+            AppendLog(
+                $"Starting mod update for {string.Join(", ", productsToUpdate.Select(product => product.DisplayName))}." +
+                Environment.NewLine);
+            await FlushUpdateUiAsync().ConfigureAwait(true);
+
+            var succeeded = await UpdateInstalledServersAsync(productsToUpdate).ConfigureAwait(true);
+            AppendLog(
+                succeeded
+                    ? "Mod updates completed successfully." + Environment.NewLine
+                    : "At least one mod update failed. Check the log above." + Environment.NewLine,
+                succeeded ? "green" : "red");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Error during mod update: {ex.Message}{Environment.NewLine}", "red");
+        }
+        finally
+        {
+            CompleteUpdateOperation();
+        }
+    }
+
+    internal void SetComponentsOperationInProgress(bool value)
+    {
+        if (_isComponentsOperationInProgress == value)
+        {
+            return;
+        }
+
+        _isComponentsOperationInProgress = value;
+        RaiseUpdateCommandStates();
+        RefreshServerUpdateConflictState();
+    }
+
+    private void RaiseUpdateCommandStates()
+    {
+        UpdateModsCommand?.RaiseCanExecuteChanged();
+        UpdateSystemCommand?.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(UpdateModsHelpText));
+        OnPropertyChanged(nameof(UpdateSystemHelpText));
+    }
+
+    private async Task UpdateSystemAsync()
+    {
+        await RunSystemUpdateAsync(requireConfirmation: true, sourceLabel: "System").ConfigureAwait(true);
     }
 
     /// <summary>
@@ -1027,138 +1122,114 @@ echo "CHIM-MCP installed and enabled."
     /// </summary>
     public Task<bool> UpdateDistroFromQuickstartAsync()
     {
-        return RunDistroUpdateAsync(
-            requireConfirmation: false,
-            sourceLabel: "Quickstart",
-            includeApplicationServers: false);
+        return RunSystemUpdateAsync(requireConfirmation: false, sourceLabel: "Quickstart");
     }
 
     /// <summary>
-    /// Runs the server-manager update for each installed, update-enabled product, then the shared
-    /// distro and components update.
-    ///
-    /// The manager is asked only about products the status probe reported as installed, so this path
-    /// can never install a missing product. The shared update always passes every application-server
-    /// skip flag: the manager owns those repositories now, and update_gws only refreshes the services
-    /// all products share.
+    /// Updates DwemerDistro and shared services without touching any application-server repository.
+    /// Quickstart uses the same path without a second confirmation prompt.
     /// </summary>
-    private async Task<bool> RunDistroUpdateAsync(
-        bool requireConfirmation,
-        string sourceLabel,
-        bool includeApplicationServers)
+    private async Task<bool> RunSystemUpdateAsync(bool requireConfirmation, string sourceLabel)
     {
-        if (!CanRunDistroUpdate())
+        if (!CanRunUpdateOperation())
         {
-            AppendLog("Another server or distro update is already running." + Environment.NewLine, "yellow");
+            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
             return false;
         }
 
-        var productsToUpdate = includeApplicationServers
-            ? GetProductsToUpdate()
-            : Array.Empty<ServerManagerItemViewModel>();
-
         if (requireConfirmation &&
             MessageBox.Show(
-                BuildDistroUpdateConfirmation(productsToUpdate),
+                BuildSystemUpdateConfirmation(),
                 "Update System",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
-            AppendLog("Update canceled." + Environment.NewLine);
+            AppendLog("System update canceled." + Environment.NewLine);
             return false;
         }
 
         IsDistroUpdateInProgress = true;
-        DistroUpdateButtonText = sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
+        SystemUpdateButtonText = sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
             ? "Quickstart Updating..."
-            : "Updating...";
+            : "Updating System...";
 
         try
         {
-            AppendLog(
-                productsToUpdate.Count > 0
-                    ? $"Starting update for {string.Join(", ", productsToUpdate.Select(product => product.DisplayName))} " +
-                      $"and the shared distro.{Environment.NewLine}"
-                    : $"Starting the shared distro and components update.{Environment.NewLine}");
+            AppendLog("Starting the DwemerDistro core and shared components update." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var serverUpdatesSucceeded = await UpdateInstalledServersAsync(productsToUpdate).ConfigureAwait(true);
-
+            var succeeded = await RunSharedDistroUpdateAsync().ConfigureAwait(true);
             AppendLog(
-                Environment.NewLine + "Running the DwemerDistro core and shared components update" + Environment.NewLine,
-                "green");
-            await FlushUpdateUiAsync().ConfigureAwait(true);
-
-            var sharedUpdateSucceeded = await RunSharedDistroUpdateAsync().ConfigureAwait(true);
-            var updateSucceeded = sharedUpdateSucceeded && serverUpdatesSucceeded;
-
-            if (updateSucceeded)
-            {
-                AppendLog("Update completed successfully." + Environment.NewLine, "green");
-            }
-            else if (sharedUpdateSucceeded)
-            {
-                AppendLog(
-                    "The shared distro update finished, but at least one server update failed. Check the log above." +
-                    Environment.NewLine,
-                    "yellow");
-            }
-            else
-            {
-                AppendLog("Update may have encountered issues. Check logs above." + Environment.NewLine, "red");
-            }
-
-            return updateSucceeded;
+                succeeded
+                    ? "System update completed successfully." + Environment.NewLine
+                    : "System update may have encountered issues. Check the log above." + Environment.NewLine,
+                succeeded ? "green" : "red");
+            return succeeded;
         }
         catch (Exception ex)
         {
-            AppendLog($"Error during update: {ex.Message}{Environment.NewLine}", "red");
+            AppendLog($"Error during system update: {ex.Message}{Environment.NewLine}", "red");
             return false;
         }
         finally
         {
-            RunOnUi(() =>
-            {
-                IsDistroUpdateInProgress = false;
-                DistroUpdateButtonText = "Update Mods";
-            });
-            QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            CompleteUpdateOperation();
         }
     }
 
-    /// <summary>Prevents Update Mods or Quickstart updates from overlapping a server operation.</summary>
-    private bool CanRunDistroUpdate()
+    private bool CanUpdateMods()
     {
-        return !IsDistroUpdateInProgress && !ServerManagers.Any(manager => manager.IsBusy);
+        return CanRunUpdateOperation() && GetProductsToUpdate().Count > 0;
     }
 
-    private string BuildDistroUpdateConfirmation(IReadOnlyList<ServerManagerItemViewModel> productsToUpdate)
+    /// <summary>Prevents mod, component, and system operations from competing for the same WSL files.</summary>
+    private bool CanRunUpdateOperation()
     {
-        if (productsToUpdate.Count == 0)
-        {
-            var notInstalled = ServerManagers
-                .Where(manager => !manager.IsInstalled)
-                .Select(manager => manager.DisplayName)
-                .ToArray();
+        return CanRunUpdateOperation(
+            IsDistroUpdateInProgress,
+            _isComponentsOperationInProgress,
+            ServerManagers.Select(manager => manager.IsBusy));
+    }
 
-            return "This will update the Dwemer Distro and its shared components.\n\n" +
-                   "No installed server is selected for updates.\n" +
-                   (notInstalled.Length > 0
-                       ? $"Not installed: {string.Join(", ", notInstalled)}. Install a server from the Mods page.\n"
-                       : string.Empty) +
-                   "\nAre you sure?";
-        }
+    internal static bool CanRunUpdateOperation(
+        bool isGlobalUpdateRunning,
+        bool isComponentsOperationRunning,
+        IEnumerable<bool> serverBusyStates)
+    {
+        return !isGlobalUpdateRunning &&
+               !isComponentsOperationRunning &&
+               !serverBusyStates.Any(isBusy => isBusy);
+    }
 
+    internal static string BuildModsUpdateConfirmation(IReadOnlyList<ServerManagerItemViewModel> productsToUpdate)
+    {
         var branchLines = productsToUpdate
             .Select(product => $"{product.DisplayName} target branch: {product.SelectedBranch}")
             .ToArray();
 
-        return "This will update the Dwemer Distro, its shared components, and the selected servers.\n\n" +
+        return "This will update only the selected installed mods. DwemerDistro and shared components will not be changed.\n\n" +
                string.Join("\n", branchLines) +
                "\n\nAre you sure?";
+    }
+
+    internal static string BuildSystemUpdateConfirmation()
+    {
+        return "This will update DwemerDistro and its shared components. Installed mods will not be changed.\n\n" +
+               "Are you sure?";
+    }
+
+    private void CompleteUpdateOperation()
+    {
+        RunOnUi(() =>
+        {
+            IsDistroUpdateInProgress = false;
+            ModsUpdateButtonText = "Update Mods";
+            SystemUpdateButtonText = "Update System";
+        });
+        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
     }
 
     /// <summary>

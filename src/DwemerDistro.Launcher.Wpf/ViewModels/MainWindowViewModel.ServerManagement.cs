@@ -80,7 +80,8 @@ public sealed partial class MainWindowViewModel
         if (e.PropertyName == nameof(ServerManagerItemViewModel.IsBusy))
         {
             RefreshServerUpdateConflictState();
-            UpdateAllCommand.RaiseCanExecuteChanged();
+            RaiseUpdateCommandStates();
+            OnPropertyChanged(nameof(IsComponentInteractionEnabled));
         }
     }
 
@@ -91,7 +92,9 @@ public sealed partial class MainWindowViewModel
     /// </summary>
     internal void RefreshServerUpdateConflictState()
     {
-        var busy = IsDistroUpdateInProgress || ServerManagers.Any(manager => manager.IsBusy);
+        var busy = IsDistroUpdateInProgress ||
+                   _isComponentsOperationInProgress ||
+                   ServerManagers.Any(manager => manager.IsBusy);
         foreach (var manager in ServerManagers)
         {
             manager.IsConflictingOperationRunning = busy;
@@ -114,6 +117,7 @@ public sealed partial class MainWindowViewModel
         SetServerUpdateInclude(ServerProduct.Herika, IncludeHerikaServerUpdate);
         SetServerUpdateInclude(ServerProduct.Stobe, IncludeStobeServerUpdate);
         SetServerUpdateInclude(ServerProduct.Dialectic, IncludeDialecticServerUpdate);
+        RaiseUpdateCommandStates();
     }
 
     private void SetServerUpdateInclude(ServerProduct product, bool included)
@@ -213,6 +217,8 @@ public sealed partial class MainWindowViewModel
         OnPropertyChanged(nameof(IsHerikaUpdateIncludeEnabled));
         OnPropertyChanged(nameof(IsStobeUpdateIncludeEnabled));
         OnPropertyChanged(nameof(IsDialecticUpdateIncludeEnabled));
+        OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+        RaiseUpdateCommandStates();
         RefreshServerUpdateConflictState();
         OpenChimCommand.RaiseCanExecuteChanged();
         OpenStobeCommand.RaiseCanExecuteChanged();
@@ -501,7 +507,7 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>
     /// Runs the manager update for each selected product in turn. One failure does not abort the
-    /// rest, so a healthy product still gets its update and the shared distro update still runs.
+    /// rest, so every selected healthy product still gets its update.
     /// </summary>
     private async Task<bool> UpdateInstalledServersAsync(IReadOnlyList<ServerManagerItemViewModel> products)
     {

@@ -185,10 +185,10 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="{Binding DistroUpdateButtonText}" Command="{Binding UpdateAllCommand}"
+                    <Button Content="{Binding ModsUpdateButtonText}" Command="{Binding UpdateModsCommand}"
                             Style="{StaticResource GameCenter.AccentButton}" MinWidth="112" Margin="0,0,6,0"
-                            AutomationProperties.Name="{Binding DistroUpdateButtonText}"
-                            AutomationProperties.HelpText="Update the Dwemer Distro products that are included in updates." />
+                            AutomationProperties.Name="{Binding ModsUpdateButtonText}"
+                            AutomationProperties.HelpText="{Binding UpdateModsHelpText}" />
                     <Button Command="{Binding StartServerCommand}"
                             Style="{StaticResource GameCenter.SuccessButton}" MinWidth="132" Margin="0,0,6,0"
                             AutomationProperties.Name="{Binding StartButtonText}"
@@ -627,16 +627,25 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock Text="COMPONENTS" Style="{StaticResource GameCenter.Heading}" />
-                            <TextBlock Text="Install services and configure the distro for this PC. Component checks load only when this page opens."
+                            <TextBlock Text="Install and configure shared services for this PC. System updates never change installed mods."
                                        Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" />
                         </StackPanel>
-                        <Button Grid.Column="1" Content="Configure CUDA" Command="{Binding OpenCudaConfigCommand}"
-                                Style="{StaticResource GameCenter.Button}" HorizontalAlignment="Right" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="{Binding SystemUpdateButtonText}" Command="{Binding UpdateSystemCommand}"
+                                    Style="{StaticResource GameCenter.AccentButton}" MinWidth="126" Margin="0,0,8,0"
+                                    AutomationProperties.Name="{Binding SystemUpdateButtonText}"
+                                    AutomationProperties.HelpText="{Binding UpdateSystemHelpText}" />
+                            <Button Content="Configure CUDA" Command="{Binding OpenCudaConfigCommand}"
+                                    Style="{StaticResource GameCenter.Button}"
+                                    IsEnabled="{Binding IsComponentInteractionEnabled}"
+                                    AutomationProperties.HelpText="Configure the CUDA version used by compatible shared components." />
+                        </StackPanel>
                     </Grid>
                     <Border Grid.Row="1" Style="{StaticResource GameCenter.Card}" Padding="0" ClipToBounds="True">
                         <!-- Empty until Components opens. MainWindow builds the page on entry and
                              drops it on exit so its visual tree can be collected. -->
-                        <ContentControl x:Name="SetupComponentsHost" MinHeight="0" Focusable="False" />
+                        <ContentControl x:Name="SetupComponentsHost" MinHeight="0" Focusable="False"
+                                        IsEnabled="{Binding IsComponentInteractionEnabled}" />
                     </Border>
                 </Grid>
             </TabItem>

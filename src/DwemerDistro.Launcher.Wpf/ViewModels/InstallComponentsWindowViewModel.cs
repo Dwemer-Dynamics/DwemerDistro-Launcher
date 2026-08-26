@@ -203,6 +203,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     {
         if (Interlocked.Increment(ref _activeOperationCount) == 1)
         {
+            _mainWindowViewModel.SetComponentsOperationInProgress(true);
             OnPropertyChanged(nameof(HasActiveOperation));
         }
     }
@@ -214,6 +215,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             return;
         }
 
+        _mainWindowViewModel.SetComponentsOperationInProgress(false);
         OnPropertyChanged(nameof(HasActiveOperation));
         ActiveOperationsCompleted?.Invoke(this, EventArgs.Empty);
     }
