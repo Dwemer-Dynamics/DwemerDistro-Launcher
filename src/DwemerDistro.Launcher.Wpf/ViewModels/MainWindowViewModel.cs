@@ -136,6 +136,8 @@ echo "CHIM-MCP installed and enabled."
     {
         _dispatcher = Application.Current.Dispatcher;
         _wsl = new WslService(_processRunner);
+        // The three server items back command CanExecute below, so they exist before any command.
+        InitializeServerManagement();
         _launcherUpdateService = new LauncherUpdateService(_httpClient, _processRunner);
         _launcherReleaseNoticeService = new LauncherReleaseNoticeService();
         _startAnimationTimer = new DispatcherTimer
@@ -163,9 +165,10 @@ echo "CHIM-MCP installed and enabled."
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
         SaveUpdateIncludeCommand = new RelayCommand(QueueUpdateIncludeSave, () => IsUpdateIncludeReady);
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
-        OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"));
-        OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"));
-        OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"));
+        // Webpage and rollback are meaningless for a product that is not installed.
+        OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => HerikaManager.CanUseInstalledFeatures);
+        OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => StobeManager.CanUseInstalledFeatures);
+        OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"), () => DialecticManager.CanUseInstalledFeatures);
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
@@ -175,9 +178,9 @@ echo "CHIM-MCP installed and enabled."
         ViewMemoryUsageCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- htop"));
         ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync);
         ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync);
-        OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"));
-        OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"));
-        OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"));
+        OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => HerikaManager.CanUseInstalledFeatures);
+        OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => StobeManager.CanUseInstalledFeatures);
+        OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => DialecticManager.CanUseInstalledFeatures);
         ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"));
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"));
         ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""));
@@ -338,6 +341,9 @@ echo "CHIM-MCP installed and enabled."
             if (SetProperty(ref _isUpdateIncludeReady, value))
             {
                 SaveUpdateIncludeCommand.RaiseCanExecuteChanged();
+                OnPropertyChanged(nameof(IsHerikaUpdateIncludeEnabled));
+                OnPropertyChanged(nameof(IsStobeUpdateIncludeEnabled));
+                OnPropertyChanged(nameof(IsDialecticUpdateIncludeEnabled));
             }
         }
     }
@@ -457,6 +463,7 @@ echo "CHIM-MCP installed and enabled."
         StartProxyAndDiscovery();
         await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
         await RunStartupStepAsync("Load dashboard auto-open setting", LoadDashboardAutoOpenAsync, StartupSettingsTimeout).ConfigureAwait(true);
+        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
@@ -984,15 +991,38 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task UpdateAllAsync()
     {
-        await RunDistroUpdateAsync(requireConfirmation: true, sourceLabel: "Distro Updates").ConfigureAwait(true);
+        await RunDistroUpdateAsync(
+                requireConfirmation: true,
+                sourceLabel: "Distro Updates",
+                includeApplicationServers: true)
+            .ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// Quickstart updates the shared core only. Application servers are installed and updated from
+    /// the Choose Your Mods step and the Mods page, never as a side effect of the distro update.
+    /// </summary>
     public Task<bool> UpdateDistroFromQuickstartAsync()
     {
-        return RunDistroUpdateAsync(requireConfirmation: false, sourceLabel: "Quickstart");
+        return RunDistroUpdateAsync(
+            requireConfirmation: false,
+            sourceLabel: "Quickstart",
+            includeApplicationServers: false);
     }
 
-    private async Task<bool> RunDistroUpdateAsync(bool requireConfirmation, string sourceLabel)
+    /// <summary>
+    /// Runs the server-manager update for each installed, update-enabled product, then the shared
+    /// distro and components update.
+    ///
+    /// The manager is asked only about products the status probe reported as installed, so this path
+    /// can never install a missing product. The shared update always passes every application-server
+    /// skip flag: the manager owns those repositories now, and update_gws only refreshes the services
+    /// all products share.
+    /// </summary>
+    private async Task<bool> RunDistroUpdateAsync(
+        bool requireConfirmation,
+        string sourceLabel,
+        bool includeApplicationServers)
     {
         if (IsDistroUpdateInProgress)
         {
@@ -1000,23 +1030,16 @@ echo "CHIM-MCP installed and enabled."
             return false;
         }
 
-        var includeHerika = IncludeHerikaServerUpdate;
-        var includeStobe = IncludeStobeServerUpdate;
-        var includeDialectic = IncludeDialecticServerUpdate;
-        var targetHerika = ResolveServerBranchChoice(TargetHerikaBranch, "aiagent");
-        var targetStobe = ResolveServerBranchChoice(TargetStobeBranch, "stobe");
-        var targetDialectic = ResolveServerBranchChoice(TargetDialecticBranch, "dialectic");
-
-        var confirmText = includeHerika || includeStobe || includeDialectic
-            ? "This will update the Dwemer Distro and selected server components.\n\n" +
-              (includeHerika ? $"HerikaServer target branch: {targetHerika}\n" : "HerikaServer update: disabled\n") +
-              (includeStobe ? $"StobeServer target branch: {targetStobe}\n" : "StobeServer update: disabled\n") +
-              (includeDialectic ? $"DialecticServer target branch: {targetDialectic}\n" : "DialecticServer update: disabled\n") +
-              "\nAre you sure?"
-            : "This will update Dwemer Distro only.\n\nAll server updates are disabled in the Distro Updates section.\n\nAre you sure?";
+        var productsToUpdate = includeApplicationServers
+            ? GetProductsToUpdate()
+            : Array.Empty<ServerManagerItemViewModel>();
 
         if (requireConfirmation &&
-            MessageBox.Show(confirmText, "Update System", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            MessageBox.Show(
+                BuildDistroUpdateConfirmation(productsToUpdate),
+                "Update System",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             AppendLog("Update canceled." + Environment.NewLine);
             return false;
@@ -1029,145 +1052,33 @@ echo "CHIM-MCP installed and enabled."
 
         try
         {
-            SetHerikaStatus("Updating...", "White");
-            if (includeStobe)
-            {
-                SetStobeStatus("Updating...", "White");
-            }
-            if (includeDialectic)
-            {
-                SetDialecticStatus("Updating...", "White");
-            }
-
-            AppendLog("Starting system update for the selected server components..." + Environment.NewLine);
-            AppendLog("Preparing update steps..." + Environment.NewLine);
+            AppendLog(
+                productsToUpdate.Count > 0
+                    ? $"Starting update for {string.Join(", ", productsToUpdate.Select(product => product.DisplayName))} " +
+                      $"and the shared distro.{Environment.NewLine}"
+                    : $"Starting the shared distro and components update.{Environment.NewLine}");
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            if (includeHerika)
-            {
-                AppendLog(Environment.NewLine + "STEP 1: Prepare HerikaServer branch" + Environment.NewLine, "green");
-                if (!await SwitchHerikaServerBranchAsync(targetHerika).ConfigureAwait(false))
-                {
-                    return false;
-                }
-            }
+            var serverUpdatesSucceeded = await UpdateInstalledServersAsync(productsToUpdate).ConfigureAwait(true);
 
-            if (includeStobe)
-            {
-                AppendLog(Environment.NewLine + (includeHerika ? "STEP 2: Prepare StobeServer branch" : "STEP 1: Prepare StobeServer branch") + Environment.NewLine, "green");
-                if (!await SwitchStobeServerBranchAsync(targetStobe).ConfigureAwait(false))
-                {
-                    return false;
-                }
-            }
-
-            if (includeDialectic)
-            {
-                AppendLog(Environment.NewLine + "Prepare DialecticServer branch" + Environment.NewLine, "green");
-                if (!await SwitchDialecticServerBranchAsync(targetDialectic).ConfigureAwait(false))
-                {
-                    return false;
-                }
-            }
-
-            AppendLog(Environment.NewLine + (includeHerika || includeStobe || includeDialectic
-                ? "STEP 3: Run DwemerDistro core update and component update"
-                : "STEP 1: Run DwemerDistro core update") + Environment.NewLine, "green");
-            AppendLog("Executing update script..." + Environment.NewLine);
+            AppendLog(
+                Environment.NewLine + "Running the DwemerDistro core and shared components update" + Environment.NewLine,
+                "green");
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var serverUpdateRequested = includeHerika || includeStobe || includeDialectic;
-            var gwsFlags = new List<string>();
-            if (!includeHerika)
-            {
-                gwsFlags.Add("--skip-herika");
-            }
-            if (!includeStobe)
-            {
-                gwsFlags.Add("--skip-stobe");
-            }
-            if (!includeDialectic)
-            {
-                gwsFlags.Add("--skip-dialectic");
-            }
+            var sharedUpdateSucceeded = await RunSharedDistroUpdateAsync().ConfigureAwait(true);
+            var updateSucceeded = sharedUpdateSucceeded && serverUpdatesSucceeded;
 
-            var gwsCommand = "/usr/local/bin/update_gws";
-            if (gwsFlags.Count > 0)
-            {
-                gwsCommand += " " + string.Join(" ", gwsFlags);
-            }
-
-            var bashCommand = serverUpdateRequested
-                ? "cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main && " +
-                  "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
-                  "echo '=====MARKER:BEGIN_SERVER_UPDATE=====' && " + gwsCommand
-                : "cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main && " +
-                  "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh";
-
-            var distroUpdateComplete = false;
-            var serverUpdateStarted = false;
-            var serverUpdateComplete = false;
-            var branchErrorDetected = false;
-
-            var result = await _wsl.RunBashAsync(bashCommand, line =>
-            {
-                if (serverUpdateRequested && line.Contains("=====MARKER:BEGIN_SERVER_UPDATE=====", StringComparison.OrdinalIgnoreCase))
-                {
-                    distroUpdateComplete = true;
-                    serverUpdateStarted = true;
-                    AppendLog(Environment.NewLine + "STEP 4: Dwemer Distro Server & Components Update" + Environment.NewLine, "green");
-                    return;
-                }
-
-                AppendLog(line);
-                var lowered = line.ToLowerInvariant();
-                if (serverUpdateRequested &&
-                    (lowered.Contains("you are not currently on a branch") ||
-                     lowered.Contains("please specify which branch you want to merge with")))
-                {
-                    branchErrorDetected = true;
-                }
-
-                if (serverUpdateRequested && serverUpdateStarted && (line.Contains("Successfully") || line.Contains("Completed")))
-                {
-                    serverUpdateComplete = true;
-                }
-            }, loginShell: false, lineBuffered: true).ConfigureAwait(false);
-
-            if (!serverUpdateRequested)
-            {
-                distroUpdateComplete = result.Succeeded;
-            }
-
-            var updateSucceeded = result.Succeeded && distroUpdateComplete && (!serverUpdateRequested || !branchErrorDetected);
             if (updateSucceeded)
             {
-                var statusParts = new List<string>();
-                if (includeHerika)
-                {
-                    statusParts.Add($"HerikaServer: {await GetCurrentBranchAsync().ConfigureAwait(false) ?? "unknown"}");
-                }
-                if (includeStobe)
-                {
-                    statusParts.Add($"StobeServer: {await GetStobeServerCurrentBranchAsync().ConfigureAwait(false) ?? "unknown"}");
-                }
-                if (includeDialectic)
-                {
-                    statusParts.Add($"DialecticServer: {await GetDialecticServerCurrentBranchAsync().ConfigureAwait(false) ?? "unknown"}");
-                }
-
-                if (serverUpdateRequested && serverUpdateComplete)
-                {
-                    AppendLog($"System update completed successfully! {string.Join(" | ", statusParts)}{Environment.NewLine}", "green");
-                }
-                else if (serverUpdateRequested)
-                {
-                    AppendLog($"Update completed. {string.Join(" | ", statusParts)}{Environment.NewLine}", "green");
-                }
-                else
-                {
-                    AppendLog("Distro update completed successfully. Server updates were skipped." + Environment.NewLine, "green");
-                }
+                AppendLog("Update completed successfully." + Environment.NewLine, "green");
+            }
+            else if (sharedUpdateSucceeded)
+            {
+                AppendLog(
+                    "The shared distro update finished, but at least one server update failed. Check the log above." +
+                    Environment.NewLine,
+                    "yellow");
             }
             else
             {
@@ -1188,207 +1099,64 @@ echo "CHIM-MCP installed and enabled."
                 IsDistroUpdateInProgress = false;
                 DistroUpdateButtonText = "Update Mods";
             });
+            QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
             QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         }
     }
 
-    private async Task<bool> SwitchHerikaServerBranchAsync(string targetBranch)
+    private string BuildDistroUpdateConfirmation(IReadOnlyList<ServerManagerItemViewModel> productsToUpdate)
     {
-        if (targetBranch is not ("aiagent" or "dev"))
+        if (productsToUpdate.Count == 0)
         {
-            AppendLog($"Invalid branch selection: '{targetBranch}'. Expected aiagent or dev.{Environment.NewLine}", "red");
-            return false;
+            var notInstalled = ServerManagers
+                .Where(manager => !manager.IsInstalled)
+                .Select(manager => manager.DisplayName)
+                .ToArray();
+
+            return "This will update the Dwemer Distro and its shared components.\n\n" +
+                   "No installed server is selected for updates.\n" +
+                   (notInstalled.Length > 0
+                       ? $"Not installed: {string.Join(", ", notInstalled)}. Install a server from the Mods page.\n"
+                       : string.Empty) +
+                   "\nAre you sure?";
         }
 
-        var currentBranch = await GetCurrentBranchAsync().ConfigureAwait(false);
-        if (currentBranch == targetBranch)
-        {
-            AppendLog($"HerikaServer already on branch '{targetBranch}'." + Environment.NewLine);
-            return true;
-        }
+        var branchLines = productsToUpdate
+            .Select(product => $"{product.DisplayName} target branch: {product.SelectedBranch}")
+            .ToArray();
 
-        AppendLog($"Switching HerikaServer branch to '{targetBranch}'..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "cd /var/www/html/HerikaServer && " +
-            "git stash save 'Auto-stash before switching branch' && " +
-            "git fetch origin && " +
-            $"git checkout -B {targetBranch} origin/{targetBranch}",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog($"Failed to switch HerikaServer branch to '{targetBranch}'." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        AppendLog($"Successfully switched HerikaServer to '{targetBranch}'." + Environment.NewLine, "green");
-        return true;
+        return "This will update the Dwemer Distro, its shared components, and the selected servers.\n\n" +
+               string.Join("\n", branchLines) +
+               "\n\nAre you sure?";
     }
 
-    private async Task<bool> SwitchStobeServerBranchAsync(string targetBranch)
+    /// <summary>
+    /// Pulls the distro scripts, runs update.sh, then runs update_gws with every application-server
+    /// skip flag so only shared services are touched.
+    /// </summary>
+    private async Task<bool> RunSharedDistroUpdateAsync()
     {
-        if (targetBranch is not ("stobe" or "dev"))
+        var bashCommand =
+            "cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main && " +
+            "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
+            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand();
+
+        var sharedComponentsStarted = false;
+        var result = await _wsl.RunBashAsync(bashCommand, line =>
         {
-            AppendLog($"Invalid StobeServer branch selection: '{targetBranch}'. Expected stobe or dev.{Environment.NewLine}", "red");
-            return false;
-        }
+            if (line.Contains(SharedComponentsMarker, StringComparison.OrdinalIgnoreCase))
+            {
+                sharedComponentsStarted = true;
+                AppendLog(Environment.NewLine + "Shared components update" + Environment.NewLine, "green");
+                return;
+            }
 
-        if (!await EnsureStobeServerRepoExistsAsync(targetBranch).ConfigureAwait(false))
-        {
-            return false;
-        }
+            AppendLog(line);
+        }, loginShell: false, lineBuffered: true).ConfigureAwait(false);
 
-        var currentBranch = await GetStobeServerCurrentBranchAsync().ConfigureAwait(false);
-        if (currentBranch == targetBranch)
-        {
-            AppendLog($"StobeServer already on branch '{targetBranch}'." + Environment.NewLine);
-            return true;
-        }
-
-        AppendLog($"Switching StobeServer branch to '{targetBranch}'..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "cd /var/www/html/StobeServer && " +
-            "git stash save 'Auto-stash before switching branch' && " +
-            "git fetch origin && " +
-            $"git checkout -B {targetBranch} origin/{targetBranch}",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog($"Failed to switch StobeServer branch to '{targetBranch}'." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        AppendLog($"Successfully switched StobeServer to '{targetBranch}'." + Environment.NewLine, "green");
-        return true;
-    }
-
-    private async Task<bool> EnsureStobeServerRepoExistsAsync(string targetBranch)
-    {
-        AppendLog("Checking StobeServer repository state..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "base_dir=/var/www/html; repo_path=/var/www/html/StobeServer; state=EXISTS; " +
-            "mkdir -p \"$base_dir\" || { echo ERROR:BASE_DIR_CREATE_FAILED >&2; exit 1; }; " +
-            "if [ ! -d \"$repo_path/.git\" ]; then " +
-            "state=CLONED; " +
-            "for legacy_path in /var/www/html/stobeserver /var/www/html/stoberser; do " +
-            "if [ -d \"$legacy_path/.git\" ]; then rm -rf \"$repo_path\" && mv \"$legacy_path\" \"$repo_path\" && state=MIGRATED:${legacy_path}; break; fi; " +
-            "done; " +
-            "if [ ! -d \"$repo_path/.git\" ]; then rm -rf \"$repo_path\" && " +
-            $"git clone -b {targetBranch} https://github.com/Dwemer-Dynamics/StobeServer.git \"$repo_path\" 1>&2 && state=CLONED:{targetBranch}; " +
-            "fi; fi; " +
-            "mkdir -p \"$repo_path/log\"; : > \"$repo_path/log/stobe_import.log\"; : > \"$repo_path/log/stobeserver.log\"; echo \"$state\"",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog("Failed to prepare StobeServer repository for branch switch." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        var output = result.StandardOutput.Trim();
-        if (output.StartsWith("CLONED:", StringComparison.OrdinalIgnoreCase))
-        {
-            AppendLog($"StobeServer was missing and has been cloned on branch '{output.Split(':').Last()}'." + Environment.NewLine, "yellow");
-        }
-        else if (output.StartsWith("MIGRATED:", StringComparison.OrdinalIgnoreCase))
-        {
-            AppendLog($"Recovered StobeServer from legacy path '{output.Split(':').Last()}' and migrated to /var/www/html/StobeServer." + Environment.NewLine, "yellow");
-        }
-
-        return true;
-    }
-
-    private async Task<bool> SwitchDialecticServerBranchAsync(string targetBranch)
-    {
-        if (targetBranch is not ("dialectic" or "dev"))
-        {
-            AppendLog($"Invalid DialecticServer branch selection: '{targetBranch}'. Expected dialectic or dev.{Environment.NewLine}", "red");
-            return false;
-        }
-
-        if (!await EnsureDialecticServerRepoExistsAsync(targetBranch).ConfigureAwait(false))
-        {
-            return false;
-        }
-
-        var currentBranch = await GetDialecticServerCurrentBranchAsync().ConfigureAwait(false);
-        if (currentBranch == targetBranch)
-        {
-            AppendLog($"DialecticServer already on branch '{targetBranch}'." + Environment.NewLine);
-            return true;
-        }
-
-        AppendLog($"Switching DialecticServer branch to '{targetBranch}'..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "cd /var/www/html/DialecticServer && " +
-            "git stash push -u -m 'Auto-stash before switching branch' >/dev/null 2>&1 || true; " +
-            "git fetch origin && " +
-            $"git checkout -B {targetBranch} origin/{targetBranch}",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog($"Failed to switch DialecticServer branch to '{targetBranch}'." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        AppendLog($"Successfully switched DialecticServer to '{targetBranch}'." + Environment.NewLine, "green");
-        return true;
-    }
-
-    private async Task<bool> EnsureDialecticServerRepoExistsAsync(string targetBranch)
-    {
-        AppendLog("Checking DialecticServer repository state..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "set -e; repo_path=/var/www/html/DialecticServer; backup_path=''; state=EXISTS; mkdir -p /var/www/html; " +
-            "if [ -d \"$repo_path\" ] && [ ! -d \"$repo_path/.git\" ]; then " +
-            "backup_path=\"${repo_path}.pre-git-$(date -u +%Y%m%d%H%M%S)\"; mv \"$repo_path\" \"$backup_path\"; state=MIGRATED:$backup_path; fi; " +
-            "if [ ! -d \"$repo_path/.git\" ]; then " +
-            $"if ! git clone -b {targetBranch} https://github.com/Dwemer-Dynamics/DialecticServer.git \"$repo_path\" 1>&2; then " +
-            "rm -rf \"$repo_path\"; if [ -n \"$backup_path\" ]; then mv \"$backup_path\" \"$repo_path\"; fi; exit 1; fi; " +
-            "if [ -z \"$backup_path\" ]; then state=CLONED; fi; fi; " +
-            "if [ -n \"$backup_path\" ] && [ -d \"$backup_path\" ]; then " +
-            "for relative_path in conf/conf.php conf/character_map.json; do " +
-            "if [ -e \"$backup_path/$relative_path\" ]; then mkdir -p \"$repo_path/$(dirname \"$relative_path\")\"; cp -a \"$backup_path/$relative_path\" \"$repo_path/$relative_path\"; fi; done; " +
-            "for relative_path in uploads data/voices soundcache log; do if [ -d \"$backup_path/$relative_path\" ]; then mkdir -p \"$repo_path/$relative_path\"; cp -a \"$backup_path/$relative_path/.\" \"$repo_path/$relative_path/\"; fi; done; " +
-            "find \"$backup_path/conf\" -maxdepth 1 -type f -name 'conf_*.php' -exec cp -a {} \"$repo_path/conf/\" \\; 2>/dev/null || true; fi; " +
-            "echo \"$state\"",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog("Failed to prepare DialecticServer repository." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        if (result.StandardOutput.Contains("MIGRATED:", StringComparison.OrdinalIgnoreCase))
-        {
-            AppendLog("Migrated the existing DialecticServer deployment into a managed Git checkout while preserving runtime data." + Environment.NewLine, "yellow");
-        }
-        else if (result.StandardOutput.Contains("CLONED", StringComparison.OrdinalIgnoreCase))
-        {
-            AppendLog($"Installed DialecticServer on branch '{targetBranch}'." + Environment.NewLine, "green");
-        }
-
-        return true;
+        return result.Succeeded && sharedComponentsStarted;
     }
 
     private async Task<string?> GetCurrentBranchAsync(CancellationToken cancellationToken = default)
@@ -1991,16 +1759,27 @@ echo "CHIM-MCP installed and enabled."
 
         await AddServerVersionDiagnosticsAsync(lines).ConfigureAwait(false);
 
-        var diagnosticCommands = new (string Display, Func<Task<CommandResult>> Run)[]
+        var diagnosticCommands = new List<(string Display, Func<Task<CommandResult>> Run)>
         {
-            ("wsl -l -v", () => _wsl.RunWslAsync(new[] { "-l", "-v" })),
-            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/HerikaServer && git status --short --branch\"",
-                () => _wsl.RunBashAsync("cd /var/www/html/HerikaServer && git status --short --branch")),
-            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/StobeServer && git status --short --branch\"",
-                () => _wsl.RunBashAsync("cd /var/www/html/StobeServer && git status --short --branch")),
-            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/DialecticServer && git status --short --branch\"",
-                () => _wsl.RunBashAsync("cd /var/www/html/DialecticServer && git status --short --branch"))
+            ("wsl -l -v", () => _wsl.RunWslAsync(new[] { "-l", "-v" }))
         };
+
+        // Only probe repositories that exist. A git status against a missing optional server would
+        // fill the report with errors that read like faults.
+        foreach (var serverKey in new[] { "herika", "stobe", "dialectic" })
+        {
+            var config = GetRollbackServerConfig(serverKey);
+            var manager = FindServerManagerByKey(config.Key);
+            if (manager?.IsNotInstalled == true)
+            {
+                continue;
+            }
+
+            var repoPath = config.RepoPath;
+            diagnosticCommands.Add((
+                $"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd {repoPath} && git status --short --branch\"",
+                () => _wsl.RunBashAsync($"cd {repoPath} && git status --short --branch")));
+        }
 
         foreach (var (display, run) in diagnosticCommands)
         {
@@ -2049,6 +1828,21 @@ echo "CHIM-MCP installed and enabled."
         {
             var config = GetRollbackServerConfig(serverKey);
             lines.Add($"--- {config.DisplayName} ---");
+
+            // An optional server that was never installed is a normal configuration, not a fault.
+            // Say so plainly and skip the version/commit probes instead of logging them as failures.
+            var manager = FindServerManagerByKey(config.Key);
+            if (manager?.IsNotInstalled == true)
+            {
+                lines.Add("State: Not installed (optional server, nothing to report)");
+                lines.Add("");
+                continue;
+            }
+
+            if (manager?.NeedsRepair == true)
+            {
+                lines.Add("State: Needs repair (reported by ddistro_server status)");
+            }
 
             try
             {
@@ -3432,6 +3226,7 @@ fi
         try
         {
             using var timeoutCts = new CancellationTokenSource(StartupVersionCheckTimeout);
+            await RefreshServerManagementAsync(timeoutCts.Token).ConfigureAwait(false);
             await CheckForUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
             await CheckStobeServerUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
             await CheckDialecticServerUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
@@ -3715,7 +3510,10 @@ fi
 
     private bool NeedsServerStatusRefresh()
     {
-        return StatusNeedsRefresh(_herikaStatusText) ||
+        // An unanswered install-state probe matters as much as a missing version: without it the
+        // Mods page cannot tell "not installed" from "not checked yet".
+        return ServerManagers.Any(manager => !manager.IsStatusKnown) ||
+               StatusNeedsRefresh(_herikaStatusText) ||
                StatusNeedsRefresh(_stobeStatusText) ||
                StatusNeedsRefresh(_dialecticStatusText);
     }
@@ -4496,6 +4294,7 @@ fi
         {
             HerikaStatusText = text;
             HerikaStatusColor = color;
+            ApplyVersionStatusToManager(ServerProduct.Herika, text, color);
         });
     }
 
@@ -4505,6 +4304,7 @@ fi
         {
             StobeStatusText = text;
             StobeStatusColor = color;
+            ApplyVersionStatusToManager(ServerProduct.Stobe, text, color);
         });
     }
 
@@ -4772,6 +4572,7 @@ fi
         {
             DialecticStatusText = text;
             DialecticStatusColor = color;
+            ApplyVersionStatusToManager(ServerProduct.Dialectic, text, color);
         });
     }
 

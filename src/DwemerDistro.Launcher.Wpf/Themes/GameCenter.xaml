@@ -399,6 +399,34 @@
         </Style.Triggers>
     </Style>
 
+    <!-- Filled red destructive action, for a purge that deletes user data. DangerButton is the
+         outline treatment used for reversible risky actions such as Force Stop; this one is filled
+         so it never reads as just another secondary button beside a brand-filled action. The label
+         stays the same near-white in every state - hover and pressed move the fill, not the text -
+         which keeps it above 5:1 on the burgundy-red fill and matches the brand buttons next to it. -->
+    <Style x:Key="GameCenter.ServerUninstallButton" TargetType="Button" BasedOn="{StaticResource GameCenter.DangerButton}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Danger}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
     <Style x:Key="GameCenter.NavButton" TargetType="RadioButton">
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
         <Setter Property="Background" Value="Transparent" />

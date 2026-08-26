@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
+using DwemerDistro.Launcher.Wpf.Models;
 using DwemerDistro.Launcher.Wpf.Services;
 using Application = System.Windows.Application;
 using MessageBox = System.Windows.MessageBox;
@@ -13,9 +14,12 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 {
     private const int IntroStepIndex = 0;
     private const int UpdateDistroStepIndex = 1;
-    private const int HuggingFaceStepIndex = 2;
-    private const int SetupStepIndex = 3;
-    private const int ReadyStepIndex = 4;
+    // Choosing mods sits between the core distro update and the credential/component steps: the
+    // manager needs the updated distro, and the later steps only target products that exist.
+    private const int ChooseModsStepIndex = 2;
+    private const int HuggingFaceStepIndex = 3;
+    private const int SetupStepIndex = 4;
+    private const int ReadyStepIndex = 5;
     private const string StatusChecking = "#555555";
     private const string StatusGood = "#285A2D";
     private const string StatusWarn = "#6A3A12";
@@ -36,6 +40,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private readonly OpenRouterCredentialSyncService _openRouterSync;
     private readonly HuggingFaceTokenService _huggingFaceToken;
     private readonly VoiceEngineService _voiceEngine;
+    private readonly ServerManagementService _serverManagement;
     private readonly OnboardingStateService _onboardingState = new();
     private readonly object _visibleSetupLogBufferLock = new();
     private readonly StringBuilder _visibleSetupLogBuffer = new();
@@ -53,6 +58,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private bool _showTechnicalDetails;
     private bool _skipHuggingFaceStep = HuggingFaceTokenService.HasManagedToken;
     private bool _quickstartDistroUpdated;
+    private bool _isInstallingProducts;
+    private string _productStatusText = "Checking installed mods...";
+    private string _productStatusBackground = StatusChecking;
     private bool _isVisibleSetupLogFlushQueued;
     private bool _isSetupInstallProgressFlushQueued;
     private int _setupOutputGeneration;
@@ -89,6 +97,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         _openRouterSync = new OpenRouterCredentialSyncService(_wsl);
         _huggingFaceToken = new HuggingFaceTokenService(_wsl);
         _voiceEngine = new VoiceEngineService(_wsl);
+        _serverManagement = new ServerManagementService(_wsl);
         _selectedPreset = _distroSetup.GetPreset(SetupPresetKey.AmdCpu);
 
         SetupComponents = [];
@@ -108,6 +117,25 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                     model.AccessUrl,
                     () => _processRunner.OpenExternalUrl(model.AccessUrl))));
         VoiceApplyTargets = [];
+        ProductChoices = new ObservableCollection<QuickstartProductViewModel>(
+            GameProfile.CreateCatalog()
+                .Select(profile => (Profile: profile, Product: ServerManagementService.TryParseGameKey(profile.Key)))
+                .Where(entry => entry.Product is not null)
+                .Select(entry => new QuickstartProductViewModel(
+                    entry.Profile,
+                    entry.Product!.Value,
+                    RetryProductInstallAsync,
+                    SkipProductInstall)));
+
+        foreach (var product in ProductChoices)
+        {
+            product.PropertyChanged += ProductChoice_PropertyChanged;
+        }
+
+        InstallSelectedProductsCommand = new AsyncRelayCommand(
+            InstallSelectedProductsAsync,
+            () => !IsBusy && HasSelectedProducts);
+        RefreshProductsCommand = new AsyncRelayCommand(RefreshProductsAsync, () => !IsBusy);
 
         InstallRecommendedCommand = new AsyncRelayCommand(InstallRecommendedAsync, () => !IsBusy);
         ContinueCommand = new AsyncRelayCommand(ContinueAsync, CanContinue);
@@ -143,6 +171,13 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public ObservableCollection<HuggingFaceQuickstartModelViewModel> HuggingFaceModelAccessItems { get; }
 
     public ObservableCollection<CredentialTargetViewModel> VoiceApplyTargets { get; }
+
+    /// <summary>The three optional application servers, in rail order.</summary>
+    public ObservableCollection<QuickstartProductViewModel> ProductChoices { get; }
+
+    public AsyncRelayCommand InstallSelectedProductsCommand { get; }
+
+    public AsyncRelayCommand RefreshProductsCommand { get; }
 
     public AsyncRelayCommand InstallRecommendedCommand { get; }
 
@@ -189,6 +224,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(IsSetupIntroStep));
                 OnPropertyChanged(nameof(IsUpdateDistroStep));
+                OnPropertyChanged(nameof(IsChooseModsStep));
                 OnPropertyChanged(nameof(IsSetupStep));
                 OnPropertyChanged(nameof(IsHuggingFaceStep));
                 OnPropertyChanged(nameof(IsReadyStep));
@@ -199,6 +235,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 OnPropertyChanged(nameof(PrimaryContinueText));
                 OnPropertyChanged(nameof(InstallRecommendedButtonText));
                 OnPropertyChanged(nameof(IsSetupSelectionEnabled));
+                OnPropertyChanged(nameof(IsProductSelectionEnabled));
                 ShowTechnicalDetails = false;
                 RaiseCommandStates();
             }
@@ -208,6 +245,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public bool IsSetupIntroStep => CurrentStepIndex == IntroStepIndex;
 
     public bool IsUpdateDistroStep => CurrentStepIndex == UpdateDistroStepIndex;
+
+    public bool IsChooseModsStep => CurrentStepIndex == ChooseModsStepIndex;
 
     public bool IsHuggingFaceStep => CurrentStepIndex == HuggingFaceStepIndex && !_skipHuggingFaceStep;
 
@@ -227,12 +266,57 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             if (SetProperty(ref _isBusy, value))
             {
                 OnPropertyChanged(nameof(IsSetupSelectionEnabled));
+                OnPropertyChanged(nameof(IsProductSelectionEnabled));
                 RaiseCommandStates();
             }
         }
     }
 
     public bool IsSetupSelectionEnabled => !IsBusy && IsSetupStep;
+
+    public bool IsProductSelectionEnabled => !IsBusy && IsChooseModsStep && !_isInstallingProducts;
+
+    public bool IsInstallingProducts
+    {
+        get => _isInstallingProducts;
+        private set
+        {
+            if (SetProperty(ref _isInstallingProducts, value))
+            {
+                OnPropertyChanged(nameof(IsProductSelectionEnabled));
+            }
+        }
+    }
+
+    public bool HasSelectedProducts => ProductChoices.Any(product => product.IsSelected);
+
+    /// <summary>
+    /// Nothing selected is a valid choice. Once a user selects a mod, Quickstart must not advance
+    /// until that choice either installed successfully or the user explicitly skipped its failure.
+    /// </summary>
+    public bool CanLeaveProductSelection => CanAdvanceFromProductSelection(ProductChoices);
+
+    internal static bool CanAdvanceFromProductSelection(
+        IReadOnlyList<QuickstartProductViewModel> products) =>
+        !products.Any(product => product.IsSelected) || products
+            .Where(product => product.IsSelected)
+            .All(product => product.InstallState is
+                QuickstartProductInstallState.Installed or QuickstartProductInstallState.Skipped);
+
+    public string ProductStatusText
+    {
+        get => _productStatusText;
+        private set => SetProperty(ref _productStatusText, value);
+    }
+
+    public string ProductStatusBackground
+    {
+        get => _productStatusBackground;
+        private set => SetProperty(ref _productStatusBackground, value);
+    }
+
+    public string InstallProductsButtonText =>
+        HasSelectedProducts ? "Install Selected Mods" : "No Mods Selected";
 
     public bool IsInstallingSetup
     {
@@ -270,6 +354,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         IntroStepIndex => "Quick Setup",
         UpdateDistroStepIndex => "Update Distro",
+        ChooseModsStepIndex => "Choose Your Mods",
         HuggingFaceStepIndex => "Connect Hugging Face",
         SetupStepIndex => "Components",
         _ => "Setup Complete"
@@ -279,6 +364,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         IntroStepIndex => "The launcher picked the recommended setup for this machine.",
         UpdateDistroStepIndex => "Pull the latest distro scripts first.",
+        ChooseModsStepIndex => "Pick the mods you want. You can add or remove any of them later from the Mods page.",
         HuggingFaceStepIndex => "The installers use Hugging Face to download cloned voice models.",
         SetupStepIndex => "Install the required voice and speech components.",
         _ => "Start the server, switch on the game, and talk."
@@ -288,6 +374,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         IntroStepIndex => "Continue",
         UpdateDistroStepIndex => "Next",
+        ChooseModsStepIndex => "Next",
         HuggingFaceStepIndex => "Continue to Install",
         SetupStepIndex => "Continue to Start Server",
         _ => "Ready"
@@ -463,6 +550,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             HardwareDetail = hardware.Detail;
             ApplyPreset(hardware.RecommendedPreset);
             await RefreshSetupCoreAsync(cancellationToken).ConfigureAwait(true);
+            await RefreshProductsCoreAsync(cancellationToken).ConfigureAwait(true);
             await _huggingFaceToken.EnsureManagedTokenAsync(cancellationToken).ConfigureAwait(true);
             await RefreshHuggingFaceStatusCoreAsync(cancellationToken).ConfigureAwait(true);
         }).ConfigureAwait(true);
@@ -569,6 +657,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                     ? "Distro update completed. Refreshed quickstart checks." + Environment.NewLine
                     : "Distro update reported issues. Check the main launcher log." + Environment.NewLine);
                 await RefreshSetupCoreAsync().ConfigureAwait(true);
+                await RefreshProductsCoreAsync().ConfigureAwait(true);
             }
             finally
             {
@@ -603,7 +692,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
         try
         {
-            await _onboardingState.MarkSkippedAsync(_selectedPreset.Key).ConfigureAwait(true);
+            await _onboardingState
+                .MarkSkippedAsync(_selectedPreset.Key, GetSelectedProductKeys(), GetProductInstallResults())
+                .ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -846,7 +937,11 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         _openRouterStatus = status;
         OpenRouterTargets.Clear();
 
-        foreach (var target in status.Targets)
+        // A product that is not installed has no database to hold a key, so it is not a credential
+        // target at all - listing it as "needs key" would read as a problem the user must fix.
+        var installedTargets = status.Targets.Where(IsInstalledCredentialTarget).ToArray();
+
+        foreach (var target in installedTargets)
         {
             OpenRouterTargets.Add(new CredentialTargetViewModel(
                 target.TargetName,
@@ -959,7 +1054,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 _selectedPreset.Key,
                 voiceEngineKey,
                 false,
-                IsHuggingFaceReady(_huggingFaceStatus))
+                IsHuggingFaceReady(_huggingFaceStatus),
+                GetSelectedProductKeys(),
+                GetProductInstallResults())
             .ConfigureAwait(true);
     }
 
@@ -974,6 +1071,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             IntroStepIndex => true,
             UpdateDistroStepIndex => true,
+            // Continuing with nothing selected is deliberate. A selected mod must be installed or
+            // explicitly skipped so a checked box cannot be silently ignored.
+            ChooseModsStepIndex => !_isInstallingProducts && CanLeaveProductSelection,
             HuggingFaceStepIndex => IsHuggingFaceReady(_huggingFaceStatus),
             SetupStepIndex => _setupStatus?.AllRequiredInstalled == true,
             ReadyStepIndex => _voiceEngineStatus?.HasUsableEngine == true,
@@ -1003,7 +1103,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private int GetNextStepIndex(int currentStepIndex)
     {
-        return _skipHuggingFaceStep && currentStepIndex == UpdateDistroStepIndex
+        return _skipHuggingFaceStep && currentStepIndex == ChooseModsStepIndex
             ? SetupStepIndex
             : Math.Min(ReadyStepIndex, currentStepIndex + 1);
     }
@@ -1011,13 +1111,13 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private int GetPreviousStepIndex(int currentStepIndex)
     {
         return _skipHuggingFaceStep && currentStepIndex == SetupStepIndex
-            ? UpdateDistroStepIndex
+            ? ChooseModsStepIndex
             : Math.Max(0, currentStepIndex - 1);
     }
 
     private int GetTotalStepCount()
     {
-        return _skipHuggingFaceStep ? 4 : 5;
+        return _skipHuggingFaceStep ? 5 : 6;
     }
 
     private int GetDisplayStepNumber()
@@ -1307,9 +1407,213 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         return verbosePrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     }
 
+    private void ProductChoice_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is not (nameof(QuickstartProductViewModel.IsSelected)
+            or nameof(QuickstartProductViewModel.IsInstalled)))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(HasSelectedProducts));
+        OnPropertyChanged(nameof(CanLeaveProductSelection));
+        OnPropertyChanged(nameof(InstallProductsButtonText));
+        InstallSelectedProductsCommand.RaiseCanExecuteChanged();
+        ContinueCommand.RaiseCanExecuteChanged();
+    }
+
+    private async Task RefreshProductsAsync()
+    {
+        await RunBusyAsync("Checking installed mods", () => RefreshProductsCoreAsync()).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Reads the server manager status so already-installed products show as Installed and stay
+    /// locked. A failed probe leaves every row selectable rather than hiding the choice entirely.
+    /// </summary>
+    private async Task RefreshProductsCoreAsync(CancellationToken cancellationToken = default)
+    {
+        ProductStatusText = "Checking installed mods";
+        ProductStatusBackground = StatusChecking;
+
+        var result = await _serverManagement.GetStatusAsync(cancellationToken).ConfigureAwait(true);
+        if (!result.IsSuccess)
+        {
+            foreach (var product in ProductChoices)
+            {
+                product.ApplyInstalledState(isInstalled: false, isStatusKnown: false);
+            }
+
+            ProductStatusText = "Mod status unavailable";
+            ProductStatusBackground = StatusUnknown;
+            AppendSetupLog($"Could not read installed mods: {result.Error}{Environment.NewLine}");
+            return;
+        }
+
+        foreach (var product in ProductChoices)
+        {
+            var status = result.Snapshot!.Find(product.Product);
+            product.ApplyInstalledState(status?.IsInstalled == true, isStatusKnown: true);
+        }
+
+        var installedCount = ProductChoices.Count(product => product.IsInstalled);
+        ProductStatusText = installedCount == 0
+            ? "No mods installed yet"
+            : $"{installedCount} of {ProductChoices.Count} installed";
+        ProductStatusBackground = installedCount == 0 ? StatusWarn : StatusGood;
+        OnPropertyChanged(nameof(HasSelectedProducts));
+        OnPropertyChanged(nameof(CanLeaveProductSelection));
+        OnPropertyChanged(nameof(InstallProductsButtonText));
+        RaiseCommandStates();
+    }
+
+    /// <summary>
+    /// Installs the ticked products one at a time on the production branch. A failure stops that
+    /// product only: earlier successes stay installed and the row offers Retry or Skip.
+    /// </summary>
+    private async Task InstallSelectedProductsAsync()
+    {
+        var selected = ProductChoices.Where(product => product.IsSelected).ToArray();
+        if (selected.Length == 0)
+        {
+            return;
+        }
+
+        await RunBusyAsync("Installing mods", async () =>
+        {
+            IsInstallingProducts = true;
+            ResetSetupOutputBuffers();
+            SetupLogText = string.Empty;
+            SetupInstallProgress = 0;
+            SetupInstallDetailText = string.Empty;
+            try
+            {
+                for (var index = 0; index < selected.Length; index++)
+                {
+                    var product = selected[index];
+                    product.ResetInstallState();
+                    SetupInstallProgressText = $"Installing {product.Title} ({index + 1} of {selected.Length})...";
+                    SetupInstallProgress = index * 100d / selected.Length;
+                    await InstallProductCoreAsync(product).ConfigureAwait(true);
+                }
+
+                SetupInstallProgress = 100;
+                SetupInstallProgressText = BuildProductInstallSummary(selected);
+            }
+            finally
+            {
+                IsInstallingProducts = false;
+            }
+        }).ConfigureAwait(true);
+    }
+
+    internal static string BuildProductInstallSummary(IReadOnlyList<QuickstartProductViewModel> attempted)
+    {
+        var installed = attempted.Count(product => product.InstallState == QuickstartProductInstallState.Installed);
+        var failed = attempted.Count(product => product.InstallState == QuickstartProductInstallState.Failed);
+        if (failed == 0)
+        {
+            return $"Installed {installed} of {attempted.Count} mods.";
+        }
+
+        return $"Installed {installed} of {attempted.Count} mods. {failed} need attention - retry or skip.";
+    }
+
+    /// <summary>
+    /// Runs one install on the production branch. Quickstart never offers the development branch: a
+    /// first-run user should land on the branch the mod ships to players.
+    /// </summary>
+    private async Task InstallProductCoreAsync(QuickstartProductViewModel product)
+    {
+        product.SetInstallState(QuickstartProductInstallState.Installing);
+        AppendSetupLog($"{Environment.NewLine}Installing {product.Title} on the Main branch...{Environment.NewLine}");
+
+        try
+        {
+            var result = await _serverManagement
+                .InstallAsync(product.Product, ServerBranchChannel.Main, AppendSetupLog)
+                .ConfigureAwait(true);
+
+            if (result.Succeeded)
+            {
+                product.SetInstallState(QuickstartProductInstallState.Installed);
+                AppendSetupLog($"{product.Title} installed.{Environment.NewLine}");
+                return;
+            }
+
+            var error = (result.StandardError + result.StandardOutput).Trim();
+            product.SetInstallState(
+                QuickstartProductInstallState.Failed,
+                string.IsNullOrWhiteSpace(error) ? $"Exit code {result.ExitCode}." : TakeLastLines(error, 3));
+            AppendSetupLog($"{product.Title} install failed.{Environment.NewLine}");
+        }
+        catch (Exception ex)
+        {
+            product.SetInstallState(QuickstartProductInstallState.Failed, ex.Message);
+            AppendSetupLog($"{product.Title} install failed: {ex.Message}{Environment.NewLine}");
+        }
+    }
+
+    private async Task RetryProductInstallAsync(QuickstartProductViewModel product)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        await RunBusyAsync($"Installing {product.Title}", async () =>
+        {
+            IsInstallingProducts = true;
+            try
+            {
+                SetupInstallProgressText = $"Retrying {product.Title}...";
+                await InstallProductCoreAsync(product).ConfigureAwait(true);
+                SetupInstallProgressText = product.InstallState == QuickstartProductInstallState.Installed
+                    ? $"{product.Title} installed."
+                    : $"{product.Title} still needs attention.";
+            }
+            finally
+            {
+                IsInstallingProducts = false;
+            }
+        }).ConfigureAwait(true);
+    }
+
+    /// <summary>Leaves a failed product uninstalled and lets the user move on.</summary>
+    private void SkipProductInstall(QuickstartProductViewModel product)
+    {
+        product.SetInstallState(QuickstartProductInstallState.Skipped, product.ResultDetail);
+        AppendSetupLog($"Skipped {product.Title}. Install it later from the Mods page.{Environment.NewLine}");
+        RaiseCommandStates();
+    }
+
+    private static string TakeLastLines(string text, int maxLines)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(Environment.NewLine, lines.Skip(Math.Max(0, lines.Length - maxLines)));
+    }
+
+    private IReadOnlyList<string> GetSelectedProductKeys()
+    {
+        return ProductChoices
+            .Where(product => product.IsSelected || product.InstallState != QuickstartProductInstallState.Pending)
+            .Select(product => ServerManagementService.ToProductToken(product.Product))
+            .ToArray();
+    }
+
+    private IReadOnlyDictionary<string, string> GetProductInstallResults()
+    {
+        return ProductChoices.ToDictionary(
+            product => ServerManagementService.ToProductToken(product.Product),
+            product => product.ToInstallResultKey(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     private void RaiseCommandStates()
     {
         InstallRecommendedCommand.RaiseCanExecuteChanged();
+        InstallSelectedProductsCommand.RaiseCanExecuteChanged();
+        RefreshProductsCommand.RaiseCanExecuteChanged();
         ContinueCommand.RaiseCanExecuteChanged();
         SkipRecommendedSetupCommand.RaiseCanExecuteChanged();
         BackCommand.RaiseCanExecuteChanged();
@@ -1324,6 +1628,30 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         StartServerCommand.RaiseCanExecuteChanged();
         AdvancedSettingsCommand.RaiseCanExecuteChanged();
         UpdateDistroCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// True when the credential target belongs to a product the manager reports as installed. Targets
+    /// are matched on database name, which is what the manager reports for each product.
+    /// </summary>
+    private bool IsInstalledCredentialTarget(OpenRouterTargetStatus target)
+    {
+        var match = ProductChoices.FirstOrDefault(product =>
+            string.Equals(
+                ServerManagementService.ToProductToken(product.Product),
+                target.DatabaseName,
+                StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(product.Key, ExtractTargetKey(target.TargetName), StringComparison.OrdinalIgnoreCase));
+
+        // An unrecognised target (CHIM's "dwemer" database, or a future product) is kept: dropping it
+        // would silently stop applying the key.
+        return match is null || match.IsInstalled;
+    }
+
+    private static string ExtractTargetKey(string targetName)
+    {
+        var separator = targetName.IndexOf('/');
+        return (separator < 0 ? targetName : targetName[..separator]).Trim();
     }
 
     private static string BuildOpenRouterStatusDetail(OpenRouterSyncStatus status)
