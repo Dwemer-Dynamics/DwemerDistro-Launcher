@@ -3689,7 +3689,14 @@ fi
                     Owner = Application.Current.MainWindow
                 };
                 _firstRunSetupWindow = window;
-                window.Closed += (_, _) => _firstRunSetupWindow = null;
+                window.Closed += (_, _) =>
+                {
+                    _firstRunSetupWindow = null;
+                    QueueBackgroundTask(
+                        "QuickStart server status refresh",
+                        cancellationToken => RefreshServerManagementAsync(cancellationToken),
+                        StartupVersionCheckTimeout);
+                };
                 window.Show();
                 window.Activate();
             }
