@@ -40,6 +40,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     private string _selectedBranch = "Main";
     private bool _isBusy;
     private bool _isConflictingOperationRunning;
+    private bool _isIncludedInUpdates = true;
     private string? _busyText;
     private string? _errorText;
 
@@ -55,6 +56,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         GameKey = gameKey;
         DisplayName = ServerManagementService.GetDisplayName(product);
         PurgeToken = ServerManagementService.GetPurgeToken(product);
+        RailProductName = BuildRailProductName(product);
         UpdateActionName = BuildUpdateActionName(product);
         Branches = new ObservableCollection<string>(new[] { "Main", "Dev" });
         _install = install;
@@ -74,6 +76,12 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     public string GameKey { get; }
 
     public string DisplayName { get; }
+
+    /// <summary>
+    /// Rail-facing name ("CHIM", "STOBE", "Dialectic"). It is what the Updates checkbox calls this
+    /// product, so help text that points the user at that checkbox uses the same word they see.
+    /// </summary>
+    public string RailProductName { get; }
 
     public string PurgeToken { get; }
 
@@ -134,11 +142,14 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
     /// <summary>
     /// The single-product update needs a confirmed install - the manager never installs a missing or
-    /// broken product - and must stay out of reach while the Update Mods sweep or another product's
-    /// operation is already driving the manager.
+    /// broken product - must respect this product's Updates checkbox, and must stay out of reach
+    /// while the Update Mods sweep or another product's operation is already driving the manager.
     /// </summary>
     public bool CanUpdate =>
-        _state == ServerInstallState.Installed && !_isBusy && !_isConflictingOperationRunning;
+        _state == ServerInstallState.Installed
+        && _isIncludedInUpdates
+        && !_isBusy
+        && !_isConflictingOperationRunning;
 
     /// <summary>A product with anything on disk can be purged; a clean absence cannot.</summary>
     public bool CanUninstall =>
@@ -170,6 +181,25 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         set
         {
             if (SetProperty(ref _isConflictingOperationRunning, value))
+            {
+                OnPropertyChanged(nameof(CanUpdate));
+                OnPropertyChanged(nameof(UpdateActionHelpText));
+                UpdateCommand.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mirrors this product's "Include ... in updates" checkbox. An excluded product opted out of
+    /// updates, so the single-product update button opts out with it rather than offering a way
+    /// around the choice; re-checking the box re-enables the button immediately.
+    /// </summary>
+    public bool IsIncludedInUpdates
+    {
+        get => _isIncludedInUpdates;
+        set
+        {
+            if (SetProperty(ref _isIncludedInUpdates, value))
             {
                 OnPropertyChanged(nameof(CanUpdate));
                 OnPropertyChanged(nameof(UpdateActionHelpText));
@@ -286,6 +316,12 @@ public sealed class ServerManagerItemViewModel : ObservableObject
                        "It stays available once that finishes.";
             }
 
+            if (!_isIncludedInUpdates)
+            {
+                return $"{UpdateActionName} is unavailable because {RailProductName} is excluded from " +
+                       $"updates. Select the {RailProductName} Updates checkbox to enable it.";
+            }
+
             return $"Update only {DisplayName}, on the selected {SelectedBranch} branch. " +
                    "The shared distro components, the other servers, and the Updates checkbox are left alone.";
         }
@@ -294,11 +330,17 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     /// <summary>Rail-facing label for the per-product update action.</summary>
     internal static string BuildUpdateActionName(ServerProduct product)
     {
+        return $"Update {BuildRailProductName(product)}";
+    }
+
+    /// <summary>The name the rail and the Updates checkbox use for this product.</summary>
+    internal static string BuildRailProductName(ServerProduct product)
+    {
         return product switch
         {
-            ServerProduct.Herika => "Update CHIM",
-            ServerProduct.Stobe => "Update STOBE",
-            ServerProduct.Dialectic => "Update Dialectic",
+            ServerProduct.Herika => "CHIM",
+            ServerProduct.Stobe => "STOBE",
+            ServerProduct.Dialectic => "Dialectic",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }

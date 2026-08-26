@@ -71,6 +71,8 @@ public sealed partial class MainWindowViewModel
         {
             manager.PropertyChanged += OnServerManagerPropertyChanged;
         }
+
+        RefreshServerUpdateIncludeState();
     }
 
     private void OnServerManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -93,6 +95,33 @@ public sealed partial class MainWindowViewModel
         foreach (var manager in ServerManagers)
         {
             manager.IsConflictingOperationRunning = busy;
+        }
+    }
+
+    /// <summary>
+    /// Mirrors the three Updates checkboxes onto their products, so a product the user excluded from
+    /// updates also has its own Update button disabled. Every path that changes a checkbox - the
+    /// user, the saved-preference load, and the revert after a failed save - goes through the
+    /// setters that call this, so the buttons always follow the values actually shown.
+    /// </summary>
+    internal void RefreshServerUpdateIncludeState()
+    {
+        if (ServerManagers.Count == 0)
+        {
+            return;
+        }
+
+        SetServerUpdateInclude(ServerProduct.Herika, IncludeHerikaServerUpdate);
+        SetServerUpdateInclude(ServerProduct.Stobe, IncludeStobeServerUpdate);
+        SetServerUpdateInclude(ServerProduct.Dialectic, IncludeDialecticServerUpdate);
+    }
+
+    private void SetServerUpdateInclude(ServerProduct product, bool included)
+    {
+        var manager = ServerManagers.FirstOrDefault(item => item.Product == product);
+        if (manager is not null)
+        {
+            manager.IsIncludedInUpdates = included;
         }
     }
 

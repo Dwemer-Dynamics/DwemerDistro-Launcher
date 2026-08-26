@@ -457,6 +457,43 @@ try
     Assert(individualUpdateCount == 1,
         "The individual update command must invoke only its product update delegate once.");
 
+    // --- Updates checkbox gates the single-product update ------------------------------------
+
+    Assert(individualUpdateItem.IsIncludedInUpdates,
+        "A product must start included in updates, so the button matches the checkbox default.");
+
+    individualUpdateItem.IsIncludedInUpdates = false;
+    Assert(!individualUpdateItem.CanUpdate && !individualUpdateItem.UpdateCommand.CanExecute(null),
+        "Clearing a product's Updates checkbox must disable that product's own Update button.");
+    individualUpdateItem.UpdateCommand.Execute(null);
+    Assert(individualUpdateCount == 1,
+        "An excluded product's update must not run even when its command is invoked directly.");
+    Assert(individualUpdateItem.UpdateActionHelpText.Contains("Updates checkbox", StringComparison.Ordinal)
+           && individualUpdateItem.UpdateActionHelpText.Contains("STOBE", StringComparison.Ordinal),
+        "The disabled update action must tell the user to enable that product's Updates checkbox.");
+    Assert(individualUpdateItem.CanUninstall && individualUpdateItem.ShowInstalledActions
+           && individualUpdateItem.StatusColor != ServerManagerItemViewModel.ErrorColor,
+        "The Updates checkbox must gate only the update action, not the rest of the lifecycle.");
+
+    individualUpdateItem.IsIncludedInUpdates = true;
+    Assert(individualUpdateItem.CanUpdate && individualUpdateItem.UpdateCommand.CanExecute(null),
+        "Re-checking the Updates checkbox must re-enable the update button for an installed idle product.");
+    individualUpdateItem.UpdateCommand.Execute(null);
+    Assert(individualUpdateCount == 2,
+        "A re-included product's update must run again as soon as the checkbox is restored.");
+
+    // A sibling operation keeps priority over the checkbox explanation.
+    individualUpdateItem.IsIncludedInUpdates = false;
+    individualUpdateItem.IsConflictingOperationRunning = true;
+    Assert(!individualUpdateItem.CanUpdate
+           && individualUpdateItem.UpdateActionHelpText.Contains("another server update is running", StringComparison.Ordinal),
+        "A running sweep must still explain itself, even for a product excluded from updates.");
+    individualUpdateItem.IsConflictingOperationRunning = false;
+    Assert(!individualUpdateItem.CanUpdate
+           && individualUpdateItem.UpdateActionHelpText.Contains("Updates checkbox", StringComparison.Ordinal),
+        "Once the transient blocks clear, an excluded product must still explain the checkbox.");
+    individualUpdateItem.IsIncludedInUpdates = true;
+
     Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "aiagent", "dev") == ServerBranchChannel.Main
            && ServerManagerItemViewModel.MapBranchToChannel("dev", "aiagent", "dev") == ServerBranchChannel.Dev
            && ServerManagerItemViewModel.MapBranchToChannel("unstable", null, null) == ServerBranchChannel.Dev

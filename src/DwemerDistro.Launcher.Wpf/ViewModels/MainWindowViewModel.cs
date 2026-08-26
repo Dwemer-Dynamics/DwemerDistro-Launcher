@@ -318,22 +318,42 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
+    // Each checkbox owns both the Update Mods sweep and its product's own Update button, so every
+    // change - including the revert after a failed save - has to reach the server manager item.
     public bool IncludeHerikaServerUpdate
     {
         get => _includeHerikaServerUpdate;
-        set => SetProperty(ref _includeHerikaServerUpdate, value);
+        set
+        {
+            if (SetProperty(ref _includeHerikaServerUpdate, value))
+            {
+                RefreshServerUpdateIncludeState();
+            }
+        }
     }
 
     public bool IncludeStobeServerUpdate
     {
         get => _includeStobeServerUpdate;
-        set => SetProperty(ref _includeStobeServerUpdate, value);
+        set
+        {
+            if (SetProperty(ref _includeStobeServerUpdate, value))
+            {
+                RefreshServerUpdateIncludeState();
+            }
+        }
     }
 
     public bool IncludeDialecticServerUpdate
     {
         get => _includeDialecticServerUpdate;
-        set => SetProperty(ref _includeDialecticServerUpdate, value);
+        set
+        {
+            if (SetProperty(ref _includeDialecticServerUpdate, value))
+            {
+                RefreshServerUpdateIncludeState();
+            }
+        }
     }
 
     public bool IsUpdateIncludeReady
