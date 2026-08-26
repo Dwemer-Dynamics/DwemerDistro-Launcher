@@ -269,26 +269,23 @@ for item in TARGETS:
 
     key_literal = sql_literal(api_key)
     sql = """
-DO $$
-DECLARE
-    badge_id integer;
-BEGIN
-    SELECT id INTO badge_id
+INSERT INTO core_api_badge(label, api_key)
+SELECT 'OpenRouter', __API_KEY__
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM core_api_badge
+    WHERE LOWER(label) = 'openrouter'
+);
+
+UPDATE core_api_badge
+SET api_key = __API_KEY__
+WHERE id = (
+    SELECT id
     FROM core_api_badge
     WHERE LOWER(label) = 'openrouter'
     ORDER BY id
-    LIMIT 1;
-
-    IF badge_id IS NULL THEN
-        INSERT INTO core_api_badge(label, api_key)
-        VALUES ('OpenRouter', __API_KEY__);
-    ELSE
-        UPDATE core_api_badge
-        SET api_key = __API_KEY__
-        WHERE id = badge_id;
-    END IF;
-END
-$$ LANGUAGE plpgsql;
+    LIMIT 1
+);
 """.replace("__API_KEY__", key_literal)
 
     result = psql(db, sql)
