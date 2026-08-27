@@ -424,8 +424,9 @@ try
         "A running Update Mods sweep or sibling server operation must disable the single-product update.");
     Assert(herikaItem.UpdateActionHelpText.Contains("unavailable", StringComparison.OrdinalIgnoreCase),
         "The disabled update action must say why it is unavailable, not just dim.");
-    Assert(herikaItem.CanUninstall && herikaItem.ShowInstalledActions,
-        "Blocking the single-product update must not disturb the existing install lifecycle actions.");
+    Assert(!herikaItem.CanUninstall && !herikaItem.UninstallCommand.CanExecute(null)
+           && !herikaItem.CanUseInstalledFeatures && herikaItem.ShowInstalledActions,
+        "Conflicting operations must disable lifecycle actions without removing their controls.");
 
     herikaItem.IsConflictingOperationRunning = false;
     Assert(herikaItem.CanUpdate && herikaItem.UpdateActionHelpText.Contains("Main", StringComparison.Ordinal)
@@ -486,7 +487,7 @@ try
     individualUpdateItem.IsIncludedInUpdates = false;
     individualUpdateItem.IsConflictingOperationRunning = true;
     Assert(!individualUpdateItem.CanUpdate
-           && individualUpdateItem.UpdateActionHelpText.Contains("another server update is running", StringComparison.Ordinal),
+           && individualUpdateItem.UpdateActionHelpText.Contains("another server, component, or system operation", StringComparison.Ordinal),
         "A running sweep must still explain itself, even for a product excluded from updates.");
     individualUpdateItem.IsConflictingOperationRunning = false;
     Assert(!individualUpdateItem.CanUpdate
@@ -529,9 +530,9 @@ try
         "Update System must update the distro checkout before running the server-free shared component update.");
 
     var modsUpdateConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([herikaItem, individualUpdateItem]);
-    Assert(modsUpdateConfirmation.Contains("only the selected installed mods", StringComparison.Ordinal)
-           && modsUpdateConfirmation.Contains("DwemerDistro and shared components will not be changed", StringComparison.Ordinal),
-        "Update Mods must clearly exclude DwemerDistro and shared components.");
+    Assert(modsUpdateConfirmation.Contains("selected installed mods", StringComparison.Ordinal)
+           && modsUpdateConfirmation.Contains("DwemerDistro and shared components first", StringComparison.Ordinal),
+        "Update Mods must clearly include the system update before the selected mods.");
     Assert(modsUpdateConfirmation.Contains($"{herikaItem.DisplayName} target branch", StringComparison.Ordinal)
            && modsUpdateConfirmation.Contains($"{individualUpdateItem.DisplayName} target branch", StringComparison.Ordinal),
         "Update Mods must list every selected installed mod and its target branch.");
@@ -547,6 +548,73 @@ try
            && !MainWindowViewModel.CanRunUpdateOperation(false, true, [false, false, false])
            && !MainWindowViewModel.CanRunUpdateOperation(false, false, [false, true, false]),
         "A system update, component operation, or individual server operation must block every competing update action.");
+
+    // --- System-first mod update sequence (no live WSL commands) -----------------------------
+
+    var updateOrder = new List<string>();
+    herikaItem.SelectedBranch = "Dev";
+    individualUpdateItem.SelectedBranch = "Main";
+    var systemFinished = new TaskCompletionSource<bool>();
+    var batchUpdate = MainWindowViewModel.UpdateInstalledServersAsync(
+        [herikaItem, individualUpdateItem],
+        () => { updateOrder.Add("system"); return systemFinished.Task; },
+        (product, branch) =>
+        {
+            updateOrder.Add($"{product.Product}:{branch}");
+            return Task.FromResult(product.Product != ServerProduct.Herika);
+        });
+    Assert(updateOrder.SequenceEqual(["system"]), "Mods must wait for the shared system update to finish.");
+    herikaItem.SelectedBranch = "Main";
+    individualUpdateItem.SelectedBranch = "Dev";
+    systemFinished.SetResult(true);
+    Assert(!await batchUpdate && updateOrder.SequenceEqual(["system", "Herika:Dev", "Stobe:Main"]),
+        "A batch must run system once, preserve original branches, continue after a mod failure, and report failure.");
+
+    foreach (var product in Enum.GetValues<ServerProduct>())
+    {
+        var item = new ServerManagerItemViewModel(product, product.ToString(),
+            _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask);
+        item.ApplyStatus(herikaStatus with { Product = product });
+        updateOrder.Clear();
+        Assert(await MainWindowViewModel.UpdateInstalledServersAsync([item],
+                () => { updateOrder.Add("system"); return Task.FromResult(true); },
+                (selected, _) => { updateOrder.Add(selected.Product.ToString()); return Task.FromResult(true); })
+               && updateOrder.SequenceEqual(["system", product.ToString()]),
+            "Every individual mod update must run system first and then only that mod.");
+        Assert(item.UpdateActionHelpText.Contains("DwemerDistro and shared components first", StringComparison.Ordinal),
+            "Each individual update must expose the system-first behavior in accessible help.");
+    }
+
+    var skippedModCalls = 0;
+    foreach (var throwSystemError in new[] { false, true })
+    {
+        try
+        {
+            var batchSucceeded = await MainWindowViewModel.UpdateInstalledServersAsync([herikaItem, individualUpdateItem],
+                () => throwSystemError ? Task.FromException<bool>(new IOException("system failure")) : Task.FromResult(false),
+                (_, _) => { skippedModCalls++; return Task.FromResult(true); });
+            Assert(!batchSucceeded, "A failed shared update must fail the batch.");
+        }
+        catch (IOException) when (throwSystemError) { }
+    }
+    Assert(skippedModCalls == 0, "System failure or exception must prevent every mod update.");
+
+    herikaItem.IsIncludedInUpdates = false;
+    individualUpdateItem.ApplyStatus(stobeStatus with { State = ServerInstallState.NotInstalled });
+    Assert(!await MainWindowViewModel.UpdateInstalledServersAsync([herikaItem, individualUpdateItem],
+            () => throw new InvalidOperationException("An empty eligible selection must not update the system."),
+            (_, _) => throw new InvalidOperationException("An unchecked or missing mod must not update.")),
+        "No eligible mods must remain a no-op, including the system stage.");
+    individualUpdateItem.IsConflictingOperationRunning = true;
+    Assert(!individualUpdateItem.CanInstall && !individualUpdateItem.InstallCommand.CanExecute(null),
+        "A system operation must block installation of a missing mod.");
+    individualUpdateItem.ApplyStatus(stobeStatus with { State = ServerInstallState.NeedsRepair });
+    Assert(!individualUpdateItem.CanRepair && !individualUpdateItem.RepairCommand.CanExecute(null)
+           && !individualUpdateItem.CanUninstall,
+        "A system operation must block repair and uninstall of a damaged mod.");
+    individualUpdateItem.IsConflictingOperationRunning = false;
+    Assert(individualUpdateItem.CanRepair && individualUpdateItem.CanUninstall,
+        "Lifecycle controls must be restored after the operation finishes.");
 
     // --- Quickstart mod choices -------------------------------------------------------------
 

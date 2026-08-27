@@ -96,7 +96,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
     public AsyncRelayCommand InstallCommand { get; }
 
-    /// <summary>Updates this product alone, on its selected branch. Shared components stay untouched.</summary>
+    /// <summary>Updates the shared system first, then this checked product on its selected branch.</summary>
     public AsyncRelayCommand UpdateCommand { get; }
 
     public AsyncRelayCommand RepairCommand { get; }
@@ -136,9 +136,9 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     /// <summary>Repair Installation plus Uninstall Server.</summary>
     public bool ShowRepairActions => _state == ServerInstallState.NeedsRepair;
 
-    public bool CanInstall => _state == ServerInstallState.NotInstalled && !_isBusy;
+    public bool CanInstall => _state == ServerInstallState.NotInstalled && !_isBusy && !_isConflictingOperationRunning;
 
-    public bool CanRepair => _state == ServerInstallState.NeedsRepair && !_isBusy;
+    public bool CanRepair => _state == ServerInstallState.NeedsRepair && !_isBusy && !_isConflictingOperationRunning;
 
     /// <summary>
     /// The single-product update needs a confirmed install - the manager never installs a missing or
@@ -153,10 +153,11 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
     /// <summary>A product with anything on disk can be purged; a clean absence cannot.</summary>
     public bool CanUninstall =>
-        (_state == ServerInstallState.Installed || _state == ServerInstallState.NeedsRepair) && !_isBusy;
+        (_state == ServerInstallState.Installed || _state == ServerInstallState.NeedsRepair)
+        && !_isBusy && !_isConflictingOperationRunning;
 
     /// <summary>Webpage, rollback and the update checkbox are only meaningful for a real install.</summary>
-    public bool CanUseInstalledFeatures => _state == ServerInstallState.Installed && !_isBusy;
+    public bool CanUseInstalledFeatures => _state == ServerInstallState.Installed && !_isBusy && !_isConflictingOperationRunning;
 
     public bool IsBusy
     {
@@ -171,9 +172,8 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Set by the window while the Update Mods sweep or another product's install, update or repair
-    /// is in flight. It gates only the single-product update action; install, repair and uninstall
-    /// keep their existing lifecycle rules.
+    /// Set by the window while a server, component or system operation is in flight. Lifecycle
+    /// actions must not compete with the system stage or another mod's database changes.
     /// </summary>
     public bool IsConflictingOperationRunning
     {
@@ -182,9 +182,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         {
             if (SetProperty(ref _isConflictingOperationRunning, value))
             {
-                OnPropertyChanged(nameof(CanUpdate));
-                OnPropertyChanged(nameof(UpdateActionHelpText));
-                UpdateCommand.RaiseCanExecuteChanged();
+                RaiseDerivedState();
             }
         }
     }
@@ -312,8 +310,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
             if (_isConflictingOperationRunning)
             {
-                return $"{UpdateActionName} is unavailable while another server update is running. " +
-                       "It stays available once that finishes.";
+                return $"{UpdateActionName} is unavailable while another server, component, or system operation is running.";
             }
 
             if (!_isIncludedInUpdates)
@@ -322,8 +319,8 @@ public sealed class ServerManagerItemViewModel : ObservableObject
                        $"updates. Select the {RailProductName} Updates checkbox to enable it.";
             }
 
-            return $"Update only {DisplayName}, on the selected {SelectedBranch} branch. " +
-                   "The shared distro components, the other servers, and the Updates checkbox are left alone.";
+            return $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} branch. " +
+                   "Other mods and the Updates checkbox are left unchanged.";
         }
     }
 

@@ -315,7 +315,7 @@ echo "CHIM-MCP installed and enabled."
 
     public string UpdateModsHelpText => CanRunUpdateOperation()
         ? GetProductsToUpdate().Count > 0
-            ? "Update installed mods whose Updates checkbox is enabled. DwemerDistro and shared components are not changed."
+            ? "Update DwemerDistro and shared components first, then installed mods whose Updates checkbox is enabled."
             : "Install a mod and enable its Updates checkbox before using Update Mods."
         : "Unavailable while another server, component, or system operation is running.";
 
@@ -1065,26 +1065,58 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
+        await RunModUpdatesAsync(productsToUpdate).ConfigureAwait(true);
+    }
+
+    /// <summary>Keeps one operation lock across the shared system update and all selected mods.</summary>
+    private async Task RunModUpdatesAsync(IReadOnlyList<ServerManagerItemViewModel> productsToUpdate)
+    {
+        if (!CanRunUpdateOperation())
+        {
+            return;
+        }
+
         IsDistroUpdateInProgress = true;
-        ModsUpdateButtonText = "Updating Mods...";
+        ModsUpdateButtonText = "Updating System...";
+        SystemUpdateButtonText = "Updating System...";
+        var systemSucceeded = false;
 
         try
         {
             AppendLog(
-                $"Starting mod update for {string.Join(", ", productsToUpdate.Select(product => product.DisplayName))}." +
+                $"Updating DwemerDistro and shared components before {string.Join(", ", productsToUpdate.Select(product => product.DisplayName))}." +
                 Environment.NewLine);
-            await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var succeeded = await UpdateInstalledServersAsync(productsToUpdate).ConfigureAwait(true);
-            AppendLog(
-                succeeded
-                    ? "Mod updates completed successfully." + Environment.NewLine
-                    : "At least one mod update failed. Check the log above." + Environment.NewLine,
-                succeeded ? "green" : "red");
+            var succeeded = await UpdateInstalledServersAsync(
+                productsToUpdate,
+                async () =>
+                {
+                    await FlushUpdateUiAsync().ConfigureAwait(true);
+                    systemSucceeded = await RunSharedDistroUpdateAsync().ConfigureAwait(true);
+                    return systemSucceeded;
+                },
+                (product, branch) =>
+                {
+                    ModsUpdateButtonText = "Updating Mods...";
+                    SystemUpdateButtonText = "Update System";
+                    return RunServerOperationAsync(product, ServerOperation.Update, branch);
+                }).ConfigureAwait(true);
+            var completionMessage = "System and mod updates completed successfully.";
+            if (!systemSucceeded)
+            {
+                completionMessage = "System update failed. No mods were updated. Check the log above.";
+            }
+            else if (!succeeded)
+            {
+                completionMessage = "At least one mod update failed. Check the log above.";
+            }
+
+            AppendLog(completionMessage + Environment.NewLine, succeeded ? "green" : "red");
         }
         catch (Exception ex)
         {
-            AppendLog($"Error during mod update: {ex.Message}{Environment.NewLine}", "red");
+            var message = systemSucceeded ? "Error during mod update" : "System update failed. No mods were updated";
+            AppendLog($"{message}: {ex.Message}{Environment.NewLine}", "red");
         }
         finally
         {
@@ -1208,7 +1240,8 @@ echo "CHIM-MCP installed and enabled."
             .Select(product => $"{product.DisplayName} target branch: {product.SelectedBranch}")
             .ToArray();
 
-        return "This will update only the selected installed mods. DwemerDistro and shared components will not be changed.\n\n" +
+        return "This will update DwemerDistro and shared components first, then the selected installed mods below. " +
+               "If the system update fails, no mods are updated.\n\n" +
                string.Join("\n", branchLines) +
                "\n\nAre you sure?";
     }

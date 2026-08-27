@@ -83,12 +83,23 @@ public sealed partial class MainWindowViewModel
             RaiseUpdateCommandStates();
             OnPropertyChanged(nameof(IsComponentInteractionEnabled));
         }
+
+        if (e.PropertyName == nameof(ServerManagerItemViewModel.CanUseInstalledFeatures))
+        {
+            OnPropertyChanged(nameof(IsHerikaUpdateIncludeEnabled));
+            OnPropertyChanged(nameof(IsStobeUpdateIncludeEnabled));
+            OnPropertyChanged(nameof(IsDialecticUpdateIncludeEnabled));
+            OpenChimCommand?.RaiseCanExecuteChanged();
+            OpenStobeCommand?.RaiseCanExecuteChanged();
+            OpenDialecticCommand?.RaiseCanExecuteChanged();
+            OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
+            OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
+            OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
+        }
     }
 
     /// <summary>
-    /// Blocks every product's single-product update while the Update Mods sweep or any one product's
-    /// install, update or repair is driving the manager. The running product is gated by its own busy
-    /// flag, so the block only has to describe "something else is happening".
+    /// Keeps server actions out of the way while any server, component or system operation runs.
     /// </summary>
     internal void RefreshServerUpdateConflictState()
     {
@@ -237,6 +248,11 @@ public sealed partial class MainWindowViewModel
 
     private async Task InstallServerAsync(ServerManagerItemViewModel item)
     {
+        if (!item.CanInstall)
+        {
+            return;
+        }
+
         await RunServerOperationAsync(
                 item,
                 ServerOperation.Install,
@@ -245,10 +261,8 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// The per-product update action on the Mods page. It runs the same manager update the Update
-    /// Mods sweep uses for this one product on its selected branch, and nothing else: the shared
-    /// distro and components update does not run, the other two servers are untouched, and the saved
-    /// Updates checkbox is neither read nor written.
+    /// Updates the shared system first, then this checked product on its selected branch. Other
+    /// products and the saved Updates checkbox are left alone.
     /// </summary>
     private async Task UpdateServerAsync(ServerManagerItemViewModel item)
     {
@@ -257,15 +271,16 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        await RunServerOperationAsync(
-                item,
-                ServerOperation.Update,
-                item.SelectedBranchChannel)
-            .ConfigureAwait(true);
+        await RunModUpdatesAsync([item]).ConfigureAwait(true);
     }
 
     private async Task RepairServerAsync(ServerManagerItemViewModel item)
     {
+        if (!item.CanRepair)
+        {
+            return;
+        }
+
         await RunServerOperationAsync(
                 item,
                 ServerOperation.Repair,
@@ -274,7 +289,7 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Runs install or repair for one product, streaming manager output to the console and always
+    /// Runs install, update or repair for one product, streaming manager output to the console and always
     /// refreshing status afterwards so a partial failure cannot leave a stale "Installed" label.
     /// </summary>
     private async Task<bool> RunServerOperationAsync(
@@ -345,7 +360,7 @@ public sealed partial class MainWindowViewModel
     private async Task UninstallServerAsync(ServerManagerItemViewModel item)
     {
         var service = _serverManagement;
-        if (service is null)
+        if (service is null || !item.CanUninstall)
         {
             return;
         }
@@ -358,6 +373,11 @@ public sealed partial class MainWindowViewModel
         if (!await ConfirmUninstallAsync(item).ConfigureAwait(true))
         {
             AppendLog($"{item.DisplayName} uninstall canceled.{Environment.NewLine}");
+            return;
+        }
+
+        if (!item.CanUninstall || IsServerBusyForUninstall(item))
+        {
             return;
         }
 
@@ -422,12 +442,7 @@ public sealed partial class MainWindowViewModel
     {
         var confirmation = await _dispatcher.InvokeAsync(() =>
         {
-            var window = new ServerUninstallWindow(
-                item.Product,
-                item.RailProductName,
-                item.Root,
-                item.Database,
-                item.DatabasePresent)
+            var window = new ServerUninstallWindow(item.Product, item.RailProductName)
             {
                 Owner = Application.Current?.MainWindow
             };
@@ -506,19 +521,27 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Runs the manager update for each selected product in turn. One failure does not abort the
-    /// rest, so every selected healthy product still gets its update.
+    /// Snapshots eligible mods and their branches before any await. The shared system runs once;
+    /// its failure stops the batch, while an individual mod failure still allows the remaining mods.
     /// </summary>
-    private async Task<bool> UpdateInstalledServersAsync(IReadOnlyList<ServerManagerItemViewModel> products)
+    internal static async Task<bool> UpdateInstalledServersAsync(
+        IReadOnlyList<ServerManagerItemViewModel> products,
+        Func<Task<bool>> updateSystem,
+        Func<ServerManagerItemViewModel, ServerBranchChannel, Task<bool>> updateMod)
     {
-        var allSucceeded = true;
-        foreach (var product in products)
+        var updates = products
+            .Where(product => ShouldUpdateProduct(product.State, product.IsIncludedInUpdates))
+            .Select(product => (Product: product, Branch: product.SelectedBranchChannel))
+            .ToArray();
+        if (updates.Length == 0 || !await updateSystem().ConfigureAwait(true))
         {
-            var succeeded = await RunServerOperationAsync(
-                    product,
-                    ServerOperation.Update,
-                    product.SelectedBranchChannel)
-                .ConfigureAwait(true);
+            return false;
+        }
+
+        var allSucceeded = true;
+        foreach (var update in updates)
+        {
+            var succeeded = await updateMod(update.Product, update.Branch).ConfigureAwait(true);
             allSucceeded &= succeeded;
         }
 

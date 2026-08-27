@@ -478,8 +478,14 @@
                                                         Margin="0,0,12,0"
                                                         Background="#151515"
                                                         ClipToBounds="True">
+                                                    <!-- Stretch alignment degenerates to top-left once UniformToFill
+                                                         overflows the slot, so the crop is anchored explicitly to the
+                                                         center of the artwork on both axes. Setting Width/Height here
+                                                         would re-anchor it top-left via the layout clip. -->
                                                     <Image Source="{Binding ArtworkSource}"
                                                            Stretch="UniformToFill"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
                                                            AutomationProperties.Name="{Binding Title, StringFormat={}{0} artwork}" />
                                                 </Border>
 
