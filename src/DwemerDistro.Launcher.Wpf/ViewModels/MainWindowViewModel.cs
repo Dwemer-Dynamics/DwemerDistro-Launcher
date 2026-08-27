@@ -1045,7 +1045,7 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
-        var productsToUpdate = GetProductsToUpdate();
+        var productsToUpdate = SnapshotModUpdates(GetProductsToUpdate());
         if (productsToUpdate.Count == 0)
         {
             AppendLog(
@@ -1069,7 +1069,8 @@ echo "CHIM-MCP installed and enabled."
     }
 
     /// <summary>Keeps one operation lock across the shared system update and all selected mods.</summary>
-    private async Task RunModUpdatesAsync(IReadOnlyList<ServerManagerItemViewModel> productsToUpdate)
+    private async Task RunModUpdatesAsync(
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate)
     {
         if (!CanRunUpdateOperation())
         {
@@ -1078,7 +1079,7 @@ echo "CHIM-MCP installed and enabled."
 
         // Status can refresh while a confirmation dialog pumps the dispatcher.
         var eligibleProducts = productsToUpdate
-            .Where(product => ShouldUpdateProduct(product.State, product.IsIncludedInUpdates))
+            .Where(update => ShouldUpdateProduct(update.Product.State, update.Product.IsIncludedInUpdates))
             .ToArray();
         if (eligibleProducts.Length == 0)
         {
@@ -1094,7 +1095,7 @@ echo "CHIM-MCP installed and enabled."
         try
         {
             AppendLog(
-                $"Updating DwemerDistro and shared components before {string.Join(", ", eligibleProducts.Select(product => product.DisplayName))}." +
+                $"Updating DwemerDistro and shared components before {string.Join(", ", eligibleProducts.Select(update => update.Product.DisplayName))}." +
                 Environment.NewLine);
 
             var succeeded = await UpdateInstalledServersAsync(
@@ -1244,10 +1245,11 @@ echo "CHIM-MCP installed and enabled."
                !serverBusyStates.Any(isBusy => isBusy);
     }
 
-    internal static string BuildModsUpdateConfirmation(IReadOnlyList<ServerManagerItemViewModel> productsToUpdate)
+    internal static string BuildModsUpdateConfirmation(
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate)
     {
         var branchLines = productsToUpdate
-            .Select(product => $"{product.DisplayName} target branch: {product.SelectedBranch}")
+            .Select(update => $"{update.Product.DisplayName} target branch: {ServerManagementService.ToBranchChoice(update.Branch)}")
             .ToArray();
 
         return "This will update DwemerDistro and shared components first, then the selected installed mods below. " +

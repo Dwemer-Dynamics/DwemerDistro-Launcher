@@ -271,8 +271,9 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        var updates = SnapshotModUpdates([item]);
         if (MessageBox.Show(
-                BuildModsUpdateConfirmation([item]),
+                BuildModsUpdateConfirmation(updates),
                 item.UpdateActionName,
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -281,7 +282,7 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        await RunModUpdatesAsync([item]).ConfigureAwait(true);
+        await RunModUpdatesAsync(updates).ConfigureAwait(true);
     }
 
     private async Task RepairServerAsync(ServerManagerItemViewModel item)
@@ -531,17 +532,28 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Snapshots eligible mods and their branches before any await. The shared system runs once;
+    /// Captures the exact branches displayed by the confirmation, before its modal dispatcher runs.
+    /// </summary>
+    internal static IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> SnapshotModUpdates(
+        IReadOnlyList<ServerManagerItemViewModel> products)
+    {
+        return products
+            .Where(product => ShouldUpdateProduct(product.State, product.IsIncludedInUpdates))
+            .Select(product => (Product: product, Branch: product.SelectedBranchChannel))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Rechecks eligibility without changing the confirmed branches. The shared system runs once;
     /// its failure stops the batch, while an individual mod failure still allows the remaining mods.
     /// </summary>
     internal static async Task<bool> UpdateInstalledServersAsync(
-        IReadOnlyList<ServerManagerItemViewModel> products,
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> confirmedUpdates,
         Func<Task<bool>> updateSystem,
         Func<ServerManagerItemViewModel, ServerBranchChannel, Task<bool>> updateMod)
     {
-        var updates = products
-            .Where(product => ShouldUpdateProduct(product.State, product.IsIncludedInUpdates))
-            .Select(product => (Product: product, Branch: product.SelectedBranchChannel))
+        var updates = confirmedUpdates
+            .Where(update => ShouldUpdateProduct(update.Product.State, update.Product.IsIncludedInUpdates))
             .ToArray();
         if (updates.Length == 0 || !await updateSystem().ConfigureAwait(true))
         {

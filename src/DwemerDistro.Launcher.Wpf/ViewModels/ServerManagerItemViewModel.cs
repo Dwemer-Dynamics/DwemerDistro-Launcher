@@ -38,6 +38,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     private string _versionStatusText = "Checking...";
     private string _versionStatusColor = CheckingColor;
     private string _selectedBranch = "Main";
+    private bool _hasExplicitBranchSelection;
     private bool _isBusy;
     private bool _isConflictingOperationRunning;
     private bool _isIncludedInUpdates = true;
@@ -213,6 +214,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         {
             if (SetProperty(ref _selectedBranch, value))
             {
+                _hasExplicitBranchSelection = true;
                 OnPropertyChanged(nameof(UpdateActionHelpText));
             }
         }
@@ -355,12 +357,16 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         _port = status?.Port;
         _errorText = null;
 
-        if (status?.Branch is not null)
+        // Follow the installed branch until the user stages a different update target.
+        if (!_hasExplicitBranchSelection && status?.Branch is not null)
         {
             var channel = MapBranchToChannel(status.Branch, status.ProductionBranch, status.DevelopmentBranch);
             if (channel is not null)
             {
-                SelectedBranch = ServerManagementService.ToBranchChoice(channel.Value);
+                if (SetProperty(ref _selectedBranch, ServerManagementService.ToBranchChoice(channel.Value), nameof(SelectedBranch)))
+                {
+                    OnPropertyChanged(nameof(UpdateActionHelpText));
+                }
             }
         }
 

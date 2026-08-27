@@ -502,6 +502,44 @@ try
            && ServerManagerItemViewModel.MapBranchToChannel(null, "aiagent", "dev") is null,
         "Branch mapping must prefer the manager's reported branch names and leave anything unknown alone.");
 
+    // A status callback can arrive while the confirmation dialog pumps the UI dispatcher.
+    foreach (var status in new[] { herikaStatus, stobeStatus, dialecticStatus })
+    {
+        var installedStatus = status with
+        {
+            State = ServerInstallState.Installed,
+            RepositoryState = ServerRepositoryState.Managed,
+            DatabasePresent = true,
+            Branch = status.ProductionBranch
+        };
+        var branchRaceItem = new ServerManagerItemViewModel(status.Product, status.Product.ToString(),
+            _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask);
+        branchRaceItem.ApplyStatus(installedStatus);
+        var defaultUpdates = MainWindowViewModel.SnapshotModUpdates([branchRaceItem]);
+        branchRaceItem.ApplyStatus(installedStatus with { Branch = status.DevelopmentBranch });
+        ServerBranchChannel? executedBranch = null;
+        await MainWindowViewModel.UpdateInstalledServersAsync(defaultUpdates,
+            () => Task.FromResult(true),
+            (_, branch) => { executedBranch = branch; return Task.FromResult(true); });
+        Assert(branchRaceItem.SelectedBranch == "Dev" && executedBranch == ServerBranchChannel.Main
+               && MainWindowViewModel.BuildModsUpdateConfirmation(defaultUpdates).Contains("target branch: Main", StringComparison.Ordinal),
+            $"{status.Product}: an automatic branch refresh must not rewrite the already-confirmed default branch.");
+        branchRaceItem.ApplyStatus(installedStatus);
+        branchRaceItem.SelectedBranch = "Dev";
+        var confirmedUpdates = MainWindowViewModel.SnapshotModUpdates([branchRaceItem]);
+        var confirmedUpdate = MainWindowViewModel.BuildModsUpdateConfirmation(confirmedUpdates);
+        branchRaceItem.ApplyStatus(installedStatus);
+        executedBranch = null;
+        await MainWindowViewModel.UpdateInstalledServersAsync(confirmedUpdates,
+            () => Task.FromResult(true),
+            (_, branch) => { executedBranch = branch; return Task.FromResult(true); });
+        Assert(confirmedUpdate.Contains("target branch: Dev", StringComparison.Ordinal)
+               && executedBranch == ServerBranchChannel.Dev,
+            $"{status.Product}: a refresh during confirmation must not change the approved update branch.");
+        Assert(branchRaceItem.SelectedBranch == "Dev",
+            $"{status.Product}: passive status refresh must preserve the user's staged branch choice.");
+    }
+
     // --- Update Mods gating -----------------------------------------------------------------
 
     Assert(MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Installed, includeInUpdates: true),
@@ -529,7 +567,8 @@ try
            && systemUpdateCommand.EndsWith(sharedUpdateCommand, StringComparison.Ordinal),
         "Update System must update the distro checkout before running the server-free shared component update.");
 
-    var modsUpdateConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([herikaItem, individualUpdateItem]);
+    var modsUpdateConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation(
+        MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]));
     Assert(modsUpdateConfirmation.Contains("selected installed mods", StringComparison.Ordinal)
            && modsUpdateConfirmation.Contains("DwemerDistro and shared components first", StringComparison.Ordinal),
         "Update Mods must clearly include the system update before the selected mods.");
@@ -556,7 +595,7 @@ try
     individualUpdateItem.SelectedBranch = "Main";
     var systemFinished = new TaskCompletionSource<bool>();
     var batchUpdate = MainWindowViewModel.UpdateInstalledServersAsync(
-        [herikaItem, individualUpdateItem],
+        MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]),
         () => { updateOrder.Add("system"); return systemFinished.Task; },
         (product, branch) =>
         {
@@ -576,7 +615,7 @@ try
             _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask);
         item.ApplyStatus(herikaStatus with { Product = product });
         updateOrder.Clear();
-        Assert(await MainWindowViewModel.UpdateInstalledServersAsync([item],
+        Assert(await MainWindowViewModel.UpdateInstalledServersAsync(MainWindowViewModel.SnapshotModUpdates([item]),
                 () => { updateOrder.Add("system"); return Task.FromResult(true); },
                 (selected, _) => { updateOrder.Add(selected.Product.ToString()); return Task.FromResult(true); })
                && updateOrder.SequenceEqual(["system", product.ToString()]),
@@ -590,7 +629,8 @@ try
     {
         try
         {
-            var batchSucceeded = await MainWindowViewModel.UpdateInstalledServersAsync([herikaItem, individualUpdateItem],
+            var batchSucceeded = await MainWindowViewModel.UpdateInstalledServersAsync(
+                MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]),
                 () => throwSystemError ? Task.FromException<bool>(new IOException("system failure")) : Task.FromResult(false),
                 (_, _) => { skippedModCalls++; return Task.FromResult(true); });
             Assert(!batchSucceeded, "A failed shared update must fail the batch.");
@@ -599,9 +639,12 @@ try
     }
     Assert(skippedModCalls == 0, "System failure or exception must prevent every mod update.");
 
+    var staleUpdates = MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]);
     herikaItem.IsIncludedInUpdates = false;
     individualUpdateItem.ApplyStatus(stobeStatus with { State = ServerInstallState.NotInstalled });
-    Assert(!await MainWindowViewModel.UpdateInstalledServersAsync([herikaItem, individualUpdateItem],
+    Assert(MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]).Count == 0,
+        "An unchecked or missing mod must be excluded from a newly confirmed selection.");
+    Assert(!await MainWindowViewModel.UpdateInstalledServersAsync(staleUpdates,
             () => throw new InvalidOperationException("An empty eligible selection must not update the system."),
             (_, _) => throw new InvalidOperationException("An unchecked or missing mod must not update.")),
         "No eligible mods must remain a no-op, including the system stage.");
