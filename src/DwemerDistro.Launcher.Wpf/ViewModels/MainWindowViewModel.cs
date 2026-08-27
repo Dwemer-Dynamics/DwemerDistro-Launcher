@@ -1076,6 +1076,16 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
+        // Status can refresh while a confirmation dialog pumps the dispatcher.
+        var eligibleProducts = productsToUpdate
+            .Where(product => ShouldUpdateProduct(product.State, product.IsIncludedInUpdates))
+            .ToArray();
+        if (eligibleProducts.Length == 0)
+        {
+            AppendLog("No installed, update-enabled mods are available. Nothing was updated." + Environment.NewLine, "yellow");
+            return;
+        }
+
         IsDistroUpdateInProgress = true;
         ModsUpdateButtonText = "Updating System...";
         SystemUpdateButtonText = "Updating System...";
@@ -1084,11 +1094,11 @@ echo "CHIM-MCP installed and enabled."
         try
         {
             AppendLog(
-                $"Updating DwemerDistro and shared components before {string.Join(", ", productsToUpdate.Select(product => product.DisplayName))}." +
+                $"Updating DwemerDistro and shared components before {string.Join(", ", eligibleProducts.Select(product => product.DisplayName))}." +
                 Environment.NewLine);
 
             var succeeded = await UpdateInstalledServersAsync(
-                productsToUpdate,
+                eligibleProducts,
                 async () =>
                 {
                     await FlushUpdateUiAsync().ConfigureAwait(true);

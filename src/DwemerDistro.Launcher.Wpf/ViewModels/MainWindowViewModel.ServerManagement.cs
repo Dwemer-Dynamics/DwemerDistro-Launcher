@@ -271,6 +271,16 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        if (MessageBox.Show(
+                BuildModsUpdateConfirmation([item]),
+                item.UpdateActionName,
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            AppendLog("Mod update canceled." + Environment.NewLine);
+            return;
+        }
+
         await RunModUpdatesAsync([item]).ConfigureAwait(true);
     }
 

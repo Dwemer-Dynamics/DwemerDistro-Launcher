@@ -185,10 +185,15 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="{Binding ModsUpdateButtonText}" Command="{Binding UpdateModsCommand}"
+                    <Button Command="{Binding UpdateModsCommand}"
                             Style="{StaticResource GameCenter.AccentButton}" MinWidth="112" Margin="0,0,6,0"
                             AutomationProperties.Name="{Binding ModsUpdateButtonText}"
-                            AutomationProperties.HelpText="{Binding UpdateModsHelpText}" />
+                            AutomationProperties.HelpText="{Binding UpdateModsHelpText}">
+                        <Grid>
+                            <TextBlock Text="Updating System..." Visibility="Hidden" />
+                            <TextBlock Text="{Binding ModsUpdateButtonText}" HorizontalAlignment="Center" />
+                        </Grid>
+                    </Button>
                     <Button Command="{Binding StartServerCommand}"
                             Style="{StaticResource GameCenter.SuccessButton}" MinWidth="132" Margin="0,0,6,0"
                             AutomationProperties.Name="{Binding StartButtonText}"
@@ -375,7 +380,7 @@
                                                       Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
                                                       AutomationProperties.Name="HerikaServer update branch"
                                                       IsEnabled="{Binding HerikaManager.CanUseInstalledFeatures}"
-                                                      AutomationProperties.HelpText="Branch used the next time this product updates." />
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
                                             <!-- Updates the shared system, then this checked mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding HerikaManager.UpdateActionName}" Command="{Binding HerikaManager.UpdateCommand}"
@@ -468,7 +473,7 @@
                                                       Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
                                                       AutomationProperties.Name="StobeServer update branch"
                                                       IsEnabled="{Binding StobeManager.CanUseInstalledFeatures}"
-                                                      AutomationProperties.HelpText="Branch used the next time this product updates." />
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
                                             <!-- Updates the shared system, then this checked mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding StobeManager.UpdateActionName}" Command="{Binding StobeManager.UpdateCommand}"
@@ -561,7 +566,7 @@
                                                       Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
                                                       AutomationProperties.Name="DialecticServer update branch"
                                                       IsEnabled="{Binding DialecticManager.CanUseInstalledFeatures}"
-                                                      AutomationProperties.HelpText="Branch used the next time this product updates." />
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
                                             <!-- Updates the shared system, then this checked mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding DialecticManager.UpdateActionName}" Command="{Binding DialecticManager.UpdateCommand}"

@@ -47,11 +47,13 @@ public partial class ServerUninstallWindow : Window
         var typed = ConfirmTokenTextBox.Text.Trim();
         var matches = string.Equals(typed, _purgeToken, StringComparison.Ordinal);
         UninstallButton.IsEnabled = matches;
-        ValidationTextBlock.Text = string.Empty;
+        var validationMessage = string.Empty;
         if (typed.Length > 0)
         {
-            ValidationTextBlock.Text = matches ? "Confirmation matches." : "Confirmation does not match.";
+            validationMessage = matches ? "Confirmation matches." : "Confirmation does not match.";
         }
+
+        ValidationTextBlock.Text = validationMessage;
     }
 
     private void UninstallButton_Click(object sender, RoutedEventArgs e)
