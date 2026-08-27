@@ -391,9 +391,9 @@
                                             <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.Brand.ChimButton}" Height="38"
                                                     AutomationProperties.Name="Rollback HerikaServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
-                                            <Button Content="Uninstall Server" Command="{Binding HerikaManager.UninstallCommand}"
+                                            <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Margin="0,16,0,0" Height="38"
-                                                    AutomationProperties.Name="Uninstall HerikaServer"
+                                                    AutomationProperties.Name="Uninstall CHIM"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
 
@@ -409,9 +409,9 @@
                                                     Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,8" Height="38"
                                                     AutomationProperties.Name="Repair HerikaServer"
                                                     AutomationProperties.HelpText="Restore this server's files and database without deleting your data." />
-                                            <Button Content="Uninstall Server" Command="{Binding HerikaManager.UninstallCommand}"
+                                            <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
-                                                    AutomationProperties.Name="Uninstall HerikaServer"
+                                                    AutomationProperties.Name="Uninstall CHIM"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
                                     </StackPanel>
@@ -486,9 +486,9 @@
                                             <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.Brand.StobeButton}" Height="38"
                                                     AutomationProperties.Name="Rollback StobeServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
-                                            <Button Content="Uninstall Server" Command="{Binding StobeManager.UninstallCommand}"
+                                            <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Margin="0,16,0,0" Height="38"
-                                                    AutomationProperties.Name="Uninstall StobeServer"
+                                                    AutomationProperties.Name="Uninstall STOBE"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
 
@@ -504,9 +504,9 @@
                                                     Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,8" Height="38"
                                                     AutomationProperties.Name="Repair StobeServer"
                                                     AutomationProperties.HelpText="Restore this server's files and database without deleting your data." />
-                                            <Button Content="Uninstall Server" Command="{Binding StobeManager.UninstallCommand}"
+                                            <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
-                                                    AutomationProperties.Name="Uninstall StobeServer"
+                                                    AutomationProperties.Name="Uninstall STOBE"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
                                     </StackPanel>
@@ -581,9 +581,9 @@
                                             <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.Brand.DialecticButton}" Height="38"
                                                     AutomationProperties.Name="Rollback DialecticServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
-                                            <Button Content="Uninstall Server" Command="{Binding DialecticManager.UninstallCommand}"
+                                            <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Margin="0,16,0,0" Height="38"
-                                                    AutomationProperties.Name="Uninstall DialecticServer"
+                                                    AutomationProperties.Name="Uninstall Dialectic"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
 
@@ -599,9 +599,9 @@
                                                     Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,8" Height="38"
                                                     AutomationProperties.Name="Repair DialecticServer"
                                                     AutomationProperties.HelpText="Restore this server's files and database without deleting your data." />
-                                            <Button Content="Uninstall Server" Command="{Binding DialecticManager.UninstallCommand}"
+                                            <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
-                                                    AutomationProperties.Name="Uninstall DialecticServer"
+                                                    AutomationProperties.Name="Uninstall Dialectic"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
                                     </StackPanel>

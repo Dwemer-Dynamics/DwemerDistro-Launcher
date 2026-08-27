@@ -83,7 +83,7 @@ public partial class ServerUninstallWindow : Window
         var matches = string.Equals(typed, _purgeToken, StringComparison.Ordinal);
         UninstallButton.IsEnabled = matches;
         ValidationTextBlock.Text = matches
-            ? $"Confirmed. Uninstall Server will delete {ServerNameTextBlock.Text}."
+            ? $"Confirmed. {Title} will delete {ServerNameTextBlock.Text}."
             : $"Uninstall stays disabled until the text matches {_purgeToken} exactly.";
     }
 

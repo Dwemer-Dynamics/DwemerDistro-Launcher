@@ -153,7 +153,7 @@
                     AutomationProperties.HelpText="Close this dialog without deleting anything." />
             <Button x:Name="UninstallButton"
                     Grid.Column="2"
-                    Content="Uninstall Server"
+                    Content="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
                     IsEnabled="False"
                     MinWidth="176"
                     MinHeight="36"

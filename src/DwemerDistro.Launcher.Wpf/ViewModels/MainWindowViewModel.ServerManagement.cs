@@ -424,7 +424,7 @@ public sealed partial class MainWindowViewModel
         {
             var window = new ServerUninstallWindow(
                 item.Product,
-                item.DisplayName,
+                item.RailProductName,
                 item.Root,
                 item.Database,
                 item.DatabasePresent)
