@@ -670,14 +670,35 @@ try
            && choice.ArtworkSource.StartsWith("pack://application", StringComparison.Ordinal),
         "Choose Your Mods must reuse the local rail artwork rather than fetching anything.");
 
-    choice.ApplyInstalledState(isInstalled: false, isStatusKnown: true);
+    Assert(!choice.IsSelectable && !choice.IsEligibleForInstall && choice.StatusText == "Checking",
+        "A mod whose status has not been read yet must not be selectable for install.");
+    choice.IsSelected = true;
+    Assert(!choice.IsSelected,
+        "A tick must not stick on a mod whose install status is still unknown.");
+
+    choice.ApplyStatus(ServerInstallState.NotInstalled);
     choice.IsSelected = true;
     Assert(choice.IsSelected && choice.IsSelectable && choice.StatusText == "Not installed",
         "A missing mod must be selectable and must say so.");
     Assert(!FirstRunSetupViewModel.CanAdvanceFromProductSelection(new[] { choice }),
         "Quickstart must not silently advance past a selected mod that was never installed.");
 
-    choice.ApplyInstalledState(isInstalled: true, isStatusKnown: true);
+    choice.ApplyStatus(ServerInstallState.Unknown);
+    Assert(!choice.IsSelected && !choice.IsSelectable && choice.StatusText == "Status unknown",
+        "A refresh that cannot confirm the status must drop the stale tick and lock the row.");
+    choice.IsSelected = true;
+    Assert(!choice.IsSelected,
+        "A row whose status refresh failed must not be re-selectable.");
+
+    choice.ApplyStatus(ServerInstallState.NeedsRepair);
+    Assert(!choice.IsSelectable && !choice.IsInstalled && choice.StatusText == "Needs repair",
+        "A damaged mod must not be offered for a Quickstart install.");
+
+    choice.ApplyStatus(ServerInstallState.NotInstalled);
+    Assert(choice.IsSelectable && choice.StatusText == "Not installed",
+        "A row must become selectable again once the status probe recovers.");
+
+    choice.ApplyStatus(ServerInstallState.Installed);
     Assert(choice.StatusText == "Installed" && !choice.IsSelectable && !choice.IsSelected,
         "An already-installed mod must show Installed, drop out of the selection, and stay locked.");
     choice.IsSelected = true;
@@ -686,7 +707,7 @@ try
 
     var failing = new QuickstartProductViewModel(
         gameCatalog.First(game => game.Key == "STOBE"), ServerProduct.Stobe, _ => Task.CompletedTask, _ => { });
-    failing.ApplyInstalledState(isInstalled: false, isStatusKnown: true);
+    failing.ApplyStatus(ServerInstallState.NotInstalled);
     failing.IsSelected = true;
     failing.SetInstallState(QuickstartProductInstallState.Failed, "git clone failed");
     Assert(failing.ShowRetry && failing.StatusText == "Failed" && failing.ResultDetail == "git clone failed",
@@ -702,6 +723,7 @@ try
 
     var succeeded = new QuickstartProductViewModel(
         gameCatalog.First(game => game.Key == "DIALECTIC"), ServerProduct.Dialectic, _ => Task.CompletedTask, _ => { });
+    succeeded.ApplyStatus(ServerInstallState.NotInstalled);
     succeeded.IsSelected = true;
     succeeded.SetInstallState(QuickstartProductInstallState.Installed);
     Assert(succeeded.IsInstalled && !succeeded.IsSelectable && !succeeded.IsSelected
@@ -719,6 +741,141 @@ try
     Assert(FirstRunSetupViewModel.BuildProductInstallSummary(new[] { succeeded })
             == "Installed 1 of 1 mods.",
         "A clean install run must report plainly without a failure hint.");
+
+    // --- Quickstart install guard ------------------------------------------------------------
+
+    // Every product starts locked, so a status the launcher never managed to read cannot be
+    // installed over from Quickstart.
+    foreach (var product in new[] { ServerProduct.Herika, ServerProduct.Stobe, ServerProduct.Dialectic })
+    {
+        var unread = new QuickstartProductViewModel(
+            gameCatalog.First(game => ServerManagementService.TryParseGameKey(game.Key) == product),
+            product,
+            _ => Task.CompletedTask,
+            _ => { });
+        Assert(!unread.IsEligibleForInstall && !unread.IsSelectable,
+            $"{product} must not be installable before its status has been read.");
+    }
+
+    Assert(FirstRunSetupViewModel.ResolveReportedState(
+            ServerStatusResult.Failed("wsl unavailable"), ServerProduct.Herika) == ServerInstallState.Unknown,
+        "A failed status read must resolve to Unknown, never to not-installed.");
+    Assert(FirstRunSetupViewModel.ResolveReportedState(null, ServerProduct.Herika) == ServerInstallState.Unknown,
+        "A missing status result must resolve to Unknown.");
+    Assert(FirstRunSetupViewModel.ResolveReportedState(
+            ServerStatusResult.Succeeded(new ServerStatusSnapshot(
+                ServerManagementService.SupportedSchemaVersion, Array.Empty<ServerStatus>())),
+            ServerProduct.Stobe) == ServerInstallState.Unknown,
+        "A product missing from the status document must resolve to Unknown, not to absent.");
+
+    Assert(ServerManagementService.TryParseStatus(
+        "{\"schema_version\":1,\"servers\":[{\"product\":\"stobe\",\"state\":\"who-knows\"}]}",
+        out var malformedSnapshot,
+        out _), "The unknown state fixture must be a valid status document.");
+    Assert(FirstRunSetupViewModel.ResolveReportedState(
+            ServerStatusResult.Succeeded(malformedSnapshot!), ServerProduct.Stobe) == ServerInstallState.Unknown,
+        "A state string this build cannot parse must resolve to Unknown.");
+
+    var installCalls = 0;
+    Func<Task<CommandResult>> countingInstall = () =>
+    {
+        installCalls++;
+        return Task.FromResult(new CommandResult(0, string.Empty, string.Empty));
+    };
+
+    // All products must refuse incomplete/unknown answers at the actual install boundary.
+    foreach (var product in Enum.GetValues<ServerProduct>())
+    {
+        var blockedRow = new QuickstartProductViewModel(
+            gameCatalog.First(game => ServerManagementService.TryParseGameKey(game.Key) == product),
+            product, _ => Task.CompletedTask, _ => { });
+        foreach (var answer in new[]
+        {
+            ServerStatusResult.Succeeded(new ServerStatusSnapshot(1, Array.Empty<ServerStatus>())),
+            ServerStatusResult.Succeeded(malformedSnapshot!),
+            StatusFor(product, (ServerInstallState)999),
+            StatusFor(product, ServerInstallState.NeedsRepair),
+            StatusFor(product, ServerInstallState.Installed)
+        })
+        {
+            blockedRow.ResetInstallState();
+            blockedRow.ApplyStatus(ServerInstallState.NotInstalled);
+            blockedRow.IsSelected = true;
+            await FirstRunSetupViewModel.InstallProductGuardedAsync(
+                blockedRow, _ => Task.FromResult(answer), countingInstall, _ => { });
+            Assert(installCalls == 0 && !blockedRow.IsSelected,
+                $"{product}: missing, unknown, repair and installed answers must never invoke install.");
+        }
+    }
+
+    var guarded = new QuickstartProductViewModel(
+        gameCatalog.First(game => game.Key == "CHIM"), ServerProduct.Herika,
+        row => FirstRunSetupViewModel.InstallProductGuardedAsync(
+            row, _ => Task.FromResult(StatusFor(row.Product, ServerInstallState.NotInstalled)),
+            countingInstall, _ => { }), _ => { });
+    guarded.ApplyStatus(ServerInstallState.NotInstalled);
+    guarded.IsSelected = true;
+
+    // Batch path: the row was ticked while the status was readable, then the pre-install check fails.
+    await FirstRunSetupViewModel.InstallProductGuardedAsync(
+        guarded,
+        _ => Task.FromResult(ServerStatusResult.Failed("wsl unavailable")),
+        countingInstall,
+        _ => { });
+    Assert(installCalls == 0,
+        "A stale ticked row must not reach the install command when the pre-install status check fails.");
+    Assert(guarded.InstallState == QuickstartProductInstallState.Failed && guarded.ShowRetry,
+        "A blocked install must land on Failed so Retry and Skip stay available.");
+    Assert(guarded.ResultDetail.Contains("Refresh installed mods", StringComparison.OrdinalIgnoreCase),
+        "A blocked install must tell the user to refresh rather than failing silently.");
+    Assert(!guarded.IsSelected,
+        "A blocked install must clear the tick that the unreadable status can no longer justify.");
+
+    // Retry path: same seam, and a mod that needs repair is sent to the Mods page instead.
+    await FirstRunSetupViewModel.InstallProductGuardedAsync(
+        guarded,
+        _ => Task.FromResult(StatusFor(ServerProduct.Herika, ServerInstallState.NeedsRepair)),
+        countingInstall,
+        _ => { });
+    Assert(installCalls == 0,
+        "Retry must not issue an install for a mod the manager reports as needing repair.");
+    Assert(guarded.InstallState == QuickstartProductInstallState.Failed && guarded.ShowRetry
+           && guarded.ResultDetail.Contains("Mods page", StringComparison.OrdinalIgnoreCase),
+        "A needs-repair mod must keep Retry available and point at the Mods page.");
+
+    // Retry recovers once the manager answers not-installed again.
+    Assert(guarded.RetryCommand.CanExecute(null), "Retry must be enabled after a guard refusal.");
+    guarded.RetryCommand.Execute(null);
+    Assert(installCalls == 1 && guarded.InstallState == QuickstartProductInstallState.Installed
+           && guarded.IsInstalled,
+        "Retry must install once the status probe recovers and reports the mod as not installed.");
+
+    var alreadyInstalled = new QuickstartProductViewModel(
+        gameCatalog.First(game => game.Key == "DIALECTIC"), ServerProduct.Dialectic, _ => Task.CompletedTask, _ => { });
+    alreadyInstalled.ApplyStatus(ServerInstallState.NotInstalled);
+    alreadyInstalled.IsSelected = true;
+    await FirstRunSetupViewModel.InstallProductGuardedAsync(
+        alreadyInstalled,
+        _ => Task.FromResult(StatusFor(ServerProduct.Dialectic, ServerInstallState.Installed)),
+        countingInstall,
+        _ => { });
+    Assert(installCalls == 1,
+        "A mod that became installed between selection and install must not be installed over.");
+    Assert(alreadyInstalled.InstallState == QuickstartProductInstallState.Installed
+           && alreadyInstalled.ResultDetail.Contains("already installed", StringComparison.OrdinalIgnoreCase),
+        "An already-installed mod must be recorded as installed and explained, not reported as a failure.");
+
+    var throwingStatus = new QuickstartProductViewModel(
+        gameCatalog.First(game => game.Key == "STOBE"), ServerProduct.Stobe, _ => Task.CompletedTask, _ => { });
+    throwingStatus.ApplyStatus(ServerInstallState.NotInstalled);
+    await FirstRunSetupViewModel.InstallProductGuardedAsync(
+        throwingStatus,
+        _ => throw new InvalidOperationException("status probe crashed"),
+        countingInstall,
+        _ => { });
+    Assert(installCalls == 1 && throwingStatus.InstallState == QuickstartProductInstallState.Failed,
+        "A status probe that throws must block the install instead of falling through to it.");
+    Console.WriteLine("Quickstart guard: initial/stale selection, all-product blocked callbacks, Retry recovery and throwing status: OK");
 
     // --- onboarding schema version 2 ---------------------------------------------------------
 
@@ -812,6 +969,27 @@ static bool Throws(Action action)
     {
         return true;
     }
+}
+
+static ServerStatusResult StatusFor(ServerProduct product, ServerInstallState state)
+{
+    return ServerStatusResult.Succeeded(new ServerStatusSnapshot(
+        ServerManagementService.SupportedSchemaVersion,
+        new[]
+        {
+            new ServerStatus(
+                product,
+                state,
+                ServerRepositoryState.Unknown,
+                DatabasePresent: null,
+                Root: null,
+                Database: null,
+                Branch: null,
+                Version: null,
+                ProductionBranch: null,
+                DevelopmentBranch: null,
+                Port: null)
+        }));
 }
 
 static void Assert(bool condition, string message)

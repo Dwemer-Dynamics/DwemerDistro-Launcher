@@ -1429,7 +1429,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     /// <summary>
     /// Reads the server manager status so already-installed products show as Installed and stay
-    /// locked. A failed probe leaves every row selectable rather than hiding the choice entirely.
+    /// locked. A failed probe, a missing entry, or a state this build does not recognise leaves the
+    /// row locked as well: Quickstart only installs what the manager confirms is not installed.
     /// </summary>
     private async Task RefreshProductsCoreAsync(CancellationToken cancellationToken = default)
     {
@@ -1441,22 +1442,44 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             foreach (var product in ProductChoices)
             {
-                product.ApplyInstalledState(isInstalled: false, isStatusKnown: false);
+                product.ApplyStatus(ServerInstallState.Unknown);
             }
 
             ProductStatusText = "Mod status unavailable";
             ProductStatusBackground = StatusUnknown;
-            AppendSetupLog($"Could not read installed mods: {result.Error}{Environment.NewLine}");
+            AppendSetupLog(
+                $"Could not read installed mods: {result.Error}{Environment.NewLine}" +
+                $"Refresh installed mods before selecting anything to install.{Environment.NewLine}");
+            RaiseProductSelectionState();
             return;
         }
 
         foreach (var product in ProductChoices)
         {
-            var status = result.Snapshot!.Find(product.Product);
-            product.ApplyInstalledState(status?.IsInstalled == true, isStatusKnown: true);
+            product.ApplyStatus(ResolveReportedState(result, product.Product));
         }
 
         UpdateProductSelectionSummary();
+    }
+
+    /// <summary>
+    /// The state the manager reports for a product. A failed read, an absent entry, and a value this
+    /// build cannot parse all resolve to Unknown rather than being treated as "not installed".
+    /// </summary>
+    internal static ServerInstallState ResolveReportedState(ServerStatusResult? result, ServerProduct product)
+    {
+        if (result?.IsSuccess != true)
+        {
+            return ServerInstallState.Unknown;
+        }
+
+        return result.Snapshot!.Find(product)?.State switch
+        {
+            ServerInstallState.NotInstalled => ServerInstallState.NotInstalled,
+            ServerInstallState.Installed => ServerInstallState.Installed,
+            ServerInstallState.NeedsRepair => ServerInstallState.NeedsRepair,
+            _ => ServerInstallState.Unknown
+        };
     }
 
     /// <summary>
@@ -1508,6 +1531,21 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             ? "No mods installed yet"
             : $"{installedCount} of {ProductChoices.Count} installed";
         ProductStatusBackground = installedCount == 0 ? StatusWarn : StatusGood;
+        if (ProductChoices.Any(product => product.ReportedState == ServerInstallState.Unknown))
+        {
+            ProductStatusText = "Mod status unavailable";
+            ProductStatusBackground = StatusUnknown;
+        }
+
+        RaiseProductSelectionState();
+    }
+
+    /// <summary>
+    /// Re-reads the selection-derived state after a status refresh may have dropped ticks, without
+    /// overwriting a status summary the caller already set.
+    /// </summary>
+    private void RaiseProductSelectionState()
+    {
         OnPropertyChanged(nameof(HasSelectedProducts));
         OnPropertyChanged(nameof(CanLeaveProductSelection));
         OnPropertyChanged(nameof(InstallProductsButtonText));
@@ -1530,21 +1568,72 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     /// Runs one install on the production branch. Quickstart never offers the development branch: a
     /// first-run user should land on the branch the mod ships to players.
     /// </summary>
-    private async Task InstallProductCoreAsync(QuickstartProductViewModel product)
+    private Task InstallProductCoreAsync(QuickstartProductViewModel product)
+    {
+        return InstallProductGuardedAsync(
+            product,
+            token => _serverManagement.GetStatusAsync(token),
+            () => _serverManagement.InstallAsync(product.Product, ServerBranchChannel.Main, AppendSetupLog),
+            AppendSetupLog);
+    }
+
+    /// <summary>
+    /// The single install path behind both the batch run and Retry. The manager status is re-read
+    /// immediately before the install command, on this explicit user action only, and the install is
+    /// never issued unless the fresh answer is an explicit not-installed. A row blocked here stays
+    /// Failed so Retry can pick it up once the status recovers.
+    /// </summary>
+    internal static async Task InstallProductGuardedAsync(
+        QuickstartProductViewModel product,
+        Func<CancellationToken, Task<ServerStatusResult>> readStatus,
+        Func<Task<CommandResult>> install,
+        Action<string> log,
+        CancellationToken cancellationToken = default)
     {
         product.SetInstallState(QuickstartProductInstallState.Installing);
-        AppendSetupLog($"{Environment.NewLine}Installing {product.Title} on the Main branch...{Environment.NewLine}");
+        log($"{Environment.NewLine}Checking the current install status for {product.Title}...{Environment.NewLine}");
+
+        ServerStatusResult? status;
+        try
+        {
+            status = await readStatus(cancellationToken).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            status = ServerStatusResult.Failed(ex.Message);
+        }
+
+        var state = ResolveReportedState(status, product.Product);
+        product.ApplyStatus(state);
+
+        if (state != ServerInstallState.NotInstalled)
+        {
+            var blocked = DescribeBlockedInstall(product.Title, state);
+            if (state == ServerInstallState.Installed)
+            {
+                // Already present: record it as installed rather than a failure so onboarding can
+                // still move on, and leave removal to the Mods page.
+                product.SetInstallState(QuickstartProductInstallState.Installed, blocked);
+            }
+            else
+            {
+                product.SetInstallState(QuickstartProductInstallState.Failed, blocked);
+            }
+
+            log($"{blocked}{Environment.NewLine}");
+            return;
+        }
+
+        log($"Installing {product.Title} on the Main branch...{Environment.NewLine}");
 
         try
         {
-            var result = await _serverManagement
-                .InstallAsync(product.Product, ServerBranchChannel.Main, AppendSetupLog)
-                .ConfigureAwait(true);
+            var result = await install().ConfigureAwait(true);
 
             if (result.Succeeded)
             {
                 product.SetInstallState(QuickstartProductInstallState.Installed);
-                AppendSetupLog($"{product.Title} installed.{Environment.NewLine}");
+                log($"{product.Title} installed.{Environment.NewLine}");
                 return;
             }
 
@@ -1552,13 +1641,27 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             product.SetInstallState(
                 QuickstartProductInstallState.Failed,
                 string.IsNullOrWhiteSpace(error) ? $"Exit code {result.ExitCode}." : TakeLastLines(error, 3));
-            AppendSetupLog($"{product.Title} install failed.{Environment.NewLine}");
+            log($"{product.Title} install failed.{Environment.NewLine}");
         }
         catch (Exception ex)
         {
             product.SetInstallState(QuickstartProductInstallState.Failed, ex.Message);
-            AppendSetupLog($"{product.Title} install failed: {ex.Message}{Environment.NewLine}");
+            log($"{product.Title} install failed: {ex.Message}{Environment.NewLine}");
         }
+    }
+
+    /// <summary>The guidance shown on a row whose fresh status blocked the install.</summary>
+    internal static string DescribeBlockedInstall(string title, ServerInstallState state)
+    {
+        return state switch
+        {
+            ServerInstallState.Installed =>
+                $"{title} is already installed. Manage or remove it from the Mods page.",
+            ServerInstallState.NeedsRepair =>
+                $"{title} needs repair, so Quickstart did not install it. Repair or reinstall it from the Mods page.",
+            _ =>
+                $"Could not confirm whether {title} is installed, so nothing was installed. Refresh installed mods and try again, or manage it from the Mods page."
+        };
     }
 
     private async Task RetryProductInstallAsync(QuickstartProductViewModel product)

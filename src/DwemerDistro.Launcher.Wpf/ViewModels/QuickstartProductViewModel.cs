@@ -17,7 +17,9 @@ public enum QuickstartProductInstallState
 /// <summary>
 /// One product row in the Quickstart "Choose Your Mods" step. Products already present are shown as
 /// Installed and cannot be ticked, unticked, or removed from here - uninstalling only lives on the
-/// Mods page behind the typed confirmation.
+/// Mods page behind the typed confirmation. Only a product the manager explicitly reports as
+/// not-installed can be ticked: an unread, failed, or unrecognised status stays locked so Quickstart
+/// never installs over something it could not see.
 /// </summary>
 public sealed class QuickstartProductViewModel : ObservableObject
 {
@@ -31,8 +33,8 @@ public sealed class QuickstartProductViewModel : ObservableObject
     private readonly Action<QuickstartProductViewModel> _skip;
 
     private bool _isSelected;
-    private bool _isInstalled;
-    private bool _isStatusKnown;
+    private ServerInstallState _reportedState = ServerInstallState.Unknown;
+    private bool _hasStatusAnswer;
     private QuickstartProductInstallState _installState = QuickstartProductInstallState.Pending;
     private string? _resultDetail;
 
@@ -87,11 +89,20 @@ public sealed class QuickstartProductViewModel : ObservableObject
         }
     }
 
-    public bool IsInstalled => _isInstalled;
+    public bool IsInstalled => _reportedState == ServerInstallState.Installed;
 
-    /// <summary>An already-installed product, or one being installed now, cannot be toggled.</summary>
+    /// <summary>The last install state the manager reported, or Unknown when it could not be read.</summary>
+    public ServerInstallState ReportedState => _reportedState;
+
+    /// <summary>
+    /// Only an explicit not-installed answer makes a product installable. An unread status, a failed
+    /// probe, a missing entry, a value this build does not know, and needs-repair all fail closed.
+    /// </summary>
+    public bool IsEligibleForInstall => _reportedState == ServerInstallState.NotInstalled;
+
+    /// <summary>An ineligible product, or one being installed now, cannot be toggled.</summary>
     public bool IsSelectable =>
-        !_isInstalled &&
+        IsEligibleForInstall &&
         _installState is not (QuickstartProductInstallState.Installing or QuickstartProductInstallState.Installed);
 
     public QuickstartProductInstallState InstallState => _installState;
@@ -108,9 +119,13 @@ public sealed class QuickstartProductViewModel : ObservableObject
         QuickstartProductInstallState.Installed => "Installed",
         QuickstartProductInstallState.Failed => "Failed",
         QuickstartProductInstallState.Skipped => "Skipped",
-        _ when _isInstalled => "Installed",
-        _ when !_isStatusKnown => "Checking",
-        _ => "Not installed"
+        _ => _reportedState switch
+        {
+            ServerInstallState.Installed => "Installed",
+            ServerInstallState.NotInstalled => "Not installed",
+            ServerInstallState.NeedsRepair => "Needs repair",
+            _ => _hasStatusAnswer ? "Status unknown" : "Checking"
+        }
     };
 
     public string StatusBackground => _installState switch
@@ -119,28 +134,33 @@ public sealed class QuickstartProductViewModel : ObservableObject
         QuickstartProductInstallState.Installed => StatusGood,
         QuickstartProductInstallState.Failed => StatusBad,
         QuickstartProductInstallState.Skipped => StatusWarn,
-        _ when _isInstalled => StatusGood,
-        _ => StatusNeutral
+        _ => _reportedState switch
+        {
+            ServerInstallState.Installed => StatusGood,
+            ServerInstallState.NeedsRepair => StatusWarn,
+            _ => StatusNeutral
+        }
     };
 
     public string AccessibleName => $"{Title} for {GameTitle}";
 
-    public string AccessibleHelpText =>
-        _isInstalled
-            ? $"{Title} is already installed. Manage or remove it from the Mods page."
-            : $"Select {Title} to install it on the Main branch during Quickstart.";
-
-    /// <summary>Applies the manager status probe. An installed product is locked out of selection.</summary>
-    public void ApplyInstalledState(bool isInstalled, bool isStatusKnown)
+    public string AccessibleHelpText => _reportedState switch
     {
-        _isInstalled = isInstalled;
-        _isStatusKnown = isStatusKnown;
-        if (isInstalled && _isSelected)
-        {
-            _isSelected = false;
-            OnPropertyChanged(nameof(IsSelected));
-        }
+        ServerInstallState.Installed => $"{Title} is already installed. Manage or remove it from the Mods page.",
+        ServerInstallState.NotInstalled => $"Select {Title} to install it on the Main branch during Quickstart.",
+        ServerInstallState.NeedsRepair => $"{Title} needs repair. Repair or reinstall it from the Mods page.",
+        _ => $"{Title} install status is unavailable. Refresh installed mods before installing it."
+    };
 
+    /// <summary>
+    /// Applies the manager status probe. Anything other than an explicit not-installed answer locks
+    /// the row and drops a stale tick, so a refresh cannot leave a selection the guard would reject.
+    /// </summary>
+    public void ApplyStatus(ServerInstallState state)
+    {
+        _reportedState = state;
+        _hasStatusAnswer = true;
+        DropSelectionIfNotEligible();
         RaiseDerivedState();
     }
 
@@ -150,13 +170,9 @@ public sealed class QuickstartProductViewModel : ObservableObject
         _resultDetail = detail;
         if (state == QuickstartProductInstallState.Installed)
         {
-            _isInstalled = true;
-            _isStatusKnown = true;
-            if (_isSelected)
-            {
-                _isSelected = false;
-                OnPropertyChanged(nameof(IsSelected));
-            }
+            _reportedState = ServerInstallState.Installed;
+            _hasStatusAnswer = true;
+            DropSelectionIfNotEligible();
         }
 
         RaiseDerivedState();
@@ -183,9 +199,22 @@ public sealed class QuickstartProductViewModel : ObservableObject
         };
     }
 
+    private void DropSelectionIfNotEligible()
+    {
+        if (!_isSelected || IsEligibleForInstall)
+        {
+            return;
+        }
+
+        _isSelected = false;
+        OnPropertyChanged(nameof(IsSelected));
+    }
+
     private void RaiseDerivedState()
     {
         OnPropertyChanged(nameof(IsInstalled));
+        OnPropertyChanged(nameof(ReportedState));
+        OnPropertyChanged(nameof(IsEligibleForInstall));
         OnPropertyChanged(nameof(IsSelectable));
         OnPropertyChanged(nameof(InstallState));
         OnPropertyChanged(nameof(ShowRetry));

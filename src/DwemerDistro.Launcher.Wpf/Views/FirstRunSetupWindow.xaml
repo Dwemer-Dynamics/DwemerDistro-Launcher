@@ -553,6 +553,12 @@
                                         Style="{StaticResource LargePrimaryButton}"
                                         AutomationProperties.Name="Install selected mods"
                                         AutomationProperties.HelpText="Installs each selected mod in turn on the Main branch. Mods that installed successfully stay installed if a later one fails." />
+                                <Button Content="Refresh Installed Mods"
+                                        Command="{Binding RefreshProductsCommand}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        VerticalAlignment="Center"
+                                        Margin="10,0,0,0"
+                                        AutomationProperties.HelpText="Checks which mods are installed. If a status check failed, try it again before selecting mods." />
                             </StackPanel>
 
                             <StackPanel Visibility="{Binding IsInstallingProducts, Converter={StaticResource BoolToVisibilityConverter}}"
