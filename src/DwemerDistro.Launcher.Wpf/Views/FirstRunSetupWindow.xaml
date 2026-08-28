@@ -126,6 +126,61 @@
             <Setter Property="FontSize" Value="12" />
         </Style>
 
+        <!-- Oversized tick box for the Choose Your Mods rows: a 28px target on the left of each
+             card, with a visible keyboard focus ring and the same palette as the rest of the wizard. -->
+        <Style x:Key="LargeProductCheckBox" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid Width="34" Height="34" Background="Transparent">
+                            <Border x:Name="Box"
+                                    Width="28"
+                                    Height="28"
+                                    CornerRadius="5"
+                                    Background="#191919"
+                                    BorderBrush="#7A7A7A"
+                                    BorderThickness="2"
+                                    SnapsToDevicePixels="True" />
+                            <Path x:Name="Tick"
+                                  Data="M 6,14 L 12,20 L 22,8"
+                                  Stroke="White"
+                                  StrokeThickness="3"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round"
+                                  Visibility="Collapsed" />
+                            <Border x:Name="FocusRing"
+                                    CornerRadius="7"
+                                    BorderBrush="White"
+                                    BorderThickness="1"
+                                    Visibility="Collapsed"
+                                    IsHitTestVisible="False" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Box" Property="Background" Value="#2F8F3A" />
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#4FA45B" />
+                                <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Box" Property="BorderBrush" Value="#FFD700" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Box" Property="Opacity" Value="0.45" />
+                                <Setter TargetName="Tick" Property="Opacity" Value="0.45" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="ProgressBar">
             <Setter Property="Background" Value="#191919" />
             <Setter Property="Foreground" Value="#2F8F3A" />
@@ -348,6 +403,189 @@
                                      AcceptsReturn="True"
                                      IsReadOnly="True"
                                      VerticalScrollBarVisibility="Auto" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel Visibility="{Binding IsChooseModsStep, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel Margin="0,8,0,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding StepTitle}"
+                                           FontSize="20"
+                                           FontWeight="Bold" />
+                                <Border Grid.Column="1"
+                                        Background="{Binding ProductStatusBackground}"
+                                        CornerRadius="12"
+                                        Padding="10,4"
+                                        VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding ProductStatusText}"
+                                               FontSize="11"
+                                               FontWeight="Bold" />
+                                </Border>
+                            </Grid>
+                            <TextBlock Text="{Binding StepSubtitle}"
+                                       Foreground="#D6D6D6"
+                                       FontSize="12"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,0" />
+                            <TextBlock Text="Nothing is selected to start with. Continue without picking anything if you would rather decide later."
+                                       Foreground="#D6D6D6"
+                                       FontSize="11"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0" />
+
+                            <!-- The whole list is disabled while an install runs, so a checkbox cannot
+                                 change under a running operation. -->
+                            <ItemsControl ItemsSource="{Binding ProductChoices}"
+                                          IsEnabled="{Binding IsProductSelectionEnabled}"
+                                          Margin="0,14,0,0"
+                                          KeyboardNavigation.TabNavigation="Continue"
+                                          AutomationProperties.Name="Available mods">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#262626"
+                                                BorderBrush="#4B4B4B"
+                                                BorderThickness="1"
+                                                CornerRadius="6"
+                                                Padding="12,10"
+                                                Margin="0,0,0,10">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <CheckBox Grid.Column="0"
+                                                          Style="{StaticResource LargeProductCheckBox}"
+                                                          IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                          IsEnabled="{Binding IsSelectable}"
+                                                          VerticalAlignment="Center"
+                                                          Margin="0,0,12,0"
+                                                          AutomationProperties.Name="{Binding AccessibleName}"
+                                                          AutomationProperties.HelpText="{Binding AccessibleHelpText}"
+                                                          ToolTip="{Binding AccessibleHelpText}" />
+
+                                                <Border Grid.Column="1"
+                                                        Width="104"
+                                                        Height="58"
+                                                        Margin="0,0,12,0"
+                                                        Background="#151515"
+                                                        ClipToBounds="True">
+                                                    <!-- Stretch alignment degenerates to top-left once UniformToFill
+                                                         overflows the slot, so the crop is anchored explicitly to the
+                                                         center of the artwork on both axes. Setting Width/Height here
+                                                         would re-anchor it top-left via the layout clip. -->
+                                                    <Image Source="{Binding ArtworkSource}"
+                                                           Stretch="UniformToFill"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           AutomationProperties.Name="{Binding Title, StringFormat={}{0} artwork}" />
+                                                </Border>
+
+                                                <StackPanel Grid.Column="2"
+                                                            VerticalAlignment="Center"
+                                                            Margin="0,0,12,0">
+                                                    <TextBlock Text="{Binding Title}"
+                                                               FontSize="14"
+                                                               FontWeight="Bold" />
+                                                    <TextBlock Text="{Binding GameTitle}"
+                                                               Foreground="#FFD700"
+                                                               FontSize="11"
+                                                               TextWrapping="Wrap"
+                                                               Margin="0,2,0,0" />
+                                                    <TextBlock Text="{Binding ResultDetail}"
+                                                               Foreground="#D79C9C"
+                                                               FontSize="11"
+                                                               TextWrapping="Wrap"
+                                                               Margin="0,4,0,0"
+                                                               Visibility="{Binding HasResultDetail, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                                </StackPanel>
+
+                                                <StackPanel Grid.Column="3"
+                                                            VerticalAlignment="Center"
+                                                            HorizontalAlignment="Right">
+                                                    <Border Background="{Binding StatusBackground}"
+                                                            CornerRadius="12"
+                                                            Padding="10,4"
+                                                            HorizontalAlignment="Right"
+                                                            MinWidth="88">
+                                                        <TextBlock Text="{Binding StatusText}"
+                                                                   FontSize="11"
+                                                                   FontWeight="Bold"
+                                                                   TextAlignment="Center" />
+                                                    </Border>
+                                                    <StackPanel Orientation="Horizontal"
+                                                                HorizontalAlignment="Right"
+                                                                Margin="0,8,0,0"
+                                                                Visibility="{Binding ShowRetry, Converter={StaticResource BoolToVisibilityConverter}}">
+                                                        <Button Content="Retry"
+                                                                Command="{Binding RetryCommand}"
+                                                                Style="{StaticResource SecondaryButton}"
+                                                                MinWidth="80"
+                                                                Margin="0,0,8,0"
+                                                                AutomationProperties.Name="{Binding Title, StringFormat=Retry installing {0}}" />
+                                                        <Button Content="Skip"
+                                                                Command="{Binding SkipCommand}"
+                                                                Style="{StaticResource SecondaryButton}"
+                                                                MinWidth="80"
+                                                                Margin="0"
+                                                                AutomationProperties.Name="{Binding Title, StringFormat=Skip {0} and continue}" />
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        Margin="0,6,0,0">
+                                <Button Content="{Binding InstallProductsButtonText}"
+                                        Command="{Binding InstallSelectedProductsCommand}"
+                                        Style="{StaticResource LargePrimaryButton}"
+                                        AutomationProperties.Name="Install selected mods"
+                                        AutomationProperties.HelpText="Installs each selected mod in turn on the Main branch. Mods that installed successfully stay installed if a later one fails." />
+                                <Button Content="Refresh Installed Mods"
+                                        Command="{Binding RefreshProductsCommand}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        VerticalAlignment="Center"
+                                        Margin="10,0,0,0"
+                                        AutomationProperties.HelpText="Checks which mods are installed. If a status check failed, try it again before selecting mods." />
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding IsInstallingProducts, Converter={StaticResource BoolToVisibilityConverter}}"
+                                        Margin="0,12,0,0">
+                                <TextBlock Text="{Binding SetupInstallProgressText}"
+                                           Foreground="#D6D6D6"
+                                           FontSize="11"
+                                           FontWeight="Bold"
+                                           Margin="0,0,0,6"
+                                           AutomationProperties.LiveSetting="Polite" />
+                                <ProgressBar Minimum="0"
+                                             Maximum="100"
+                                             Value="{Binding SetupInstallProgress, Mode=OneWay}"
+                                             AutomationProperties.Name="Mod install progress" />
+                            </StackPanel>
+
+                            <TextBlock Text="Console"
+                                       Foreground="#FFD700"
+                                       FontWeight="Bold"
+                                       Margin="0,18,0,8" />
+                            <TextBox Text="{Binding SetupLogText, Mode=OneWay}"
+                                     Height="120"
+                                     TextWrapping="Wrap"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     VerticalScrollBarVisibility="Auto"
+                                     AutomationProperties.Name="Mod install output" />
                         </StackPanel>
                     </Border>
                 </StackPanel>

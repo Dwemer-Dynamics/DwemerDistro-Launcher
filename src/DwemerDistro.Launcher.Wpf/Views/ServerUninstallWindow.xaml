@@ -1,0 +1,102 @@
+<Window x:Class="DwemerDistro.Launcher.Wpf.Views.ServerUninstallWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Uninstall Server"
+        Icon="/Assets/DwemerDistro.ico"
+        Width="520"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource GameCenter.Window}"
+        TextElement.Foreground="{DynamicResource GameCenter.Text}"
+        FocusManager.FocusedElement="{Binding ElementName=ConfirmTokenTextBox}"
+        AutomationProperties.Name="Uninstall server confirmation"
+        KeyDown="Window_KeyDown">
+    <Window.Resources>
+        <Style x:Key="DialogBodyText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="DialogCaptionText" TargetType="TextBlock" BasedOn="{StaticResource DialogBodyText}">
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="HeadingTextBlock"
+                   Grid.Row="0"
+                   Text="Uninstall server"
+                   FontFamily="Trebuchet MS"
+                   FontSize="18"
+                   FontWeight="Bold"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource GameCenter.DangerText}" />
+
+        <!-- The single warning carries the whole consequence, so nothing repeats it below. -->
+        <TextBlock x:Name="WarningTextBlock"
+                   Grid.Row="1"
+                   Style="{StaticResource DialogBodyText}"
+                   Foreground="{DynamicResource GameCenter.DangerText}"
+                   Margin="0,10,0,16" />
+
+        <StackPanel Grid.Row="2">
+            <TextBlock x:Name="ConfirmPromptTextBlock"
+                       Style="{StaticResource DialogBodyText}"
+                       Margin="0,0,0,6" />
+            <TextBox x:Name="ConfirmTokenTextBox"
+                     Height="34"
+                     VerticalContentAlignment="Center"
+                     Padding="10,0"
+                     FontFamily="Consolas"
+                     FontSize="13"
+                     Background="#191919"
+                     Foreground="{DynamicResource GameCenter.Text}"
+                     CaretBrush="{DynamicResource GameCenter.Text}"
+                     BorderBrush="{DynamicResource GameCenter.Border}"
+                     BorderThickness="1"
+                     AutomationProperties.LabeledBy="{Binding ElementName=ConfirmPromptTextBlock}"
+                     TextChanged="ConfirmTokenTextBox_TextChanged" />
+            <TextBlock x:Name="ValidationTextBlock"
+                       Style="{StaticResource DialogCaptionText}"
+                       MinHeight="18"
+                       Margin="0,6,0,0"
+                       AutomationProperties.LiveSetting="Polite" />
+
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="CancelButton"
+                        Grid.Column="1"
+                        Content="Cancel"
+                        IsCancel="True"
+                        MinWidth="120"
+                        MinHeight="36"
+                        Margin="0,0,10,0"
+                        Style="{StaticResource GameCenter.Button}"
+                        Click="CancelButton_Click"
+                        AutomationProperties.Name="Cancel uninstall"
+                        AutomationProperties.HelpText="Close this dialog without deleting anything." />
+                <Button x:Name="UninstallButton"
+                        Grid.Column="2"
+                        Content="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                        IsEnabled="False"
+                        MinWidth="176"
+                        MinHeight="36"
+                        Style="{StaticResource GameCenter.ServerUninstallButton}"
+                        Click="UninstallButton_Click" />
+            </Grid>
+        </StackPanel>
+    </Grid>
+</Window>

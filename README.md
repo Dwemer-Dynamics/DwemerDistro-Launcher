@@ -9,9 +9,20 @@ It keeps WSL distro management in the launcher, but separates launcher binary up
 ## Scope
 
 - Native Windows launcher built with WPF on .NET 8
-- 1:1 port of the current Python launcher behavior
+- install, repair, update, uninstall, and reinstall CHIM, Stobe, and Dialectic independently
+- Quickstart mod selection for fresh server-free distro installs
 - launcher-only self-update via `DwemerDistroUpdater.exe`
 - WSL distro/server updates remain separate from launcher binary updates
+
+## Optional Game Servers
+
+Fresh DwemerDistro packages contain no game servers. The Quickstart **Choose Your Mods** step installs any selected products from their Main branch; selecting none is valid. The Mods page then shows each server as Not installed, Installed, or Needs repair and exposes only the actions valid for that state.
+
+Uninstall is destructive. It requires the product-specific `PURGE-*` confirmation and removes that server's files and PostgreSQL database. It does not remove shared voice/components or another game server.
+
+**Update Mods** updates DwemerDistro and shared components once, then updates installed mods whose Updates checkbox is enabled. Each mod's own **Update** button also updates the system first, then that checked mod on its selected branch. Neither action installs missing mods or updates unchecked mods. If the system update fails, no mod updates run. A failed mod update does not stop the remaining selected mods.
+
+**Update System** on the Components page and **Update Distro** in Quickstart update only DwemerDistro and shared services. The launcher executable's own update remains separate.
 
 ## Workspace
 
