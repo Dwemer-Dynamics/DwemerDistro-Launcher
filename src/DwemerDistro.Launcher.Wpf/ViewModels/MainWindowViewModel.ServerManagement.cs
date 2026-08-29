@@ -544,21 +544,35 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Rechecks eligibility without changing the confirmed branches. The shared system runs once;
-    /// its failure stops the batch, while an individual mod failure still allows the remaining mods.
+    /// Rechecks eligibility without changing the confirmed branches. The shared system update always
+    /// runs first - Update Mods doubles as the recovery action, so a distro whose mods are missing or
+    /// whose status is unreadable still gets its core and shared components repaired - and its failure
+    /// stops the batch, while an individual mod failure still allows the remaining mods. An empty
+    /// eligible selection is a successful system-only update, never an error.
     /// </summary>
+    /// <param name="refreshUpdates">
+    /// Optional re-read of server status after the system stage. Recovery is the reason it exists: a
+    /// mod that only became visible once the system update restored <c>ddistro_server</c> is still
+    /// updated, on the branch the user confirmed when it was already known.
+    /// </param>
     internal static async Task<bool> UpdateInstalledServersAsync(
         IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> confirmedUpdates,
         Func<Task<bool>> updateSystem,
-        Func<ServerManagerItemViewModel, ServerBranchChannel, Task<bool>> updateMod)
+        Func<ServerManagerItemViewModel, ServerBranchChannel, Task<bool>> updateMod,
+        Func<Task<IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)>>>? refreshUpdates = null)
     {
-        var updates = confirmedUpdates
-            .Where(update => ShouldUpdateProduct(update.Product.State, update.Product.IsIncludedInUpdates))
-            .ToArray();
-        if (updates.Length == 0 || !await updateSystem().ConfigureAwait(true))
+        if (!await updateSystem().ConfigureAwait(true))
         {
             return false;
         }
+
+        var candidates = refreshUpdates is null
+            ? confirmedUpdates
+            : MergeConfirmedBranches(confirmedUpdates, await refreshUpdates().ConfigureAwait(true));
+
+        var updates = candidates
+            .Where(update => ShouldUpdateProduct(update.Product.State, update.Product.IsIncludedInUpdates))
+            .ToArray();
 
         var allSucceeded = true;
         foreach (var update in updates)
@@ -568,6 +582,24 @@ public sealed partial class MainWindowViewModel
         }
 
         return allSucceeded;
+    }
+
+    /// <summary>
+    /// Keeps the branch the user already approved for every product that was part of the
+    /// confirmation, and accepts the currently selected branch only for products the post-system
+    /// refresh discovered, which the confirmation could not have named.
+    /// </summary>
+    internal static IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> MergeConfirmedBranches(
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> confirmedUpdates,
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> refreshedUpdates)
+    {
+        return refreshedUpdates
+            .Select(refreshed =>
+            {
+                var confirmed = confirmedUpdates.FirstOrDefault(update => update.Product == refreshed.Product);
+                return confirmed.Product is null ? refreshed : confirmed;
+            })
+            .ToArray();
     }
 
     private static (string Progress, string Past, string Failure) DescribeOperation(ServerOperation operation)

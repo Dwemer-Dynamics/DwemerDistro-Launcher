@@ -27,10 +27,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static readonly TimeSpan StartupFirstRunProbeTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan StartupLauncherUpdateTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StartupVersionCheckTimeout = TimeSpan.FromSeconds(20);
+    // The automatic sync runs a full system update, so it is bounded far above a status probe.
+    private static readonly TimeSpan LauncherVersionSyncTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan ServerWebPageProbeTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan ServerWebPageStartupTimeout = TimeSpan.FromSeconds(150);
     private static readonly TimeSpan ServerWebPageStartupPollInterval = TimeSpan.FromSeconds(3);
     private const string DashboardAutoOpenFlagPath = "/home/dwemer/.dashboard_autoopen";
+    /// <summary>Records the launcher build that last synchronized this distro.</summary>
+    private const string LauncherSyncMarkerPath = "/home/dwemer/.launcher_synced_version";
     private const string DistroRepositoryUrl = "https://github.com/abeiro/dwemerdistro.git";
     private const string DashboardAutoOpenNeutralColor = "#C8C8C8";
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
@@ -163,7 +167,8 @@ echo "CHIM-MCP installed and enabled."
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
         ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
-        UpdateModsCommand = new AsyncRelayCommand(UpdateModsAsync, CanUpdateMods);
+        // Update Mods is also the recovery action, so it stays available with no mods installed.
+        UpdateModsCommand = new AsyncRelayCommand(UpdateModsAsync, CanRunUpdateOperation);
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
@@ -313,11 +318,23 @@ echo "CHIM-MCP installed and enabled."
         private set => SetProperty(ref _systemUpdateButtonText, value);
     }
 
-    public string UpdateModsHelpText => CanRunUpdateOperation()
-        ? GetProductsToUpdate().Count > 0
+    public string UpdateModsHelpText => BuildUpdateModsHelpText(CanRunUpdateOperation(), GetProductsToUpdate().Count > 0);
+
+    /// <summary>
+    /// Update Mods always updates the system first, so with nothing eligible it must describe a
+    /// system-only update rather than refuse.
+    /// </summary>
+    internal static string BuildUpdateModsHelpText(bool canRunUpdateOperation, bool hasEligibleMods)
+    {
+        if (!canRunUpdateOperation)
+        {
+            return "Unavailable while another server, component, or system operation is running.";
+        }
+
+        return hasEligibleMods
             ? "Update DwemerDistro and shared components first, then installed mods whose Updates checkbox is enabled."
-            : "Install a mod and enable its Updates checkbox before using Update Mods."
-        : "Unavailable while another server, component, or system operation is running.";
+            : "Update DwemerDistro and shared components. No installed, update-enabled mods are known, so no mod is changed.";
+    }
 
     public string UpdateSystemHelpText => CanRunUpdateOperation()
         ? "Update DwemerDistro and shared components. Installed mods are not changed."
@@ -544,6 +561,9 @@ echo "CHIM-MCP installed and enabled."
                 LauncherLogService.Startup("First-time setup startup check completed: not needed.");
                 QueueLauncherUpdateCheck();
                 ShowPendingDedicatedTtsPortsNotice();
+                // Queued last, and only on this branch: the automatic system update must never race
+                // Quickstart's own install and update steps, or the release notice it would sit behind.
+                QueueLauncherVersionSync();
                 return;
             }
         }
@@ -594,6 +614,18 @@ echo "CHIM-MCP installed and enabled."
             "Launcher update check",
             cancellationToken => CheckLauncherUpdatesAsync(cancellationToken),
             StartupVersionCheckTimeout);
+    }
+
+    /// <summary>
+    /// Runs the automatic launcher-version system sync on the shared background-task path, so a slow
+    /// or failing update is logged rather than blocking startup.
+    /// </summary>
+    private void QueueLauncherVersionSync()
+    {
+        QueueBackgroundTask(
+            "Launcher version sync",
+            cancellationToken => SyncLauncherVersionAsync(cancellationToken),
+            LauncherVersionSyncTimeout);
     }
 
     private void ShowPendingDedicatedTtsPortsNotice()
@@ -1037,6 +1069,10 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
+    /// <summary>
+    /// The top-level recovery action. It runs even with no known mods, because the system update is
+    /// what restores a distro whose <c>ddistro_server</c> or status probe is broken.
+    /// </summary>
     private async Task UpdateModsAsync()
     {
         if (!CanRunUpdateOperation())
@@ -1046,14 +1082,6 @@ echo "CHIM-MCP installed and enabled."
         }
 
         var productsToUpdate = SnapshotModUpdates(GetProductsToUpdate());
-        if (productsToUpdate.Count == 0)
-        {
-            AppendLog(
-                "No installed, update-enabled mods are available. Check each mod's Updates checkbox." +
-                Environment.NewLine,
-                "yellow");
-            return;
-        }
 
         if (MessageBox.Show(
                 BuildModsUpdateConfirmation(productsToUpdate),
@@ -1065,38 +1093,44 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
-        await RunModUpdatesAsync(productsToUpdate).ConfigureAwait(true);
+        await RunModUpdatesAsync(productsToUpdate, discoverInstalledMods: true).ConfigureAwait(true);
     }
 
     /// <summary>Keeps one operation lock across the shared system update and all selected mods.</summary>
+    /// <param name="discoverInstalledMods">
+    /// Only the top-level Update Mods sweep re-reads status after the system stage, because only
+    /// it is the recovery action. A single product Update must stay a single product update, even
+    /// if the refresh would find more eligible mods.
+    /// </param>
     private async Task RunModUpdatesAsync(
-        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate)
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate,
+        bool discoverInstalledMods = false)
     {
         if (!CanRunUpdateOperation())
         {
             return;
         }
 
-        // Status can refresh while a confirmation dialog pumps the dispatcher.
+        // Status can refresh while a confirmation dialog pumps the dispatcher. An empty selection is
+        // still a valid run: the system stage is the whole point of the recovery path.
         var eligibleProducts = productsToUpdate
             .Where(update => ShouldUpdateProduct(update.Product.State, update.Product.IsIncludedInUpdates))
             .ToArray();
-        if (eligibleProducts.Length == 0)
-        {
-            AppendLog("No installed, update-enabled mods are available. Nothing was updated." + Environment.NewLine, "yellow");
-            return;
-        }
 
         IsDistroUpdateInProgress = true;
         ModsUpdateButtonText = "Updating System...";
         SystemUpdateButtonText = "Updating System...";
         var systemSucceeded = false;
+        var modsAttempted = false;
 
         try
         {
             AppendLog(
-                $"Updating DwemerDistro and shared components before {string.Join(", ", eligibleProducts.Select(update => update.Product.DisplayName))}." +
-                Environment.NewLine);
+                eligibleProducts.Length > 0
+                    ? $"Updating DwemerDistro and shared components before {string.Join(", ", eligibleProducts.Select(update => update.Product.DisplayName))}." +
+                      Environment.NewLine
+                    : "Updating DwemerDistro and shared components. Installed mods with updates enabled are updated afterwards." +
+                      Environment.NewLine);
 
             var succeeded = await UpdateInstalledServersAsync(
                 eligibleProducts,
@@ -1108,10 +1142,12 @@ echo "CHIM-MCP installed and enabled."
                 },
                 (product, branch) =>
                 {
+                    modsAttempted = true;
                     ModsUpdateButtonText = "Updating Mods...";
                     SystemUpdateButtonText = "Update System";
                     return RunServerOperationAsync(product, ServerOperation.Update, branch);
-                }).ConfigureAwait(true);
+                },
+                discoverInstalledMods ? RefreshEligibleModUpdatesAsync : null).ConfigureAwait(true);
             var completionMessage = "System and mod updates completed successfully.";
             if (!systemSucceeded)
             {
@@ -1120,6 +1156,11 @@ echo "CHIM-MCP installed and enabled."
             else if (!succeeded)
             {
                 completionMessage = "At least one mod update failed. Check the log above.";
+            }
+            else if (!modsAttempted)
+            {
+                completionMessage =
+                    "System and shared components updated successfully. No installed, update-enabled mods were found, so no mod was changed.";
             }
 
             AppendLog(completionMessage + Environment.NewLine, succeeded ? "green" : "red");
@@ -1133,6 +1174,17 @@ echo "CHIM-MCP installed and enabled."
         {
             CompleteUpdateOperation();
         }
+    }
+
+    /// <summary>
+    /// Re-reads server status once the system stage succeeded, so a mod that only became visible
+    /// after the system update repaired <c>ddistro_server</c> is still updated. Missing and unchecked
+    /// mods stay excluded, because the snapshot goes through the same eligibility filter.
+    /// </summary>
+    private async Task<IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)>> RefreshEligibleModUpdatesAsync()
+    {
+        await RefreshServerManagementSafeAsync().ConfigureAwait(true);
+        return SnapshotModUpdates(GetProductsToUpdate());
     }
 
     internal void SetComponentsOperationInProgress(bool value)
@@ -1173,7 +1225,10 @@ echo "CHIM-MCP installed and enabled."
     /// Updates DwemerDistro and shared services without touching any application-server repository.
     /// Quickstart uses the same path without a second confirmation prompt.
     /// </summary>
-    private async Task<bool> RunSystemUpdateAsync(bool requireConfirmation, string sourceLabel)
+    private async Task<bool> RunSystemUpdateAsync(
+        bool requireConfirmation,
+        string sourceLabel,
+        CancellationToken cancellationToken = default)
     {
         if (!CanRunUpdateOperation())
         {
@@ -1196,13 +1251,15 @@ echo "CHIM-MCP installed and enabled."
         SystemUpdateButtonText = sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
             ? "Quickstart Updating..."
             : "Updating System...";
+        // Update Mods runs the same system stage, so the top-level button has to say so too.
+        ModsUpdateButtonText = "Updating System...";
 
         try
         {
             AppendLog("Starting the DwemerDistro core and shared components update." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var succeeded = await RunSharedDistroUpdateAsync().ConfigureAwait(true);
+            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken).ConfigureAwait(true);
             AppendLog(
                 succeeded
                     ? "System update completed successfully." + Environment.NewLine
@@ -1221,9 +1278,137 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private bool CanUpdateMods()
+    // --- Automatic launcher-version system sync --------------------------------------------
+
+    /// <summary>
+    /// Runs the system-only update once after the launcher executable changes version, so a distro
+    /// left behind by an older build is brought forward without the user having to find a button.
+    /// No prompt is shown; the console carries the whole story. The marker is written only after a
+    /// successful update, so a failed or blocked attempt simply retries on a later launch. Game
+    /// server repositories are never touched: this reuses the same server-free system update.
+    /// </summary>
+    private async Task SyncLauncherVersionAsync(CancellationToken cancellationToken = default)
     {
-        return CanRunUpdateOperation() && GetProductsToUpdate().Count > 0;
+        var currentVersion = SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion);
+        if (currentVersion is null)
+        {
+            LauncherLogService.Startup("Launcher version sync skipped: the launcher version is not a plain version string.");
+            return;
+        }
+
+        CommandResult marker;
+        try
+        {
+            marker = await _wsl.RunBashAsync(
+                    BuildLauncherSyncMarkerReadCommand(),
+                    loginShell: false,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Launcher version sync could not read its marker.", ex);
+            return;
+        }
+
+        if (!marker.Succeeded)
+        {
+            // A distro that cannot answer has nothing to synchronize yet; first-time setup owns that case.
+            LauncherLogService.Startup("Launcher version sync skipped: the distro did not answer.");
+            return;
+        }
+
+        if (!ShouldSyncLauncherVersion(marker.StandardOutput, currentVersion))
+        {
+            LauncherLogService.Startup($"Launcher version sync skipped: {currentVersion} is already recorded.");
+            return;
+        }
+
+        AppendLog(
+            $"{Environment.NewLine}Launcher {currentVersion} has not updated this distro yet. " +
+            $"Updating DwemerDistro and its shared components automatically. Installed mods are not changed.{Environment.NewLine}",
+            "yellow");
+
+        // Marshalled to the UI thread because the update drives button text, the operation lock, and
+        // command states, exactly as the Components button does.
+        var succeeded = await _dispatcher
+            .InvokeAsync(() => RunSystemUpdateAsync(
+                requireConfirmation: false,
+                sourceLabel: "Launcher sync",
+                cancellationToken))
+            .Task
+            .Unwrap()
+            .ConfigureAwait(false);
+
+        if (!succeeded)
+        {
+            AppendLog(
+                "Automatic launcher update sync did not complete. It will run again on the next launch." + Environment.NewLine,
+                "yellow");
+            return;
+        }
+
+        CommandResult write;
+        try
+        {
+            write = await _wsl.RunBashAsync(
+                    BuildLauncherSyncMarkerWriteCommand(currentVersion),
+                    loginShell: false,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Launcher version sync could not record its marker.", ex);
+            AppendLog(
+                "Automatic launcher update sync finished, but it could not be recorded, so it runs again on the next launch." +
+                Environment.NewLine,
+                "yellow");
+            return;
+        }
+
+        AppendLog(
+            write.Succeeded
+                ? $"Automatic launcher update sync finished. Launcher {currentVersion} will not repeat it." + Environment.NewLine
+                : "Automatic launcher update sync finished, but it could not be recorded, so it runs again on the next launch." +
+                  Environment.NewLine,
+            write.Succeeded ? "green" : "yellow");
+    }
+
+    /// <summary>
+    /// Only a plain dotted version may reach the marker command; anything else is refused rather than
+    /// quoted into a shell.
+    /// </summary>
+    internal static string? SanitizeLauncherSyncVersion(string? version)
+    {
+        var trimmed = version?.Trim();
+        if (string.IsNullOrEmpty(trimmed) || trimmed.Length > 32)
+        {
+            return null;
+        }
+
+        return trimmed.All(character => char.IsAsciiDigit(character) || character == '.') ? trimmed : null;
+    }
+
+    /// <summary>
+    /// True when this launcher build has not recorded a successful sync yet. A missing, empty, or
+    /// different marker all mean "run it once".
+    /// </summary>
+    internal static bool ShouldSyncLauncherVersion(string? recordedVersion, string currentVersion)
+    {
+        return !string.Equals(recordedVersion?.Trim(), currentVersion, StringComparison.Ordinal);
+    }
+
+    internal static string BuildLauncherSyncMarkerReadCommand()
+    {
+        return $"cat {LauncherSyncMarkerPath} 2>/dev/null || true";
+    }
+
+    internal static string BuildLauncherSyncMarkerWriteCommand(string version)
+    {
+        var safeVersion = SanitizeLauncherSyncVersion(version)
+            ?? throw new ArgumentException("The launcher sync marker only accepts a plain version.", nameof(version));
+        return $"mkdir -p /home/dwemer && printf '%s' '{safeVersion}' > {LauncherSyncMarkerPath}";
     }
 
     /// <summary>Prevents mod, component, and system operations from competing for the same WSL files.</summary>
@@ -1248,6 +1433,17 @@ echo "CHIM-MCP installed and enabled."
     internal static string BuildModsUpdateConfirmation(
         IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate)
     {
+        // No eligible mod is a normal state on a broken or bare distro, so this describes the
+        // system-only update it is about to run instead of reporting a missing-mod error.
+        if (productsToUpdate.Count == 0)
+        {
+            return "This will update DwemerDistro and its shared components first. " +
+                   "No installed, update-enabled mods can currently be detected. After the system update repairs status, " +
+                   "any installed mods with Updates enabled will update on their selected branches.\n\n" +
+                   "Missing mods are never installed and unchecked mods are never updated.\n\n" +
+                   "Are you sure?";
+        }
+
         var branchLines = productsToUpdate
             .Select(update => $"{update.Product.DisplayName} target branch: {ServerManagementService.ToBranchChoice(update.Branch)}")
             .ToArray();
@@ -1282,7 +1478,7 @@ echo "CHIM-MCP installed and enabled."
     /// Pulls the distro scripts, runs update.sh, then runs update_gws with every application-server
     /// skip flag so only shared services are touched.
     /// </summary>
-    private async Task<bool> RunSharedDistroUpdateAsync()
+    private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default)
     {
         var bashCommand = BuildSystemUpdateCommand();
 
@@ -1297,7 +1493,7 @@ echo "CHIM-MCP installed and enabled."
             }
 
             AppendLog(line);
-        }, loginShell: false, lineBuffered: true).ConfigureAwait(false);
+        }, loginShell: false, lineBuffered: true, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return result.Succeeded && sharedComponentsStarted;
     }
