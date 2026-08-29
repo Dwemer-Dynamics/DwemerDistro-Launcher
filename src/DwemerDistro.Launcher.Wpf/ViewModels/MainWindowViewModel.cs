@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Threading;
@@ -36,10 +37,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// <summary>Records the launcher build that last synchronized this distro.</summary>
     private const string LauncherSyncMarkerPath = "/home/dwemer/.launcher_synced_version";
     private const string DistroRepositoryUrl = "https://github.com/abeiro/dwemerdistro.git";
+    private const string SystemReleaseManifestUrl =
+        "https://raw.githubusercontent.com/abeiro/dwemerdistro/main/system-release.json";
+    private const string InstalledSystemReleaseManifestPath = "/var/lib/dwemerdistro/system-release.json";
     private const string DashboardAutoOpenNeutralColor = "#C8C8C8";
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
     private const string DashboardAutoOpenWarningColor = "#FFB641";
     private const string DashboardAutoOpenErrorColor = "#FF8A80";
+    private const string SystemStatusNeutralColor = "#C8C8C8";
+    private const string SystemStatusBusyColor = "#F4D8A6";
+    private const string SystemStatusSuccessColor = "#8FD694";
+    private const string SystemStatusAttentionColor = "#FFB641";
+    private const string SystemStatusErrorColor = "#FF8A80";
+    // Segoe MDL2 Assets, the icon font the rail and caption buttons already use. The badge is a
+    // shape, so the top button's signal never rests on colour alone.
+    internal const string SystemUpdateAvailableGlyph = "\uE896";
+    internal const string SystemUpdateFailedGlyph = "\uE7BA";
+    internal const string SystemUpdateUnknownGlyph = "\uE9CE";
     private const string UpdateIncludeNeutralColor = "#C8C8C8";
     private const string UpdateIncludeSuccessColor = "#8FD694";
     private const string UpdateIncludeErrorColor = "#FF8A80";
@@ -110,8 +124,12 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
     private string _launcherUpdateButtonText = "Check Update";
-    private string _modsUpdateButtonText = "Update Mods";
     private string _systemUpdateButtonText = "Update System";
+    // Unknown until the system-version check reports. The launcher never claims that a distro it
+    // has not inspected is current.
+    private SystemUpdateAvailability _systemUpdateState = SystemUpdateAvailability.Unknown;
+    private string? _installedSystemVersion;
+    private string? _availableSystemVersion;
     private bool _isDistroUpdateInProgress;
     private bool _isComponentsOperationInProgress;
     private bool _includeHerikaServerUpdate = true;
@@ -167,8 +185,8 @@ echo "CHIM-MCP installed and enabled."
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
         ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
-        // Update Mods is also the recovery action, so it stays available with no mods installed.
-        UpdateModsCommand = new AsyncRelayCommand(UpdateModsAsync, CanRunUpdateOperation);
+        // Update System is also the recovery action, so it stays available whether the distro
+        // reports itself as current, out of date, or not at all.
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
@@ -178,6 +196,11 @@ echo "CHIM-MCP installed and enabled."
         OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => HerikaManager.CanUseInstalledFeatures);
         OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => StobeManager.CanUseInstalledFeatures);
         OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"), () => DialecticManager.CanUseInstalledFeatures);
+        // Nexus pages are plain external links: they never probe WSL, never start a server, and
+        // stay usable whatever the local server is doing.
+        OpenChimNexusCommand = new RelayCommand(() => OpenModNexusPage("CHIM"));
+        OpenStobeNexusCommand = new RelayCommand(() => OpenModNexusPage("STOBE"));
+        OpenDialecticNexusCommand = new RelayCommand(() => OpenModNexusPage("DIALECTIC"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
@@ -306,39 +329,220 @@ echo "CHIM-MCP installed and enabled."
         private set => SetProperty(ref _launcherUpdateButtonText, value);
     }
 
-    public string ModsUpdateButtonText
-    {
-        get => _modsUpdateButtonText;
-        private set => SetProperty(ref _modsUpdateButtonText, value);
-    }
-
     public string SystemUpdateButtonText
     {
         get => _systemUpdateButtonText;
-        private set => SetProperty(ref _systemUpdateButtonText, value);
+        private set
+        {
+            if (SetProperty(ref _systemUpdateButtonText, value))
+            {
+                OnPropertyChanged(nameof(SystemUpdateAccessibleName));
+            }
+        }
     }
 
-    public string UpdateModsHelpText => BuildUpdateModsHelpText(CanRunUpdateOperation(), GetProductsToUpdate().Count > 0);
+    /// <summary>
+    /// What the launcher currently knows about the shared system. Availability never depends on it:
+    /// Update System is also the recovery action, so it stays live while the state is current or
+    /// unknown.
+    /// </summary>
+    public SystemUpdateAvailability SystemUpdateState
+    {
+        get => _systemUpdateState;
+        private set
+        {
+            if (SetProperty(ref _systemUpdateState, value))
+            {
+                RaiseSystemUpdateStatusChanged();
+            }
+        }
+    }
+
+    /// <summary>The compact line under the Components caption. Words first; colour only echoes them.</summary>
+    public string SystemStatusText =>
+        BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion);
+
+    public string SystemStatusColor => BuildSystemStatusColor(SystemUpdateState);
+
+    public string SystemStatusHelpText =>
+        BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion) +
+        " Update System updates DwemerDistro and shared components. Installed mods are not changed.";
+
+    public string SystemUpdateBadgeGlyph => BuildSystemUpdateBadgeGlyph(SystemUpdateState);
+
+    public string SystemUpdateBadgeColor => BuildSystemStatusColor(SystemUpdateState);
 
     /// <summary>
-    /// Update Mods always updates the system first, so with nothing eligible it must describe a
-    /// system-only update rather than refuse.
+    /// The badge sits in a fixed-width column inside the button, so showing or hiding it never
+    /// moves the label.
     /// </summary>
-    internal static string BuildUpdateModsHelpText(bool canRunUpdateOperation, bool hasEligibleMods)
+    public bool IsSystemUpdateBadgeVisible => BuildSystemUpdateBadgeGlyph(SystemUpdateState).Length > 0;
+
+    public string SystemUpdateAccessibleName =>
+        BuildSystemUpdateAccessibleName(SystemUpdateButtonText, SystemUpdateState);
+
+    public string UpdateSystemHelpText => BuildUpdateSystemHelpText(
+        CanRunUpdateOperation(), SystemUpdateState, _installedSystemVersion, _availableSystemVersion);
+
+    /// <summary>
+    /// Every state is spelled out, so someone who cannot see the status line or the badge colour
+    /// still reads which one it is.
+    /// </summary>
+    internal static string BuildSystemStatusText(
+        SystemUpdateAvailability state,
+        string? installedVersion,
+        string? availableVersion)
+    {
+        var installed = NormalizeSystemVersion(installedVersion);
+        var available = NormalizeSystemVersion(availableVersion);
+
+        return state switch
+        {
+            SystemUpdateAvailability.Checking => "System: checking for updates...",
+            SystemUpdateAvailability.Updating => "System: updating now...",
+            SystemUpdateAvailability.Current => installed is null
+                ? "System: up to date."
+                : $"System: up to date (version {installed}).",
+            SystemUpdateAvailability.UpdateAvailable => (installed, available) switch
+            {
+                (not null, not null) => $"System: update available (installed {installed}, latest {available}).",
+                (null, not null) => $"System: update available (latest {available}).",
+                _ => "System: update available."
+            },
+            SystemUpdateAvailability.Failed => "System: last update failed. Run Update System to retry.",
+            // Unknown is also the recovery state: a distro that cannot report its version is exactly
+            // the one Update System exists to repair.
+            _ => "System: version unknown. Update System also repairs a distro that cannot report it."
+        };
+    }
+
+    internal static string BuildSystemStatusColor(SystemUpdateAvailability state)
+    {
+        return state switch
+        {
+            SystemUpdateAvailability.Checking => SystemStatusNeutralColor,
+            SystemUpdateAvailability.Updating => SystemStatusBusyColor,
+            SystemUpdateAvailability.Current => SystemStatusSuccessColor,
+            SystemUpdateAvailability.UpdateAvailable => SystemStatusAttentionColor,
+            SystemUpdateAvailability.Failed => SystemStatusErrorColor,
+            _ => SystemStatusNeutralColor
+        };
+    }
+
+    /// <summary>
+    /// An empty glyph means no badge. Checking and Updating already say so in the button label and
+    /// the status line, so they add nothing on top of the button.
+    /// </summary>
+    internal static string BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability state)
+    {
+        return state switch
+        {
+            SystemUpdateAvailability.UpdateAvailable => SystemUpdateAvailableGlyph,
+            SystemUpdateAvailability.Failed => SystemUpdateFailedGlyph,
+            SystemUpdateAvailability.Unknown => SystemUpdateUnknownGlyph,
+            _ => string.Empty
+        };
+    }
+
+    internal static string BuildSystemUpdateAccessibleName(string? buttonText, SystemUpdateAvailability state)
+    {
+        var label = string.IsNullOrWhiteSpace(buttonText) ? "Update System" : buttonText.Trim();
+
+        return state switch
+        {
+            SystemUpdateAvailability.Checking => $"{label}, checking for system updates",
+            SystemUpdateAvailability.Updating => $"{label}, system update running",
+            SystemUpdateAvailability.Current => $"{label}, system up to date",
+            SystemUpdateAvailability.UpdateAvailable => $"{label}, system update available",
+            SystemUpdateAvailability.Failed => $"{label}, last system update failed",
+            _ => $"{label}, system version unknown"
+        };
+    }
+
+    internal static string BuildUpdateSystemHelpText(
+        bool canRunUpdateOperation,
+        SystemUpdateAvailability state,
+        string? installedVersion,
+        string? availableVersion)
     {
         if (!canRunUpdateOperation)
         {
             return "Unavailable while another server, component, or system operation is running.";
         }
 
-        return hasEligibleMods
-            ? "Update DwemerDistro and shared components first, then installed mods whose Updates checkbox is enabled."
-            : "Update DwemerDistro and shared components. No installed, update-enabled mods are known, so no mod is changed.";
+        return "Update DwemerDistro and shared components. Installed mods are not changed. " +
+               BuildSystemStatusText(state, installedVersion, availableVersion);
     }
 
-    public string UpdateSystemHelpText => CanRunUpdateOperation()
-        ? "Update DwemerDistro and shared components. Installed mods are not changed."
-        : "Unavailable while another server, component, or system operation is running.";
+    internal static string? NormalizeSystemVersion(string? version)
+    {
+        var trimmed = version?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    /// <summary>
+    /// Backend seam. The approved system-version check - a versioned distro manifest compared with
+    /// the local successful-update marker - is the only thing that may report Checking, Current or
+    /// UpdateAvailable. Nothing in the UI infers availability, and no Git SHA is consulted here.
+    /// </summary>
+    internal void ApplySystemUpdateCheckResult(
+        SystemUpdateAvailability state,
+        string? installedVersion,
+        string? availableVersion)
+    {
+        RunOnUi(() =>
+        {
+            // A slow startup check must not overwrite the Updating state after a user starts the
+            // recovery action. CompleteUpdateOperation queues a fresh check when the run finishes.
+            if (IsDistroUpdateInProgress)
+            {
+                return;
+            }
+
+            _installedSystemVersion = NormalizeSystemVersion(installedVersion);
+            _availableSystemVersion = NormalizeSystemVersion(availableVersion);
+            _systemUpdateState = state;
+            RaiseSystemUpdateStatusChanged();
+        });
+    }
+
+    /// <summary>Moves the state without discarding versions a check has already reported.</summary>
+    internal void SetSystemUpdateState(SystemUpdateAvailability state)
+    {
+        RunOnUi(() =>
+        {
+            _systemUpdateState = state;
+            RaiseSystemUpdateStatusChanged();
+        });
+    }
+
+    /// <summary>
+    /// A finished update makes whatever the check advertised the version now on disk, so the line
+    /// never reports the version it just replaced. The real check re-confirms this next time it runs.
+    /// </summary>
+    private void MarkSystemUpdateSucceeded()
+    {
+        RunOnUi(() =>
+        {
+            _installedSystemVersion = _availableSystemVersion ?? _installedSystemVersion;
+            _availableSystemVersion = null;
+            _systemUpdateState = SystemUpdateAvailability.Current;
+            RaiseSystemUpdateStatusChanged();
+        });
+    }
+
+    private void RaiseSystemUpdateStatusChanged()
+    {
+        OnPropertyChanged(nameof(SystemUpdateState));
+        OnPropertyChanged(nameof(SystemStatusText));
+        OnPropertyChanged(nameof(SystemStatusColor));
+        OnPropertyChanged(nameof(SystemStatusHelpText));
+        OnPropertyChanged(nameof(SystemUpdateBadgeGlyph));
+        OnPropertyChanged(nameof(SystemUpdateBadgeColor));
+        OnPropertyChanged(nameof(IsSystemUpdateBadgeVisible));
+        OnPropertyChanged(nameof(SystemUpdateAccessibleName));
+        OnPropertyChanged(nameof(UpdateSystemHelpText));
+    }
 
     public bool IsComponentInteractionEnabled =>
         !IsDistroUpdateInProgress && !ServerManagers.Any(manager => manager.IsBusy);
@@ -359,8 +563,8 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    // Each checkbox owns both the Update Mods sweep and its product's own Update button, so every
-    // change - including the revert after a failed save - has to reach the server manager item.
+    // Each checkbox owns its product's Update button, so every change - including the revert after
+    // a failed save - has to reach the server manager item.
     public bool IncludeHerikaServerUpdate
     {
         get => _includeHerikaServerUpdate;
@@ -486,7 +690,6 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand StartServerCommand { get; }
     public AsyncRelayCommand StopServerCommand { get; }
     public AsyncRelayCommand ForceStopServerCommand { get; }
-    public AsyncRelayCommand UpdateModsCommand { get; }
     public AsyncRelayCommand UpdateSystemCommand { get; }
     public RelayCommand OpenServerFolderCommand { get; }
     public RelayCommand OpenFirstRunSetupCommand { get; }
@@ -495,6 +698,9 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand OpenChimCommand { get; }
     public AsyncRelayCommand OpenStobeCommand { get; }
     public AsyncRelayCommand OpenDialecticCommand { get; }
+    public RelayCommand OpenChimNexusCommand { get; }
+    public RelayCommand OpenStobeNexusCommand { get; }
+    public RelayCommand OpenDialecticNexusCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
@@ -532,6 +738,7 @@ echo "CHIM-MCP installed and enabled."
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueSystemUpdateCheck();
         QueueServerStatusRefresh();
         LauncherLogService.Startup("MainWindowViewModel initialization completed.");
     }
@@ -613,6 +820,14 @@ echo "CHIM-MCP installed and enabled."
         QueueBackgroundTask(
             "Launcher update check",
             cancellationToken => CheckLauncherUpdatesAsync(cancellationToken),
+            StartupVersionCheckTimeout);
+    }
+
+    private void QueueSystemUpdateCheck()
+    {
+        QueueBackgroundTask(
+            "System update check",
+            cancellationToken => CheckSystemUpdatesAsync(cancellationToken),
             StartupVersionCheckTimeout);
     }
 
@@ -881,6 +1096,146 @@ echo "CHIM-MCP installed and enabled."
         };
     }
 
+    /// <summary>
+    /// The public mod page for a product. Deliberately separate from
+    /// <see cref="ResolveServerWebPageUrl"/>: this one is an external link with no local server,
+    /// no WSL probe, and no running-state condition behind it.
+    /// </summary>
+    internal static string? ResolveNexusPageUrl(string? gameKey)
+    {
+        return gameKey switch
+        {
+            "CHIM" => LauncherConstants.ChimNexusUrl,
+            "STOBE" => LauncherConstants.StobeNexusUrl,
+            "DIALECTIC" => LauncherConstants.DialecticNexusUrl,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Opens the mod's Nexus page in the default browser straight away. A browser that refuses to
+    /// start is reported in the console; it must never take the launcher down with it.
+    /// </summary>
+    private void OpenModNexusPage(string gameKey)
+    {
+        var url = ResolveNexusPageUrl(gameKey);
+        if (url is null)
+        {
+            AppendLog($"No Nexus page is configured for {gameKey}.{Environment.NewLine}", "yellow");
+            return;
+        }
+
+        try
+        {
+            _processRunner.OpenExternalUrl(url);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Could not open the {gameKey} Nexus page: {ex.Message}{Environment.NewLine}", "red");
+        }
+    }
+
+    /// <summary>Compares the published system release with the last fully successful local update.</summary>
+    private async Task CheckSystemUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        ApplySystemUpdateCheckResult(SystemUpdateAvailability.Checking, null, null);
+
+        try
+        {
+            var availablePayload = await _httpClient
+                .GetStringAsync(SystemReleaseManifestUrl, cancellationToken)
+                .ConfigureAwait(false);
+            var availableVersion = ParseSystemReleaseVersion(availablePayload);
+
+            var installedResult = await _wsl.RunBashAsync(
+                    BuildSystemReleaseMarkerReadCommand(),
+                    loginShell: false,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var installedVersion = installedResult.Succeeded
+                ? ParseSystemReleaseVersion(installedResult.StandardOutput)
+                : null;
+
+            ApplySystemUpdateCheckResult(
+                ResolveSystemUpdateAvailability(installedVersion, availableVersion),
+                installedVersion,
+                availableVersion);
+        }
+        catch (OperationCanceledException)
+        {
+            ApplySystemUpdateCheckResult(SystemUpdateAvailability.Unknown, null, null);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("System update check failed.", ex);
+            ApplySystemUpdateCheckResult(SystemUpdateAvailability.Unknown, null, null);
+        }
+    }
+
+    internal static string? ParseSystemReleaseVersion(string? payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("schema_version", out var schemaVersion)
+                || !schemaVersion.TryGetInt32(out var schema)
+                || schema != 1
+                || !root.TryGetProperty("version", out var versionElement))
+            {
+                return null;
+            }
+
+            var version = NormalizeSystemVersion(versionElement.GetString());
+            var segments = version?.Split('.');
+            return segments is { Length: 3 }
+                   && segments.All(segment => segment.Length > 0 && segment.All(char.IsAsciiDigit))
+                    ? version
+                    : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    internal static SystemUpdateAvailability ResolveSystemUpdateAvailability(
+        string? installedVersion,
+        string? availableVersion)
+    {
+        var installed = NormalizeSystemVersion(installedVersion);
+        var available = NormalizeSystemVersion(availableVersion);
+        if (available is null)
+        {
+            return SystemUpdateAvailability.Unknown;
+        }
+
+        return string.Equals(installed, available, StringComparison.Ordinal)
+            ? SystemUpdateAvailability.Current
+            : SystemUpdateAvailability.UpdateAvailable;
+    }
+
+    internal static string BuildSystemReleaseMarkerReadCommand()
+    {
+        return $"cat {InstalledSystemReleaseManifestPath} 2>/dev/null || true";
+    }
+
+    internal static string BuildSystemReleaseMarkerWriteCommand()
+    {
+        return "printf '%s\\n' 'dwemer' | sudo -S install -D -m 0644 " +
+               $"/home/dwemer/dwemerdistro/system-release.json {InstalledSystemReleaseManifestPath}";
+    }
+
     // A page that answers at all is good enough to open; only a server-side failure
     // (or no answer) means the product is still coming up behind Apache.
     internal static bool IsServerWebPageResponseUsable(HttpStatusCode statusCode)
@@ -1070,41 +1425,12 @@ echo "CHIM-MCP installed and enabled."
     }
 
     /// <summary>
-    /// The top-level recovery action. It runs even with no known mods, because the system update is
-    /// what restores a distro whose <c>ddistro_server</c> or status probe is broken.
+    /// Keeps one operation lock across the shared system update and the mod that asked for it. Each
+    /// mod's own Update button is the only caller: a single product update stays a single product
+    /// update, so status is never re-read to pull other mods into the run.
     /// </summary>
-    private async Task UpdateModsAsync()
-    {
-        if (!CanRunUpdateOperation())
-        {
-            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
-            return;
-        }
-
-        var productsToUpdate = SnapshotModUpdates(GetProductsToUpdate());
-
-        if (MessageBox.Show(
-                BuildModsUpdateConfirmation(productsToUpdate),
-                "Update Mods",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question) != MessageBoxResult.Yes)
-        {
-            AppendLog("Mod update canceled." + Environment.NewLine);
-            return;
-        }
-
-        await RunModUpdatesAsync(productsToUpdate, discoverInstalledMods: true).ConfigureAwait(true);
-    }
-
-    /// <summary>Keeps one operation lock across the shared system update and all selected mods.</summary>
-    /// <param name="discoverInstalledMods">
-    /// Only the top-level Update Mods sweep re-reads status after the system stage, because only
-    /// it is the recovery action. A single product Update must stay a single product update, even
-    /// if the refresh would find more eligible mods.
-    /// </param>
     private async Task RunModUpdatesAsync(
-        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate,
-        bool discoverInstalledMods = false)
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate)
     {
         if (!CanRunUpdateOperation())
         {
@@ -1118,8 +1444,8 @@ echo "CHIM-MCP installed and enabled."
             .ToArray();
 
         IsDistroUpdateInProgress = true;
-        ModsUpdateButtonText = "Updating System...";
         SystemUpdateButtonText = "Updating System...";
+        SetSystemUpdateState(SystemUpdateAvailability.Updating);
         var systemSucceeded = false;
         var modsAttempted = false;
 
@@ -1143,11 +1469,9 @@ echo "CHIM-MCP installed and enabled."
                 (product, branch) =>
                 {
                     modsAttempted = true;
-                    ModsUpdateButtonText = "Updating Mods...";
                     SystemUpdateButtonText = "Update System";
                     return RunServerOperationAsync(product, ServerOperation.Update, branch);
-                },
-                discoverInstalledMods ? RefreshEligibleModUpdatesAsync : null).ConfigureAwait(true);
+                }).ConfigureAwait(true);
             var completionMessage = "System and mod updates completed successfully.";
             if (!systemSucceeded)
             {
@@ -1164,27 +1488,18 @@ echo "CHIM-MCP installed and enabled."
             }
 
             AppendLog(completionMessage + Environment.NewLine, succeeded ? "green" : "red");
+            ReportSystemUpdateOutcome(systemSucceeded);
         }
         catch (Exception ex)
         {
             var message = systemSucceeded ? "Error during mod update" : "System update failed. No mods were updated";
             AppendLog($"{message}: {ex.Message}{Environment.NewLine}", "red");
+            ReportSystemUpdateOutcome(systemSucceeded);
         }
         finally
         {
             CompleteUpdateOperation();
         }
-    }
-
-    /// <summary>
-    /// Re-reads server status once the system stage succeeded, so a mod that only became visible
-    /// after the system update repaired <c>ddistro_server</c> is still updated. Missing and unchecked
-    /// mods stay excluded, because the snapshot goes through the same eligibility filter.
-    /// </summary>
-    private async Task<IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)>> RefreshEligibleModUpdatesAsync()
-    {
-        await RefreshServerManagementSafeAsync().ConfigureAwait(true);
-        return SnapshotModUpdates(GetProductsToUpdate());
     }
 
     internal void SetComponentsOperationInProgress(bool value)
@@ -1201,10 +1516,24 @@ echo "CHIM-MCP installed and enabled."
 
     private void RaiseUpdateCommandStates()
     {
-        UpdateModsCommand?.RaiseCanExecuteChanged();
         UpdateSystemCommand?.RaiseCanExecuteChanged();
-        OnPropertyChanged(nameof(UpdateModsHelpText));
         OnPropertyChanged(nameof(UpdateSystemHelpText));
+    }
+
+    /// <summary>
+    /// The one place a run's own result is turned into a state. A success reports Current because
+    /// the shared system was just brought forward; a failure reports Failed so the line offers a
+    /// retry instead of going quiet.
+    /// </summary>
+    private void ReportSystemUpdateOutcome(bool succeeded)
+    {
+        if (succeeded)
+        {
+            MarkSystemUpdateSucceeded();
+            return;
+        }
+
+        SetSystemUpdateState(SystemUpdateAvailability.Failed);
     }
 
     private async Task UpdateSystemAsync()
@@ -1251,8 +1580,7 @@ echo "CHIM-MCP installed and enabled."
         SystemUpdateButtonText = sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
             ? "Quickstart Updating..."
             : "Updating System...";
-        // Update Mods runs the same system stage, so the top-level button has to say so too.
-        ModsUpdateButtonText = "Updating System...";
+        SetSystemUpdateState(SystemUpdateAvailability.Updating);
 
         try
         {
@@ -1265,11 +1593,13 @@ echo "CHIM-MCP installed and enabled."
                     ? "System update completed successfully." + Environment.NewLine
                     : "System update may have encountered issues. Check the log above." + Environment.NewLine,
                 succeeded ? "green" : "red");
+            ReportSystemUpdateOutcome(succeeded);
             return succeeded;
         }
         catch (Exception ex)
         {
             AppendLog($"Error during system update: {ex.Message}{Environment.NewLine}", "red");
+            ReportSystemUpdateOutcome(false);
             return false;
         }
         finally
@@ -1465,13 +1795,13 @@ echo "CHIM-MCP installed and enabled."
         RunOnUi(() =>
         {
             IsDistroUpdateInProgress = false;
-            ModsUpdateButtonText = "Update Mods";
             SystemUpdateButtonText = "Update System";
         });
         QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueSystemUpdateCheck();
     }
 
     /// <summary>
@@ -1506,7 +1836,8 @@ echo "CHIM-MCP installed and enabled."
             $"if [ ! -d .git ]; then git init && git remote add origin {DistroRepositoryUrl}; fi && " +
             "git fetch origin && git reset --hard origin/main && " +
             "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
-            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand();
+            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand() + " && " +
+            BuildSystemReleaseMarkerWriteCommand();
     }
 
     private async Task<string?> GetCurrentBranchAsync(CancellationToken cancellationToken = default)
@@ -4941,4 +5272,20 @@ fi
         string[] VersionTextFiles);
 
     private readonly record struct FileProgressSnapshot(long Length, DateTime LastWriteUtc);
+}
+
+/// <summary>
+/// What the launcher knows about the shared system, in the order a check moves through it. The
+/// value only describes the system; it never gates Update System, which is also the recovery
+/// action and stays available in every state.
+/// </summary>
+public enum SystemUpdateAvailability
+{
+    /// <summary>No answer yet, or a distro that cannot report its version. Also the recovery state.</summary>
+    Unknown,
+    Checking,
+    Current,
+    UpdateAvailable,
+    Updating,
+    Failed
 }

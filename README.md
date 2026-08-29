@@ -20,9 +20,11 @@ Fresh DwemerDistro packages contain no game servers. The Quickstart **Choose You
 
 Uninstall is destructive. It requires the product-specific `PURGE-*` confirmation and removes that server's files and PostgreSQL database. It does not remove shared voice/components or another game server.
 
-**Update Mods** always updates DwemerDistro and shared components once, even when mod status is unavailable or no mods are installed, then updates installed mods whose Updates checkbox is enabled. Each mod's own **Update** button also updates the system first, then that checked mod on its selected branch. Neither action installs missing mods or updates unchecked mods. If the system update fails, no mod updates run. A failed mod update does not stop the remaining selected mods.
+Each mod's own **Update** button updates DwemerDistro and shared components first, then that mod on its selected branch, and only if its Updates checkbox is enabled. It never installs a missing mod, never updates an unchecked one, and never touches another mod. If the system update fails, no mod update runs.
 
-**Update System** on the Components page and **Update Distro** in Quickstart update only DwemerDistro and shared services. The launcher executable is downloaded and applied separately; the next launch automatically synchronizes DwemerDistro and shared services once for that launcher version without changing installed mods.
+Each installed mod also exposes a **Webpage** button for its local server UI and a **Nexus Page** button below it. The Nexus button opens the mod's public page in your browser immediately: it does not start or contact the local server.
+
+**Update System** in the top bar is the only top-level update action, and it is also the recovery action - it stays available whether the system reports itself as current, out of date, or not at all. It updates only DwemerDistro and shared services; installed mods are never changed. The Components page carries a compact system status line (checking, up to date, update available, unknown, updating, failed) rather than a second copy of the button, and the top button raises a badge when an update is available. **Update Distro** in Quickstart runs the same system-only update. The launcher executable is downloaded and applied separately; the next launch automatically synchronizes DwemerDistro and shared services once for that launcher version without changing installed mods.
 
 ## Workspace
 

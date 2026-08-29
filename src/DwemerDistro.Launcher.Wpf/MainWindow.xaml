@@ -184,13 +184,33 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Command="{Binding UpdateModsCommand}"
-                            Style="{StaticResource GameCenter.AccentButton}" MinWidth="112" Margin="0,0,6,0"
-                            AutomationProperties.Name="{Binding ModsUpdateButtonText}"
-                            AutomationProperties.HelpText="{Binding UpdateModsHelpText}">
+                    <!-- The one Update System action in the normal launcher. The badge lives in its own
+                         fixed-width column, so a state change never moves the label; the label column
+                         keeps reserving the widest running text for the same reason. The button stays
+                         enabled whenever no other operation is running, because it is also the recovery
+                         action for a distro that cannot report itself. -->
+                    <Button Command="{Binding UpdateSystemCommand}"
+                            Style="{StaticResource GameCenter.AccentButton}" MinWidth="140" Margin="0,0,6,0"
+                            AutomationProperties.Name="{Binding SystemUpdateAccessibleName}"
+                            AutomationProperties.HelpText="{Binding UpdateSystemHelpText}"
+                            ToolTip="{Binding SystemStatusHelpText}">
                         <Grid>
-                            <TextBlock Text="Updating System..." Visibility="Hidden" />
-                            <TextBlock Text="{Binding ModsUpdateButtonText}" HorizontalAlignment="Center" />
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="16" />
+                            </Grid.ColumnDefinitions>
+                            <Grid>
+                                <!-- Hidden content reserves the widest running state without changing accessibility text. -->
+                                <TextBlock Text="Updating System..." Visibility="Hidden" />
+                                <TextBlock Text="{Binding SystemUpdateButtonText}" HorizontalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Grid.Column="1" Text="{Binding SystemUpdateBadgeGlyph}"
+                                       Foreground="{Binding SystemUpdateBadgeColor}"
+                                       FontFamily="Segoe MDL2 Assets" FontSize="12" FontWeight="Normal"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center"
+                                       Visibility="{Binding IsSystemUpdateBadgeVisible, Converter={StaticResource BoolToVisibility}}"
+                                       AutomationProperties.Name="{Binding SystemStatusText}"
+                                       AutomationProperties.LiveSetting="Polite" />
                         </Grid>
                     </Button>
                     <Button Command="{Binding StartServerCommand}"
@@ -390,6 +410,13 @@
                                             <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,0,0,8" Height="38"
                                                     AutomationProperties.Name="CHIM Webpage"
                                                     AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <!-- External mod page. It opens the browser immediately and never
+                                                 probes or starts WSL, so it stays usable while the installed server
+                                                 is stopped. Neutral styling keeps it distinct from the
+                                                 brand-coloured local actions above it. -->
+                                            <Button Content="CHIM Nexus Page" Command="{Binding OpenChimNexusCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,0,8" Height="38"
+                                                    AutomationProperties.Name="CHIM Nexus Page"
+                                                    AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
                                             <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.Brand.ChimButton}" Height="38"
                                                     AutomationProperties.Name="Rollback HerikaServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
@@ -483,6 +510,13 @@
                                             <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,0,0,8" Height="38"
                                                     AutomationProperties.Name="STOBE Webpage"
                                                     AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <!-- External mod page. It opens the browser immediately and never
+                                                 probes or starts WSL, so it stays usable while the installed server
+                                                 is stopped. Neutral styling keeps it distinct from the
+                                                 brand-coloured local actions above it. -->
+                                            <Button Content="STOBE Nexus Page" Command="{Binding OpenStobeNexusCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,0,8" Height="38"
+                                                    AutomationProperties.Name="STOBE Nexus Page"
+                                                    AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
                                             <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.Brand.StobeButton}" Height="38"
                                                     AutomationProperties.Name="Rollback StobeServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
@@ -576,6 +610,13 @@
                                             <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,0,0,8" Height="38"
                                                     AutomationProperties.Name="DIALECTIC Webpage"
                                                     AutomationProperties.HelpText="Open the Dialectic server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <!-- External mod page. It opens the browser immediately and never
+                                                 probes or starts WSL, so it stays usable while the installed server
+                                                 is stopped. Neutral styling keeps it distinct from the
+                                                 brand-coloured local actions above it. -->
+                                            <Button Content="DIALECTIC Nexus Page" Command="{Binding OpenDialecticNexusCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,0,8" Height="38"
+                                                    AutomationProperties.Name="DIALECTIC Nexus Page"
+                                                    AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
                                             <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.Brand.DialecticButton}" Height="38"
                                                     AutomationProperties.Name="Rollback DialecticServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
@@ -627,12 +668,21 @@
                             <TextBlock Text="COMPONENTS" Style="{StaticResource GameCenter.Heading}" />
                             <TextBlock Text="Install and configure shared services for this PC. System updates never change installed mods."
                                        Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" />
+                            <!-- One compact system line. It never wraps and its row height is fixed, so no
+                                 state can push the components card down; the full sentence stays in the
+                                 tooltip and in the accessible help text. Update System itself is the top
+                                 bar action - this page no longer carries a second copy of it. -->
+                            <TextBlock Text="{Binding SystemStatusText}" Foreground="{Binding SystemStatusColor}"
+                                       Style="{StaticResource GameCenter.Caption}"
+                                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                       Height="18" Margin="0,6,0,0"
+                                       ToolTip="{Binding SystemStatusHelpText}"
+                                       AutomationProperties.Name="System update status"
+                                       AutomationProperties.HelpText="{Binding SystemStatusHelpText}"
+                                       AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                            <Button Content="{Binding SystemUpdateButtonText}" Command="{Binding UpdateSystemCommand}"
-                                    Style="{StaticResource GameCenter.AccentButton}" MinWidth="126" Margin="0,0,8,0"
-                                    AutomationProperties.Name="{Binding SystemUpdateButtonText}"
-                                    AutomationProperties.HelpText="{Binding UpdateSystemHelpText}" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                                    VerticalAlignment="Top">
                             <Button Content="Configure CUDA" Command="{Binding OpenCudaConfigCommand}"
                                     Style="{StaticResource GameCenter.Button}"
                                     IsEnabled="{Binding IsComponentInteractionEnabled}"
