@@ -403,25 +403,28 @@
                                             <!-- Updates the shared system, then this checked mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding HerikaManager.UpdateActionName}" Command="{Binding HerikaManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,8" Height="38"
+                                                    Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,12" Height="40"
                                                     AutomationProperties.Name="{Binding HerikaManager.UpdateActionName}"
                                                     ToolTip="{Binding HerikaManager.UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding HerikaManager.UpdateActionHelpText}" />
-                                            <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.ModAction.ChimSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="CHIM Webpage"
                                                     AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
                                             <!-- External mod page. It opens the browser immediately and never
                                                  probes or starts WSL, so it stays usable while the installed server
                                                  is stopped. Neutral styling keeps it distinct from the
                                                  brand-coloured local actions above it. -->
-                                            <Button Content="CHIM Nexus Page" Command="{Binding OpenChimNexusCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="CHIM Nexus Page" Command="{Binding OpenChimNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="CHIM Nexus Page"
                                                     AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
-                                            <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.Brand.ChimButton}" Height="38"
+                                            <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.ModAction.ChimSecondaryButton}"
                                                     AutomationProperties.Name="Rollback HerikaServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
+                                            <!-- Decorative rule only. It ends the reversible actions so the purge below reads as a
+                                                 separate decision; it is not focusable and adds nothing to the tab order. -->
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
-                                                    Style="{StaticResource GameCenter.ServerUninstallButton}" Margin="0,16,0,0" Height="38"
+                                                    Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall CHIM"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
@@ -503,25 +506,28 @@
                                             <!-- Updates the shared system, then this checked mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding StobeManager.UpdateActionName}" Command="{Binding StobeManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,8" Height="38"
+                                                    Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,12" Height="40"
                                                     AutomationProperties.Name="{Binding StobeManager.UpdateActionName}"
                                                     ToolTip="{Binding StobeManager.UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding StobeManager.UpdateActionHelpText}" />
-                                            <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.ModAction.StobeSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="STOBE Webpage"
                                                     AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
                                             <!-- External mod page. It opens the browser immediately and never
                                                  probes or starts WSL, so it stays usable while the installed server
                                                  is stopped. Neutral styling keeps it distinct from the
                                                  brand-coloured local actions above it. -->
-                                            <Button Content="STOBE Nexus Page" Command="{Binding OpenStobeNexusCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="STOBE Nexus Page" Command="{Binding OpenStobeNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="STOBE Nexus Page"
                                                     AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
-                                            <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.Brand.StobeButton}" Height="38"
+                                            <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.ModAction.StobeSecondaryButton}"
                                                     AutomationProperties.Name="Rollback StobeServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
+                                            <!-- Decorative rule only. It ends the reversible actions so the purge below reads as a
+                                                 separate decision; it is not focusable and adds nothing to the tab order. -->
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
-                                                    Style="{StaticResource GameCenter.ServerUninstallButton}" Margin="0,16,0,0" Height="38"
+                                                    Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall STOBE"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
@@ -603,25 +609,28 @@
                                             <!-- Updates the shared system, then this checked mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding DialecticManager.UpdateActionName}" Command="{Binding DialecticManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,8" Height="38"
+                                                    Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,12" Height="40"
                                                     AutomationProperties.Name="{Binding DialecticManager.UpdateActionName}"
                                                     ToolTip="{Binding DialecticManager.UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding DialecticManager.UpdateActionHelpText}" />
-                                            <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.ModAction.DialecticSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="DIALECTIC Webpage"
                                                     AutomationProperties.HelpText="Open the Dialectic server webpage. If it is unavailable, the launcher can start the server first." />
                                             <!-- External mod page. It opens the browser immediately and never
                                                  probes or starts WSL, so it stays usable while the installed server
                                                  is stopped. Neutral styling keeps it distinct from the
                                                  brand-coloured local actions above it. -->
-                                            <Button Content="DIALECTIC Nexus Page" Command="{Binding OpenDialecticNexusCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="DIALECTIC Nexus Page" Command="{Binding OpenDialecticNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="DIALECTIC Nexus Page"
                                                     AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
-                                            <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.Brand.DialecticButton}" Height="38"
+                                            <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.ModAction.DialecticSecondaryButton}"
                                                     AutomationProperties.Name="Rollback DialecticServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
+                                            <!-- Decorative rule only. It ends the reversible actions so the purge below reads as a
+                                                 separate decision; it is not focusable and adds nothing to the tab order. -->
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
-                                                    Style="{StaticResource GameCenter.ServerUninstallButton}" Margin="0,16,0,0" Height="38"
+                                                    Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall Dialectic"
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>

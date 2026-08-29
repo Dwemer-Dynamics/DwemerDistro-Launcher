@@ -354,6 +354,113 @@
         </Style.Triggers>
     </Style>
 
+    <!-- Compact secondary tier for the supporting actions inside an installed mod's action
+         panel. The brand-filled Update above them stays the one strong call to action; these sit
+         a step down at 34px with a transparent fill and a 1px outline, so the panel reads as one
+         primary followed by supporting actions instead of a stack of equal-weight buttons.
+         Geometry only - hover, pressed, focus, and disabled feedback all come from the base
+         GameCenter.Button template, and the label stays full-strength white while enabled so the
+         de-emphasis never costs contrast. Disabled falls back to the same neutral PanelRaised /
+         BorderStrong / TextMuted treatment every other tier uses. -->
+    <Style x:Key="GameCenter.ModAction.SecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="Height" Value="34" />
+        <Setter Property="MinHeight" Value="34" />
+        <Setter Property="Padding" Value="10,0" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Brand-outlined variants of the compact secondary tier. They keep the mod's colour on the
+         outline so a supporting action still belongs to its mod, but never take a brand fill at
+         rest - the fill is reserved for that panel's Update action. Hover and pressed move the
+         same two channels as the filled brand buttons (fill to the brand tint, outline to the
+         brand tone), and disabled drops the brand for the shared neutral treatment. -->
+    <Style x:Key="GameCenter.ModAction.ChimSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.ChimTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.ChimBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.ChimTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.StobeSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.StobeTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.StobeBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.StobeTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.DialecticSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.DialecticBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Hairline rule that closes the reversible actions and opens the destructive one, so the
+         purge below it is a deliberate reach rather than the next button in the stack. Purely
+         decorative: it takes no hit testing and no focus and carries no automation name, so the
+         tab order and the screen-reader walk of the panel are unchanged. -->
+    <Style x:Key="GameCenter.ModAction.Separator" TargetType="Border">
+        <Setter Property="Height" Value="1" />
+        <Setter Property="Background" Value="{DynamicResource GameCenter.BorderStrong}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+        <Setter Property="Margin" Value="0,14,0,14" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+    </Style>
+
     <Style x:Key="GameCenter.SuccessButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
         <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
