@@ -373,8 +373,8 @@ echo "CHIM-MCP installed and enabled."
     public string SystemUpdateBadgeColor => BuildSystemStatusColor(SystemUpdateState);
 
     /// <summary>
-    /// The badge sits in a fixed-width column inside the button, so showing or hiding it never
-    /// moves the label.
+    /// The badge overlays the button's right edge, so showing or hiding it never moves the
+    /// full-width centred label.
     /// </summary>
     public bool IsSystemUpdateBadgeVisible => BuildSystemUpdateBadgeGlyph(SystemUpdateState).Length > 0;
 

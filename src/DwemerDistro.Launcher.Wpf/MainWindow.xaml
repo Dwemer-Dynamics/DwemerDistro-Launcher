@@ -180,10 +180,11 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- The one Update Distro action in the normal launcher. The badge lives in its own
-                         fixed-width column, so a state change never moves the label; the label column
-                         keeps reserving the widest label of every state for the same reason, so the
-                         longer available-update text never resizes the button or shifts Start/Stop.
+                    <!-- The one Update Distro action in the normal launcher. The badge is an overlay
+                         pinned to the right edge instead of a column, so it never pulls the label off the
+                         button's centre and a state change never moves the label; the hidden labels keep
+                         reserving the widest text of every state for the same reason, so the longer
+                         available-update text never resizes the button or shifts Start/Stop.
                          The button stays enabled whenever no other operation is running, because it is
                          also the recovery action for a distro that cannot report itself. -->
                     <Button Command="{Binding UpdateSystemCommand}"
@@ -192,18 +193,14 @@
                             AutomationProperties.HelpText="{Binding UpdateSystemHelpText}"
                             ToolTip="{Binding SystemStatusHelpText}">
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="16" />
-                            </Grid.ColumnDefinitions>
-                            <Grid>
-                                <!-- Hidden content reserves the widest label - the available-update text and the
-                                     longest running text - without changing accessibility text. -->
-                                <TextBlock Text="Distro Update Available" Visibility="Hidden" />
-                                <TextBlock Text="Quickstart Updating..." Visibility="Hidden" />
-                                <TextBlock Text="{Binding SystemUpdateButtonText}" HorizontalAlignment="Center" />
-                            </Grid>
-                            <TextBlock Grid.Column="1" Text="{Binding SystemUpdateBadgeGlyph}"
+                            <!-- Hidden content reserves the widest label - the available-update text and the
+                                 longest running text - without changing accessibility text. The 16px side
+                                 margins reserve the badge gutter on both sides, so the reservation stays
+                                 symmetric about the centre and the right-edge badge never lands on a glyph. -->
+                            <TextBlock Text="Distro Update Available" Visibility="Hidden" Margin="16,0" />
+                            <TextBlock Text="Quickstart Updating..." Visibility="Hidden" Margin="16,0" />
+                            <TextBlock Text="{Binding SystemUpdateButtonText}" HorizontalAlignment="Center" />
+                            <TextBlock Text="{Binding SystemUpdateBadgeGlyph}"
                                        Foreground="{Binding SystemUpdateBadgeColor}"
                                        FontFamily="Segoe MDL2 Assets" FontSize="12" FontWeight="Normal"
                                        HorizontalAlignment="Right" VerticalAlignment="Center"
