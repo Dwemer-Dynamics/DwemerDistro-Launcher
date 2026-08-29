@@ -89,7 +89,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     /// <summary>
     /// Label for the single-product update action ("Update CHIM"). It names the rail product the
     /// mod page is showing rather than the server binary, so it never reads as a second copy of the
-    /// top-level Update Mods sweep.
+    /// system-first mod update.
     /// </summary>
     public string UpdateActionName { get; }
 
@@ -144,7 +144,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     /// <summary>
     /// The single-product update needs a confirmed install - the manager never installs a missing or
     /// broken product - must respect this product's Updates checkbox, and must stay out of reach
-    /// while the Update Mods sweep or another product's operation is already driving the manager.
+    /// while a system update or another product's operation is already driving the manager.
     /// </summary>
     public bool CanUpdate =>
         _state == ServerInstallState.Installed

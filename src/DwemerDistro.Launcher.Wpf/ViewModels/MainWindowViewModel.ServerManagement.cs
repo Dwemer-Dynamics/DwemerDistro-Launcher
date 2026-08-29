@@ -30,7 +30,7 @@ public sealed partial class MainWindowViewModel
 
     public ServerManagerItemViewModel DialecticManager { get; private set; } = null!;
 
-    /// <summary>The three products in rail order. Backs status refresh and the Update Mods sweep.</summary>
+    /// <summary>The three products in rail order. Backs status refresh and every mod update.</summary>
     public IReadOnlyList<ServerManagerItemViewModel> ServerManagers { get; private set; } = [];
 
     public string ServerManagementStatusText
@@ -496,7 +496,7 @@ public sealed partial class MainWindowViewModel
         }
     }
 
-    // --- Update Mods -----------------------------------------------------------------------
+    // --- Mod updates -----------------------------------------------------------------------
 
     /// <summary>
     /// A product is updated only when it is really installed and the user left its update checkbox
@@ -517,20 +517,6 @@ public sealed partial class MainWindowViewModel
         return "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic";
     }
 
-    private IReadOnlyList<ServerManagerItemViewModel> GetProductsToUpdate()
-    {
-        var include = new Dictionary<ServerProduct, bool>
-        {
-            [ServerProduct.Herika] = IncludeHerikaServerUpdate,
-            [ServerProduct.Stobe] = IncludeStobeServerUpdate,
-            [ServerProduct.Dialectic] = IncludeDialecticServerUpdate
-        };
-
-        return ServerManagers
-            .Where(manager => ShouldUpdateProduct(manager.State, include[manager.Product]))
-            .ToArray();
-    }
-
     /// <summary>
     /// Captures the exact branches displayed by the confirmation, before its modal dispatcher runs.
     /// </summary>
@@ -545,10 +531,10 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>
     /// Rechecks eligibility without changing the confirmed branches. The shared system update always
-    /// runs first - Update Mods doubles as the recovery action, so a distro whose mods are missing or
-    /// whose status is unreadable still gets its core and shared components repaired - and its failure
-    /// stops the batch, while an individual mod failure still allows the remaining mods. An empty
-    /// eligible selection is a successful system-only update, never an error.
+    /// runs first - so a distro whose mods are missing or whose status is unreadable still gets its
+    /// core and shared components repaired - and its failure stops the batch, while an individual mod
+    /// failure still allows the remaining mods. An empty eligible selection is a successful
+    /// system-only update, never an error.
     /// </summary>
     /// <param name="refreshUpdates">
     /// Optional re-read of server status after the system stage. Recovery is the reason it exists: a

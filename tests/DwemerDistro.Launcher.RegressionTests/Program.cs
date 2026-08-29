@@ -88,7 +88,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.3", "Launcher constants must report version 3.3.3.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.4", "Launcher constants must report version 3.3.4.");
 
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
@@ -128,6 +128,17 @@ try
         "Each mod webpage button must open that product's local web UI, not its Nexus page.");
     Assert(gameCatalog.All(game => MainWindowViewModel.ResolveServerWebPageUrl(game.Key) is not null),
         "Every game profile on the rail must resolve to a webpage URL.");
+    Assert(MainWindowViewModel.ResolveNexusPageUrl("CHIM") == "https://www.nexusmods.com/skyrimspecialedition/mods/126330"
+           && MainWindowViewModel.ResolveNexusPageUrl("STOBE") == "https://www.nexusmods.com/kenshi/mods/1891"
+           && MainWindowViewModel.ResolveNexusPageUrl("DIALECTIC") == "https://www.nexusmods.com/newvegas/mods/99233",
+        "Each Nexus button must open that mod's own Nexus page.");
+    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null),
+        "Every game profile on the rail must resolve to a Nexus page.");
+    Assert(MainWindowViewModel.ResolveNexusPageUrl("UNKNOWN") is null,
+        "An unknown product must resolve to no Nexus page rather than another mod's page.");
+    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
+            .StartsWith("https://www.nexusmods.com/", StringComparison.Ordinal)),
+        "A Nexus button must open an external page, never a local server URL.");
     Assert(MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.OK)
            && MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.Unauthorized),
         "A webpage that answers must count as reachable even when it demands a login.");
@@ -421,7 +432,7 @@ try
     Assert(herikaItem.CanUpdate, "The test precondition requires an installed, idle product.");
     herikaItem.IsConflictingOperationRunning = true;
     Assert(!herikaItem.CanUpdate && !herikaItem.UpdateCommand.CanExecute(null),
-        "A running Update Mods sweep or sibling server operation must disable the single-product update.");
+        "A running system update or sibling server operation must disable the single-product update.");
     Assert(herikaItem.UpdateActionHelpText.Contains("unavailable", StringComparison.OrdinalIgnoreCase),
         "The disabled update action must say why it is unavailable, not just dim.");
     Assert(!herikaItem.CanUninstall && !herikaItem.UninstallCommand.CanExecute(null)
@@ -540,7 +551,7 @@ try
             $"{status.Product}: passive status refresh must preserve the user's staged branch choice.");
     }
 
-    // --- Update Mods gating -----------------------------------------------------------------
+    // --- Mod update gating ------------------------------------------------------------------
 
     Assert(MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Installed, includeInUpdates: true),
         "An installed product with updates enabled must be updated.");
@@ -563,18 +574,45 @@ try
     Assert(systemUpdateCommand.Contains("if [ ! -d .git ]; then git init", StringComparison.Ordinal)
            && systemUpdateCommand.Contains("git remote add origin https://github.com/abeiro/dwemerdistro.git", StringComparison.Ordinal),
         "Update System must bootstrap Git metadata for a freshly installed empty distro.");
+    var systemReleaseMarkerWrite = MainWindowViewModel.BuildSystemReleaseMarkerWriteCommand();
     Assert(systemUpdateCommand.Contains("git fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
-           && systemUpdateCommand.EndsWith(sharedUpdateCommand, StringComparison.Ordinal),
-        "Update System must update the distro checkout before running the server-free shared component update.");
+           && systemUpdateCommand.Contains(sharedUpdateCommand + " && ", StringComparison.Ordinal)
+           && systemUpdateCommand.EndsWith(systemReleaseMarkerWrite, StringComparison.Ordinal),
+        "Update System must update the distro and shared components before recording the successful system release.");
+    Assert(systemReleaseMarkerWrite.Contains("sudo -S install -D -m 0644", StringComparison.Ordinal)
+           && systemReleaseMarkerWrite.Contains("/home/dwemer/dwemerdistro/system-release.json", StringComparison.Ordinal)
+           && systemReleaseMarkerWrite.Contains("/var/lib/dwemerdistro/system-release.json", StringComparison.Ordinal),
+        "The installed system marker must be copied from the fetched release manifest with root-owned system permissions.");
+    Assert(MainWindowViewModel.BuildSystemReleaseMarkerReadCommand()
+            == "cat /var/lib/dwemerdistro/system-release.json 2>/dev/null || true",
+        "A missing installed system marker must remain a normal update-available state, not a shell failure.");
+
+    const string systemRelease100 = "{\"schema_version\":1,\"version\":\"1.0.0\"}";
+    Assert(MainWindowViewModel.ParseSystemReleaseVersion(systemRelease100) == "1.0.0",
+        "A valid system release manifest must expose its semantic version.");
+    Assert(MainWindowViewModel.ParseSystemReleaseVersion(null) is null
+           && MainWindowViewModel.ParseSystemReleaseVersion("not json") is null
+           && MainWindowViewModel.ParseSystemReleaseVersion("{\"schema_version\":2,\"version\":\"1.0.0\"}") is null
+           && MainWindowViewModel.ParseSystemReleaseVersion("{\"schema_version\":1,\"version\":\"1..0\"}") is null,
+        "Missing, malformed, unsupported, or invalid system manifests must fail closed to Unknown.");
+    Assert(MainWindowViewModel.ResolveSystemUpdateAvailability("1.0.0", "1.0.0")
+            == SystemUpdateAvailability.Current
+           && MainWindowViewModel.ResolveSystemUpdateAvailability(null, "1.0.0")
+            == SystemUpdateAvailability.UpdateAvailable
+           && MainWindowViewModel.ResolveSystemUpdateAvailability("1.0.0", "1.0.1")
+            == SystemUpdateAvailability.UpdateAvailable
+           && MainWindowViewModel.ResolveSystemUpdateAvailability("1.0.0", null)
+            == SystemUpdateAvailability.Unknown,
+        "System availability must compare the last successful marker with the published manifest and preserve recovery when remote status is unknown.");
 
     var modsUpdateConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation(
         MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]));
     Assert(modsUpdateConfirmation.Contains("selected installed mods", StringComparison.Ordinal)
            && modsUpdateConfirmation.Contains("DwemerDistro and shared components first", StringComparison.Ordinal),
-        "Update Mods must clearly include the system update before the selected mods.");
+        "A mod update must clearly include the system update before the selected mods.");
     Assert(modsUpdateConfirmation.Contains($"{herikaItem.DisplayName} target branch", StringComparison.Ordinal)
            && modsUpdateConfirmation.Contains($"{individualUpdateItem.DisplayName} target branch", StringComparison.Ordinal),
-        "Update Mods must list every selected installed mod and its target branch.");
+        "A mod update must list every selected installed mod and its target branch.");
 
     var systemUpdateConfirmation = MainWindowViewModel.BuildSystemUpdateConfirmation();
     Assert(systemUpdateConfirmation.Contains("DwemerDistro and its shared components", StringComparison.Ordinal)
@@ -661,18 +699,84 @@ try
     Assert(individualUpdateItem.CanRepair && individualUpdateItem.CanUninstall,
         "Lifecycle controls must be restored after the operation finishes.");
 
-    // --- Update Mods as the recovery action ---------------------------------------------------
+    // --- Update System as the single top-level update and the recovery action -----------------
 
-    Assert(MainWindowViewModel.BuildUpdateModsHelpText(true, true)
-            .Contains("then installed mods whose Updates checkbox is enabled", StringComparison.Ordinal),
-        "Update Mods must keep describing the system-first sweep of eligible mods.");
-    var systemOnlyHelpText = MainWindowViewModel.BuildUpdateModsHelpText(true, false);
-    Assert(systemOnlyHelpText.Contains("Update DwemerDistro and shared components", StringComparison.Ordinal)
-           && !systemOnlyHelpText.Contains("Install a mod", StringComparison.Ordinal),
-        "With no eligible mod, Update Mods must describe a system update instead of refusing.");
-    Assert(MainWindowViewModel.BuildUpdateModsHelpText(false, true)
-            .Contains("another server, component, or system operation", StringComparison.Ordinal),
-        "A competing operation must stay the only reason Update Mods is unavailable.");
+    var systemStates = Enum.GetValues<SystemUpdateAvailability>();
+    Assert(systemStates.Length == 6,
+        "The system status line must cover checking, current, update available, unknown, updating, and failed.");
+
+    foreach (var state in systemStates)
+    {
+        var statusText = MainWindowViewModel.BuildSystemStatusText(state, null, null);
+        Assert(statusText.StartsWith("System:", StringComparison.Ordinal) && statusText.Length > "System:".Length,
+            $"The {state} system state must say what it is in words, not only in colour.");
+        Assert(MainWindowViewModel.BuildSystemStatusColor(state).Length > 0,
+            $"The {state} system state must resolve to a status colour.");
+
+        var accessibleName = MainWindowViewModel.BuildSystemUpdateAccessibleName("Update System", state);
+        Assert(accessibleName.StartsWith("Update System,", StringComparison.Ordinal),
+            $"The {state} system state must keep the button label at the front of its accessible name.");
+
+        // Update System is also the recovery action, so no state may describe it as unavailable.
+        Assert(!MainWindowViewModel.BuildUpdateSystemHelpText(true, state, null, null)
+                .Contains("Unavailable", StringComparison.OrdinalIgnoreCase),
+            $"Update System must stay available in the {state} state whenever no other operation is running.");
+        Assert(MainWindowViewModel.BuildUpdateSystemHelpText(false, state, null, null)
+                .Contains("another server, component, or system operation", StringComparison.Ordinal),
+            "A competing operation must stay the only reason Update System is unavailable.");
+    }
+
+    Assert(systemStates.Select(state => MainWindowViewModel.BuildSystemStatusText(state, null, null))
+               .Distinct(StringComparer.Ordinal).Count() == systemStates.Length,
+        "Every system state must read differently, so the line is never ambiguous without colour.");
+    Assert(systemStates.Select(state => MainWindowViewModel.BuildSystemUpdateAccessibleName("Update System", state))
+               .Distinct(StringComparer.Ordinal).Count() == systemStates.Length,
+        "Every system state must be distinguishable from the button's accessible name alone.");
+
+    Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.UpdateAvailable, "1.2", "1.3")
+               .Contains("installed 1.2", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.UpdateAvailable, "1.2", "1.3")
+               .Contains("latest 1.3", StringComparison.Ordinal),
+        "A known version pair must name both the installed and the available system version.");
+    Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.UpdateAvailable, null, null)
+            == "System: update available.",
+        "An update reported without versions must still say an update is available.");
+    Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Current, "  1.3  ", null)
+            == "System: up to date (version 1.3).",
+        "A reported version must be trimmed before it reaches the status line.");
+    Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Current, "   ", null)
+            == "System: up to date.",
+        "A blank version must be treated as no version at all.");
+    Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Unknown, null, null)
+            .Contains("repairs a distro that cannot report it", StringComparison.Ordinal),
+        "The unknown state must point at Update System as the recovery action.");
+    Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Failed, null, null)
+            .Contains("Run Update System to retry", StringComparison.Ordinal),
+        "A failed update must offer the retry instead of going quiet.");
+
+    // The badge is a glyph, so the top button's signal survives a display that drops its colour.
+    Assert(MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.UpdateAvailable)
+            == MainWindowViewModel.SystemUpdateAvailableGlyph,
+        "An available system update must raise the badge on the top Update System button.");
+    Assert(MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Failed)
+            == MainWindowViewModel.SystemUpdateFailedGlyph
+           && MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Unknown)
+            == MainWindowViewModel.SystemUpdateUnknownGlyph,
+        "A failed or unknown system state must raise its own badge rather than reuse another one.");
+    Assert(new[] { MainWindowViewModel.SystemUpdateAvailableGlyph, MainWindowViewModel.SystemUpdateFailedGlyph,
+                   MainWindowViewModel.SystemUpdateUnknownGlyph }.Distinct(StringComparer.Ordinal).Count() == 3,
+        "Each signalled system state must use its own glyph.");
+    Assert(MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Checking).Length == 0
+           && MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Current).Length == 0
+           && MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Updating).Length == 0,
+        "A state the button label already reports must not add a badge on top of it.");
+
+    Assert(MainWindowViewModel.BuildSystemUpdateAccessibleName("Updating System...", SystemUpdateAvailability.Updating)
+            .StartsWith("Updating System...,", StringComparison.Ordinal),
+        "The accessible name must follow the running button label instead of a fixed one.");
+    Assert(MainWindowViewModel.BuildSystemUpdateAccessibleName("   ", SystemUpdateAvailability.Current)
+            .StartsWith("Update System,", StringComparison.Ordinal),
+        "A missing button label must still leave a usable accessible name.");
 
     var systemOnlyConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([]);
     Assert(systemOnlyConfirmation.Contains("No installed, update-enabled mods can currently be detected", StringComparison.Ordinal)
@@ -687,7 +791,7 @@ try
             () => { systemOnlyRuns++; return Task.FromResult(true); },
             (_, _) => throw new InvalidOperationException("A system-only update must not touch any mod."))
            && systemOnlyRuns == 1,
-        "Update Mods with no eligible mod must run the system update once and succeed.");
+        "A mod update with no eligible mod must run the system update once and succeed.");
     Assert(!await MainWindowViewModel.UpdateInstalledServersAsync(
             [],
             () => Task.FromResult(false),
@@ -722,7 +826,7 @@ try
     Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
             recoveredUpdates,
             () => { recoveredOrder.Add("system"); return Task.FromResult(true); },
-            (_, _) => throw new InvalidOperationException("A missing mod must never be installed by Update Mods."),
+            (_, _) => throw new InvalidOperationException("A missing mod must never be installed by a mod update."),
             () => Task.FromResult(MainWindowViewModel.SnapshotModUpdates([recoveredItem])))
            && recoveredOrder.SequenceEqual(["system"]),
         "The post-update refresh must never install a mod that is still missing.");
@@ -733,7 +837,7 @@ try
     Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
             recoveredUpdates,
             () => { recoveredOrder.Add("system"); return Task.FromResult(true); },
-            (_, _) => throw new InvalidOperationException("An unchecked mod must never be updated by Update Mods."),
+            (_, _) => throw new InvalidOperationException("An unchecked mod must never be updated by a mod update."),
             () => Task.FromResult(MainWindowViewModel.SnapshotModUpdates([recoveredItem])))
            && recoveredOrder.SequenceEqual(["system"]),
         "The post-update refresh must never update a mod whose Updates checkbox is off.");
@@ -765,13 +869,13 @@ try
 
     Assert(MainWindowViewModel.ShouldSyncLauncherVersion(null, LauncherConstants.LauncherVersion)
            && MainWindowViewModel.ShouldSyncLauncherVersion(string.Empty, LauncherConstants.LauncherVersion)
-           && MainWindowViewModel.ShouldSyncLauncherVersion("3.3.2", "3.3.3"),
+           && MainWindowViewModel.ShouldSyncLauncherVersion("3.3.3", "3.3.4"),
         "A missing, empty, or stale marker must run the automatic system sync.");
-    Assert(!MainWindowViewModel.ShouldSyncLauncherVersion("3.3.3\n", "3.3.3")
-           && !MainWindowViewModel.ShouldSyncLauncherVersion("3.3.3", "3.3.3"),
+    Assert(!MainWindowViewModel.ShouldSyncLauncherVersion("3.3.4\n", "3.3.4")
+           && !MainWindowViewModel.ShouldSyncLauncherVersion("3.3.4", "3.3.4"),
         "A recorded launcher version must stop the automatic sync from running every launch.");
 
-    Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(" 3.3.3 ") == "3.3.3"
+    Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(" 3.3.4 ") == "3.3.4"
            && MainWindowViewModel.SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion) == LauncherConstants.LauncherVersion,
         "A plain dotted version must survive sanitizing so the marker can be written.");
     Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(null) is null
