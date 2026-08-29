@@ -1829,7 +1829,7 @@ echo "CHIM-MCP installed and enabled."
         var semanticVersion = await ReadWslFileFirstLineAsync("/var/www/html/HerikaServer/.version_number.txt", cancellationToken).ConfigureAwait(false);
         var gitVersion = currentBranch is null
             ? null
-            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/abeiro/HerikaServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
+            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/HerikaServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
