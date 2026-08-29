@@ -45,7 +45,7 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 
 | Behavior | Current command/logic |
 | --- | --- |
-| Distro repo bootstrap | create `/home/dwemer/dwemerdistro`, clone `https://github.com/abeiro/dwemerdistro.git` if missing |
+| Distro repo bootstrap | create `/home/dwemer/dwemerdistro`, clone `https://github.com/Dwemer-Dynamics/DwemerDistro-Core.git` if missing |
 | Distro repo update | `cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main` |
 | Distro apply | `chmod +x update.sh && echo 'dwemer' \| sudo -S ./update.sh` |
 | HerikaServer update | `/usr/local/bin/update_gws` |
@@ -60,7 +60,7 @@ Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 
 | Behavior | Current source |
 | --- | --- |
-| Distro latest version | `https://raw.githubusercontent.com/abeiro/dwemerdistro/main/.version.txt` |
+| Distro latest version | `https://raw.githubusercontent.com/Dwemer-Dynamics/DwemerDistro-Core/main/.version.txt` |
 | Distro local version | `/home/dwemer/dwemerdistro/.version.txt` or `/etc/.version.txt` |
 | HerikaServer local date version | `\\wsl$\DwemerAI4Skyrim3\var\www\html\HerikaServer\.version.txt` |
 | HerikaServer local semantic version | `\\wsl$\DwemerAI4Skyrim3\var\www\html\HerikaServer\.version_number.txt` |
