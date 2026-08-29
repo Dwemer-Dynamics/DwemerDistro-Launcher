@@ -88,7 +88,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.2", "Launcher constants must report version 3.3.2.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.3", "Launcher constants must report version 3.3.3.");
 
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
@@ -765,13 +765,13 @@ try
 
     Assert(MainWindowViewModel.ShouldSyncLauncherVersion(null, LauncherConstants.LauncherVersion)
            && MainWindowViewModel.ShouldSyncLauncherVersion(string.Empty, LauncherConstants.LauncherVersion)
-           && MainWindowViewModel.ShouldSyncLauncherVersion("3.3.1", "3.3.2"),
+           && MainWindowViewModel.ShouldSyncLauncherVersion("3.3.2", "3.3.3"),
         "A missing, empty, or stale marker must run the automatic system sync.");
-    Assert(!MainWindowViewModel.ShouldSyncLauncherVersion("3.3.2\n", "3.3.2")
-           && !MainWindowViewModel.ShouldSyncLauncherVersion("3.3.2", "3.3.2"),
+    Assert(!MainWindowViewModel.ShouldSyncLauncherVersion("3.3.3\n", "3.3.3")
+           && !MainWindowViewModel.ShouldSyncLauncherVersion("3.3.3", "3.3.3"),
         "A recorded launcher version must stop the automatic sync from running every launch.");
 
-    Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(" 3.3.2 ") == "3.3.2"
+    Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(" 3.3.3 ") == "3.3.3"
            && MainWindowViewModel.SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion) == LauncherConstants.LauncherVersion,
         "A plain dotted version must survive sanitizing so the marker can be written.");
     Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(null) is null
