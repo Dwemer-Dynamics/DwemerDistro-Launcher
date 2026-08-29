@@ -180,35 +180,59 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- The one Update Distro action in the normal launcher. The badge is an overlay
-                         pinned to the right edge instead of a column, so it never pulls the label off the
-                         button's centre and a state change never moves the label; the hidden labels keep
-                         reserving the widest text of every state for the same reason, so the longer
-                         available-update text never resizes the button or shifts Start/Stop.
+                    <!-- The one Update Distro action in the normal launcher. The widest state is reserved
+                         by this outer slot rather than by the coloured frame, so Start, Stop, and Force
+                         Stop never move while the visible button sizes itself to whatever it is currently
+                         saying; the resting "Update Distro" frame therefore hugs its label instead of
+                         carrying the available-update text's width all day. The badge is an overlay in the
+                         button's own right gutter instead of a column, so it never pulls the label off the
+                         frame's centre.
                          The button stays enabled whenever no other operation is running, because it is
                          also the recovery action for a distro that cannot report itself. -->
-                    <Button Command="{Binding UpdateSystemCommand}"
-                            Style="{StaticResource GameCenter.AccentButton}" MinWidth="140" Margin="0,0,6,0"
-                            AutomationProperties.Name="{Binding SystemUpdateAccessibleName}"
-                            AutomationProperties.HelpText="{Binding UpdateSystemHelpText}"
-                            ToolTip="{Binding SystemStatusHelpText}">
-                        <Grid>
-                            <!-- Hidden content reserves the widest label - the available-update text and the
-                                 longest running text - without changing accessibility text. The 16px side
-                                 margins reserve the badge gutter on both sides, so the reservation stays
-                                 symmetric about the centre and the right-edge badge never lands on a glyph. -->
-                            <TextBlock Text="Distro Update Available" Visibility="Hidden" Margin="16,0" />
-                            <TextBlock Text="Quickstart Updating..." Visibility="Hidden" Margin="16,0" />
-                            <TextBlock Text="{Binding SystemUpdateButtonText}" HorizontalAlignment="Center" />
-                            <TextBlock Text="{Binding SystemUpdateBadgeGlyph}"
-                                       Foreground="{Binding SystemUpdateBadgeColor}"
-                                       FontFamily="Segoe MDL2 Assets" FontSize="12" FontWeight="Normal"
-                                       HorizontalAlignment="Right" VerticalAlignment="Center"
-                                       Visibility="{Binding IsSystemUpdateBadgeVisible, Converter={StaticResource BoolToVisibility}}"
-                                       AutomationProperties.Name="{Binding SystemStatusText}"
-                                       AutomationProperties.LiveSetting="Polite" />
-                        </Grid>
-                    </Button>
+                    <Grid Margin="0,0,6,0">
+                        <!-- Hidden reservation for the two longest labels - the available-update text and
+                             the longest running text - each padded by the widest frame any state can ask
+                             for: 8px padding + 1px border + the 20px badge gutter, per side. The size and
+                             weight repeat what the button lends its label, so the reservation measures the
+                             same text the same way; the face is left to inherit, exactly as the label's
+                             does. Nothing here is drawn or announced; it only pins the slot width. -->
+                        <TextBlock Text="Distro Update Available" Visibility="Hidden" Margin="29,0"
+                                   FontSize="12" FontWeight="Bold" />
+                        <TextBlock Text="Quickstart Updating..." Visibility="Hidden" Margin="29,0"
+                                   FontSize="12" FontWeight="Bold" />
+                        <Button Command="{Binding UpdateSystemCommand}"
+                                HorizontalAlignment="Right"
+                                AutomationProperties.Name="{Binding SystemUpdateAccessibleName}"
+                                AutomationProperties.HelpText="{Binding UpdateSystemHelpText}"
+                                ToolTip="{Binding SystemStatusHelpText}">
+                            <Button.Style>
+                                <!-- Padding stays symmetric in both states, so the label is centred in the
+                                     frame either way. It only widens while the badge is up, to open the
+                                     right gutter the glyph sits in. -->
+                                <Style TargetType="Button" BasedOn="{StaticResource GameCenter.AccentButton}">
+                                    <Setter Property="Padding" Value="8,6" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsSystemUpdateBadgeVisible}" Value="True">
+                                            <Setter Property="Padding" Value="28,6" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                            <Grid>
+                                <TextBlock Text="{Binding SystemUpdateButtonText}" HorizontalAlignment="Center" />
+                                <!-- The negative margin moves the glyph out of the label's box and into the
+                                     padding gutter, so it neither widens the content nor lands on a glyph. -->
+                                <TextBlock Text="{Binding SystemUpdateBadgeGlyph}"
+                                           Foreground="{Binding SystemUpdateBadgeColor}"
+                                           FontFamily="Segoe MDL2 Assets" FontSize="12" FontWeight="Normal"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           Margin="0,0,-20,0"
+                                           Visibility="{Binding IsSystemUpdateBadgeVisible, Converter={StaticResource BoolToVisibility}}"
+                                           AutomationProperties.Name="{Binding SystemStatusText}"
+                                           AutomationProperties.LiveSetting="Polite" />
+                            </Grid>
+                        </Button>
+                    </Grid>
                     <Button Command="{Binding StartServerCommand}"
                             Style="{StaticResource GameCenter.SuccessButton}" MinWidth="132" Margin="0,0,6,0"
                             AutomationProperties.Name="{Binding StartButtonText}"
