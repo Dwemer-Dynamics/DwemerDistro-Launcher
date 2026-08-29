@@ -58,10 +58,6 @@
             <Setter Property="MinWidth" Value="104" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <Style x:Key="GameCenter.HeroUpdateCheckBox" TargetType="CheckBox" BasedOn="{StaticResource GameCenter.CheckBox}">
-            <Setter Property="Visibility" Value="Collapsed" />
-            <Setter Property="HorizontalAlignment" Value="Right" />
-        </Style>
     </Window.Resources>
 
     <Grid x:Name="ShellGrid" Background="{DynamicResource GameCenter.Window}">
@@ -264,75 +260,11 @@
                                     </StackPanel>
                                 </Border>
                             </Grid>
-                            <Grid Grid.Row="1" Margin="18,14">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.ModTitle}" />
-                                    <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource GameCenter.Gold}"
-                                               FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="12,0,0,0">
-                                    <Grid>
-                                        <CheckBox x:Name="HeroChimUpdateCheckBox" Content="Updates"
-                                                  IsChecked="{Binding IncludeHerikaServerUpdate}"
-                                                  IsEnabled="{Binding IsHerikaUpdateIncludeEnabled}"
-                                                  Command="{Binding SaveUpdateIncludeCommand}"
-                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                                  AutomationProperties.Name="Include CHIM in updates"
-                                                  ToolTip="{Binding UpdateIncludeStatusText}"
-                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
-                                            <CheckBox.Style>
-                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="CHIM">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </CheckBox.Style>
-                                        </CheckBox>
-                                        <CheckBox x:Name="HeroStobeUpdateCheckBox" Content="Updates"
-                                                  IsChecked="{Binding IncludeStobeServerUpdate}"
-                                                  IsEnabled="{Binding IsStobeUpdateIncludeEnabled}"
-                                                  Command="{Binding SaveUpdateIncludeCommand}"
-                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                                  AutomationProperties.Name="Include STOBE in updates"
-                                                  ToolTip="{Binding UpdateIncludeStatusText}"
-                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
-                                            <CheckBox.Style>
-                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </CheckBox.Style>
-                                        </CheckBox>
-                                        <CheckBox x:Name="HeroDialecticUpdateCheckBox" Content="Updates"
-                                                  IsChecked="{Binding IncludeDialecticServerUpdate}"
-                                                  IsEnabled="{Binding IsDialecticUpdateIncludeEnabled}"
-                                                  Command="{Binding SaveUpdateIncludeCommand}"
-                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                                  AutomationProperties.Name="Include Dialectic in updates"
-                                                  ToolTip="{Binding UpdateIncludeStatusText}"
-                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
-                                            <CheckBox.Style>
-                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </CheckBox.Style>
-                                        </CheckBox>
-                                    </Grid>
-                                    <TextBlock Text="Include this mod when Update runs."
-                                               Style="{StaticResource GameCenter.Caption}" FontSize="11"
-                                               MaxWidth="200" TextAlignment="Right" Margin="0,4,0,0" />
-                                </StackPanel>
-                            </Grid>
+                            <StackPanel Grid.Row="1" Margin="18,14">
+                                <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.ModTitle}" />
+                                <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource GameCenter.Gold}"
+                                           FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
+                            </StackPanel>
                         </Grid>
                     </Border>
 
@@ -400,7 +332,7 @@
                                                       AutomationProperties.Name="HerikaServer update branch"
                                                       IsEnabled="{Binding HerikaManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                            <!-- Updates the shared system, then this checked mod on the chosen branch.
+                                            <!-- Updates the shared system, then this mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding HerikaManager.UpdateActionName}" Command="{Binding HerikaManager.UpdateCommand}"
                                                     Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,12" Height="40"
@@ -503,7 +435,7 @@
                                                       AutomationProperties.Name="StobeServer update branch"
                                                       IsEnabled="{Binding StobeManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                            <!-- Updates the shared system, then this checked mod on the chosen branch.
+                                            <!-- Updates the shared system, then this mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding StobeManager.UpdateActionName}" Command="{Binding StobeManager.UpdateCommand}"
                                                     Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,12" Height="40"
@@ -606,7 +538,7 @@
                                                       AutomationProperties.Name="DialecticServer update branch"
                                                       IsEnabled="{Binding DialecticManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                            <!-- Updates the shared system, then this checked mod on the chosen branch.
+                                            <!-- Updates the shared system, then this mod on the chosen branch.
                                                  Disabled during conflicting operations so controls never shift. -->
                                             <Button Content="{Binding DialecticManager.UpdateActionName}" Command="{Binding DialecticManager.UpdateCommand}"
                                                     Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,12" Height="40"
@@ -655,14 +587,10 @@
                                     </StackPanel>
                                 </Grid>
                             </ScrollViewer>
-                            <StackPanel Grid.Row="1" Margin="0,12,0,0">
-                                <TextBlock Text="{Binding ServerManagementStatusText}" Foreground="{Binding ServerManagementStatusColor}"
-                                           TextWrapping="Wrap" FontSize="11"
-                                           AutomationProperties.Name="Installed servers summary"
-                                           AutomationProperties.LiveSetting="Polite" />
-                                <TextBlock Text="{Binding UpdateIncludeStatusText}" Foreground="{Binding UpdateIncludeStatusColor}"
-                                           TextWrapping="Wrap" Margin="0,6,0,0" />
-                            </StackPanel>
+                            <TextBlock Grid.Row="1" Text="{Binding ServerManagementStatusText}" Foreground="{Binding ServerManagementStatusColor}"
+                                       TextWrapping="Wrap" FontSize="11" Margin="0,12,0,0"
+                                       AutomationProperties.Name="Installed servers summary"
+                                       AutomationProperties.LiveSetting="Polite" />
                         </Grid>
                     </Border>
                 </Grid>

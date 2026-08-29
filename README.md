@@ -20,7 +20,7 @@ Fresh DwemerDistro packages contain no game servers. The Quickstart **Choose You
 
 Uninstall is destructive. It requires the product-specific `PURGE-*` confirmation and removes that server's files and PostgreSQL database. It does not remove shared voice/components or another game server.
 
-Each mod's own **Update** button updates DwemerDistro and shared components first, then that mod on its selected branch, and only if its Updates checkbox is enabled. It never installs a missing mod, never updates an unchecked one, and never touches another mod. If the system update fails, no mod update runs.
+Each mod's own **Update** button updates DwemerDistro and shared components first, then that mod on its selected branch. It is available whenever that mod is installed and no conflicting operation is running. It never installs a missing mod and never touches another mod. If the system update fails, no mod update runs.
 
 Each installed mod also exposes a **Webpage** button for its local server UI and a **Nexus Page** button below it. The Nexus button opens the mod's public page in your browser immediately: it does not start or contact the local server.
 

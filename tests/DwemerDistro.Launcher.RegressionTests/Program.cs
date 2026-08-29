@@ -97,11 +97,6 @@ try
                                    && game.RailImageSource.EndsWith("-rail.jpg", StringComparison.Ordinal)),
         "Every game profile must use local hero and rail artwork.");
 
-    var keyedPreferences = MainWindowViewModel.ParseUpdateIncludeSettings(
-        "herika=0\nstobe=\ndialectic=1\n");
-    Assert(!keyedPreferences.Herika && keyedPreferences.Stobe && keyedPreferences.Dialectic,
-        "An empty update preference must not shift the following game's value.");
-
     Assert(MainWindowViewModel.ResolveServerBranchChoice("Main", "aiagent") == "aiagent"
            && MainWindowViewModel.ResolveServerBranchChoice("Main", "stobe") == "stobe"
            && MainWindowViewModel.ResolveServerBranchChoice("Main", "dialectic") == "dialectic",
@@ -469,42 +464,48 @@ try
     Assert(individualUpdateCount == 1,
         "The individual update command must invoke only its product update delegate once.");
 
-    // --- Updates checkbox gates the single-product update ------------------------------------
+    // --- No saved preference gates the single-product update ---------------------------------
 
-    Assert(individualUpdateItem.IsIncludedInUpdates,
-        "A product must start included in updates, so the button matches the checkbox default.");
-
-    individualUpdateItem.IsIncludedInUpdates = false;
-    Assert(!individualUpdateItem.CanUpdate && !individualUpdateItem.UpdateCommand.CanExecute(null),
-        "Clearing a product's Updates checkbox must disable that product's own Update button.");
-    individualUpdateItem.UpdateCommand.Execute(null);
-    Assert(individualUpdateCount == 1,
-        "An excluded product's update must not run even when its command is invoked directly.");
-    Assert(individualUpdateItem.UpdateActionHelpText.Contains("Updates checkbox", StringComparison.Ordinal)
-           && individualUpdateItem.UpdateActionHelpText.Contains("STOBE", StringComparison.Ordinal),
-        "The disabled update action must tell the user to enable that product's Updates checkbox.");
-    Assert(individualUpdateItem.CanUninstall && individualUpdateItem.ShowInstalledActions
-           && individualUpdateItem.StatusColor != ServerManagerItemViewModel.ErrorColor,
-        "The Updates checkbox must gate only the update action, not the rest of the lifecycle.");
-
-    individualUpdateItem.IsIncludedInUpdates = true;
+    // No saved preference gates a mod update: an installed, idle mod is updatable with nothing else set.
     Assert(individualUpdateItem.CanUpdate && individualUpdateItem.UpdateCommand.CanExecute(null),
-        "Re-checking the Updates checkbox must re-enable the update button for an installed idle product.");
+        "An installed idle mod must be updatable without any saved update preference.");
     individualUpdateItem.UpdateCommand.Execute(null);
     Assert(individualUpdateCount == 2,
-        "A re-included product's update must run again as soon as the checkbox is restored.");
+        "An installed idle mod's update must run every time its own button is invoked.");
 
-    // A sibling operation keeps priority over the checkbox explanation.
-    individualUpdateItem.IsIncludedInUpdates = false;
     individualUpdateItem.IsConflictingOperationRunning = true;
-    Assert(!individualUpdateItem.CanUpdate
+    Assert(!individualUpdateItem.CanUpdate && !individualUpdateItem.UpdateCommand.CanExecute(null)
            && individualUpdateItem.UpdateActionHelpText.Contains("another server, component, or system operation", StringComparison.Ordinal),
-        "A running sweep must still explain itself, even for a product excluded from updates.");
+        "A conflicting operation must disable the mod update and say why.");
+    individualUpdateItem.UpdateCommand.Execute(null);
+    Assert(individualUpdateCount == 2,
+        "A conflicted product's update must not run even when its command is invoked directly.");
     individualUpdateItem.IsConflictingOperationRunning = false;
-    Assert(!individualUpdateItem.CanUpdate
-           && individualUpdateItem.UpdateActionHelpText.Contains("Updates checkbox", StringComparison.Ordinal),
-        "Once the transient blocks clear, an excluded product must still explain the checkbox.");
-    individualUpdateItem.IsIncludedInUpdates = true;
+    Assert(individualUpdateItem.CanUpdate && individualUpdateItem.CanUninstall
+           && individualUpdateItem.ShowInstalledActions
+           && individualUpdateItem.StatusColor != ServerManagerItemViewModel.ErrorColor,
+        "Clearing the conflict must restore the update action alongside the rest of the lifecycle.");
+
+    foreach (var ineligible in new[]
+             {
+                 ServerInstallState.NotInstalled, ServerInstallState.NeedsRepair, ServerInstallState.Unknown
+             })
+    {
+        individualUpdateItem.ApplyStatus(stobeStatus with { State = ineligible, DatabasePresent = true });
+        Assert(!individualUpdateItem.CanUpdate && !individualUpdateItem.UpdateCommand.CanExecute(null)
+               && individualUpdateItem.UpdateActionHelpText.Contains("until STOBE is installed", StringComparison.Ordinal),
+            $"A {ineligible} mod must stay ineligible for update and explain that it is not installed.");
+        individualUpdateItem.UpdateCommand.Execute(null);
+    }
+
+    Assert(individualUpdateCount == 2,
+        "No un-installed state may run a mod update, however its command is invoked.");
+    individualUpdateItem.ApplyStatus(stobeStatus with
+    {
+        State = ServerInstallState.Installed,
+        RepositoryState = ServerRepositoryState.Managed,
+        DatabasePresent = true
+    });
 
     Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "aiagent", "dev") == ServerBranchChannel.Main
            && ServerManagerItemViewModel.MapBranchToChannel("dev", "aiagent", "dev") == ServerBranchChannel.Dev
@@ -553,14 +554,12 @@ try
 
     // --- Mod update gating ------------------------------------------------------------------
 
-    Assert(MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Installed, includeInUpdates: true),
-        "An installed product with updates enabled must be updated.");
-    Assert(!MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Installed, includeInUpdates: false),
-        "An installed product with updates disabled must be left alone.");
-    Assert(!MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.NotInstalled, includeInUpdates: true)
-           && !MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.NeedsRepair, includeInUpdates: true)
-           && !MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Unknown, includeInUpdates: true),
-        "Update must never reach a product that is not installed, whatever the update checkbox says.");
+    Assert(MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Installed),
+        "An installed product must be updated; no saved preference gates it any more.");
+    Assert(!MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.NotInstalled)
+           && !MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.NeedsRepair)
+           && !MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Unknown),
+        "Update must never reach a product that is not installed.");
 
     var sharedUpdateCommand = MainWindowViewModel.BuildSharedComponentsUpdateCommand();
     Assert(sharedUpdateCommand.StartsWith("/usr/local/bin/update_gws", StringComparison.Ordinal),
@@ -678,16 +677,16 @@ try
     Assert(skippedModCalls == 0, "System failure or exception must prevent every mod update.");
 
     var staleUpdates = MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]);
-    herikaItem.IsIncludedInUpdates = false;
+    herikaItem.ApplyStatus(herikaStatus with { State = ServerInstallState.NeedsRepair });
     individualUpdateItem.ApplyStatus(stobeStatus with { State = ServerInstallState.NotInstalled });
     Assert(MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]).Count == 0,
-        "An unchecked or missing mod must be excluded from a newly confirmed selection.");
+        "A mod that stopped being installed must be excluded from a newly confirmed selection.");
     var staleSystemRuns = 0;
     Assert(await MainWindowViewModel.UpdateInstalledServersAsync(staleUpdates,
             () => { staleSystemRuns++; return Task.FromResult(true); },
-            (_, _) => throw new InvalidOperationException("An unchecked or missing mod must not update."))
+            (_, _) => throw new InvalidOperationException("A missing or broken mod must not update."))
            && staleSystemRuns == 1,
-        "Mods that became unchecked or missing must still leave a successful system-only update.");
+        "Mods that became missing or broken must still leave a successful system-only update.");
     individualUpdateItem.IsConflictingOperationRunning = true;
     Assert(!individualUpdateItem.CanInstall && !individualUpdateItem.InstallCommand.CanExecute(null),
         "A system operation must block installation of a missing mod.");
@@ -779,10 +778,9 @@ try
         "A missing button label must still leave a usable accessible name.");
 
     var systemOnlyConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([]);
-    Assert(systemOnlyConfirmation.Contains("No installed, update-enabled mods can currently be detected", StringComparison.Ordinal)
-           && systemOnlyConfirmation.Contains("After the system update repairs status", StringComparison.Ordinal)
-           && systemOnlyConfirmation.Contains("Missing mods are never installed", StringComparison.Ordinal)
-           && systemOnlyConfirmation.Contains("unchecked mods are never updated", StringComparison.Ordinal),
+    Assert(systemOnlyConfirmation.Contains("shared components only", StringComparison.Ordinal)
+           && systemOnlyConfirmation.Contains("will not be updated", StringComparison.Ordinal)
+           && systemOnlyConfirmation.Contains("Missing mods are never installed", StringComparison.Ordinal),
         "An empty selection must confirm a system-only update rather than report a missing-mod error.");
 
     var systemOnlyRuns = 0;
@@ -832,16 +830,15 @@ try
         "The post-update refresh must never install a mod that is still missing.");
 
     recoveredOrder.Clear();
-    recoveredItem.ApplyStatus(recoveredInstalledStatus);
-    recoveredItem.IsIncludedInUpdates = false;
+    recoveredItem.ApplyStatus(recoveredInstalledStatus with { State = ServerInstallState.NeedsRepair });
     Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
             recoveredUpdates,
             () => { recoveredOrder.Add("system"); return Task.FromResult(true); },
-            (_, _) => throw new InvalidOperationException("An unchecked mod must never be updated by a mod update."),
+            (_, _) => throw new InvalidOperationException("A broken mod must never be updated by a mod update."),
             () => Task.FromResult(MainWindowViewModel.SnapshotModUpdates([recoveredItem])))
            && recoveredOrder.SequenceEqual(["system"]),
-        "The post-update refresh must never update a mod whose Updates checkbox is off.");
-    recoveredItem.IsIncludedInUpdates = true;
+        "The post-update refresh must never update a mod that still needs repair.");
+    recoveredItem.ApplyStatus(recoveredInstalledStatus);
 
     recoveredItem.SelectedBranch = "Main";
     var branchApprovedUpdates = MainWindowViewModel.SnapshotModUpdates([recoveredItem]);
