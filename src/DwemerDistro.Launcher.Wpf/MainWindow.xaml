@@ -180,11 +180,12 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- The one Update System action in the normal launcher. The badge lives in its own
+                    <!-- The one Update Distro action in the normal launcher. The badge lives in its own
                          fixed-width column, so a state change never moves the label; the label column
-                         keeps reserving the widest running text for the same reason. The button stays
-                         enabled whenever no other operation is running, because it is also the recovery
-                         action for a distro that cannot report itself. -->
+                         keeps reserving the widest label of every state for the same reason, so the
+                         longer available-update text never resizes the button or shifts Start/Stop.
+                         The button stays enabled whenever no other operation is running, because it is
+                         also the recovery action for a distro that cannot report itself. -->
                     <Button Command="{Binding UpdateSystemCommand}"
                             Style="{StaticResource GameCenter.AccentButton}" MinWidth="140" Margin="0,0,6,0"
                             AutomationProperties.Name="{Binding SystemUpdateAccessibleName}"
@@ -196,8 +197,10 @@
                                 <ColumnDefinition Width="16" />
                             </Grid.ColumnDefinitions>
                             <Grid>
-                                <!-- Hidden content reserves the widest running state without changing accessibility text. -->
-                                <TextBlock Text="Updating System..." Visibility="Hidden" />
+                                <!-- Hidden content reserves the widest label - the available-update text and the
+                                     longest running text - without changing accessibility text. -->
+                                <TextBlock Text="Distro Update Available" Visibility="Hidden" />
+                                <TextBlock Text="Quickstart Updating..." Visibility="Hidden" />
                                 <TextBlock Text="{Binding SystemUpdateButtonText}" HorizontalAlignment="Center" />
                             </Grid>
                             <TextBlock Grid.Column="1" Text="{Binding SystemUpdateBadgeGlyph}"
@@ -614,7 +617,7 @@
                                        Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" />
                             <!-- One compact system line. It never wraps and its row height is fixed, so no
                                  state can push the components card down; the full sentence stays in the
-                                 tooltip and in the accessible help text. Update System itself is the top
+                                 tooltip and in the accessible help text. Update Distro itself is the top
                                  bar action - this page no longer carries a second copy of it. -->
                             <TextBlock Text="{Binding SystemStatusText}" Foreground="{Binding SystemStatusColor}"
                                        Style="{StaticResource GameCenter.Caption}"

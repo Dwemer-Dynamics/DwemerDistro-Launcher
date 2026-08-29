@@ -51,6 +51,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private const string SystemStatusErrorColor = "#FF8A80";
     /// <summary>Appended to a mod's version line, and only when the comparison confirmed it.</summary>
     internal const string UpdateAvailableStatusSuffix = "Update Available";
+    // The top button says what it does; only a confirmed available update says so instead.
+    internal const string SystemUpdateDefaultButtonText = "Update Distro";
+    internal const string SystemUpdateAvailableButtonText = "Distro Update Available";
 
     // Segoe MDL2 Assets, the icon font the rail and caption buttons already use. The badge is a
     // shape, so the top button's signal never rests on colour alone.
@@ -123,7 +126,10 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
     private string _launcherUpdateButtonText = "Check Update";
-    private string _systemUpdateButtonText = "Update System";
+    // Null whenever no run owns the button. The idle label is derived from the availability state
+    // rather than stored, so a background check that confirms an update relabels the button without
+    // anything else having to remember to.
+    private string? _systemUpdateRunningButtonText;
     // Unknown until the system-version check reports. The launcher never claims that a distro it
     // has not inspected is current.
     private SystemUpdateAvailability _systemUpdateState = SystemUpdateAvailability.Unknown;
@@ -173,7 +179,7 @@ echo "CHIM-MCP installed and enabled."
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
         ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
-        // Update System is also the recovery action, so it stays available whether the distro
+        // Update Distro is also the recovery action, so it stays available whether the distro
         // reports itself as current, out of date, or not at all.
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
@@ -316,21 +322,28 @@ echo "CHIM-MCP installed and enabled."
         private set => SetProperty(ref _launcherUpdateButtonText, value);
     }
 
-    public string SystemUpdateButtonText
+    public string SystemUpdateButtonText =>
+        _systemUpdateRunningButtonText ?? BuildSystemUpdateIdleButtonText(SystemUpdateState);
+
+    /// <summary>
+    /// A running label owns the button for as long as the run lasts. Passing null hands the button
+    /// back to the availability state.
+    /// </summary>
+    private void SetSystemUpdateRunningButtonText(string? runningText)
     {
-        get => _systemUpdateButtonText;
-        private set
+        if (string.Equals(_systemUpdateRunningButtonText, runningText, StringComparison.Ordinal))
         {
-            if (SetProperty(ref _systemUpdateButtonText, value))
-            {
-                OnPropertyChanged(nameof(SystemUpdateAccessibleName));
-            }
+            return;
         }
+
+        _systemUpdateRunningButtonText = runningText;
+        OnPropertyChanged(nameof(SystemUpdateButtonText));
+        OnPropertyChanged(nameof(SystemUpdateAccessibleName));
     }
 
     /// <summary>
     /// What the launcher currently knows about the shared system. Availability never depends on it:
-    /// Update System is also the recovery action, so it stays live while the state is current or
+    /// Update Distro is also the recovery action, so it stays live while the state is current or
     /// unknown.
     /// </summary>
     public SystemUpdateAvailability SystemUpdateState
@@ -353,7 +366,7 @@ echo "CHIM-MCP installed and enabled."
 
     public string SystemStatusHelpText =>
         BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion) +
-        " Update System updates DwemerDistro and shared components. Installed mods are not changed.";
+        " Update Distro updates DwemerDistro and shared components. Installed mods are not changed.";
 
     public string SystemUpdateBadgeGlyph => BuildSystemUpdateBadgeGlyph(SystemUpdateState);
 
@@ -396,10 +409,10 @@ echo "CHIM-MCP installed and enabled."
                 (null, not null) => $"System: update available (latest {available}).",
                 _ => "System: update available."
             },
-            SystemUpdateAvailability.Failed => "System: last update failed. Run Update System to retry.",
+            SystemUpdateAvailability.Failed => "System: last update failed. Run Update Distro to retry.",
             // Unknown is also the recovery state: a distro that cannot report its version is exactly
-            // the one Update System exists to repair.
-            _ => "System: version unknown. Update System also repairs a distro that cannot report it."
+            // the one Update Distro exists to repair.
+            _ => "System: version unknown. Update Distro also repairs a distro that cannot report it."
         };
     }
 
@@ -431,9 +444,21 @@ echo "CHIM-MCP installed and enabled."
         };
     }
 
+    /// <summary>
+    /// The label the top button carries whenever no run owns it. Only the confirmed UpdateAvailable
+    /// state advertises an update - the status colour never decides this - so checking, current,
+    /// unknown and failed all keep the plain action label.
+    /// </summary>
+    internal static string BuildSystemUpdateIdleButtonText(SystemUpdateAvailability state)
+    {
+        return state == SystemUpdateAvailability.UpdateAvailable
+            ? SystemUpdateAvailableButtonText
+            : SystemUpdateDefaultButtonText;
+    }
+
     internal static string BuildSystemUpdateAccessibleName(string? buttonText, SystemUpdateAvailability state)
     {
-        var label = string.IsNullOrWhiteSpace(buttonText) ? "Update System" : buttonText.Trim();
+        var label = string.IsNullOrWhiteSpace(buttonText) ? SystemUpdateDefaultButtonText : buttonText.Trim();
 
         return state switch
         {
@@ -521,6 +546,8 @@ echo "CHIM-MCP installed and enabled."
     private void RaiseSystemUpdateStatusChanged()
     {
         OnPropertyChanged(nameof(SystemUpdateState));
+        // The idle label is derived from the state, so it moves with it.
+        OnPropertyChanged(nameof(SystemUpdateButtonText));
         OnPropertyChanged(nameof(SystemStatusText));
         OnPropertyChanged(nameof(SystemStatusColor));
         OnPropertyChanged(nameof(SystemStatusHelpText));
@@ -1364,7 +1391,7 @@ echo "CHIM-MCP installed and enabled."
             .ToArray();
 
         IsDistroUpdateInProgress = true;
-        SystemUpdateButtonText = "Updating System...";
+        SetSystemUpdateRunningButtonText("Updating Distro...");
         SetSystemUpdateState(SystemUpdateAvailability.Updating);
         var systemSucceeded = false;
         var modsAttempted = false;
@@ -1389,7 +1416,7 @@ echo "CHIM-MCP installed and enabled."
                 (product, branch) =>
                 {
                     modsAttempted = true;
-                    SystemUpdateButtonText = "Update System";
+                    SetSystemUpdateRunningButtonText(null);
                     return RunServerOperationAsync(product, ServerOperation.Update, branch);
                 }).ConfigureAwait(true);
             var completionMessage = "System and mod updates completed successfully.";
@@ -1488,7 +1515,7 @@ echo "CHIM-MCP installed and enabled."
         if (requireConfirmation &&
             MessageBox.Show(
                 BuildSystemUpdateConfirmation(),
-                "Update System",
+                "Update Distro",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
@@ -1497,9 +1524,9 @@ echo "CHIM-MCP installed and enabled."
         }
 
         IsDistroUpdateInProgress = true;
-        SystemUpdateButtonText = sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
+        SetSystemUpdateRunningButtonText(sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
             ? "Quickstart Updating..."
-            : "Updating System...";
+            : "Updating Distro...");
         SetSystemUpdateState(SystemUpdateAvailability.Updating);
 
         try
@@ -1714,7 +1741,7 @@ echo "CHIM-MCP installed and enabled."
         RunOnUi(() =>
         {
             IsDistroUpdateInProgress = false;
-            SystemUpdateButtonText = "Update System";
+            SetSystemUpdateRunningButtonText(null);
         });
         QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout);
         QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
@@ -5003,7 +5030,7 @@ fi
 
 /// <summary>
 /// What the launcher knows about the shared system, in the order a check moves through it. The
-/// value only describes the system; it never gates Update System, which is also the recovery
+/// value only describes the system; it never gates Update Distro, which is also the recovery
 /// action and stays available in every state.
 /// </summary>
 public enum SystemUpdateAvailability

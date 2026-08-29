@@ -643,12 +643,12 @@ try
     var systemUpdateCommand = MainWindowViewModel.BuildSystemUpdateCommand();
     Assert(systemUpdateCommand.Contains("if [ ! -d .git ]; then git init", StringComparison.Ordinal)
            && systemUpdateCommand.Contains("git remote add origin https://github.com/abeiro/dwemerdistro.git", StringComparison.Ordinal),
-        "Update System must bootstrap Git metadata for a freshly installed empty distro.");
+        "Update Distro must bootstrap Git metadata for a freshly installed empty distro.");
     var systemReleaseMarkerWrite = MainWindowViewModel.BuildSystemReleaseMarkerWriteCommand();
     Assert(systemUpdateCommand.Contains("git fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
            && systemUpdateCommand.Contains(sharedUpdateCommand + " && ", StringComparison.Ordinal)
            && systemUpdateCommand.EndsWith(systemReleaseMarkerWrite, StringComparison.Ordinal),
-        "Update System must update the distro and shared components before recording the successful system release.");
+        "Update Distro must update the distro and shared components before recording the successful system release.");
     Assert(systemReleaseMarkerWrite.Contains("sudo -S install -D -m 0644", StringComparison.Ordinal)
            && systemReleaseMarkerWrite.Contains("/home/dwemer/dwemerdistro/system-release.json", StringComparison.Ordinal)
            && systemReleaseMarkerWrite.Contains("/var/lib/dwemerdistro/system-release.json", StringComparison.Ordinal),
@@ -687,7 +687,7 @@ try
     var systemUpdateConfirmation = MainWindowViewModel.BuildSystemUpdateConfirmation();
     Assert(systemUpdateConfirmation.Contains("DwemerDistro and its shared components", StringComparison.Ordinal)
            && systemUpdateConfirmation.Contains("Installed mods will not be changed", StringComparison.Ordinal),
-        "Update System must clearly exclude every installed mod server.");
+        "Update Distro must clearly exclude every installed mod server.");
 
     Assert(MainWindowViewModel.CanRunUpdateOperation(false, false, [false, false, false]),
         "Update actions must be available when every shared operation gate is idle.");
@@ -769,7 +769,7 @@ try
     Assert(individualUpdateItem.CanRepair && individualUpdateItem.CanUninstall,
         "Lifecycle controls must be restored after the operation finishes.");
 
-    // --- Update System as the single top-level update and the recovery action -----------------
+    // --- Update Distro as the single top-level update and the recovery action -----------------
 
     var systemStates = Enum.GetValues<SystemUpdateAvailability>();
     Assert(systemStates.Length == 6,
@@ -783,25 +783,44 @@ try
         Assert(MainWindowViewModel.BuildSystemStatusColor(state).Length > 0,
             $"The {state} system state must resolve to a status colour.");
 
-        var accessibleName = MainWindowViewModel.BuildSystemUpdateAccessibleName("Update System", state);
-        Assert(accessibleName.StartsWith("Update System,", StringComparison.Ordinal),
+        // The explicit availability state, never the status colour, decides the label: checking,
+        // current, unknown and failed all keep the plain action label.
+        var idleButtonText = MainWindowViewModel.BuildSystemUpdateIdleButtonText(state);
+        Assert(idleButtonText == (state == SystemUpdateAvailability.UpdateAvailable
+                ? "Distro Update Available"
+                : "Update Distro"),
+            $"The {state} system state must decide the top button label on its own.");
+
+        var accessibleName = MainWindowViewModel.BuildSystemUpdateAccessibleName(idleButtonText, state);
+        Assert(accessibleName.StartsWith(idleButtonText + ",", StringComparison.Ordinal),
             $"The {state} system state must keep the button label at the front of its accessible name.");
 
-        // Update System is also the recovery action, so no state may describe it as unavailable.
+        // Update Distro is also the recovery action, so no state may describe it as unavailable.
         Assert(!MainWindowViewModel.BuildUpdateSystemHelpText(true, state, null, null)
                 .Contains("Unavailable", StringComparison.OrdinalIgnoreCase),
-            $"Update System must stay available in the {state} state whenever no other operation is running.");
+            $"Update Distro must stay available in the {state} state whenever no other operation is running.");
         Assert(MainWindowViewModel.BuildUpdateSystemHelpText(false, state, null, null)
                 .Contains("another server, component, or system operation", StringComparison.Ordinal),
-            "A competing operation must stay the only reason Update System is unavailable.");
+            "A competing operation must stay the only reason Update Distro is unavailable.");
     }
 
     Assert(systemStates.Select(state => MainWindowViewModel.BuildSystemStatusText(state, null, null))
                .Distinct(StringComparer.Ordinal).Count() == systemStates.Length,
         "Every system state must read differently, so the line is never ambiguous without colour.");
-    Assert(systemStates.Select(state => MainWindowViewModel.BuildSystemUpdateAccessibleName("Update System", state))
+    Assert(systemStates.Select(state => MainWindowViewModel.BuildSystemUpdateAccessibleName(
+                   MainWindowViewModel.BuildSystemUpdateIdleButtonText(state), state))
                .Distinct(StringComparer.Ordinal).Count() == systemStates.Length,
         "Every system state must be distinguishable from the button's accessible name alone.");
+    Assert(systemStates.Count(state => MainWindowViewModel.BuildSystemUpdateIdleButtonText(state)
+            == MainWindowViewModel.SystemUpdateAvailableButtonText) == 1,
+        "Only a confirmed available update may advertise one on the top button.");
+    Assert(MainWindowViewModel.BuildSystemUpdateIdleButtonText(SystemUpdateAvailability.UpdateAvailable)
+            == "Distro Update Available"
+           && MainWindowViewModel.BuildSystemUpdateIdleButtonText(SystemUpdateAvailability.Failed)
+            == "Update Distro"
+           && MainWindowViewModel.BuildSystemUpdateIdleButtonText(SystemUpdateAvailability.Unknown)
+            == "Update Distro",
+        "The top action must read Update Distro until a check confirms an available distro update.");
 
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.UpdateAvailable, "1.2", "1.3")
                .Contains("installed 1.2", StringComparison.Ordinal)
@@ -819,15 +838,15 @@ try
         "A blank version must be treated as no version at all.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Unknown, null, null)
             .Contains("repairs a distro that cannot report it", StringComparison.Ordinal),
-        "The unknown state must point at Update System as the recovery action.");
+        "The unknown state must point at Update Distro as the recovery action.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Failed, null, null)
-            .Contains("Run Update System to retry", StringComparison.Ordinal),
+            .Contains("Run Update Distro to retry", StringComparison.Ordinal),
         "A failed update must offer the retry instead of going quiet.");
 
     // The badge is a glyph, so the top button's signal survives a display that drops its colour.
     Assert(MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.UpdateAvailable)
             == MainWindowViewModel.SystemUpdateAvailableGlyph,
-        "An available system update must raise the badge on the top Update System button.");
+        "An available system update must raise the badge on the top Update Distro button.");
     Assert(MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Failed)
             == MainWindowViewModel.SystemUpdateFailedGlyph
            && MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Unknown)
@@ -841,11 +860,11 @@ try
            && MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Updating).Length == 0,
         "A state the button label already reports must not add a badge on top of it.");
 
-    Assert(MainWindowViewModel.BuildSystemUpdateAccessibleName("Updating System...", SystemUpdateAvailability.Updating)
-            .StartsWith("Updating System...,", StringComparison.Ordinal),
+    Assert(MainWindowViewModel.BuildSystemUpdateAccessibleName("Updating Distro...", SystemUpdateAvailability.Updating)
+            .StartsWith("Updating Distro...,", StringComparison.Ordinal),
         "The accessible name must follow the running button label instead of a fixed one.");
     Assert(MainWindowViewModel.BuildSystemUpdateAccessibleName("   ", SystemUpdateAvailability.Current)
-            .StartsWith("Update System,", StringComparison.Ordinal),
+            .StartsWith("Update Distro,", StringComparison.Ordinal),
         "A missing button label must still leave a usable accessible name.");
 
     var systemOnlyConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([]);
