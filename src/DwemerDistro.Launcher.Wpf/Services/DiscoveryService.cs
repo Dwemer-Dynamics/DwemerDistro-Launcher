@@ -116,6 +116,12 @@ public sealed class DiscoveryService
 
     private async Task<string> BuildDiscoveryResponseAsync(string request, CancellationToken cancellationToken)
     {
+        var loopbackTarget = GetLoopbackDiscoveryTarget(request);
+        if (loopbackTarget is not null)
+        {
+            return BuildHttpResponse("200 OK", loopbackTarget);
+        }
+
         var targetPort = GetDiscoveryTargetPort(request);
         var wslIp = await _wslIpResolver(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(wslIp))
@@ -126,13 +132,46 @@ public sealed class DiscoveryService
         return BuildHttpResponse("200 OK", $"{wslIp}:{targetPort}");
     }
 
+    internal static string? GetLoopbackDiscoveryTarget(string request)
+    {
+        return GetGame(request) is "lorkhan" or "morrowind" or "openmw"
+            ? $"127.0.0.1:{LauncherConstants.LorkhanProxyPort}"
+            : null;
+    }
+
     private static int GetDiscoveryTargetPort(string request)
+    {
+        var game = GetGame(request);
+        if (game is "kenshi" or "stobe")
+        {
+            return LauncherConstants.StobeServerPort;
+        }
+
+        if (game is "starfield")
+        {
+            return LauncherConstants.StarfieldServerPort;
+        }
+
+        if (game is "dialectic" or "fallout" or "fnv" or "newvegas")
+        {
+            return LauncherConstants.DialecticServerPort;
+        }
+
+        if (game is "reign")
+        {
+            return LauncherConstants.ReignServerPort;
+        }
+
+        return LauncherConstants.SkyrimServerPort;
+    }
+
+    private static string? GetGame(string request)
     {
         var requestLine = request.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
         var requestParts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (requestParts.Length < 2 || !Uri.TryCreate("http://localhost" + requestParts[1], UriKind.Absolute, out var uri))
         {
-            return LauncherConstants.SkyrimServerPort;
+            return null;
         }
 
         var query = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries);
@@ -141,30 +180,11 @@ public sealed class DiscoveryService
             var pieces = part.Split('=', 2);
             if (pieces.Length == 2 && pieces[0].Equals("game", StringComparison.OrdinalIgnoreCase))
             {
-                var value = Uri.UnescapeDataString(pieces[1]).Trim().ToLowerInvariant();
-                if (value is "kenshi" or "stobe")
-                {
-                    return LauncherConstants.StobeServerPort;
-                }
-
-                if (value is "starfield")
-                {
-                    return LauncherConstants.StarfieldServerPort;
-                }
-
-                if (value is "dialectic" or "fallout" or "fnv" or "newvegas")
-                {
-                    return LauncherConstants.DialecticServerPort;
-                }
-
-                if (value is "reign")
-                {
-                    return LauncherConstants.ReignServerPort;
-                }
+                return Uri.UnescapeDataString(pieces[1]).Trim().ToLowerInvariant();
             }
         }
 
-        return LauncherConstants.SkyrimServerPort;
+        return null;
     }
 
     private static string BuildHttpResponse(string status, string body)

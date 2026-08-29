@@ -8,12 +8,17 @@ public sealed class TcpProxyService
 {
     private readonly Func<CancellationToken, Task<IPEndPoint?>> _targetResolver;
     private readonly Action<string> _log;
+    private readonly int _listenPort;
+    private readonly string _name;
     private CancellationTokenSource? _cts;
     private TcpListener? _listener;
     private Task? _acceptLoopTask;
 
-    public TcpProxyService(Func<CancellationToken, Task<IPEndPoint?>> targetResolver, Action<string> log)
+    public TcpProxyService(int listenPort, string name,
+        Func<CancellationToken, Task<IPEndPoint?>> targetResolver, Action<string> log)
     {
+        _listenPort = listenPort;
+        _name = name;
         _targetResolver = targetResolver;
         _log = log;
     }
@@ -26,9 +31,9 @@ public sealed class TcpProxyService
         }
 
         _cts = new CancellationTokenSource();
-        _listener = new TcpListener(IPAddress.Loopback, LauncherConstants.SkyrimProxyPort);
+        _listener = new TcpListener(IPAddress.Loopback, _listenPort);
         _listener.Start(16);
-        _log($"TCP Proxy listening on 127.0.0.1:{LauncherConstants.SkyrimProxyPort}{Environment.NewLine}");
+        _log($"{_name} proxy listening on 127.0.0.1:{_listenPort}{Environment.NewLine}");
         _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
     }
 
@@ -58,7 +63,7 @@ public sealed class TcpProxyService
         _listener = null;
         _cts.Dispose();
         _cts = null;
-        _log($"TCP Proxy stopped.{Environment.NewLine}");
+        _log($"{_name} proxy stopped.{Environment.NewLine}");
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -83,7 +88,7 @@ public sealed class TcpProxyService
             {
                 if (!cancellationToken.IsCancellationRequested)
                 {
-                    _log($"Proxy accept loop stopped unexpectedly.{Environment.NewLine}");
+                    _log($"{_name} proxy accept loop stopped unexpectedly.{Environment.NewLine}");
                 }
                 break;
             }
@@ -98,7 +103,7 @@ public sealed class TcpProxyService
         var target = await _targetResolver(cancellationToken).ConfigureAwait(false);
         if (target is null)
         {
-            _log($"Proxy: Could not get WSL IP.{Environment.NewLine}");
+            _log($"{_name} proxy: Could not get WSL IP.{Environment.NewLine}");
             return;
         }
 
@@ -117,7 +122,7 @@ public sealed class TcpProxyService
         {
             if (!cancellationToken.IsCancellationRequested)
             {
-                _log($"Proxy: Error connecting to target: {ex.Message}{Environment.NewLine}");
+                _log($"{_name} proxy: Error connecting to target: {ex.Message}{Environment.NewLine}");
             }
         }
     }
