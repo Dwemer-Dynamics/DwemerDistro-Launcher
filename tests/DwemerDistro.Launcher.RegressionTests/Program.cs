@@ -778,7 +778,9 @@ try
     foreach (var state in systemStates)
     {
         var statusText = MainWindowViewModel.BuildSystemStatusText(state, null, null);
-        Assert(statusText.StartsWith("System:", StringComparison.Ordinal) && statusText.Length > "System:".Length,
+        Assert(state == SystemUpdateAvailability.Current
+                ? statusText.StartsWith("Distro is ", StringComparison.Ordinal)
+                : statusText.StartsWith("System:", StringComparison.Ordinal) && statusText.Length > "System:".Length,
             $"The {state} system state must say what it is in words, not only in colour.");
         Assert(MainWindowViewModel.BuildSystemStatusColor(state).Length > 0,
             $"The {state} system state must resolve to a status colour.");
@@ -831,10 +833,10 @@ try
             == "System: update available.",
         "An update reported without versions must still say an update is available.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Current, "  1.3  ", null)
-            == "System: up to date (version 1.3).",
+            == "Distro is up to date (version 1.3).",
         "A reported version must be trimmed before it reaches the status line.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Current, "   ", null)
-            == "System: up to date.",
+            == "Distro is up to date.",
         "A blank version must be treated as no version at all.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Unknown, null, null)
             .Contains("repairs a distro that cannot report it", StringComparison.Ordinal),

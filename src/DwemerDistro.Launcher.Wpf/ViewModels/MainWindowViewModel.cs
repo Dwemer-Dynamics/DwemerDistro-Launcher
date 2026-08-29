@@ -403,8 +403,8 @@ echo "CHIM-MCP installed and enabled."
             SystemUpdateAvailability.Checking => "System: checking for updates...",
             SystemUpdateAvailability.Updating => "System: updating now...",
             SystemUpdateAvailability.Current => installed is null
-                ? "System: up to date."
-                : $"System: up to date (version {installed}).",
+                ? "Distro is up to date."
+                : $"Distro is up to date (version {installed}).",
             SystemUpdateAvailability.UpdateAvailable => (installed, available) switch
             {
                 (not null, not null) => $"System: update available (installed {installed}, latest {available}).",
