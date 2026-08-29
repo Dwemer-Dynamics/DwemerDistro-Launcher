@@ -310,7 +310,7 @@
                                         </Grid>
 
                                         <!-- Not installed: pick a branch, then install. Webpage, rollback and the
-                                             update checkbox stay out of reach until the server exists. -->
+                                             update action stay out of reach until the server exists. -->
                                         <StackPanel Visibility="{Binding HerikaManager.ShowNotInstalledActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Install branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding HerikaManager.Branches}" SelectedItem="{Binding HerikaManager.SelectedBranch}"
@@ -333,12 +333,16 @@
                                                       IsEnabled="{Binding HerikaManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
                                             <!-- Updates the shared system, then this mod on the chosen branch.
-                                                 Disabled during conflicting operations so controls never shift. -->
-                                            <Button Content="{Binding HerikaManager.UpdateActionName}" Command="{Binding HerikaManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,12" Height="40"
-                                                    AutomationProperties.Name="{Binding HerikaManager.UpdateActionName}"
-                                                    ToolTip="{Binding HerikaManager.UpdateActionHelpText}"
-                                                    AutomationProperties.HelpText="{Binding HerikaManager.UpdateActionHelpText}" />
+                                                 Disabled during conflicting operations so controls never shift.
+                                                 The manager is this button's DataContext so the shared update
+                                                 style can watch IsUpdateAvailable and turn the button green
+                                                 only for a confirmed newer version on the selected branch. -->
+                                            <Button DataContext="{Binding HerikaManager}"
+                                                    Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.ChimUpdateButton}" Margin="0,16,0,12" Height="40"
+                                                    AutomationProperties.Name="{Binding UpdateActionName}"
+                                                    ToolTip="{Binding UpdateActionHelpText}"
+                                                    AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
                                             <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.ModAction.ChimSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="CHIM Webpage"
                                                     AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
@@ -413,7 +417,7 @@
                                         </Grid>
 
                                         <!-- Not installed: pick a branch, then install. Webpage, rollback and the
-                                             update checkbox stay out of reach until the server exists. -->
+                                             update action stay out of reach until the server exists. -->
                                         <StackPanel Visibility="{Binding StobeManager.ShowNotInstalledActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Install branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding StobeManager.Branches}" SelectedItem="{Binding StobeManager.SelectedBranch}"
@@ -436,12 +440,16 @@
                                                       IsEnabled="{Binding StobeManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
                                             <!-- Updates the shared system, then this mod on the chosen branch.
-                                                 Disabled during conflicting operations so controls never shift. -->
-                                            <Button Content="{Binding StobeManager.UpdateActionName}" Command="{Binding StobeManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,12" Height="40"
-                                                    AutomationProperties.Name="{Binding StobeManager.UpdateActionName}"
-                                                    ToolTip="{Binding StobeManager.UpdateActionHelpText}"
-                                                    AutomationProperties.HelpText="{Binding StobeManager.UpdateActionHelpText}" />
+                                                 Disabled during conflicting operations so controls never shift.
+                                                 The manager is this button's DataContext so the shared update
+                                                 style can watch IsUpdateAvailable and turn the button green
+                                                 only for a confirmed newer version on the selected branch. -->
+                                            <Button DataContext="{Binding StobeManager}"
+                                                    Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.StobeUpdateButton}" Margin="0,16,0,12" Height="40"
+                                                    AutomationProperties.Name="{Binding UpdateActionName}"
+                                                    ToolTip="{Binding UpdateActionHelpText}"
+                                                    AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
                                             <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.ModAction.StobeSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="STOBE Webpage"
                                                     AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
@@ -516,7 +524,7 @@
                                         </Grid>
 
                                         <!-- Not installed: pick a branch, then install. Webpage, rollback and the
-                                             update checkbox stay out of reach until the server exists. -->
+                                             update action stay out of reach until the server exists. -->
                                         <StackPanel Visibility="{Binding DialecticManager.ShowNotInstalledActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Install branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding DialecticManager.Branches}" SelectedItem="{Binding DialecticManager.SelectedBranch}"
@@ -539,12 +547,16 @@
                                                       IsEnabled="{Binding DialecticManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
                                             <!-- Updates the shared system, then this mod on the chosen branch.
-                                                 Disabled during conflicting operations so controls never shift. -->
-                                            <Button Content="{Binding DialecticManager.UpdateActionName}" Command="{Binding DialecticManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,12" Height="40"
-                                                    AutomationProperties.Name="{Binding DialecticManager.UpdateActionName}"
-                                                    ToolTip="{Binding DialecticManager.UpdateActionHelpText}"
-                                                    AutomationProperties.HelpText="{Binding DialecticManager.UpdateActionHelpText}" />
+                                                 Disabled during conflicting operations so controls never shift.
+                                                 The manager is this button's DataContext so the shared update
+                                                 style can watch IsUpdateAvailable and turn the button green
+                                                 only for a confirmed newer version on the selected branch. -->
+                                            <Button DataContext="{Binding DialecticManager}"
+                                                    Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.DialecticUpdateButton}" Margin="0,16,0,12" Height="40"
+                                                    AutomationProperties.Name="{Binding UpdateActionName}"
+                                                    ToolTip="{Binding UpdateActionHelpText}"
+                                                    AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
                                             <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.ModAction.DialecticSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="DIALECTIC Webpage"
                                                     AutomationProperties.HelpText="Open the Dialectic server webpage. If it is unavailable, the launcher can start the server first." />

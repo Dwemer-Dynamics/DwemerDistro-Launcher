@@ -194,10 +194,14 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>Feeds the existing version status into the matching product's status line.</summary>
-    private void ApplyVersionStatusToManager(ServerProduct product, string text, string color)
+    private void ApplyVersionStatusToManager(
+        ServerProduct product,
+        string text,
+        string color,
+        bool updateAvailable)
     {
         var manager = ServerManagers.FirstOrDefault(item => item.Product == product);
-        manager?.ApplyVersionStatus(text, color);
+        manager?.ApplyVersionStatus(text, color, updateAvailable);
     }
 
     private async Task InstallServerAsync(ServerManagerItemViewModel item)

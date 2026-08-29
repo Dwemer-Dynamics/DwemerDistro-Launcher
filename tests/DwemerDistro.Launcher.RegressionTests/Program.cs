@@ -108,6 +108,22 @@ try
            && MainWindowViewModel.MapServerBranchToChoice("unstable", "stobe") == "Dev",
         "Existing production and development branches must map back to visible choices.");
 
+    // --- mod version status line ------------------------------------------------------------
+
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3")
+               == "aiagent | 01-01-2026 | 1.2.3",
+        "A mod with no confirmed update must keep the plain branch | date | semantic version line.");
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3", true)
+               == "aiagent | 01-01-2026 | 1.2.3 | Update Available",
+        "A confirmed update must append Update Available after the version info on the existing separator.");
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("dialectic", null, null, null, false)
+               == "dialectic | N/A | N/A",
+        "An unknown version must not claim an update: the same yellow also means missing or unknown.");
+    Assert(MainWindowViewModel.UpdateAvailableStatusSuffix == "Update Available",
+        "Both the mod control menu and the 96px rail tile must show the exact text Update Available.");
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("stobe", "stobe", "01-01-2026", "1.2.3", true).Length <= 48,
+        "The status line must stay short enough for the fixed status area and the 96px rail tiles.");
+
     Assert(InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(false, false),
         "Leaving Components with nothing running must release the page so its visual tree can be collected.");
     Assert(!InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(true, false),
@@ -356,7 +372,7 @@ try
         ServerProduct.Herika, "CHIM", _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask,
         _ => Task.CompletedTask);
 
-    herikaItem.ApplyVersionStatus("aiagent | 01-01-2026 | 1.2.3", "LimeGreen");
+    herikaItem.ApplyVersionStatus("aiagent | 01-01-2026 | 1.2.3", "LimeGreen", false);
     herikaItem.ApplyStatus(stobeStatus with { Product = ServerProduct.Herika });
     Assert(herikaItem.ShowNotInstalledActions && !herikaItem.ShowInstalledActions && !herikaItem.ShowRepairActions,
         "A not-installed product must show only the install branch and Install Server.");
@@ -364,9 +380,11 @@ try
            && herikaItem.StatusColor == ServerManagerItemViewModel.NotInstalledColor,
         "A not-installed product must read Not installed in the neutral grey, not the version colours.");
     Assert(!herikaItem.CanUseInstalledFeatures && herikaItem.CanInstall && !herikaItem.CanUninstall,
-        "Webpage, rollback and the update checkbox must stay unreachable while nothing is installed.");
+        "Webpage, rollback and the update action must stay unreachable while nothing is installed.");
     Assert(!herikaItem.CanUpdate,
         "The single-product update must never be offered for a product that is not installed.");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A product that is not installed has nothing to update, so its button must stay themed.");
 
     herikaItem.ApplyStatus(herikaStatus);
     Assert(herikaItem.ShowInstalledActions && !herikaItem.ShowNotInstalledActions && !herikaItem.ShowRepairActions,
@@ -377,6 +395,8 @@ try
         "An installed product must offer uninstall but never a second install.");
     Assert(herikaItem.CanUpdate && herikaItem.UpdateCommand.CanExecute(null),
         "An installed, idle product must offer its own update action.");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "An installed product that is current must keep its per-mod themed update button.");
     Assert(herikaItem.SelectedBranch == "Main",
         "The reported production branch must map back to the Main branch choice.");
     Assert(herikaItem.LocationSummary.Contains("/var/www/html/HerikaServer", StringComparison.Ordinal)
@@ -393,6 +413,8 @@ try
         "A needs-repair product must not expose webpage or rollback, but must stay uninstallable.");
     Assert(!herikaItem.CanUpdate,
         "A needs-repair product must be repaired, not updated over the top of a broken install.");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A needs-repair product must not go green: repair comes before any update.");
     Assert(herikaItem.SelectedBranch == "Dev",
         "A checked-out development branch must map back to the Dev branch choice.");
 
@@ -438,6 +460,55 @@ try
     Assert(herikaItem.CanUpdate && herikaItem.UpdateActionHelpText.Contains("Main", StringComparison.Ordinal)
            && herikaItem.UpdateActionHelpText.Contains("HerikaServer", StringComparison.Ordinal),
         "The enabled update action must name the one server and the branch it will use.");
+
+    // --- confirmed update available drives the green update button --------------------------
+
+    // The flag is the version comparison's own answer, not a reading of the status colour: the
+    // yellow below also stands for an unknown or a missing version.
+    herikaItem.ApplyVersionStatus(
+        MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3", true),
+        "Yellow",
+        true);
+    Assert(herikaItem.IsUpdateAvailable,
+        "A confirmed newer version on the selected branch must turn the mod's update button green.");
+    Assert(herikaItem.StatusText.EndsWith(" | Update Available", StringComparison.Ordinal),
+        "The mod control menu status line must end with Update Available after the version info.");
+    Assert(herikaItem.UpdateActionHelpText.Contains("Update Available", StringComparison.Ordinal),
+        "A screen reader must hear the confirmed update, not only see the colour change.");
+
+    herikaItem.ApplyVersionStatus(
+        MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", null, null),
+        "Yellow",
+        false);
+    Assert(!herikaItem.IsUpdateAvailable && herikaItem.StatusColor == "Yellow",
+        "Yellow for an unknown or missing version must leave the update button in its mod theme.");
+    Assert(!herikaItem.StatusText.Contains("Update Available", StringComparison.Ordinal),
+        "An unknown version must never claim an update in either place the version is shown.");
+
+    herikaItem.ApplyVersionStatus(
+        MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3", true),
+        "Yellow",
+        true);
+    Assert(herikaItem.IsUpdateAvailable, "The test precondition requires a confirmed update.");
+    herikaItem.IsConflictingOperationRunning = true;
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A confirmed update must drop back to the themed button while another operation is running.");
+    herikaItem.IsConflictingOperationRunning = false;
+
+    herikaItem.BeginOperation("Updating (Main)...");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A busy mod must not show a green call to action for work that is already running.");
+    herikaItem.EndOperation("Last update failed");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A failed operation must read as failed, not as an available update.");
+
+    herikaItem.EndOperation();
+    Assert(herikaItem.IsUpdateAvailable,
+        "Clearing the failure must restore the still-confirmed update.");
+    herikaItem.ApplyStatus(dialecticStatus with { Product = ServerProduct.Herika });
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A product that falls into needs-repair must stop advertising an update.");
+    herikaItem.ApplyStatus(herikaStatus);
 
     var individualUpdateInvoked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var individualUpdateCount = 0;

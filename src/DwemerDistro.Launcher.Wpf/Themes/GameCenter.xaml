@@ -354,6 +354,102 @@
         </Style.Triggers>
     </Style>
 
+    <!-- Per-mod update action. It is the brand-filled button above by default and only swaps to
+         the shared success green when the mod's own version comparison confirmed the selected
+         branch is ahead - the view model's IsUpdateAvailable, never the yellow status colour,
+         which also stands for an unknown or missing version. Geometry, padding, the white label
+         and the base template's focus ring are inherited unchanged, so the swap costs no layout
+         and no focus visual. Hover and pressed keep moving two channels in green (fill darkens or
+         lightens, outline goes gold), and disabled is left to the brand style's neutral muted
+         treatment, so a confirmed update that becomes unavailable reads as "off" rather than as a
+         dimmer green. The DataContext of each of these buttons is its ServerManagerItemViewModel. -->
+    <Style x:Key="GameCenter.ModAction.ChimUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.ChimButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.StobeUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.StobeButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.DialecticUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.DialecticButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
     <!-- Compact secondary tier for the supporting actions inside an installed mod's action
          panel. The brand-filled Update above them stays the one strong call to action; these sit
          a step down at 34px with a transparent fill and a 1px outline, so the panel reads as one

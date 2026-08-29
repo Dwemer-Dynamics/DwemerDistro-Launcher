@@ -37,6 +37,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     private int? _port;
     private string _versionStatusText = "Checking...";
     private string _versionStatusColor = CheckingColor;
+    private bool _isVersionUpdateAvailable;
     private string _selectedBranch = "Main";
     private bool _hasExplicitBranchSelection;
     private bool _isBusy;
@@ -149,6 +150,18 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         _state == ServerInstallState.Installed
         && !_isBusy
         && !_isConflictingOperationRunning;
+
+    /// <summary>
+    /// True only when the last version check compared the installed version against the selected
+    /// branch and found the branch ahead. It is never inferred from the status colour, because the
+    /// same yellow also covers an unknown or missing version. Every other state - checking,
+    /// current, unknown, missing, needs repair, busy, failed - leaves this false, so the update
+    /// button keeps its per-mod brand colour and green stays a confirmed signal.
+    /// </summary>
+    public bool IsUpdateAvailable =>
+        _isVersionUpdateAvailable
+        && CanUpdate
+        && string.IsNullOrWhiteSpace(_errorText);
 
     /// <summary>A product with anything on disk can be purged; a clean absence cannot.</summary>
     public bool CanUninstall =>
@@ -299,7 +312,12 @@ public sealed class ServerManagerItemViewModel : ObservableObject
                 return $"{UpdateActionName} is unavailable until {RailProductName} is installed.";
             }
 
-            return $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} branch. " +
+            var lead = IsUpdateAvailable
+                ? $"Update Available for {RailProductName} on the selected {SelectedBranch} branch. "
+                : string.Empty;
+
+            return lead +
+                   $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} branch. " +
                    "Other mods are left unchanged.";
         }
     }
@@ -358,14 +376,21 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         RaiseDerivedState();
     }
 
-    /// <summary>Feeds the existing per-product version check into the installed status line.</summary>
-    public void ApplyVersionStatus(string text, string color)
+    /// <summary>
+    /// Feeds the existing per-product version check into the installed status line.
+    /// <paramref name="updateAvailable"/> is the version comparison's own answer, passed in rather
+    /// than read back out of <paramref name="color"/>.
+    /// </summary>
+    public void ApplyVersionStatus(string text, string color, bool updateAvailable)
     {
         _versionStatusText = text;
         _versionStatusColor = color;
+        _isVersionUpdateAvailable = updateAvailable;
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(StatusColor));
         OnPropertyChanged(nameof(AccessibleStatusHelpText));
+        OnPropertyChanged(nameof(IsUpdateAvailable));
+        OnPropertyChanged(nameof(UpdateActionHelpText));
     }
 
     public void BeginOperation(string busyText)
@@ -386,7 +411,17 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     {
         _busyText = null;
         _errorText = error;
-        IsBusy = false;
+
+        var wasBusy = _isBusy;
+        _isBusy = false;
+        if (wasBusy)
+        {
+            OnPropertyChanged(nameof(IsBusy));
+        }
+
+        // Setting or clearing the error moves the status line and the confirmed-update signal even
+        // when nothing was in flight, so the derived state is republished either way.
+        RaiseDerivedState();
     }
 
     /// <summary>
@@ -444,6 +479,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         OnPropertyChanged(nameof(CanInstall));
         OnPropertyChanged(nameof(CanRepair));
         OnPropertyChanged(nameof(CanUpdate));
+        OnPropertyChanged(nameof(IsUpdateAvailable));
         OnPropertyChanged(nameof(CanUninstall));
         OnPropertyChanged(nameof(CanUseInstalledFeatures));
         OnPropertyChanged(nameof(StatusText));

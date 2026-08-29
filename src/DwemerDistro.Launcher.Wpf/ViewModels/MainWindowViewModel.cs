@@ -49,6 +49,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private const string SystemStatusSuccessColor = "#8FD694";
     private const string SystemStatusAttentionColor = "#FFB641";
     private const string SystemStatusErrorColor = "#FF8A80";
+    /// <summary>Appended to a mod's version line, and only when the comparison confirmed it.</summary>
+    internal const string UpdateAvailableStatusSuffix = "Update Available";
+
     // Segoe MDL2 Assets, the icon font the rail and caption buttons already use. The badge is a
     // shape, so the top button's signal never rests on colour alone.
     internal const string SystemUpdateAvailableGlyph = "\uE896";
@@ -1785,7 +1788,7 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        SetHerikaStatus("Checking...", "White");
+        SetHerikaStatus("Checking...", "White", false);
         var currentBranch = await GetCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         var branchChoice = MapServerBranchToChoice(currentBranch, "aiagent");
         if (branchChoice is not null)
@@ -1799,30 +1802,35 @@ echo "CHIM-MCP installed and enabled."
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/abeiro/HerikaServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
-        var statusText = BuildServerVersionStatusText(
-            "herika",
-            currentBranch,
-            FormatDateVersion(currentVersion),
-            semanticVersion);
-
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
-            var comparison = CompareVersions(currentVersion, gitVersion);
-            SetHerikaStatus(statusText, comparison < 0 ? "Yellow" : "LimeGreen");
+            // The only place a mod update is confirmed: the installed version is behind the branch
+            // that is actually checked out. Every other arm below leaves the flag false.
+            var updateAvailable = CompareVersions(currentVersion, gitVersion) < 0;
+            SetHerikaStatus(
+                BuildServerVersionStatusText(
+                    "herika", currentBranch, FormatDateVersion(currentVersion), semanticVersion, updateAvailable),
+                updateAvailable ? "Yellow" : "LimeGreen",
+                updateAvailable);
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
-            SetHerikaStatus(statusText, "LimeGreen");
+            SetHerikaStatus(
+                BuildServerVersionStatusText(
+                    "herika", currentBranch, FormatDateVersion(currentVersion), semanticVersion),
+                "LimeGreen",
+                false);
         }
         else
         {
-            SetHerikaStatus(BuildServerVersionStatusText("herika", currentBranch, null, null), "Yellow");
+            // Yellow here means "version unknown", not "behind" - so it must not turn a button green.
+            SetHerikaStatus(BuildServerVersionStatusText("herika", currentBranch, null, null), "Yellow", false);
         }
     }
 
     private async Task CheckStobeServerUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        SetStobeStatus("Checking...", "White");
+        SetStobeStatus("Checking...", "White", false);
         var currentBranch = await GetStobeServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         var branchChoice = MapServerBranchToChoice(currentBranch, "stobe");
         if (branchChoice is not null)
@@ -1838,24 +1846,26 @@ echo "CHIM-MCP installed and enabled."
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/StobeServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
-        var statusText = BuildServerVersionStatusText(
-            "stobe",
-            currentBranch,
-            FormatDateVersion(currentVersion),
-            semanticVersion);
-
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
-            var comparison = CompareVersions(currentVersion, gitVersion);
-            SetStobeStatus(statusText, comparison < 0 ? "Yellow" : "LimeGreen");
+            var updateAvailable = CompareVersions(currentVersion, gitVersion) < 0;
+            SetStobeStatus(
+                BuildServerVersionStatusText(
+                    "stobe", currentBranch, FormatDateVersion(currentVersion), semanticVersion, updateAvailable),
+                updateAvailable ? "Yellow" : "LimeGreen",
+                updateAvailable);
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
-            SetStobeStatus(statusText, "LimeGreen");
+            SetStobeStatus(
+                BuildServerVersionStatusText(
+                    "stobe", currentBranch, FormatDateVersion(currentVersion), semanticVersion),
+                "LimeGreen",
+                false);
         }
         else
         {
-            SetStobeStatus(BuildServerVersionStatusText("stobe", currentBranch, null, null), "Yellow");
+            SetStobeStatus(BuildServerVersionStatusText("stobe", currentBranch, null, null), "Yellow", false);
         }
     }
 
@@ -3911,14 +3921,22 @@ fi
                text.Contains("[N/A]", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildServerVersionStatusText(
+    /// <summary>
+    /// The one status line both the mod control menu and the 96px rail tile show. The
+    /// "Update Available" suffix rides the existing " | " separator after the version fields, so
+    /// the line only grows when the branch comparison actually confirmed a newer version - never
+    /// for an unknown or missing one.
+    /// </summary>
+    internal static string BuildServerVersionStatusText(
         string serviceName,
         string? branch,
         string? dateVersion,
-        string? semanticVersion)
+        string? semanticVersion,
+        bool updateAvailable = false)
     {
         var source = string.IsNullOrWhiteSpace(branch) ? serviceName : branch.Trim();
-        return $"{source} | {dateVersion ?? "N/A"} | {semanticVersion ?? "N/A"}";
+        var text = $"{source} | {dateVersion ?? "N/A"} | {semanticVersion ?? "N/A"}";
+        return updateAvailable ? $"{text} | {UpdateAvailableStatusSuffix}" : text;
     }
 
     private static FileProgressSnapshot? TryGetFileProgressSnapshot(string path)
@@ -4207,7 +4225,7 @@ fi
 
     private async Task CheckDialecticServerUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        SetDialecticStatus("Checking...", "White");
+        SetDialecticStatus("Checking...", "White", false);
         var currentBranch = await GetDialecticServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         var branchChoice = MapServerBranchToChoice(currentBranch, "dialectic");
         if (branchChoice is not null)
@@ -4221,23 +4239,26 @@ fi
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/DialecticServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
-        var statusText = BuildServerVersionStatusText(
-            "dialectic",
-            currentBranch,
-            FormatDateVersion(currentVersion),
-            semanticVersion);
-
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
-            SetDialecticStatus(statusText, CompareVersions(currentVersion, gitVersion) < 0 ? "Yellow" : "LimeGreen");
+            var updateAvailable = CompareVersions(currentVersion, gitVersion) < 0;
+            SetDialecticStatus(
+                BuildServerVersionStatusText(
+                    "dialectic", currentBranch, FormatDateVersion(currentVersion), semanticVersion, updateAvailable),
+                updateAvailable ? "Yellow" : "LimeGreen",
+                updateAvailable);
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
-            SetDialecticStatus(statusText, "LimeGreen");
+            SetDialecticStatus(
+                BuildServerVersionStatusText(
+                    "dialectic", currentBranch, FormatDateVersion(currentVersion), semanticVersion),
+                "LimeGreen",
+                false);
         }
         else
         {
-            SetDialecticStatus(BuildServerVersionStatusText("dialectic", currentBranch, null, null), "Yellow");
+            SetDialecticStatus(BuildServerVersionStatusText("dialectic", currentBranch, null, null), "Yellow", false);
         }
     }
 
@@ -4682,23 +4703,23 @@ fi
         await Task.Delay(75).ConfigureAwait(true);
     }
 
-    private void SetHerikaStatus(string text, string color)
+    private void SetHerikaStatus(string text, string color, bool updateAvailable)
     {
         RunOnUi(() =>
         {
             HerikaStatusText = text;
             HerikaStatusColor = color;
-            ApplyVersionStatusToManager(ServerProduct.Herika, text, color);
+            ApplyVersionStatusToManager(ServerProduct.Herika, text, color, updateAvailable);
         });
     }
 
-    private void SetStobeStatus(string text, string color)
+    private void SetStobeStatus(string text, string color, bool updateAvailable)
     {
         RunOnUi(() =>
         {
             StobeStatusText = text;
             StobeStatusColor = color;
-            ApplyVersionStatusToManager(ServerProduct.Stobe, text, color);
+            ApplyVersionStatusToManager(ServerProduct.Stobe, text, color, updateAvailable);
         });
     }
 
@@ -4960,13 +4981,13 @@ fi
         public string LogPath => $"/home/dwemer/.dwemerdistro/logs/components/{Key}.log";
     }
 
-    private void SetDialecticStatus(string text, string color)
+    private void SetDialecticStatus(string text, string color, bool updateAvailable)
     {
         RunOnUi(() =>
         {
             DialecticStatusText = text;
             DialecticStatusColor = color;
-            ApplyVersionStatusToManager(ServerProduct.Dialectic, text, color);
+            ApplyVersionStatusToManager(ServerProduct.Dialectic, text, color, updateAvailable);
         });
     }
 
