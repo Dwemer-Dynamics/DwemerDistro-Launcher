@@ -88,7 +88,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.5", "Launcher constants must report version 3.3.5.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.6", "Launcher constants must report version 3.3.6.");
 
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
@@ -96,11 +96,6 @@ try
     Assert(gameCatalog.All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
                                    && game.RailImageSource.EndsWith("-rail.jpg", StringComparison.Ordinal)),
         "Every game profile must use local hero and rail artwork.");
-
-    var keyedPreferences = MainWindowViewModel.ParseUpdateIncludeSettings(
-        "herika=0\nstobe=\ndialectic=1\n");
-    Assert(!keyedPreferences.Herika && keyedPreferences.Stobe && keyedPreferences.Dialectic,
-        "An empty update preference must not shift the following game's value.");
 
     Assert(MainWindowViewModel.ResolveServerBranchChoice("Main", "aiagent") == "aiagent"
            && MainWindowViewModel.ResolveServerBranchChoice("Main", "stobe") == "stobe"
@@ -112,6 +107,22 @@ try
            && MainWindowViewModel.MapServerBranchToChoice("dev", "stobe") == "Dev"
            && MainWindowViewModel.MapServerBranchToChoice("unstable", "stobe") == "Dev",
         "Existing production and development branches must map back to visible choices.");
+
+    // --- mod version status line ------------------------------------------------------------
+
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3")
+               == "aiagent | 01-01-2026 | 1.2.3",
+        "A mod with no confirmed update must keep the plain branch | date | semantic version line.");
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3", true)
+               == "aiagent | 01-01-2026 | 1.2.3 | Update Available",
+        "A confirmed update must append Update Available after the version info on the existing separator.");
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("dialectic", null, null, null, false)
+               == "dialectic | N/A | N/A",
+        "An unknown version must not claim an update: the same yellow also means missing or unknown.");
+    Assert(MainWindowViewModel.UpdateAvailableStatusSuffix == "Update Available",
+        "Both the mod control menu and the 96px rail tile must show the exact text Update Available.");
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("stobe", "stobe", "01-01-2026", "1.2.3", true).Length <= 48,
+        "The status line must stay short enough for the fixed status area and the 96px rail tiles.");
 
     Assert(InstallComponentsWindowViewModel.ShouldUnloadComponentsPage(false, false),
         "Leaving Components with nothing running must release the page so its visual tree can be collected.");
@@ -361,7 +372,7 @@ try
         ServerProduct.Herika, "CHIM", _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask,
         _ => Task.CompletedTask);
 
-    herikaItem.ApplyVersionStatus("aiagent | 01-01-2026 | 1.2.3", "LimeGreen");
+    herikaItem.ApplyVersionStatus("aiagent | 01-01-2026 | 1.2.3", "LimeGreen", false);
     herikaItem.ApplyStatus(stobeStatus with { Product = ServerProduct.Herika });
     Assert(herikaItem.ShowNotInstalledActions && !herikaItem.ShowInstalledActions && !herikaItem.ShowRepairActions,
         "A not-installed product must show only the install branch and Install Server.");
@@ -369,9 +380,11 @@ try
            && herikaItem.StatusColor == ServerManagerItemViewModel.NotInstalledColor,
         "A not-installed product must read Not installed in the neutral grey, not the version colours.");
     Assert(!herikaItem.CanUseInstalledFeatures && herikaItem.CanInstall && !herikaItem.CanUninstall,
-        "Webpage, rollback and the update checkbox must stay unreachable while nothing is installed.");
+        "Webpage, rollback and the update action must stay unreachable while nothing is installed.");
     Assert(!herikaItem.CanUpdate,
         "The single-product update must never be offered for a product that is not installed.");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A product that is not installed has nothing to update, so its button must stay themed.");
 
     herikaItem.ApplyStatus(herikaStatus);
     Assert(herikaItem.ShowInstalledActions && !herikaItem.ShowNotInstalledActions && !herikaItem.ShowRepairActions,
@@ -382,6 +395,8 @@ try
         "An installed product must offer uninstall but never a second install.");
     Assert(herikaItem.CanUpdate && herikaItem.UpdateCommand.CanExecute(null),
         "An installed, idle product must offer its own update action.");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "An installed product that is current must keep its per-mod themed update button.");
     Assert(herikaItem.SelectedBranch == "Main",
         "The reported production branch must map back to the Main branch choice.");
     Assert(herikaItem.LocationSummary.Contains("/var/www/html/HerikaServer", StringComparison.Ordinal)
@@ -398,6 +413,8 @@ try
         "A needs-repair product must not expose webpage or rollback, but must stay uninstallable.");
     Assert(!herikaItem.CanUpdate,
         "A needs-repair product must be repaired, not updated over the top of a broken install.");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A needs-repair product must not go green: repair comes before any update.");
     Assert(herikaItem.SelectedBranch == "Dev",
         "A checked-out development branch must map back to the Dev branch choice.");
 
@@ -444,6 +461,55 @@ try
            && herikaItem.UpdateActionHelpText.Contains("HerikaServer", StringComparison.Ordinal),
         "The enabled update action must name the one server and the branch it will use.");
 
+    // --- confirmed update available drives the green update button --------------------------
+
+    // The flag is the version comparison's own answer, not a reading of the status colour: the
+    // yellow below also stands for an unknown or a missing version.
+    herikaItem.ApplyVersionStatus(
+        MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3", true),
+        "Yellow",
+        true);
+    Assert(herikaItem.IsUpdateAvailable,
+        "A confirmed newer version on the selected branch must turn the mod's update button green.");
+    Assert(herikaItem.StatusText.EndsWith(" | Update Available", StringComparison.Ordinal),
+        "The mod control menu status line must end with Update Available after the version info.");
+    Assert(herikaItem.UpdateActionHelpText.Contains("Update Available", StringComparison.Ordinal),
+        "A screen reader must hear the confirmed update, not only see the colour change.");
+
+    herikaItem.ApplyVersionStatus(
+        MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", null, null),
+        "Yellow",
+        false);
+    Assert(!herikaItem.IsUpdateAvailable && herikaItem.StatusColor == "Yellow",
+        "Yellow for an unknown or missing version must leave the update button in its mod theme.");
+    Assert(!herikaItem.StatusText.Contains("Update Available", StringComparison.Ordinal),
+        "An unknown version must never claim an update in either place the version is shown.");
+
+    herikaItem.ApplyVersionStatus(
+        MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3", true),
+        "Yellow",
+        true);
+    Assert(herikaItem.IsUpdateAvailable, "The test precondition requires a confirmed update.");
+    herikaItem.IsConflictingOperationRunning = true;
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A confirmed update must drop back to the themed button while another operation is running.");
+    herikaItem.IsConflictingOperationRunning = false;
+
+    herikaItem.BeginOperation("Updating (Main)...");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A busy mod must not show a green call to action for work that is already running.");
+    herikaItem.EndOperation("Last update failed");
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A failed operation must read as failed, not as an available update.");
+
+    herikaItem.EndOperation();
+    Assert(herikaItem.IsUpdateAvailable,
+        "Clearing the failure must restore the still-confirmed update.");
+    herikaItem.ApplyStatus(dialecticStatus with { Product = ServerProduct.Herika });
+    Assert(!herikaItem.IsUpdateAvailable,
+        "A product that falls into needs-repair must stop advertising an update.");
+    herikaItem.ApplyStatus(herikaStatus);
+
     var individualUpdateInvoked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var individualUpdateCount = 0;
     var individualUpdateItem = new ServerManagerItemViewModel(
@@ -469,42 +535,48 @@ try
     Assert(individualUpdateCount == 1,
         "The individual update command must invoke only its product update delegate once.");
 
-    // --- Updates checkbox gates the single-product update ------------------------------------
+    // --- No saved preference gates the single-product update ---------------------------------
 
-    Assert(individualUpdateItem.IsIncludedInUpdates,
-        "A product must start included in updates, so the button matches the checkbox default.");
-
-    individualUpdateItem.IsIncludedInUpdates = false;
-    Assert(!individualUpdateItem.CanUpdate && !individualUpdateItem.UpdateCommand.CanExecute(null),
-        "Clearing a product's Updates checkbox must disable that product's own Update button.");
-    individualUpdateItem.UpdateCommand.Execute(null);
-    Assert(individualUpdateCount == 1,
-        "An excluded product's update must not run even when its command is invoked directly.");
-    Assert(individualUpdateItem.UpdateActionHelpText.Contains("Updates checkbox", StringComparison.Ordinal)
-           && individualUpdateItem.UpdateActionHelpText.Contains("STOBE", StringComparison.Ordinal),
-        "The disabled update action must tell the user to enable that product's Updates checkbox.");
-    Assert(individualUpdateItem.CanUninstall && individualUpdateItem.ShowInstalledActions
-           && individualUpdateItem.StatusColor != ServerManagerItemViewModel.ErrorColor,
-        "The Updates checkbox must gate only the update action, not the rest of the lifecycle.");
-
-    individualUpdateItem.IsIncludedInUpdates = true;
+    // No saved preference gates a mod update: an installed, idle mod is updatable with nothing else set.
     Assert(individualUpdateItem.CanUpdate && individualUpdateItem.UpdateCommand.CanExecute(null),
-        "Re-checking the Updates checkbox must re-enable the update button for an installed idle product.");
+        "An installed idle mod must be updatable without any saved update preference.");
     individualUpdateItem.UpdateCommand.Execute(null);
     Assert(individualUpdateCount == 2,
-        "A re-included product's update must run again as soon as the checkbox is restored.");
+        "An installed idle mod's update must run every time its own button is invoked.");
 
-    // A sibling operation keeps priority over the checkbox explanation.
-    individualUpdateItem.IsIncludedInUpdates = false;
     individualUpdateItem.IsConflictingOperationRunning = true;
-    Assert(!individualUpdateItem.CanUpdate
+    Assert(!individualUpdateItem.CanUpdate && !individualUpdateItem.UpdateCommand.CanExecute(null)
            && individualUpdateItem.UpdateActionHelpText.Contains("another server, component, or system operation", StringComparison.Ordinal),
-        "A running sweep must still explain itself, even for a product excluded from updates.");
+        "A conflicting operation must disable the mod update and say why.");
+    individualUpdateItem.UpdateCommand.Execute(null);
+    Assert(individualUpdateCount == 2,
+        "A conflicted product's update must not run even when its command is invoked directly.");
     individualUpdateItem.IsConflictingOperationRunning = false;
-    Assert(!individualUpdateItem.CanUpdate
-           && individualUpdateItem.UpdateActionHelpText.Contains("Updates checkbox", StringComparison.Ordinal),
-        "Once the transient blocks clear, an excluded product must still explain the checkbox.");
-    individualUpdateItem.IsIncludedInUpdates = true;
+    Assert(individualUpdateItem.CanUpdate && individualUpdateItem.CanUninstall
+           && individualUpdateItem.ShowInstalledActions
+           && individualUpdateItem.StatusColor != ServerManagerItemViewModel.ErrorColor,
+        "Clearing the conflict must restore the update action alongside the rest of the lifecycle.");
+
+    foreach (var ineligible in new[]
+             {
+                 ServerInstallState.NotInstalled, ServerInstallState.NeedsRepair, ServerInstallState.Unknown
+             })
+    {
+        individualUpdateItem.ApplyStatus(stobeStatus with { State = ineligible, DatabasePresent = true });
+        Assert(!individualUpdateItem.CanUpdate && !individualUpdateItem.UpdateCommand.CanExecute(null)
+               && individualUpdateItem.UpdateActionHelpText.Contains("until STOBE is installed", StringComparison.Ordinal),
+            $"A {ineligible} mod must stay ineligible for update and explain that it is not installed.");
+        individualUpdateItem.UpdateCommand.Execute(null);
+    }
+
+    Assert(individualUpdateCount == 2,
+        "No un-installed state may run a mod update, however its command is invoked.");
+    individualUpdateItem.ApplyStatus(stobeStatus with
+    {
+        State = ServerInstallState.Installed,
+        RepositoryState = ServerRepositoryState.Managed,
+        DatabasePresent = true
+    });
 
     Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "aiagent", "dev") == ServerBranchChannel.Main
            && ServerManagerItemViewModel.MapBranchToChannel("dev", "aiagent", "dev") == ServerBranchChannel.Dev
@@ -553,14 +625,12 @@ try
 
     // --- Mod update gating ------------------------------------------------------------------
 
-    Assert(MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Installed, includeInUpdates: true),
-        "An installed product with updates enabled must be updated.");
-    Assert(!MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Installed, includeInUpdates: false),
-        "An installed product with updates disabled must be left alone.");
-    Assert(!MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.NotInstalled, includeInUpdates: true)
-           && !MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.NeedsRepair, includeInUpdates: true)
-           && !MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Unknown, includeInUpdates: true),
-        "Update must never reach a product that is not installed, whatever the update checkbox says.");
+    Assert(MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Installed),
+        "An installed product must be updated; no saved preference gates it any more.");
+    Assert(!MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.NotInstalled)
+           && !MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.NeedsRepair)
+           && !MainWindowViewModel.ShouldUpdateProduct(ServerInstallState.Unknown),
+        "Update must never reach a product that is not installed.");
 
     var sharedUpdateCommand = MainWindowViewModel.BuildSharedComponentsUpdateCommand();
     Assert(sharedUpdateCommand.StartsWith("/usr/local/bin/update_gws", StringComparison.Ordinal),
@@ -573,12 +643,12 @@ try
     var systemUpdateCommand = MainWindowViewModel.BuildSystemUpdateCommand();
     Assert(systemUpdateCommand.Contains("if [ ! -d .git ]; then git init", StringComparison.Ordinal)
            && systemUpdateCommand.Contains("git remote add origin https://github.com/abeiro/dwemerdistro.git", StringComparison.Ordinal),
-        "Update System must bootstrap Git metadata for a freshly installed empty distro.");
+        "Update Distro must bootstrap Git metadata for a freshly installed empty distro.");
     var systemReleaseMarkerWrite = MainWindowViewModel.BuildSystemReleaseMarkerWriteCommand();
     Assert(systemUpdateCommand.Contains("git fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
            && systemUpdateCommand.Contains(sharedUpdateCommand + " && ", StringComparison.Ordinal)
            && systemUpdateCommand.EndsWith(systemReleaseMarkerWrite, StringComparison.Ordinal),
-        "Update System must update the distro and shared components before recording the successful system release.");
+        "Update Distro must update the distro and shared components before recording the successful system release.");
     Assert(systemReleaseMarkerWrite.Contains("sudo -S install -D -m 0644", StringComparison.Ordinal)
            && systemReleaseMarkerWrite.Contains("/home/dwemer/dwemerdistro/system-release.json", StringComparison.Ordinal)
            && systemReleaseMarkerWrite.Contains("/var/lib/dwemerdistro/system-release.json", StringComparison.Ordinal),
@@ -617,7 +687,7 @@ try
     var systemUpdateConfirmation = MainWindowViewModel.BuildSystemUpdateConfirmation();
     Assert(systemUpdateConfirmation.Contains("DwemerDistro and its shared components", StringComparison.Ordinal)
            && systemUpdateConfirmation.Contains("Installed mods will not be changed", StringComparison.Ordinal),
-        "Update System must clearly exclude every installed mod server.");
+        "Update Distro must clearly exclude every installed mod server.");
 
     Assert(MainWindowViewModel.CanRunUpdateOperation(false, false, [false, false, false]),
         "Update actions must be available when every shared operation gate is idle.");
@@ -678,16 +748,16 @@ try
     Assert(skippedModCalls == 0, "System failure or exception must prevent every mod update.");
 
     var staleUpdates = MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]);
-    herikaItem.IsIncludedInUpdates = false;
+    herikaItem.ApplyStatus(herikaStatus with { State = ServerInstallState.NeedsRepair });
     individualUpdateItem.ApplyStatus(stobeStatus with { State = ServerInstallState.NotInstalled });
     Assert(MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]).Count == 0,
-        "An unchecked or missing mod must be excluded from a newly confirmed selection.");
+        "A mod that stopped being installed must be excluded from a newly confirmed selection.");
     var staleSystemRuns = 0;
     Assert(await MainWindowViewModel.UpdateInstalledServersAsync(staleUpdates,
             () => { staleSystemRuns++; return Task.FromResult(true); },
-            (_, _) => throw new InvalidOperationException("An unchecked or missing mod must not update."))
+            (_, _) => throw new InvalidOperationException("A missing or broken mod must not update."))
            && staleSystemRuns == 1,
-        "Mods that became unchecked or missing must still leave a successful system-only update.");
+        "Mods that became missing or broken must still leave a successful system-only update.");
     individualUpdateItem.IsConflictingOperationRunning = true;
     Assert(!individualUpdateItem.CanInstall && !individualUpdateItem.InstallCommand.CanExecute(null),
         "A system operation must block installation of a missing mod.");
@@ -699,7 +769,7 @@ try
     Assert(individualUpdateItem.CanRepair && individualUpdateItem.CanUninstall,
         "Lifecycle controls must be restored after the operation finishes.");
 
-    // --- Update System as the single top-level update and the recovery action -----------------
+    // --- Update Distro as the single top-level update and the recovery action -----------------
 
     var systemStates = Enum.GetValues<SystemUpdateAvailability>();
     Assert(systemStates.Length == 6,
@@ -708,30 +778,51 @@ try
     foreach (var state in systemStates)
     {
         var statusText = MainWindowViewModel.BuildSystemStatusText(state, null, null);
-        Assert(statusText.StartsWith("System:", StringComparison.Ordinal) && statusText.Length > "System:".Length,
+        Assert(state == SystemUpdateAvailability.Current
+                ? statusText.StartsWith("Distro is ", StringComparison.Ordinal)
+                : statusText.StartsWith("System:", StringComparison.Ordinal) && statusText.Length > "System:".Length,
             $"The {state} system state must say what it is in words, not only in colour.");
         Assert(MainWindowViewModel.BuildSystemStatusColor(state).Length > 0,
             $"The {state} system state must resolve to a status colour.");
 
-        var accessibleName = MainWindowViewModel.BuildSystemUpdateAccessibleName("Update System", state);
-        Assert(accessibleName.StartsWith("Update System,", StringComparison.Ordinal),
+        // The explicit availability state, never the status colour, decides the label: checking,
+        // current, unknown and failed all keep the plain action label.
+        var idleButtonText = MainWindowViewModel.BuildSystemUpdateIdleButtonText(state);
+        Assert(idleButtonText == (state == SystemUpdateAvailability.UpdateAvailable
+                ? "Distro Update Available"
+                : "Update Distro"),
+            $"The {state} system state must decide the top button label on its own.");
+
+        var accessibleName = MainWindowViewModel.BuildSystemUpdateAccessibleName(idleButtonText, state);
+        Assert(accessibleName.StartsWith(idleButtonText + ",", StringComparison.Ordinal),
             $"The {state} system state must keep the button label at the front of its accessible name.");
 
-        // Update System is also the recovery action, so no state may describe it as unavailable.
+        // Update Distro is also the recovery action, so no state may describe it as unavailable.
         Assert(!MainWindowViewModel.BuildUpdateSystemHelpText(true, state, null, null)
                 .Contains("Unavailable", StringComparison.OrdinalIgnoreCase),
-            $"Update System must stay available in the {state} state whenever no other operation is running.");
+            $"Update Distro must stay available in the {state} state whenever no other operation is running.");
         Assert(MainWindowViewModel.BuildUpdateSystemHelpText(false, state, null, null)
                 .Contains("another server, component, or system operation", StringComparison.Ordinal),
-            "A competing operation must stay the only reason Update System is unavailable.");
+            "A competing operation must stay the only reason Update Distro is unavailable.");
     }
 
     Assert(systemStates.Select(state => MainWindowViewModel.BuildSystemStatusText(state, null, null))
                .Distinct(StringComparer.Ordinal).Count() == systemStates.Length,
         "Every system state must read differently, so the line is never ambiguous without colour.");
-    Assert(systemStates.Select(state => MainWindowViewModel.BuildSystemUpdateAccessibleName("Update System", state))
+    Assert(systemStates.Select(state => MainWindowViewModel.BuildSystemUpdateAccessibleName(
+                   MainWindowViewModel.BuildSystemUpdateIdleButtonText(state), state))
                .Distinct(StringComparer.Ordinal).Count() == systemStates.Length,
         "Every system state must be distinguishable from the button's accessible name alone.");
+    Assert(systemStates.Count(state => MainWindowViewModel.BuildSystemUpdateIdleButtonText(state)
+            == MainWindowViewModel.SystemUpdateAvailableButtonText) == 1,
+        "Only a confirmed available update may advertise one on the top button.");
+    Assert(MainWindowViewModel.BuildSystemUpdateIdleButtonText(SystemUpdateAvailability.UpdateAvailable)
+            == "Distro Update Available"
+           && MainWindowViewModel.BuildSystemUpdateIdleButtonText(SystemUpdateAvailability.Failed)
+            == "Update Distro"
+           && MainWindowViewModel.BuildSystemUpdateIdleButtonText(SystemUpdateAvailability.Unknown)
+            == "Update Distro",
+        "The top action must read Update Distro until a check confirms an available distro update.");
 
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.UpdateAvailable, "1.2", "1.3")
                .Contains("installed 1.2", StringComparison.Ordinal)
@@ -742,22 +833,22 @@ try
             == "System: update available.",
         "An update reported without versions must still say an update is available.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Current, "  1.3  ", null)
-            == "System: up to date (version 1.3).",
+            == "Distro is up to date (version 1.3).",
         "A reported version must be trimmed before it reaches the status line.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Current, "   ", null)
-            == "System: up to date.",
+            == "Distro is up to date.",
         "A blank version must be treated as no version at all.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Unknown, null, null)
             .Contains("repairs a distro that cannot report it", StringComparison.Ordinal),
-        "The unknown state must point at Update System as the recovery action.");
+        "The unknown state must point at Update Distro as the recovery action.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Failed, null, null)
-            .Contains("Run Update System to retry", StringComparison.Ordinal),
+            .Contains("Run Update Distro to retry", StringComparison.Ordinal),
         "A failed update must offer the retry instead of going quiet.");
 
     // The badge is a glyph, so the top button's signal survives a display that drops its colour.
     Assert(MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.UpdateAvailable)
             == MainWindowViewModel.SystemUpdateAvailableGlyph,
-        "An available system update must raise the badge on the top Update System button.");
+        "An available system update must raise the badge on the top Update Distro button.");
     Assert(MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Failed)
             == MainWindowViewModel.SystemUpdateFailedGlyph
            && MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Unknown)
@@ -771,18 +862,17 @@ try
            && MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.Updating).Length == 0,
         "A state the button label already reports must not add a badge on top of it.");
 
-    Assert(MainWindowViewModel.BuildSystemUpdateAccessibleName("Updating System...", SystemUpdateAvailability.Updating)
-            .StartsWith("Updating System...,", StringComparison.Ordinal),
+    Assert(MainWindowViewModel.BuildSystemUpdateAccessibleName("Updating Distro...", SystemUpdateAvailability.Updating)
+            .StartsWith("Updating Distro...,", StringComparison.Ordinal),
         "The accessible name must follow the running button label instead of a fixed one.");
     Assert(MainWindowViewModel.BuildSystemUpdateAccessibleName("   ", SystemUpdateAvailability.Current)
-            .StartsWith("Update System,", StringComparison.Ordinal),
+            .StartsWith("Update Distro,", StringComparison.Ordinal),
         "A missing button label must still leave a usable accessible name.");
 
     var systemOnlyConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([]);
-    Assert(systemOnlyConfirmation.Contains("No installed, update-enabled mods can currently be detected", StringComparison.Ordinal)
-           && systemOnlyConfirmation.Contains("After the system update repairs status", StringComparison.Ordinal)
-           && systemOnlyConfirmation.Contains("Missing mods are never installed", StringComparison.Ordinal)
-           && systemOnlyConfirmation.Contains("unchecked mods are never updated", StringComparison.Ordinal),
+    Assert(systemOnlyConfirmation.Contains("shared components only", StringComparison.Ordinal)
+           && systemOnlyConfirmation.Contains("will not be updated", StringComparison.Ordinal)
+           && systemOnlyConfirmation.Contains("Missing mods are never installed", StringComparison.Ordinal),
         "An empty selection must confirm a system-only update rather than report a missing-mod error.");
 
     var systemOnlyRuns = 0;
@@ -832,16 +922,15 @@ try
         "The post-update refresh must never install a mod that is still missing.");
 
     recoveredOrder.Clear();
-    recoveredItem.ApplyStatus(recoveredInstalledStatus);
-    recoveredItem.IsIncludedInUpdates = false;
+    recoveredItem.ApplyStatus(recoveredInstalledStatus with { State = ServerInstallState.NeedsRepair });
     Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
             recoveredUpdates,
             () => { recoveredOrder.Add("system"); return Task.FromResult(true); },
-            (_, _) => throw new InvalidOperationException("An unchecked mod must never be updated by a mod update."),
+            (_, _) => throw new InvalidOperationException("A broken mod must never be updated by a mod update."),
             () => Task.FromResult(MainWindowViewModel.SnapshotModUpdates([recoveredItem])))
            && recoveredOrder.SequenceEqual(["system"]),
-        "The post-update refresh must never update a mod whose Updates checkbox is off.");
-    recoveredItem.IsIncludedInUpdates = true;
+        "The post-update refresh must never update a mod that still needs repair.");
+    recoveredItem.ApplyStatus(recoveredInstalledStatus);
 
     recoveredItem.SelectedBranch = "Main";
     var branchApprovedUpdates = MainWindowViewModel.SnapshotModUpdates([recoveredItem]);
@@ -869,13 +958,13 @@ try
 
     Assert(MainWindowViewModel.ShouldSyncLauncherVersion(null, LauncherConstants.LauncherVersion)
            && MainWindowViewModel.ShouldSyncLauncherVersion(string.Empty, LauncherConstants.LauncherVersion)
-           && MainWindowViewModel.ShouldSyncLauncherVersion("3.3.4", "3.3.5"),
+           && MainWindowViewModel.ShouldSyncLauncherVersion("3.3.5", "3.3.6"),
         "A missing, empty, or stale marker must run the automatic system sync.");
-    Assert(!MainWindowViewModel.ShouldSyncLauncherVersion("3.3.5\n", "3.3.5")
-           && !MainWindowViewModel.ShouldSyncLauncherVersion("3.3.5", "3.3.5"),
+    Assert(!MainWindowViewModel.ShouldSyncLauncherVersion("3.3.6\n", "3.3.6")
+           && !MainWindowViewModel.ShouldSyncLauncherVersion("3.3.6", "3.3.6"),
         "A recorded launcher version must stop the automatic sync from running every launch.");
 
-    Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(" 3.3.5 ") == "3.3.5"
+    Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(" 3.3.6 ") == "3.3.6"
            && MainWindowViewModel.SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion) == LauncherConstants.LauncherVersion,
         "A plain dotted version must survive sanitizing so the marker can be written.");
     Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(null) is null

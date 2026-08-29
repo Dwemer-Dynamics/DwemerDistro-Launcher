@@ -37,11 +37,11 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     private int? _port;
     private string _versionStatusText = "Checking...";
     private string _versionStatusColor = CheckingColor;
+    private bool _isVersionUpdateAvailable;
     private string _selectedBranch = "Main";
     private bool _hasExplicitBranchSelection;
     private bool _isBusy;
     private bool _isConflictingOperationRunning;
-    private bool _isIncludedInUpdates = true;
     private string? _busyText;
     private string? _errorText;
 
@@ -79,8 +79,8 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     public string DisplayName { get; }
 
     /// <summary>
-    /// Rail-facing name ("CHIM", "STOBE", "Dialectic"). It is what the Updates checkbox calls this
-    /// product, so help text that points the user at that checkbox uses the same word they see.
+    /// Rail-facing name ("CHIM", "STOBE", "Dialectic"). The uninstall confirmation uses it so the
+    /// dialog names the product with the same word the rail shows.
     /// </summary>
     public string RailProductName { get; }
 
@@ -97,7 +97,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
     public AsyncRelayCommand InstallCommand { get; }
 
-    /// <summary>Updates the shared system first, then this checked product on its selected branch.</summary>
+    /// <summary>Updates the shared system first, then this product on its selected branch.</summary>
     public AsyncRelayCommand UpdateCommand { get; }
 
     public AsyncRelayCommand RepairCommand { get; }
@@ -143,21 +143,32 @@ public sealed class ServerManagerItemViewModel : ObservableObject
 
     /// <summary>
     /// The single-product update needs a confirmed install - the manager never installs a missing or
-    /// broken product - must respect this product's Updates checkbox, and must stay out of reach
-    /// while a system update or another product's operation is already driving the manager.
+    /// broken product - and must stay out of reach while a system update or another product's
+    /// operation is already driving the manager. Nothing else gates it.
     /// </summary>
     public bool CanUpdate =>
         _state == ServerInstallState.Installed
-        && _isIncludedInUpdates
         && !_isBusy
         && !_isConflictingOperationRunning;
+
+    /// <summary>
+    /// True only when the last version check compared the installed version against the selected
+    /// branch and found the branch ahead. It is never inferred from the status colour, because the
+    /// same yellow also covers an unknown or missing version. Every other state - checking,
+    /// current, unknown, missing, needs repair, busy, failed - leaves this false, so the update
+    /// button keeps its per-mod brand colour and green stays a confirmed signal.
+    /// </summary>
+    public bool IsUpdateAvailable =>
+        _isVersionUpdateAvailable
+        && CanUpdate
+        && string.IsNullOrWhiteSpace(_errorText);
 
     /// <summary>A product with anything on disk can be purged; a clean absence cannot.</summary>
     public bool CanUninstall =>
         (_state == ServerInstallState.Installed || _state == ServerInstallState.NeedsRepair)
         && !_isBusy && !_isConflictingOperationRunning;
 
-    /// <summary>Webpage, rollback and the update checkbox are only meaningful for a real install.</summary>
+    /// <summary>Webpage and rollback are only meaningful for a real install.</summary>
     public bool CanUseInstalledFeatures => _state == ServerInstallState.Installed && !_isBusy && !_isConflictingOperationRunning;
 
     public bool IsBusy
@@ -184,25 +195,6 @@ public sealed class ServerManagerItemViewModel : ObservableObject
             if (SetProperty(ref _isConflictingOperationRunning, value))
             {
                 RaiseDerivedState();
-            }
-        }
-    }
-
-    /// <summary>
-    /// Mirrors this product's "Include ... in updates" checkbox. An excluded product opted out of
-    /// updates, so the single-product update button opts out with it rather than offering a way
-    /// around the choice; re-checking the box re-enables the button immediately.
-    /// </summary>
-    public bool IsIncludedInUpdates
-    {
-        get => _isIncludedInUpdates;
-        set
-        {
-            if (SetProperty(ref _isIncludedInUpdates, value))
-            {
-                OnPropertyChanged(nameof(CanUpdate));
-                OnPropertyChanged(nameof(UpdateActionHelpText));
-                UpdateCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -315,14 +307,18 @@ public sealed class ServerManagerItemViewModel : ObservableObject
                 return $"{UpdateActionName} is unavailable while another server, component, or system operation is running.";
             }
 
-            if (!_isIncludedInUpdates)
+            if (_state != ServerInstallState.Installed)
             {
-                return $"{UpdateActionName} is unavailable because {RailProductName} is excluded from " +
-                       $"updates. Select the {RailProductName} Updates checkbox to enable it.";
+                return $"{UpdateActionName} is unavailable until {RailProductName} is installed.";
             }
 
-            return $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} branch. " +
-                   "Other mods and the Updates checkbox are left unchanged.";
+            var lead = IsUpdateAvailable
+                ? $"Update Available for {RailProductName} on the selected {SelectedBranch} branch. "
+                : string.Empty;
+
+            return lead +
+                   $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} branch. " +
+                   "Other mods are left unchanged.";
         }
     }
 
@@ -332,7 +328,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         return $"Update {BuildRailProductName(product)}";
     }
 
-    /// <summary>The name the rail and the Updates checkbox use for this product.</summary>
+    /// <summary>The name the rail uses for this product.</summary>
     internal static string BuildRailProductName(ServerProduct product)
     {
         return product switch
@@ -380,14 +376,21 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         RaiseDerivedState();
     }
 
-    /// <summary>Feeds the existing per-product version check into the installed status line.</summary>
-    public void ApplyVersionStatus(string text, string color)
+    /// <summary>
+    /// Feeds the existing per-product version check into the installed status line.
+    /// <paramref name="updateAvailable"/> is the version comparison's own answer, passed in rather
+    /// than read back out of <paramref name="color"/>.
+    /// </summary>
+    public void ApplyVersionStatus(string text, string color, bool updateAvailable)
     {
         _versionStatusText = text;
         _versionStatusColor = color;
+        _isVersionUpdateAvailable = updateAvailable;
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(StatusColor));
         OnPropertyChanged(nameof(AccessibleStatusHelpText));
+        OnPropertyChanged(nameof(IsUpdateAvailable));
+        OnPropertyChanged(nameof(UpdateActionHelpText));
     }
 
     public void BeginOperation(string busyText)
@@ -408,7 +411,17 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     {
         _busyText = null;
         _errorText = error;
-        IsBusy = false;
+
+        var wasBusy = _isBusy;
+        _isBusy = false;
+        if (wasBusy)
+        {
+            OnPropertyChanged(nameof(IsBusy));
+        }
+
+        // Setting or clearing the error moves the status line and the confirmed-update signal even
+        // when nothing was in flight, so the derived state is republished either way.
+        RaiseDerivedState();
     }
 
     /// <summary>
@@ -466,6 +479,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         OnPropertyChanged(nameof(CanInstall));
         OnPropertyChanged(nameof(CanRepair));
         OnPropertyChanged(nameof(CanUpdate));
+        OnPropertyChanged(nameof(IsUpdateAvailable));
         OnPropertyChanged(nameof(CanUninstall));
         OnPropertyChanged(nameof(CanUseInstalledFeatures));
         OnPropertyChanged(nameof(StatusText));

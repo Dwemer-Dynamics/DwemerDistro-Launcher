@@ -29,7 +29,7 @@ internal sealed partial class DistroDoctorService(WslService wsl)
             $"/usr/local/bin/fix_ddistro_permissions {mode}; " +
             "elif [ -f /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions ]; then " +
             $"bash /home/dwemer/dwemerdistro/bin/fix_ddistro_permissions {mode}; " +
-            "else echo 'Neither ddistro_doctor nor fix_ddistro_permissions is installed. Run Update System first.'; exit 127; fi; " +
+            "else echo 'Neither ddistro_doctor nor fix_ddistro_permissions is installed. Run Update Distro first.'; exit 127; fi; " +
             "fi";
 
         return wsl.RunBashAsync(

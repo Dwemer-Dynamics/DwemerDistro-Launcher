@@ -14,15 +14,10 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 /// </summary>
 public sealed partial class MainWindowViewModel
 {
-    private const string ServerManagementNeutralColor = "#C8C8C8";
-    private const string ServerManagementErrorColor = "#FF8A80";
-
     /// <summary>Separates the distro core update from the shared components update in the console.</summary>
     private const string SharedComponentsMarker = "=====MARKER:BEGIN_SHARED_COMPONENTS=====";
 
     private ServerManagementService? _serverManagement;
-    private string _serverManagementStatusText = "Checking installed servers...";
-    private string _serverManagementStatusColor = ServerManagementNeutralColor;
 
     public ServerManagerItemViewModel HerikaManager { get; private set; } = null!;
 
@@ -32,28 +27,6 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>The three products in rail order. Backs status refresh and every mod update.</summary>
     public IReadOnlyList<ServerManagerItemViewModel> ServerManagers { get; private set; } = [];
-
-    public string ServerManagementStatusText
-    {
-        get => _serverManagementStatusText;
-        private set => SetProperty(ref _serverManagementStatusText, value);
-    }
-
-    public string ServerManagementStatusColor
-    {
-        get => _serverManagementStatusColor;
-        private set => SetProperty(ref _serverManagementStatusColor, value);
-    }
-
-    /// <summary>
-    /// The per-product update checkbox needs both the saved preference load and a real install; an
-    /// unchecked-but-enabled box on a missing product would promise an update that cannot happen.
-    /// </summary>
-    public bool IsHerikaUpdateIncludeEnabled => IsUpdateIncludeReady && HerikaManager.CanUseInstalledFeatures;
-
-    public bool IsStobeUpdateIncludeEnabled => IsUpdateIncludeReady && StobeManager.CanUseInstalledFeatures;
-
-    public bool IsDialecticUpdateIncludeEnabled => IsUpdateIncludeReady && DialecticManager.CanUseInstalledFeatures;
 
     private void InitializeServerManagement()
     {
@@ -71,8 +44,6 @@ public sealed partial class MainWindowViewModel
         {
             manager.PropertyChanged += OnServerManagerPropertyChanged;
         }
-
-        RefreshServerUpdateIncludeState();
     }
 
     private void OnServerManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -86,9 +57,6 @@ public sealed partial class MainWindowViewModel
 
         if (e.PropertyName == nameof(ServerManagerItemViewModel.CanUseInstalledFeatures))
         {
-            OnPropertyChanged(nameof(IsHerikaUpdateIncludeEnabled));
-            OnPropertyChanged(nameof(IsStobeUpdateIncludeEnabled));
-            OnPropertyChanged(nameof(IsDialecticUpdateIncludeEnabled));
             OpenChimCommand?.RaiseCanExecuteChanged();
             OpenStobeCommand?.RaiseCanExecuteChanged();
             OpenDialecticCommand?.RaiseCanExecuteChanged();
@@ -109,34 +77,6 @@ public sealed partial class MainWindowViewModel
         foreach (var manager in ServerManagers)
         {
             manager.IsConflictingOperationRunning = busy;
-        }
-    }
-
-    /// <summary>
-    /// Mirrors the three Updates checkboxes onto their products, so a product the user excluded from
-    /// updates also has its own Update button disabled. Every path that changes a checkbox - the
-    /// user, the saved-preference load, and the revert after a failed save - goes through the
-    /// setters that call this, so the buttons always follow the values actually shown.
-    /// </summary>
-    internal void RefreshServerUpdateIncludeState()
-    {
-        if (ServerManagers.Count == 0)
-        {
-            return;
-        }
-
-        SetServerUpdateInclude(ServerProduct.Herika, IncludeHerikaServerUpdate);
-        SetServerUpdateInclude(ServerProduct.Stobe, IncludeStobeServerUpdate);
-        SetServerUpdateInclude(ServerProduct.Dialectic, IncludeDialecticServerUpdate);
-        RaiseUpdateCommandStates();
-    }
-
-    private void SetServerUpdateInclude(ServerProduct product, bool included)
-    {
-        var manager = ServerManagers.FirstOrDefault(item => item.Product == product);
-        if (manager is not null)
-        {
-            manager.IsIncludedInUpdates = included;
         }
     }
 
@@ -173,8 +113,8 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Re-reads <c>status all --json</c> and pushes it into the three items. A failed probe keeps the
-    /// last known state and shows why, rather than claiming everything is missing.
+    /// Re-reads <c>status all --json</c> and pushes it into the three items. A failed probe marks each
+    /// item as unavailable, rather than claiming everything is missing.
     /// </summary>
     private async Task RefreshServerManagementAsync(CancellationToken cancellationToken = default)
     {
@@ -194,7 +134,6 @@ public sealed partial class MainWindowViewModel
                     manager.ApplyStatusError("Server status unavailable");
                 }
 
-                SetServerManagementStatus($"Installed servers: {result.Error}", ServerManagementErrorColor);
                 RaiseServerManagerDependentStates();
                 return;
             }
@@ -204,30 +143,12 @@ public sealed partial class MainWindowViewModel
                 manager.ApplyStatus(result.Snapshot!.Find(manager.Product));
             }
 
-            SetServerManagementStatus(BuildServerManagementSummary(ServerManagers), ServerManagementNeutralColor);
             RaiseServerManagerDependentStates();
         });
     }
 
-    internal static string BuildServerManagementSummary(IReadOnlyList<ServerManagerItemViewModel> managers)
-    {
-        var installed = managers.Count(manager => manager.IsInstalled);
-        var needsRepair = managers.Count(manager => manager.NeedsRepair);
-        var summary = $"{installed} of {managers.Count} servers installed.";
-        return needsRepair > 0 ? $"{summary} {needsRepair} need repair." : summary;
-    }
-
-    private void SetServerManagementStatus(string text, string color)
-    {
-        ServerManagementStatusText = text;
-        ServerManagementStatusColor = color;
-    }
-
     private void RaiseServerManagerDependentStates()
     {
-        OnPropertyChanged(nameof(IsHerikaUpdateIncludeEnabled));
-        OnPropertyChanged(nameof(IsStobeUpdateIncludeEnabled));
-        OnPropertyChanged(nameof(IsDialecticUpdateIncludeEnabled));
         OnPropertyChanged(nameof(IsComponentInteractionEnabled));
         RaiseUpdateCommandStates();
         RefreshServerUpdateConflictState();
@@ -240,10 +161,14 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>Feeds the existing version status into the matching product's status line.</summary>
-    private void ApplyVersionStatusToManager(ServerProduct product, string text, string color)
+    private void ApplyVersionStatusToManager(
+        ServerProduct product,
+        string text,
+        string color,
+        bool updateAvailable)
     {
         var manager = ServerManagers.FirstOrDefault(item => item.Product == product);
-        manager?.ApplyVersionStatus(text, color);
+        manager?.ApplyVersionStatus(text, color, updateAvailable);
     }
 
     private async Task InstallServerAsync(ServerManagerItemViewModel item)
@@ -261,8 +186,8 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Updates the shared system first, then this checked product on its selected branch. Other
-    /// products and the saved Updates checkbox are left alone.
+    /// Updates the shared system first, then this product on its selected branch. Other products
+    /// are left alone.
     /// </summary>
     private async Task UpdateServerAsync(ServerManagerItemViewModel item)
     {
@@ -499,13 +424,13 @@ public sealed partial class MainWindowViewModel
     // --- Mod updates -----------------------------------------------------------------------
 
     /// <summary>
-    /// A product is updated only when it is really installed and the user left its update checkbox
-    /// on. Update must never install a missing product, so a not-installed or needs-repair state is
-    /// always excluded regardless of the checkbox.
+    /// A product is updated only when it is really installed. Update must never install a missing
+    /// or broken product, so a not-installed, needs-repair or unknown state is always excluded.
+    /// This is the single guard every mod update path funnels through.
     /// </summary>
-    internal static bool ShouldUpdateProduct(ServerInstallState state, bool includeInUpdates)
+    internal static bool ShouldUpdateProduct(ServerInstallState state)
     {
-        return includeInUpdates && state == ServerInstallState.Installed;
+        return state == ServerInstallState.Installed;
     }
 
     /// <summary>
@@ -524,7 +449,7 @@ public sealed partial class MainWindowViewModel
         IReadOnlyList<ServerManagerItemViewModel> products)
     {
         return products
-            .Where(product => ShouldUpdateProduct(product.State, product.IsIncludedInUpdates))
+            .Where(product => ShouldUpdateProduct(product.State))
             .Select(product => (Product: product, Branch: product.SelectedBranchChannel))
             .ToArray();
     }
@@ -557,7 +482,7 @@ public sealed partial class MainWindowViewModel
             : MergeConfirmedBranches(confirmedUpdates, await refreshUpdates().ConfigureAwait(true));
 
         var updates = candidates
-            .Where(update => ShouldUpdateProduct(update.Product.State, update.Product.IsIncludedInUpdates))
+            .Where(update => ShouldUpdateProduct(update.Product.State))
             .ToArray();
 
         var allSucceeded = true;

@@ -226,21 +226,6 @@ public partial class MainWindow : Window
         DialecticDetails.Visibility = key == "DIALECTIC" ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void UpdateCheckBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.CheckBox { IsEnabled: true } checkBox)
-        {
-            return;
-        }
-
-        e.Handled = true;
-        checkBox.IsChecked = !(checkBox.IsChecked ?? false);
-        if (checkBox.Command?.CanExecute(checkBox.CommandParameter) == true)
-        {
-            checkBox.Command.Execute(checkBox.CommandParameter);
-        }
-    }
-
     private void ToggleConsoleButton_Click(object sender, RoutedEventArgs e)
     {
         ToggleConsole();

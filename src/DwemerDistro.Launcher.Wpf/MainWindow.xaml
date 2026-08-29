@@ -58,10 +58,6 @@
             <Setter Property="MinWidth" Value="104" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
-        <Style x:Key="GameCenter.HeroUpdateCheckBox" TargetType="CheckBox" BasedOn="{StaticResource GameCenter.CheckBox}">
-            <Setter Property="Visibility" Value="Collapsed" />
-            <Setter Property="HorizontalAlignment" Value="Right" />
-        </Style>
     </Window.Resources>
 
     <Grid x:Name="ShellGrid" Background="{DynamicResource GameCenter.Window}">
@@ -184,35 +180,59 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- The one Update System action in the normal launcher. The badge lives in its own
-                         fixed-width column, so a state change never moves the label; the label column
-                         keeps reserving the widest running text for the same reason. The button stays
-                         enabled whenever no other operation is running, because it is also the recovery
-                         action for a distro that cannot report itself. -->
-                    <Button Command="{Binding UpdateSystemCommand}"
-                            Style="{StaticResource GameCenter.AccentButton}" MinWidth="140" Margin="0,0,6,0"
-                            AutomationProperties.Name="{Binding SystemUpdateAccessibleName}"
-                            AutomationProperties.HelpText="{Binding UpdateSystemHelpText}"
-                            ToolTip="{Binding SystemStatusHelpText}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="16" />
-                            </Grid.ColumnDefinitions>
+                    <!-- The one Update Distro action in the normal launcher. The widest state is reserved
+                         by this outer slot rather than by the coloured frame, so Start, Stop, and Force
+                         Stop never move while the visible button sizes itself to whatever it is currently
+                         saying; the resting "Update Distro" frame therefore hugs its label instead of
+                         carrying the available-update text's width all day. The badge is an overlay in the
+                         button's own right gutter instead of a column, so it never pulls the label off the
+                         frame's centre.
+                         The button stays enabled whenever no other operation is running, because it is
+                         also the recovery action for a distro that cannot report itself. -->
+                    <Grid Margin="0,0,6,0">
+                        <!-- Hidden reservation for the two longest labels - the available-update text and
+                             the longest running text - each padded by the widest frame any state can ask
+                             for: 8px padding + 1px border + the 20px badge gutter, per side. The size and
+                             weight repeat what the button lends its label, so the reservation measures the
+                             same text the same way; the face is left to inherit, exactly as the label's
+                             does. Nothing here is drawn or announced; it only pins the slot width. -->
+                        <TextBlock Text="Distro Update Available" Visibility="Hidden" Margin="29,0"
+                                   FontSize="12" FontWeight="Bold" />
+                        <TextBlock Text="Quickstart Updating..." Visibility="Hidden" Margin="29,0"
+                                   FontSize="12" FontWeight="Bold" />
+                        <Button Command="{Binding UpdateSystemCommand}"
+                                HorizontalAlignment="Right"
+                                AutomationProperties.Name="{Binding SystemUpdateAccessibleName}"
+                                AutomationProperties.HelpText="{Binding UpdateSystemHelpText}"
+                                ToolTip="{Binding SystemStatusHelpText}">
+                            <Button.Style>
+                                <!-- Padding stays symmetric in both states, so the label is centred in the
+                                     frame either way. It only widens while the badge is up, to open the
+                                     right gutter the glyph sits in. -->
+                                <Style TargetType="Button" BasedOn="{StaticResource GameCenter.AccentButton}">
+                                    <Setter Property="Padding" Value="8,6" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsSystemUpdateBadgeVisible}" Value="True">
+                                            <Setter Property="Padding" Value="28,6" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
                             <Grid>
-                                <!-- Hidden content reserves the widest running state without changing accessibility text. -->
-                                <TextBlock Text="Updating System..." Visibility="Hidden" />
                                 <TextBlock Text="{Binding SystemUpdateButtonText}" HorizontalAlignment="Center" />
+                                <!-- The negative margin moves the glyph out of the label's box and into the
+                                     padding gutter, so it neither widens the content nor lands on a glyph. -->
+                                <TextBlock Text="{Binding SystemUpdateBadgeGlyph}"
+                                           Foreground="{Binding SystemUpdateBadgeColor}"
+                                           FontFamily="Segoe MDL2 Assets" FontSize="12" FontWeight="Normal"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           Margin="0,0,-20,0"
+                                           Visibility="{Binding IsSystemUpdateBadgeVisible, Converter={StaticResource BoolToVisibility}}"
+                                           AutomationProperties.Name="{Binding SystemStatusText}"
+                                           AutomationProperties.LiveSetting="Polite" />
                             </Grid>
-                            <TextBlock Grid.Column="1" Text="{Binding SystemUpdateBadgeGlyph}"
-                                       Foreground="{Binding SystemUpdateBadgeColor}"
-                                       FontFamily="Segoe MDL2 Assets" FontSize="12" FontWeight="Normal"
-                                       HorizontalAlignment="Right" VerticalAlignment="Center"
-                                       Visibility="{Binding IsSystemUpdateBadgeVisible, Converter={StaticResource BoolToVisibility}}"
-                                       AutomationProperties.Name="{Binding SystemStatusText}"
-                                       AutomationProperties.LiveSetting="Polite" />
-                        </Grid>
-                    </Button>
+                        </Button>
+                    </Grid>
                     <Button Command="{Binding StartServerCommand}"
                             Style="{StaticResource GameCenter.SuccessButton}" MinWidth="132" Margin="0,0,6,0"
                             AutomationProperties.Name="{Binding StartButtonText}"
@@ -264,81 +284,16 @@
                                     </StackPanel>
                                 </Border>
                             </Grid>
-                            <Grid Grid.Row="1" Margin="18,14">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.ModTitle}" />
-                                    <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource GameCenter.Gold}"
-                                               FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="12,0,0,0">
-                                    <Grid>
-                                        <CheckBox x:Name="HeroChimUpdateCheckBox" Content="Updates"
-                                                  IsChecked="{Binding IncludeHerikaServerUpdate}"
-                                                  IsEnabled="{Binding IsHerikaUpdateIncludeEnabled}"
-                                                  Command="{Binding SaveUpdateIncludeCommand}"
-                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                                  AutomationProperties.Name="Include CHIM in updates"
-                                                  ToolTip="{Binding UpdateIncludeStatusText}"
-                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
-                                            <CheckBox.Style>
-                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="CHIM">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </CheckBox.Style>
-                                        </CheckBox>
-                                        <CheckBox x:Name="HeroStobeUpdateCheckBox" Content="Updates"
-                                                  IsChecked="{Binding IncludeStobeServerUpdate}"
-                                                  IsEnabled="{Binding IsStobeUpdateIncludeEnabled}"
-                                                  Command="{Binding SaveUpdateIncludeCommand}"
-                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                                  AutomationProperties.Name="Include STOBE in updates"
-                                                  ToolTip="{Binding UpdateIncludeStatusText}"
-                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
-                                            <CheckBox.Style>
-                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </CheckBox.Style>
-                                        </CheckBox>
-                                        <CheckBox x:Name="HeroDialecticUpdateCheckBox" Content="Updates"
-                                                  IsChecked="{Binding IncludeDialecticServerUpdate}"
-                                                  IsEnabled="{Binding IsDialecticUpdateIncludeEnabled}"
-                                                  Command="{Binding SaveUpdateIncludeCommand}"
-                                                  PreviewMouseLeftButtonDown="UpdateCheckBox_PreviewMouseLeftButtonDown"
-                                                  AutomationProperties.Name="Include Dialectic in updates"
-                                                  ToolTip="{Binding UpdateIncludeStatusText}"
-                                                  AutomationProperties.HelpText="{Binding UpdateIncludeStatusText}">
-                                            <CheckBox.Style>
-                                                <Style TargetType="CheckBox" BasedOn="{StaticResource GameCenter.HeroUpdateCheckBox}">
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </CheckBox.Style>
-                                        </CheckBox>
-                                    </Grid>
-                                    <TextBlock Text="Include this mod when Update runs."
-                                               Style="{StaticResource GameCenter.Caption}" FontSize="11"
-                                               MaxWidth="200" TextAlignment="Right" Margin="0,4,0,0" />
-                                </StackPanel>
-                            </Grid>
+                            <StackPanel Grid.Row="1" Margin="18,14">
+                                <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.ModTitle}" />
+                                <TextBlock Text="{Binding SelectedGame.GameTitle}" Foreground="{DynamicResource GameCenter.Gold}"
+                                           FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
+                            </StackPanel>
                         </Grid>
                     </Border>
 
                     <Border Grid.Column="2" Style="{StaticResource GameCenter.Card}">
                         <Grid>
-                            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <!-- The card scrolls so the extra install/repair/uninstall actions never clip at the
                                  window's minimum size. -->
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -378,7 +333,7 @@
                                         </Grid>
 
                                         <!-- Not installed: pick a branch, then install. Webpage, rollback and the
-                                             update checkbox stay out of reach until the server exists. -->
+                                             update action stay out of reach until the server exists. -->
                                         <StackPanel Visibility="{Binding HerikaManager.ShowNotInstalledActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Install branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding HerikaManager.Branches}" SelectedItem="{Binding HerikaManager.SelectedBranch}"
@@ -400,13 +355,17 @@
                                                       AutomationProperties.Name="HerikaServer update branch"
                                                       IsEnabled="{Binding HerikaManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                            <!-- Updates the shared system, then this checked mod on the chosen branch.
-                                                 Disabled during conflicting operations so controls never shift. -->
-                                            <Button Content="{Binding HerikaManager.UpdateActionName}" Command="{Binding HerikaManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,12" Height="40"
-                                                    AutomationProperties.Name="{Binding HerikaManager.UpdateActionName}"
-                                                    ToolTip="{Binding HerikaManager.UpdateActionHelpText}"
-                                                    AutomationProperties.HelpText="{Binding HerikaManager.UpdateActionHelpText}" />
+                                            <!-- Updates the shared system, then this mod on the chosen branch.
+                                                 Disabled during conflicting operations so controls never shift.
+                                                 The manager is this button's DataContext so the shared update
+                                                 style can watch IsUpdateAvailable and turn the button green
+                                                 only for a confirmed newer version on the selected branch. -->
+                                            <Button DataContext="{Binding HerikaManager}"
+                                                    Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.ChimUpdateButton}" Margin="0,16,0,12" Height="40"
+                                                    AutomationProperties.Name="{Binding UpdateActionName}"
+                                                    ToolTip="{Binding UpdateActionHelpText}"
+                                                    AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
                                             <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.ModAction.ChimSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="CHIM Webpage"
                                                     AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
@@ -481,7 +440,7 @@
                                         </Grid>
 
                                         <!-- Not installed: pick a branch, then install. Webpage, rollback and the
-                                             update checkbox stay out of reach until the server exists. -->
+                                             update action stay out of reach until the server exists. -->
                                         <StackPanel Visibility="{Binding StobeManager.ShowNotInstalledActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Install branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding StobeManager.Branches}" SelectedItem="{Binding StobeManager.SelectedBranch}"
@@ -503,13 +462,17 @@
                                                       AutomationProperties.Name="StobeServer update branch"
                                                       IsEnabled="{Binding StobeManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                            <!-- Updates the shared system, then this checked mod on the chosen branch.
-                                                 Disabled during conflicting operations so controls never shift. -->
-                                            <Button Content="{Binding StobeManager.UpdateActionName}" Command="{Binding StobeManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,12" Height="40"
-                                                    AutomationProperties.Name="{Binding StobeManager.UpdateActionName}"
-                                                    ToolTip="{Binding StobeManager.UpdateActionHelpText}"
-                                                    AutomationProperties.HelpText="{Binding StobeManager.UpdateActionHelpText}" />
+                                            <!-- Updates the shared system, then this mod on the chosen branch.
+                                                 Disabled during conflicting operations so controls never shift.
+                                                 The manager is this button's DataContext so the shared update
+                                                 style can watch IsUpdateAvailable and turn the button green
+                                                 only for a confirmed newer version on the selected branch. -->
+                                            <Button DataContext="{Binding StobeManager}"
+                                                    Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.StobeUpdateButton}" Margin="0,16,0,12" Height="40"
+                                                    AutomationProperties.Name="{Binding UpdateActionName}"
+                                                    ToolTip="{Binding UpdateActionHelpText}"
+                                                    AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
                                             <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.ModAction.StobeSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="STOBE Webpage"
                                                     AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
@@ -584,7 +547,7 @@
                                         </Grid>
 
                                         <!-- Not installed: pick a branch, then install. Webpage, rollback and the
-                                             update checkbox stay out of reach until the server exists. -->
+                                             update action stay out of reach until the server exists. -->
                                         <StackPanel Visibility="{Binding DialecticManager.ShowNotInstalledActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Install branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding DialecticManager.Branches}" SelectedItem="{Binding DialecticManager.SelectedBranch}"
@@ -606,13 +569,17 @@
                                                       AutomationProperties.Name="DialecticServer update branch"
                                                       IsEnabled="{Binding DialecticManager.CanUseInstalledFeatures}"
                                                       AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                            <!-- Updates the shared system, then this checked mod on the chosen branch.
-                                                 Disabled during conflicting operations so controls never shift. -->
-                                            <Button Content="{Binding DialecticManager.UpdateActionName}" Command="{Binding DialecticManager.UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,12" Height="40"
-                                                    AutomationProperties.Name="{Binding DialecticManager.UpdateActionName}"
-                                                    ToolTip="{Binding DialecticManager.UpdateActionHelpText}"
-                                                    AutomationProperties.HelpText="{Binding DialecticManager.UpdateActionHelpText}" />
+                                            <!-- Updates the shared system, then this mod on the chosen branch.
+                                                 Disabled during conflicting operations so controls never shift.
+                                                 The manager is this button's DataContext so the shared update
+                                                 style can watch IsUpdateAvailable and turn the button green
+                                                 only for a confirmed newer version on the selected branch. -->
+                                            <Button DataContext="{Binding DialecticManager}"
+                                                    Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.DialecticUpdateButton}" Margin="0,16,0,12" Height="40"
+                                                    AutomationProperties.Name="{Binding UpdateActionName}"
+                                                    ToolTip="{Binding UpdateActionHelpText}"
+                                                    AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
                                             <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.ModAction.DialecticSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="DIALECTIC Webpage"
                                                     AutomationProperties.HelpText="Open the Dialectic server webpage. If it is unavailable, the launcher can start the server first." />
@@ -655,14 +622,6 @@
                                     </StackPanel>
                                 </Grid>
                             </ScrollViewer>
-                            <StackPanel Grid.Row="1" Margin="0,12,0,0">
-                                <TextBlock Text="{Binding ServerManagementStatusText}" Foreground="{Binding ServerManagementStatusColor}"
-                                           TextWrapping="Wrap" FontSize="11"
-                                           AutomationProperties.Name="Installed servers summary"
-                                           AutomationProperties.LiveSetting="Polite" />
-                                <TextBlock Text="{Binding UpdateIncludeStatusText}" Foreground="{Binding UpdateIncludeStatusColor}"
-                                           TextWrapping="Wrap" Margin="0,6,0,0" />
-                            </StackPanel>
                         </Grid>
                     </Border>
                 </Grid>
@@ -679,7 +638,7 @@
                                        Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" />
                             <!-- One compact system line. It never wraps and its row height is fixed, so no
                                  state can push the components card down; the full sentence stays in the
-                                 tooltip and in the accessible help text. Update System itself is the top
+                                 tooltip and in the accessible help text. Update Distro itself is the top
                                  bar action - this page no longer carries a second copy of it. -->
                             <TextBlock Text="{Binding SystemStatusText}" Foreground="{Binding SystemStatusColor}"
                                        Style="{StaticResource GameCenter.Caption}"
