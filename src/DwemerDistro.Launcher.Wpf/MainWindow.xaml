@@ -154,15 +154,14 @@
                 </StackPanel>
                 <StackPanel Grid.Row="3" Margin="5,12,5,4">
                     <Button Command="{Binding UpdateLauncherCommand}" Style="{StaticResource GameCenter.LauncherUpdateButton}"
-                            AutomationProperties.Name="{Binding LauncherUpdateButtonText}" Margin="0,0,0,10">
+                            AutomationProperties.Name="{Binding LauncherUpdateButtonText}"
+                            AutomationProperties.HelpText="{Binding LauncherUpdateStatusText}" Margin="0,0,0,10">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" Width="22" />
                             <TextBlock Text="{Binding LauncherUpdateButtonText}" />
                         </StackPanel>
                     </Button>
                     <TextBlock Text="{Binding LauncherVersionText}" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="10" />
-                    <TextBlock Text="{Binding LauncherUpdateStatusText}" Foreground="{Binding LauncherUpdateStatusColor}"
-                               FontSize="10" TextWrapping="Wrap" Margin="0,5,0,0" />
                 </StackPanel>
             </Grid>
         </Border>

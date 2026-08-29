@@ -88,7 +88,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.2", "Launcher constants must report version 3.3.2.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.3", "Launcher constants must report version 3.3.3.");
 
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
@@ -644,10 +644,12 @@ try
     individualUpdateItem.ApplyStatus(stobeStatus with { State = ServerInstallState.NotInstalled });
     Assert(MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]).Count == 0,
         "An unchecked or missing mod must be excluded from a newly confirmed selection.");
-    Assert(!await MainWindowViewModel.UpdateInstalledServersAsync(staleUpdates,
-            () => throw new InvalidOperationException("An empty eligible selection must not update the system."),
-            (_, _) => throw new InvalidOperationException("An unchecked or missing mod must not update.")),
-        "No eligible mods must remain a no-op, including the system stage.");
+    var staleSystemRuns = 0;
+    Assert(await MainWindowViewModel.UpdateInstalledServersAsync(staleUpdates,
+            () => { staleSystemRuns++; return Task.FromResult(true); },
+            (_, _) => throw new InvalidOperationException("An unchecked or missing mod must not update."))
+           && staleSystemRuns == 1,
+        "Mods that became unchecked or missing must still leave a successful system-only update.");
     individualUpdateItem.IsConflictingOperationRunning = true;
     Assert(!individualUpdateItem.CanInstall && !individualUpdateItem.InstallCommand.CanExecute(null),
         "A system operation must block installation of a missing mod.");
@@ -658,6 +660,145 @@ try
     individualUpdateItem.IsConflictingOperationRunning = false;
     Assert(individualUpdateItem.CanRepair && individualUpdateItem.CanUninstall,
         "Lifecycle controls must be restored after the operation finishes.");
+
+    // --- Update Mods as the recovery action ---------------------------------------------------
+
+    Assert(MainWindowViewModel.BuildUpdateModsHelpText(true, true)
+            .Contains("then installed mods whose Updates checkbox is enabled", StringComparison.Ordinal),
+        "Update Mods must keep describing the system-first sweep of eligible mods.");
+    var systemOnlyHelpText = MainWindowViewModel.BuildUpdateModsHelpText(true, false);
+    Assert(systemOnlyHelpText.Contains("Update DwemerDistro and shared components", StringComparison.Ordinal)
+           && !systemOnlyHelpText.Contains("Install a mod", StringComparison.Ordinal),
+        "With no eligible mod, Update Mods must describe a system update instead of refusing.");
+    Assert(MainWindowViewModel.BuildUpdateModsHelpText(false, true)
+            .Contains("another server, component, or system operation", StringComparison.Ordinal),
+        "A competing operation must stay the only reason Update Mods is unavailable.");
+
+    var systemOnlyConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation([]);
+    Assert(systemOnlyConfirmation.Contains("No installed, update-enabled mods can currently be detected", StringComparison.Ordinal)
+           && systemOnlyConfirmation.Contains("After the system update repairs status", StringComparison.Ordinal)
+           && systemOnlyConfirmation.Contains("Missing mods are never installed", StringComparison.Ordinal)
+           && systemOnlyConfirmation.Contains("unchecked mods are never updated", StringComparison.Ordinal),
+        "An empty selection must confirm a system-only update rather than report a missing-mod error.");
+
+    var systemOnlyRuns = 0;
+    Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
+            [],
+            () => { systemOnlyRuns++; return Task.FromResult(true); },
+            (_, _) => throw new InvalidOperationException("A system-only update must not touch any mod."))
+           && systemOnlyRuns == 1,
+        "Update Mods with no eligible mod must run the system update once and succeed.");
+    Assert(!await MainWindowViewModel.UpdateInstalledServersAsync(
+            [],
+            () => Task.FromResult(false),
+            (_, _) => throw new InvalidOperationException("A failed system update must not touch any mod.")),
+        "A failed system-only update must still report failure.");
+
+    // Recovery: the status probe is unreadable when the sweep starts, and the system update repairs it.
+    var recoveredItem = new ServerManagerItemViewModel(
+        ServerProduct.Herika, "CHIM", _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask,
+        _ => Task.CompletedTask);
+    var recoveredInstalledStatus = herikaStatus with { Branch = herikaStatus.ProductionBranch };
+    recoveredItem.ApplyStatusError("Server status unavailable");
+    var recoveredUpdates = MainWindowViewModel.SnapshotModUpdates([recoveredItem]);
+    Assert(recoveredUpdates.Count == 0,
+        "A product whose status is unavailable must not be part of the confirmed selection.");
+    var recoveredOrder = new List<string>();
+    Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
+            recoveredUpdates,
+            () =>
+            {
+                recoveredItem.ApplyStatus(recoveredInstalledStatus);
+                recoveredOrder.Add("system");
+                return Task.FromResult(true);
+            },
+            (product, branch) => { recoveredOrder.Add($"{product.Product}:{branch}"); return Task.FromResult(true); },
+            () => Task.FromResult(MainWindowViewModel.SnapshotModUpdates([recoveredItem])))
+           && recoveredOrder.SequenceEqual(["system", "Herika:Main"]),
+        "A mod that only becomes visible after the system update must still be updated on its selected branch.");
+
+    recoveredOrder.Clear();
+    recoveredItem.ApplyStatus(recoveredInstalledStatus with { State = ServerInstallState.NotInstalled });
+    Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
+            recoveredUpdates,
+            () => { recoveredOrder.Add("system"); return Task.FromResult(true); },
+            (_, _) => throw new InvalidOperationException("A missing mod must never be installed by Update Mods."),
+            () => Task.FromResult(MainWindowViewModel.SnapshotModUpdates([recoveredItem])))
+           && recoveredOrder.SequenceEqual(["system"]),
+        "The post-update refresh must never install a mod that is still missing.");
+
+    recoveredOrder.Clear();
+    recoveredItem.ApplyStatus(recoveredInstalledStatus);
+    recoveredItem.IsIncludedInUpdates = false;
+    Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
+            recoveredUpdates,
+            () => { recoveredOrder.Add("system"); return Task.FromResult(true); },
+            (_, _) => throw new InvalidOperationException("An unchecked mod must never be updated by Update Mods."),
+            () => Task.FromResult(MainWindowViewModel.SnapshotModUpdates([recoveredItem])))
+           && recoveredOrder.SequenceEqual(["system"]),
+        "The post-update refresh must never update a mod whose Updates checkbox is off.");
+    recoveredItem.IsIncludedInUpdates = true;
+
+    recoveredItem.SelectedBranch = "Main";
+    var branchApprovedUpdates = MainWindowViewModel.SnapshotModUpdates([recoveredItem]);
+    recoveredItem.SelectedBranch = "Dev";
+    ServerBranchChannel? mergedBranch = null;
+    Assert(await MainWindowViewModel.UpdateInstalledServersAsync(
+            branchApprovedUpdates,
+            () => Task.FromResult(true),
+            (_, branch) => { mergedBranch = branch; return Task.FromResult(true); },
+            () => Task.FromResult(MainWindowViewModel.SnapshotModUpdates([recoveredItem])))
+           && mergedBranch == ServerBranchChannel.Main,
+        "The post-update refresh must not rewrite the branch the user already approved.");
+    Assert(MainWindowViewModel.MergeConfirmedBranches(
+                branchApprovedUpdates,
+                MainWindowViewModel.SnapshotModUpdates([recoveredItem]))
+            .Single().Branch == ServerBranchChannel.Main,
+        "A confirmed product must keep its approved branch when the refreshed snapshot disagrees.");
+    Assert(MainWindowViewModel.MergeConfirmedBranches(
+                [],
+                MainWindowViewModel.SnapshotModUpdates([recoveredItem]))
+            .Single().Branch == ServerBranchChannel.Dev,
+        "A product the confirmation never saw must use the branch currently selected for it.");
+
+    // --- Automatic launcher-version system sync -----------------------------------------------
+
+    Assert(MainWindowViewModel.ShouldSyncLauncherVersion(null, LauncherConstants.LauncherVersion)
+           && MainWindowViewModel.ShouldSyncLauncherVersion(string.Empty, LauncherConstants.LauncherVersion)
+           && MainWindowViewModel.ShouldSyncLauncherVersion("3.3.2", "3.3.3"),
+        "A missing, empty, or stale marker must run the automatic system sync.");
+    Assert(!MainWindowViewModel.ShouldSyncLauncherVersion("3.3.3\n", "3.3.3")
+           && !MainWindowViewModel.ShouldSyncLauncherVersion("3.3.3", "3.3.3"),
+        "A recorded launcher version must stop the automatic sync from running every launch.");
+
+    Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(" 3.3.3 ") == "3.3.3"
+           && MainWindowViewModel.SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion) == LauncherConstants.LauncherVersion,
+        "A plain dotted version must survive sanitizing so the marker can be written.");
+    Assert(MainWindowViewModel.SanitizeLauncherSyncVersion(null) is null
+           && MainWindowViewModel.SanitizeLauncherSyncVersion("3.3.2; rm -rf /") is null
+           && MainWindowViewModel.SanitizeLauncherSyncVersion("3.3.2'") is null
+           && MainWindowViewModel.SanitizeLauncherSyncVersion("$(id)") is null,
+        "Nothing but digits and dots may reach the launcher sync marker command.");
+
+    var syncMarkerRead = MainWindowViewModel.BuildLauncherSyncMarkerReadCommand();
+    Assert(syncMarkerRead.Contains("cat /home/dwemer/.launcher_synced_version", StringComparison.Ordinal)
+           && syncMarkerRead.Contains("|| true", StringComparison.Ordinal),
+        "A missing sync marker must read as empty rather than as a distro failure.");
+    var syncMarkerWrite = MainWindowViewModel.BuildLauncherSyncMarkerWriteCommand(LauncherConstants.LauncherVersion);
+    Assert(syncMarkerWrite.Contains($"printf '%s' '{LauncherConstants.LauncherVersion}'", StringComparison.Ordinal)
+           && syncMarkerWrite.EndsWith("> /home/dwemer/.launcher_synced_version", StringComparison.Ordinal),
+        "A successful sync must persist the launcher version inside the distro.");
+    var markerWriteRejected = false;
+    try
+    {
+        MainWindowViewModel.BuildLauncherSyncMarkerWriteCommand("3.3.2; touch /tmp/pwned");
+    }
+    catch (ArgumentException)
+    {
+        markerWriteRejected = true;
+    }
+
+    Assert(markerWriteRejected, "A version carrying shell syntax must never build a marker command.");
 
     // --- Quickstart mod choices -------------------------------------------------------------
 

@@ -12,7 +12,7 @@ It keeps WSL distro management in the launcher, but separates launcher binary up
 - install, repair, update, uninstall, and reinstall CHIM, Stobe, and Dialectic independently
 - Quickstart mod selection for fresh server-free distro installs
 - launcher-only self-update via `DwemerDistroUpdater.exe`
-- WSL distro/server updates remain separate from launcher binary updates
+- Launcher binary updates trigger a one-time DwemerDistro/shared-system sync on the next launch
 
 ## Optional Game Servers
 
@@ -20,9 +20,9 @@ Fresh DwemerDistro packages contain no game servers. The Quickstart **Choose You
 
 Uninstall is destructive. It requires the product-specific `PURGE-*` confirmation and removes that server's files and PostgreSQL database. It does not remove shared voice/components or another game server.
 
-**Update Mods** updates DwemerDistro and shared components once, then updates installed mods whose Updates checkbox is enabled. Each mod's own **Update** button also updates the system first, then that checked mod on its selected branch. Neither action installs missing mods or updates unchecked mods. If the system update fails, no mod updates run. A failed mod update does not stop the remaining selected mods.
+**Update Mods** always updates DwemerDistro and shared components once, even when mod status is unavailable or no mods are installed, then updates installed mods whose Updates checkbox is enabled. Each mod's own **Update** button also updates the system first, then that checked mod on its selected branch. Neither action installs missing mods or updates unchecked mods. If the system update fails, no mod updates run. A failed mod update does not stop the remaining selected mods.
 
-**Update System** on the Components page and **Update Distro** in Quickstart update only DwemerDistro and shared services. The launcher executable's own update remains separate.
+**Update System** on the Components page and **Update Distro** in Quickstart update only DwemerDistro and shared services. The launcher executable is downloaded and applied separately; the next launch automatically synchronizes DwemerDistro and shared services once for that launcher version without changing installed mods.
 
 ## Workspace
 
