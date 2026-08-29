@@ -14,15 +14,10 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 /// </summary>
 public sealed partial class MainWindowViewModel
 {
-    private const string ServerManagementNeutralColor = "#C8C8C8";
-    private const string ServerManagementErrorColor = "#FF8A80";
-
     /// <summary>Separates the distro core update from the shared components update in the console.</summary>
     private const string SharedComponentsMarker = "=====MARKER:BEGIN_SHARED_COMPONENTS=====";
 
     private ServerManagementService? _serverManagement;
-    private string _serverManagementStatusText = "Checking installed servers...";
-    private string _serverManagementStatusColor = ServerManagementNeutralColor;
 
     public ServerManagerItemViewModel HerikaManager { get; private set; } = null!;
 
@@ -32,18 +27,6 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>The three products in rail order. Backs status refresh and every mod update.</summary>
     public IReadOnlyList<ServerManagerItemViewModel> ServerManagers { get; private set; } = [];
-
-    public string ServerManagementStatusText
-    {
-        get => _serverManagementStatusText;
-        private set => SetProperty(ref _serverManagementStatusText, value);
-    }
-
-    public string ServerManagementStatusColor
-    {
-        get => _serverManagementStatusColor;
-        private set => SetProperty(ref _serverManagementStatusColor, value);
-    }
 
     private void InitializeServerManagement()
     {
@@ -130,8 +113,8 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Re-reads <c>status all --json</c> and pushes it into the three items. A failed probe keeps the
-    /// last known state and shows why, rather than claiming everything is missing.
+    /// Re-reads <c>status all --json</c> and pushes it into the three items. A failed probe marks each
+    /// item as unavailable, rather than claiming everything is missing.
     /// </summary>
     private async Task RefreshServerManagementAsync(CancellationToken cancellationToken = default)
     {
@@ -151,7 +134,6 @@ public sealed partial class MainWindowViewModel
                     manager.ApplyStatusError("Server status unavailable");
                 }
 
-                SetServerManagementStatus($"Installed servers: {result.Error}", ServerManagementErrorColor);
                 RaiseServerManagerDependentStates();
                 return;
             }
@@ -161,23 +143,8 @@ public sealed partial class MainWindowViewModel
                 manager.ApplyStatus(result.Snapshot!.Find(manager.Product));
             }
 
-            SetServerManagementStatus(BuildServerManagementSummary(ServerManagers), ServerManagementNeutralColor);
             RaiseServerManagerDependentStates();
         });
-    }
-
-    internal static string BuildServerManagementSummary(IReadOnlyList<ServerManagerItemViewModel> managers)
-    {
-        var installed = managers.Count(manager => manager.IsInstalled);
-        var needsRepair = managers.Count(manager => manager.NeedsRepair);
-        var summary = $"{installed} of {managers.Count} servers installed.";
-        return needsRepair > 0 ? $"{summary} {needsRepair} need repair." : summary;
-    }
-
-    private void SetServerManagementStatus(string text, string color)
-    {
-        ServerManagementStatusText = text;
-        ServerManagementStatusColor = color;
     }
 
     private void RaiseServerManagerDependentStates()

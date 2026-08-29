@@ -270,7 +270,6 @@
 
                     <Border Grid.Column="2" Style="{StaticResource GameCenter.Card}">
                         <Grid>
-                            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <!-- The card scrolls so the extra install/repair/uninstall actions never clip at the
                                  window's minimum size. -->
                             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
@@ -599,10 +598,6 @@
                                     </StackPanel>
                                 </Grid>
                             </ScrollViewer>
-                            <TextBlock Grid.Row="1" Text="{Binding ServerManagementStatusText}" Foreground="{Binding ServerManagementStatusColor}"
-                                       TextWrapping="Wrap" FontSize="11" Margin="0,12,0,0"
-                                       AutomationProperties.Name="Installed servers summary"
-                                       AutomationProperties.LiveSetting="Polite" />
                         </Grid>
                     </Border>
                 </Grid>
