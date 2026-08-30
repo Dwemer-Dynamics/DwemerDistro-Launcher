@@ -118,6 +118,14 @@ try
            && parakeetInstallCommand.Contains("CUDA_PYTORCH_SUPPORTED=1", StringComparison.Ordinal),
         "Python GPU components must honor Core's capability result instead of assuming every nvcc GPU is supported.");
 
+    var distroSetup = new DistroSetupService(new WslService(new ProcessRunner()));
+    var nvidiaQuickstart = distroSetup.GetPreset(SetupPresetKey.NvidiaGpu);
+    Assert(nvidiaQuickstart.ComponentKeys.SequenceEqual(["cuda", "audiocpp", "minime", "parakeet"]),
+        "NVIDIA Quickstart must install automatic CUDA before every GPU-dependent component.");
+    Assert(distroSetup.GetComponent(nvidiaQuickstart.ComponentKeys[0]).InstallArguments
+            .Contains(cudaInstallCommand),
+        "The CUDA step used by NVIDIA Quickstart must execute the automatic GPU-selection command.");
+
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
         "The launcher rail must expose exactly three unique game profiles.");
