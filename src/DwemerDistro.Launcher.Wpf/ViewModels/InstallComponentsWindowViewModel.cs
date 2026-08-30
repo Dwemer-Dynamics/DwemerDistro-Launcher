@@ -881,7 +881,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "cuda",
                 title: "CUDA",
-                description: "Install the NVIDIA CUDA stack used by GPU-backed services. Run this first on NVIDIA systems.",
+                description: "Install the NVIDIA CUDA stack used by GPU-backed services. Run this first on NVIDIA systems.\nPort: None",
                 installCheckExpression: "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
                 primaryCommand: CreateInstallCommand("cuda"),
                 supportsNvidiaCuda: true)));
@@ -892,7 +892,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "minime",
                 title: "Minime and TXT2VEC",
-                description: "Installs the small helper LLM and vector service used to improve NPC responses and retrieval.",
+                description: "Installs the small helper LLM and vector service used to improve NPC responses and retrieval.\nPort: 8082",
                 installCheckExpression: "Path('/home/dwemer/python-minime').exists()",
                 primaryCommand: CreateInstallCommand("minime"),
                 supportsNvidiaCuda: true,
@@ -900,7 +900,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "chimmcp",
                 title: "CHIM-MCP",
-                description: "Optional MCP integration for CHIM tooling. Install this only when you want MCP support.",
+                description: "Optional MCP integration for CHIM tooling. Install this only when you want MCP support.\nPort: None",
                 installCheckExpression: "Path('/home/dwemer/CHIM-MCP/dist/index.js').exists()",
                 primaryCommand: CreateInstallCommand("chimmcp"))));
 
@@ -910,7 +910,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "audiocpp",
                 title: "Pocket-TTS (GPU / audio.cpp)",
-                description: "Recommended Pocket-TTS runtime for NVIDIA GPUs. Runs the CUDA C++ server on port 8086.",
+                description: "Recommended Pocket-TTS runtime for NVIDIA GPUs.\nPort: 8086",
                 installCheckExpression: "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file() and Path('/home/dwemer/audio.cpp/start.sh').exists()",
                 primaryCommand: CreateInstallCommand("audiocpp"),
                 supportsNvidiaCuda: true),
@@ -932,7 +932,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "omnivoice",
                 title: "Multilingual OmniVoice TTS",
-                description: "Optional local OmniVoice TTS for CHIM voice libraries. Uses a separate service on port 8021.",
+                description: "Optional local OmniVoice TTS for CHIM voice libraries.\nPort: 8021",
                 installCheckExpression: "Path('/home/dwemer/omnivoice-tts/venv').exists()",
                 primaryCommand: CreateInstallCommand("omnivoice"),
                 supportsNvidiaCuda: true,
@@ -941,14 +941,14 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "xtts",
                 title: "Dwemer Distro XTTS",
-                description: "High-quality XTTS deployment for cloned Skyrim voices. Requires the shared XTTS Python environment.",
+                description: "High-quality XTTS deployment for cloned Skyrim voices. Requires the shared XTTS Python environment.\nPort: 8020",
                 installCheckExpression: "Path('/home/dwemer/python-tts').exists()",
                 primaryCommand: CreateInstallCommand("xtts"),
                 supportsNvidiaCuda: true),
             CreateItem(
                 key: "melotts",
                 title: "MeloTTS",
-                description: "Fast TTS option for lightweight setups with low overhead and strong CPU support. Uses port 8084.",
+                description: "Fast TTS option for lightweight setups with low overhead and strong CPU support.\nPort: 8084",
                 installCheckExpression: "Path('/home/dwemer/python-melotts').exists()",
                 primaryCommand: CreateInstallCommand("melotts"),
                 supportsNvidiaCuda: true,
@@ -956,7 +956,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "pipertts",
                 title: "Piper-TTS",
-                description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.",
+                description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.\nPort: 5000",
                 installCheckExpression: "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))",
                 primaryCommand: CreateInstallCommand("pipertts"),
                 supportsNvidiaCuda: true,
@@ -966,7 +966,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "mimic3",
                 title: "Mimic3",
-                description: "Older local TTS service that is still useful when you want a simple, lightweight fallback.",
+                description: "Older local TTS service that is still useful when you want a simple, lightweight fallback.\nPort: 59125",
                 installCheckExpression: "Path('/home/dwemer/python-mimic3/bin/python').is_file()",
                 primaryCommand: CreateInstallCommand("mimic3"))));
 
@@ -976,7 +976,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "parakeet",
                 title: "Parakeet STT",
-                description: "Offline speech-to-text service with GPU and CPU modes for local transcription.",
+                description: "Offline speech-to-text service with GPU and CPU modes for local transcription.\nPort: 8022",
                 installCheckExpression: "Path('/home/dwemer/parakeet-api-server/venv').exists()",
                 primaryCommand: CreateInstallCommand("parakeet"),
                 supportsNvidiaCuda: true,
@@ -984,7 +984,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "localwhisper",
                 title: "LocalWhisper",
-                description: "Offline Whisper-based speech-to-text service for local microphone and transcription workflows.",
+                description: "Offline Whisper-based speech-to-text service for local microphone and transcription workflows.\nPort: 9876",
                 installCheckExpression: "Path('/home/dwemer/python-stt').exists()",
                 primaryCommand: CreateInstallCommand("localwhisper"),
                 supportsNvidiaCuda: true,
