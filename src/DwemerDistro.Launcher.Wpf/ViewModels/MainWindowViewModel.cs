@@ -4534,7 +4534,13 @@ fi
             "cuda" => new(
                 "cuda",
                 "CUDA",
-                "/usr/local/bin/install_full_packages",
+                """
+                if [ ! -x /usr/local/bin/install_cuda_dependencies ]; then
+                    echo "The minimal CUDA installer is missing. Update DwemerDistro and retry."
+                    exit 23
+                fi
+                /usr/local/bin/install_cuda_dependencies 12.8
+                """,
                 "command -v nvcc >/dev/null 2>&1 || [ -x /usr/bin/nvcc ] || [ -x /usr/local/cuda/bin/nvcc ]",
                 "root"),
             "minime" => new(

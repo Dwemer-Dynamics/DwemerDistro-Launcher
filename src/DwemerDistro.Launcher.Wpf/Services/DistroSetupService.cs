@@ -9,29 +9,13 @@ public sealed class DistroSetupService(WslService wsl)
     private const string NonInteractiveInstallInput = "";
     private const string CudaInstallCommand = """
 set -e
-export DEBIAN_FRONTEND=noninteractive
-export DEBIAN_PRIORITY=critical
-export APT_LISTCHANGES_FRONTEND=none
-export NEEDRESTART_MODE=a
-export UCF_FORCE_CONFFOLD=1
 
-printf '%s\n' \
-    'nvidia-cudnn nvidia-cudnn/question select I Agree' \
-    'nvidia-cudnn nvidia-cudnn/question seen true' | debconf-set-selections
-
-if [ ! -s /etc/ddistro-full-packages.txt ]; then
-    echo "Missing /etc/ddistro-full-packages.txt. Cannot install CUDA package set."
-    exit 21
+if [ ! -x /usr/local/bin/install_cuda_dependencies ]; then
+    echo "The minimal CUDA installer is missing. Update DwemerDistro in Quickstart and retry."
+    exit 23
 fi
 
-echo "Installing CUDA package set..."
-dpkg --configure -a
-apt-get update
-xargs --arg-file=/etc/ddistro-full-packages.txt apt-get install -y
-apt-get clean
-find /var/lib/apt/lists/ -type f -delete
-
-echo "CUDA package install complete."
+/usr/local/bin/install_cuda_dependencies 12.8
 """;
     private const string PrepareDistroCommand = """
 set -e
@@ -245,10 +229,10 @@ from pathlib import Path
 
 tokens = (
     "/usr/local/bin/install_full_packages",
+    "/usr/local/bin/install_cuda_dependencies",
     "ddistro_install.sh",
     "/conf.sh",
     "/install.sh",
-    "/etc/ddistro-full-packages.txt",
     "apt-get install",
     "dpkg --configure",
     "python -m pip install",
