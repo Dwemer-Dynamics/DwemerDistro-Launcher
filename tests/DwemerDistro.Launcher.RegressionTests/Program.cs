@@ -13,6 +13,15 @@ Directory.CreateDirectory(logDirectory);
 
 try
 {
+    Assert(LauncherConstants.LorkhanProxyPort == 7514 && LauncherConstants.LorkhanServerPort == 8090,
+        "LORKHAN must keep its dedicated launcher proxy and WSL server ports.");
+    Assert(DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=lorkhan HTTP/1.1\r\n\r\n")
+               == "127.0.0.1:7514"
+           && DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=openmw HTTP/1.1\r\n\r\n")
+               == "127.0.0.1:7514"
+           && DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=reign HTTP/1.1\r\n\r\n") is null,
+        "Discovery must return the LORKHAN loopback proxy without capturing Reign.");
+
     var service = new LauncherReleaseNoticeService(installDirectory, localAppDataDirectory);
     var targetVersion = new Version(3, 1, 13);
 

@@ -106,6 +106,7 @@ echo "CHIM-MCP installed and enabled."
     private readonly SemaphoreSlim _componentInstallGate = new(1, 1);
 
     private TcpProxyService? _tcpProxyService;
+    private TcpProxyService? _lorkhanProxyService;
     private DiscoveryService? _discoveryService;
     private Process? _serverProcess;
     private string? _wslIp;
@@ -698,6 +699,7 @@ echo "CHIM-MCP installed and enabled."
         _startAnimationTimer.Stop();
         _serverStatusRetryTimer.Stop();
         await (_tcpProxyService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
+        await (_lorkhanProxyService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         await (_discoveryService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         _processRunner.TryKill(_serverProcess);
         LauncherLogService.Startup("Launcher shutdown completed.");
@@ -951,7 +953,7 @@ echo "CHIM-MCP installed and enabled."
     {
         try
         {
-            _tcpProxyService = new TcpProxyService(async cancellationToken =>
+            _tcpProxyService = new TcpProxyService(LauncherConstants.SkyrimProxyPort, "CHIM", async cancellationToken =>
             {
                 var ip = await GetWslIpAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
                 return ip is null ? null : new IPEndPoint(IPAddress.Parse(ip), LauncherConstants.SkyrimServerPort);
@@ -963,6 +965,22 @@ echo "CHIM-MCP installed and enabled."
             _tcpProxyService = null;
             LauncherLogService.Startup("TCP proxy failed to start.", ex);
             AppendLog($"TCP proxy failed to start: {ex.Message}{Environment.NewLine}", "yellow");
+        }
+
+        try
+        {
+            _lorkhanProxyService = new TcpProxyService(LauncherConstants.LorkhanProxyPort, "LORKHAN", async cancellationToken =>
+            {
+                var ip = await GetWslIpAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
+                return ip is null ? null : new IPEndPoint(IPAddress.Parse(ip), LauncherConstants.LorkhanServerPort);
+            }, text => AppendLog(text));
+            _lorkhanProxyService.Start();
+        }
+        catch (Exception ex)
+        {
+            _lorkhanProxyService = null;
+            LauncherLogService.Startup("LORKHAN TCP proxy failed to start.", ex);
+            AppendLog($"LORKHAN TCP proxy failed to start: {ex.Message}{Environment.NewLine}", "yellow");
         }
 
         try
