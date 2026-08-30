@@ -99,6 +99,36 @@ try
         "A completed setup must not reopen QuickStart.");
     Assert(LauncherConstants.LauncherVersion == "3.3.8", "Launcher constants must report version 3.3.8.");
 
+    var setupServiceType = typeof(DistroSetupService);
+    var privateStatic = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+    var cudaInstallCommand = (string)setupServiceType.GetField("CudaInstallCommand", privateStatic)!
+        .GetRawConstantValue()!;
+    var audioCppInstallCommand = (string)setupServiceType.GetField("PocketTtsAudioCppInstallCommand", privateStatic)!
+        .GetRawConstantValue()!;
+    var minimeInstallCommand = (string)setupServiceType.GetField("MinimeInstallCommand", privateStatic)!
+        .GetRawConstantValue()!;
+    var parakeetInstallCommand = (string)setupServiceType.GetField("ParakeetInstallCommand", privateStatic)!
+        .GetRawConstantValue()!;
+    Assert(cudaInstallCommand.Contains("install_cuda_dependencies auto", StringComparison.Ordinal)
+           && !cudaInstallCommand.Contains("install_cuda_dependencies 12.8", StringComparison.Ordinal),
+        "NVIDIA Quickstart must let DwemerDistro select the CUDA toolkit for the active GPU.");
+    Assert(audioCppInstallCommand.Contains("install_audiocpp_pockettts auto", StringComparison.Ordinal),
+        "Pocket-TTS audio.cpp must build against the automatically selected CUDA toolkit.");
+    Assert(minimeInstallCommand.Contains("CUDA_PYTORCH_SUPPORTED=1", StringComparison.Ordinal)
+           && parakeetInstallCommand.Contains("CUDA_PYTORCH_SUPPORTED=1", StringComparison.Ordinal),
+        "Python GPU components must honor Core's capability result instead of assuming every nvcc GPU is supported.");
+
+    var distroSetup = new DistroSetupService(new WslService(new ProcessRunner()));
+    var nvidiaQuickstart = distroSetup.GetPreset(SetupPresetKey.NvidiaGpu);
+    Assert(nvidiaQuickstart.ComponentKeys.SequenceEqual(["cuda", "audiocpp", "minime", "parakeet"]),
+        "NVIDIA Quickstart must install automatic CUDA before every GPU-dependent component.");
+    var quickstartCuda = distroSetup.GetComponent(nvidiaQuickstart.ComponentKeys[0]);
+    Assert(quickstartCuda.InstallArguments.Contains(cudaInstallCommand),
+        "The CUDA step used by NVIDIA Quickstart must execute the automatic GPU-selection command.");
+    Assert(quickstartCuda.InstallCheckExpression.Contains("cuda-selection.env", StringComparison.Ordinal)
+           && quickstartCuda.InstallCheckExpression.Contains("nvcc", StringComparison.Ordinal),
+        "Quickstart must repair legacy CUDA installs that do not have Core's trusted selection state.");
+
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
         "The launcher rail must expose exactly three unique game profiles.");
