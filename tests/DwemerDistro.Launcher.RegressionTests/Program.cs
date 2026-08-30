@@ -651,7 +651,7 @@ try
 
     var systemUpdateCommand = MainWindowViewModel.BuildSystemUpdateCommand();
     Assert(systemUpdateCommand.Contains("if [ ! -d .git ]; then git init", StringComparison.Ordinal)
-           && systemUpdateCommand.Contains("git remote add origin https://github.com/abeiro/dwemerdistro.git", StringComparison.Ordinal),
+            && systemUpdateCommand.Contains("git remote add origin https://github.com/Dwemer-Dynamics/DwemerDistro-Core.git", StringComparison.Ordinal),
         "Update Distro must bootstrap Git metadata for a freshly installed empty distro.");
     var systemReleaseMarkerWrite = MainWindowViewModel.BuildSystemReleaseMarkerWriteCommand();
     Assert(systemUpdateCommand.Contains("git fetch origin && git reset --hard origin/main", StringComparison.Ordinal)

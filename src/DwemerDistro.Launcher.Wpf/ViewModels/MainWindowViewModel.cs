@@ -36,9 +36,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private const string DashboardAutoOpenFlagPath = "/home/dwemer/.dashboard_autoopen";
     /// <summary>Records the launcher build that last synchronized this distro.</summary>
     private const string LauncherSyncMarkerPath = "/home/dwemer/.launcher_synced_version";
-    private const string DistroRepositoryUrl = "https://github.com/abeiro/dwemerdistro.git";
+    private const string DistroRepositoryUrl = "https://github.com/Dwemer-Dynamics/DwemerDistro-Core.git";
     private const string SystemReleaseManifestUrl =
-        "https://raw.githubusercontent.com/abeiro/dwemerdistro/main/system-release.json";
+        "https://raw.githubusercontent.com/Dwemer-Dynamics/DwemerDistro-Core/main/system-release.json";
     private const string InstalledSystemReleaseManifestPath = "/var/lib/dwemerdistro/system-release.json";
     private const string DashboardAutoOpenNeutralColor = "#C8C8C8";
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
