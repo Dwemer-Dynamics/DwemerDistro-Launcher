@@ -15,7 +15,7 @@ if [ ! -x /usr/local/bin/install_cuda_dependencies ]; then
     exit 23
 fi
 
-/usr/local/bin/install_cuda_dependencies 12.8
+/usr/local/bin/install_cuda_dependencies auto
 """;
     private const string PrepareDistroCommand = """
 set -e
@@ -86,7 +86,7 @@ if [ ! -x /usr/local/bin/install_audiocpp_pockettts ]; then
     exit 23
 fi
 
-BUILD_PARALLEL="${BUILD_PARALLEL:-2}" /usr/local/bin/install_audiocpp_pockettts 12.8
+BUILD_PARALLEL="${BUILD_PARALLEL:-2}" /usr/local/bin/install_audiocpp_pockettts auto
 
 ln -sfn /home/dwemer/audio.cpp/start-audiocpp-pockettts.sh /home/dwemer/audio.cpp/start.sh
 chown -h dwemer:dwemer /home/dwemer/audio.cpp/start.sh
@@ -166,7 +166,16 @@ fi
 . /home/dwemer/python-minime/bin/activate
 python -m pip install --upgrade pip wheel setuptools
 
-if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
+pytorch_gpu_available() {
+    local cuda_home
+
+    [ -r /var/lib/dwemerdistro/cuda-selection.env ] || return 1
+    grep -qx 'CUDA_PYTORCH_SUPPORTED=1' /var/lib/dwemerdistro/cuda-selection.env || return 1
+    cuda_home="$(sed -n 's|^CUDA_HOME=\(/usr/local/cuda-\(12\.8\|13\.0\)\)$|\1|p' /var/lib/dwemerdistro/cuda-selection.env | head -n 1)"
+    [ -n "$cuda_home" ] && [ -x "$cuda_home/bin/nvcc" ]
+}
+
+if pytorch_gpu_available; then
     python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu128
 else
     python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
@@ -174,7 +183,7 @@ fi
 
 python -m pip install -r requirements.txt
 
-if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
+if pytorch_gpu_available; then
     ln -sf /home/dwemer/minime-t5/start-gpu.sh /home/dwemer/minime-t5/start.sh
     echo "Minime/TXT2VEC installed and enabled in GPU / CUDA mode."
 else
@@ -207,7 +216,13 @@ fi
 . venv/bin/activate
 python -m pip install --upgrade pip wheel setuptools
 
-if command -v nvcc >/dev/null 2>&1 || [ -e /usr/bin/nvcc ] || [ -e /usr/local/cuda/bin/nvcc ]; then
+cuda_home=""
+if [ -r /var/lib/dwemerdistro/cuda-selection.env ] &&
+   grep -qx 'CUDA_PYTORCH_SUPPORTED=1' /var/lib/dwemerdistro/cuda-selection.env; then
+    cuda_home="$(sed -n 's|^CUDA_HOME=\(/usr/local/cuda-\(12\.8\|13\.0\)\)$|\1|p' /var/lib/dwemerdistro/cuda-selection.env | head -n 1)"
+fi
+
+if [ -n "$cuda_home" ] && [ -x "$cuda_home/bin/nvcc" ]; then
     python -m pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
     python -m pip install sherpa-onnx==1.12.13+cuda12.cudnn9 -f https://k2-fsa.github.io/sherpa/onnx/cuda.html
     python -m pip install nvidia-cudnn-cu12

@@ -4539,7 +4539,7 @@ fi
                     echo "The minimal CUDA installer is missing. Update DwemerDistro and retry."
                     exit 23
                 fi
-                /usr/local/bin/install_cuda_dependencies 12.8
+                /usr/local/bin/install_cuda_dependencies auto
                 """,
                 "command -v nvcc >/dev/null 2>&1 || [ -x /usr/bin/nvcc ] || [ -x /usr/local/cuda/bin/nvcc ]",
                 "root"),
@@ -4565,7 +4565,7 @@ fi
                     echo "The audio.cpp Pocket-TTS installer is missing. Update DwemerDistro and retry."
                     exit 23
                 fi
-                BUILD_PARALLEL="${BUILD_PARALLEL:-2}" /usr/local/bin/install_audiocpp_pockettts 12.8
+                BUILD_PARALLEL="${BUILD_PARALLEL:-2}" /usr/local/bin/install_audiocpp_pockettts auto
                 ln -sfn /home/dwemer/audio.cpp/start-audiocpp-pockettts.sh /home/dwemer/audio.cpp/start.sh
                 chown -h dwemer:dwemer /home/dwemer/audio.cpp/start.sh
                 rm -f /home/dwemer/pocket-tts/start.sh
