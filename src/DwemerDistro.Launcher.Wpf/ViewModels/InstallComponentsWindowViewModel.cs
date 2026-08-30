@@ -917,14 +917,14 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "pockettts",
                 title: "Pocket-TTS (CPU / Python)",
-                    description: "Python Pocket-TTS runtime for AMD or CPU-only systems. Fresh installs use port 8024; existing legacy installs can remain on 8020 until migrated.",
+                description: "Python Pocket-TTS runtime for AMD or CPU-only systems.\nPort: 8024",
                 installCheckExpression: "Path('/home/dwemer/pocket-tts/venv/bin/python').exists()",
                 primaryCommand: CreateInstallCommand("pockettts"),
                 supportsAmdCpu: true),
             CreateItem(
                 key: "chatterbox",
                 title: "Chatterbox",
-                    description: "High-quality multilingual TTS with voice cloning. Fresh installs use port 8023; existing legacy installs can remain on 8020 until migrated.",
+                description: "High-quality multilingual TTS with voice cloning.\nPort: 8023",
                 installCheckExpression: "Path('/home/dwemer/chatterbox/venv').exists()",
                 primaryCommand: CreateInstallCommand("chatterbox"),
                 supportsNvidiaCuda: true,
