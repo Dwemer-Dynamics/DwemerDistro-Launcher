@@ -122,9 +122,12 @@ try
     var nvidiaQuickstart = distroSetup.GetPreset(SetupPresetKey.NvidiaGpu);
     Assert(nvidiaQuickstart.ComponentKeys.SequenceEqual(["cuda", "audiocpp", "minime", "parakeet"]),
         "NVIDIA Quickstart must install automatic CUDA before every GPU-dependent component.");
-    Assert(distroSetup.GetComponent(nvidiaQuickstart.ComponentKeys[0]).InstallArguments
-            .Contains(cudaInstallCommand),
+    var quickstartCuda = distroSetup.GetComponent(nvidiaQuickstart.ComponentKeys[0]);
+    Assert(quickstartCuda.InstallArguments.Contains(cudaInstallCommand),
         "The CUDA step used by NVIDIA Quickstart must execute the automatic GPU-selection command.");
+    Assert(quickstartCuda.InstallCheckExpression.Contains("cuda-selection.env", StringComparison.Ordinal)
+           && quickstartCuda.InstallCheckExpression.Contains("nvcc", StringComparison.Ordinal),
+        "Quickstart must repair legacy CUDA installs that do not have Core's trusted selection state.");
 
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,

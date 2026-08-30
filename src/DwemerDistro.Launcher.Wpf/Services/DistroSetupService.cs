@@ -284,7 +284,7 @@ PY
             "cuda",
             "CUDA",
             "NVIDIA CUDA runtime",
-            "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
+            "Path('/var/lib/dwemerdistro/cuda-selection.env').is_file() and (shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists())",
             ["-d", LauncherConstants.DistroName, "--", "bash", "-lc", CudaInstallCommand]),
         new(
             "audiocpp",
