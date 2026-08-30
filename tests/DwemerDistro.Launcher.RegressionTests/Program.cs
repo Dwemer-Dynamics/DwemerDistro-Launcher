@@ -97,7 +97,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.7", "Launcher constants must report version 3.3.7.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.8", "Launcher constants must report version 3.3.8.");
 
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
