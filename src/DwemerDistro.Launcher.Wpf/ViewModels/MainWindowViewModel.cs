@@ -44,6 +44,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
     private const string DashboardAutoOpenWarningColor = "#FFB641";
     private const string DashboardAutoOpenErrorColor = "#FF8A80";
+    private const string ForceGitUpdatesNeutralColor = "#C8C8C8";
+    // Force Updates rests on a warning colour whenever it is on, so the destructive state is
+    // never reported in the same tone as an ordinary saved preference.
+    private const string ForceGitUpdatesWarningColor = "#FFB641";
+    private const string ForceGitUpdatesErrorColor = "#FF8A80";
     private const string SystemStatusNeutralColor = "#C8C8C8";
     private const string SystemStatusBusyColor = "#F4D8A6";
     private const string SystemStatusSuccessColor = "#8FD694";
@@ -51,6 +56,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private const string SystemStatusErrorColor = "#FF8A80";
     /// <summary>Appended to a mod's version line, and only when the comparison confirmed it.</summary>
     internal const string UpdateAvailableStatusSuffix = "Update Available";
+
+    /// <summary>The Settings label, reused by every message about the option.</summary>
+    internal const string ForceGitUpdatesSettingName = "Force Updates";
+
+    /// <summary>Restated on every mod update while the option is on.</summary>
+    internal const string ForceGitUpdatesUpdateWarning =
+        "Force Updates is ON: manual edits to Git-tracked files in these servers will be " +
+        "permanently discarded. Databases, uploads, profiles, memories, voices, and other untracked " +
+        "data are not deleted.";
+
     // The top button says what it does; only a confirmed available update says so instead.
     internal const string SystemUpdateDefaultButtonText = "Update Distro";
     internal const string SystemUpdateAvailableButtonText = "Distro Update Available";
@@ -103,6 +118,7 @@ echo "CHIM-MCP installed and enabled."
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly LauncherUpdateService _launcherUpdateService;
     private readonly LauncherReleaseNoticeService _launcherReleaseNoticeService;
+    private readonly UpdatePreferencesService _updatePreferences;
     private readonly SemaphoreSlim _componentInstallGate = new(1, 1);
 
     private TcpProxyService? _tcpProxyService;
@@ -143,6 +159,11 @@ echo "CHIM-MCP installed and enabled."
     private bool _isDashboardAutoOpenReady;
     private string _dashboardAutoOpenStatusText = "Checking saved preference...";
     private string _dashboardAutoOpenStatusColor = DashboardAutoOpenNeutralColor;
+    // Off until a saved preference says otherwise, so an unreadable file can never force an update.
+    private bool _forceGitUpdatesEnabled;
+    private bool _lastSavedForceGitUpdatesEnabled;
+    private string _forceGitUpdatesStatusText = string.Empty;
+    private string _forceGitUpdatesStatusColor = ForceGitUpdatesNeutralColor;
     private bool _canUpdateLauncher;
     private string _targetHerikaBranch = "Main";
     private string _targetStobeBranch = "Main";
@@ -160,6 +181,8 @@ echo "CHIM-MCP installed and enabled."
         InitializeServerManagement();
         _launcherUpdateService = new LauncherUpdateService(_httpClient, _processRunner);
         _launcherReleaseNoticeService = new LauncherReleaseNoticeService();
+        _updatePreferences = new UpdatePreferencesService();
+        LoadForceGitUpdates();
         _startAnimationTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(500)
@@ -186,6 +209,7 @@ echo "CHIM-MCP installed and enabled."
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
+        ConfirmForceGitUpdatesCommand = new RelayCommand(ConfirmForceGitUpdates);
         // Webpage and rollback are meaningless for a product that is not installed.
         OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => HerikaManager.CanUseInstalledFeatures);
         OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => StobeManager.CanUseInstalledFeatures);
@@ -598,6 +622,29 @@ echo "CHIM-MCP installed and enabled."
         private set => SetProperty(ref _dashboardAutoOpenStatusColor, value);
     }
 
+    /// <summary>
+    /// Two-way for the Settings checkbox, which flips it before
+    /// <see cref="ConfirmForceGitUpdatesCommand"/> runs; that command is what confirms, saves, or
+    /// puts it back.
+    /// </summary>
+    public bool ForceGitUpdatesEnabled
+    {
+        get => _forceGitUpdatesEnabled;
+        set => SetProperty(ref _forceGitUpdatesEnabled, value);
+    }
+
+    public string ForceGitUpdatesStatusText
+    {
+        get => _forceGitUpdatesStatusText;
+        private set => SetProperty(ref _forceGitUpdatesStatusText, value);
+    }
+
+    public string ForceGitUpdatesStatusColor
+    {
+        get => _forceGitUpdatesStatusColor;
+        private set => SetProperty(ref _forceGitUpdatesStatusColor, value);
+    }
+
     public bool CanUpdateLauncher
     {
         get => _canUpdateLauncher;
@@ -646,6 +693,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenServerFolderCommand { get; }
     public RelayCommand OpenFirstRunSetupCommand { get; }
     public AsyncRelayCommand SaveDashboardAutoOpenCommand { get; }
+    public RelayCommand ConfirmForceGitUpdatesCommand { get; }
     public AsyncRelayCommand OpenChimCommand { get; }
     public AsyncRelayCommand OpenStobeCommand { get; }
     public AsyncRelayCommand OpenDialecticCommand { get; }
@@ -1397,7 +1445,8 @@ echo "CHIM-MCP installed and enabled."
     /// update, so status is never re-read to pull other mods into the run.
     /// </summary>
     private async Task RunModUpdatesAsync(
-        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate)
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate,
+        bool forceGitUpdates)
     {
         if (!CanRunUpdateOperation())
         {
@@ -1437,7 +1486,7 @@ echo "CHIM-MCP installed and enabled."
                 {
                     modsAttempted = true;
                     SetSystemUpdateRunningButtonText(null);
-                    return RunServerOperationAsync(product, ServerOperation.Update, branch);
+                    return RunServerOperationAsync(product, ServerOperation.Update, branch, forceGitUpdates);
                 }).ConfigureAwait(true);
             var completionMessage = "System and mod updates completed successfully.";
             if (!systemSucceeded)
@@ -1728,7 +1777,8 @@ echo "CHIM-MCP installed and enabled."
     }
 
     internal static string BuildModsUpdateConfirmation(
-        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate)
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate,
+        bool forceGitUpdates = false)
     {
         // If status changed after the button became available, describe the system-only recovery
         // accurately rather than promising a mod update that this empty selection cannot perform.
@@ -1744,10 +1794,34 @@ echo "CHIM-MCP installed and enabled."
             .Select(update => $"{update.Product.DisplayName} target branch: {ServerManagementService.ToBranchChoice(update.Branch)}")
             .ToArray();
 
+        // The setting is confirmed once in Settings but applies to every later update, so the
+        // destructive part is restated here rather than relying on the user remembering it.
+        var forceWarning = forceGitUpdates
+            ? "\n\n" + ForceGitUpdatesUpdateWarning
+            : string.Empty;
+
         return "This will update DwemerDistro and shared components first, then the selected installed mods below. " +
                "If the system update fails, no mods are updated.\n\n" +
                string.Join("\n", branchLines) +
+               forceWarning +
                "\n\nAre you sure?";
+    }
+
+    /// <summary>
+    /// The enable confirmation. It has to be exact about scope: forcing an update rewrites the files
+    /// Git tracks, and leaves everything Git does not track - databases, uploads, profiles, memories
+    /// and voices - untouched.
+    /// </summary>
+    internal static string BuildForceGitUpdatesConfirmation()
+    {
+        return $"{ForceGitUpdatesSettingName} is destructive.\n\n" +
+               "While it is on, updating HerikaServer, StobeServer, or DialecticServer overwrites the files " +
+               "those servers track in Git. Any edit you made to a tracked file by hand is permanently " +
+               "discarded, with no undo.\n\n" +
+               "Nothing untracked is removed: databases, uploads, profiles, memories, voices, and other " +
+               "runtime data are left in place.\n\n" +
+               "Leave this off unless an update keeps failing because an installed server has manual edits.\n\n" +
+               $"Turn {ForceGitUpdatesSettingName} on?";
     }
 
     internal static string BuildSystemUpdateConfirmation()
@@ -2100,6 +2174,87 @@ echo "CHIM-MCP installed and enabled."
     {
         DashboardAutoOpenStatusText = text;
         DashboardAutoOpenStatusColor = color;
+    }
+
+    /// <summary>
+    /// Reads the saved Force Updates preference at startup. The service already fails closed, so
+    /// a missing or malformed file simply leaves the option off and says so in the row.
+    /// </summary>
+    private void LoadForceGitUpdates()
+    {
+        var enabled = _updatePreferences.GetForceGitUpdates();
+        _lastSavedForceGitUpdatesEnabled = enabled;
+        ForceGitUpdatesEnabled = enabled;
+        ApplyForceGitUpdatesSavedStatus(enabled);
+    }
+
+    /// <summary>
+    /// The toggle rule, kept away from the dialog so it can be exercised without one: only turning
+    /// the option on is destructive, so only that asks, and a cancelled prompt leaves it off.
+    /// </summary>
+    internal static bool ResolveForceGitUpdatesToggle(bool requestedEnabled, Func<bool> confirmEnable)
+    {
+        return requestedEnabled && confirmEnable();
+    }
+
+    /// <summary>
+    /// Runs after the checkbox has already flipped itself, and is what puts it back: a cancelled
+    /// enable reverts to unchecked and saves nothing, while any resolved state is persisted.
+    /// </summary>
+    private void ConfirmForceGitUpdates()
+    {
+        var desired = ResolveForceGitUpdatesToggle(ForceGitUpdatesEnabled, ConfirmForceGitUpdatesEnable);
+        if (desired != ForceGitUpdatesEnabled)
+        {
+            ForceGitUpdatesEnabled = desired;
+            ApplyForceGitUpdatesSavedStatus(_lastSavedForceGitUpdatesEnabled);
+            AppendLog($"{ForceGitUpdatesSettingName} was left off.{Environment.NewLine}");
+            return;
+        }
+
+        if (!_updatePreferences.TrySetForceGitUpdates(desired, out var error))
+        {
+            ForceGitUpdatesEnabled = _lastSavedForceGitUpdatesEnabled;
+            SetForceGitUpdatesStatus(
+                "Could not save. Reverted to the last saved value.",
+                ForceGitUpdatesErrorColor);
+            var reason = string.IsNullOrWhiteSpace(error) ? string.Empty : $": {error.Trim()}";
+            AppendLog($"Failed to save the {ForceGitUpdatesSettingName} setting{reason}{Environment.NewLine}", "red");
+            return;
+        }
+
+        _lastSavedForceGitUpdatesEnabled = desired;
+        ApplyForceGitUpdatesSavedStatus(desired);
+        AppendLog(
+            desired
+                ? $"{ForceGitUpdatesSettingName} is ON. Mod updates will discard manual edits to tracked files.{Environment.NewLine}"
+                : $"{ForceGitUpdatesSettingName} is OFF.{Environment.NewLine}",
+            desired ? "yellow" : "green");
+    }
+
+    private bool ConfirmForceGitUpdatesEnable()
+    {
+        return MessageBox.Show(
+            BuildForceGitUpdatesConfirmation(),
+            ForceGitUpdatesSettingName,
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    }
+
+    /// <summary>Reports the saved state, in a warning colour whenever the option is on.</summary>
+    private void ApplyForceGitUpdatesSavedStatus(bool enabled)
+    {
+        SetForceGitUpdatesStatus(
+            enabled
+                ? "On. Mod updates discard manual edits to tracked files in the installed servers."
+                : "Off. An update stops when an installed server has manual edits to tracked files.",
+            enabled ? ForceGitUpdatesWarningColor : ForceGitUpdatesNeutralColor);
+    }
+
+    private void SetForceGitUpdatesStatus(string text, string color)
+    {
+        ForceGitUpdatesStatusText = text;
+        ForceGitUpdatesStatusColor = color;
     }
 
     private async Task FixWslDnsAsync()

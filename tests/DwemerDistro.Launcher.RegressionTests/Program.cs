@@ -97,7 +97,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.10", "Launcher constants must report version 3.3.10.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.11", "Launcher constants must report version 3.3.11.");
 
     var setupServiceType = typeof(DistroSetupService);
     var privateStatic = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
@@ -722,6 +722,91 @@ try
     Assert(modsUpdateConfirmation.Contains($"{herikaItem.DisplayName} target branch", StringComparison.Ordinal)
            && modsUpdateConfirmation.Contains($"{individualUpdateItem.DisplayName} target branch", StringComparison.Ordinal),
         "A mod update must list every selected installed mod and its target branch.");
+
+    // --- Force Updates -----------------------------------------------------------------------
+
+    var forcedModsUpdateConfirmation = MainWindowViewModel.BuildModsUpdateConfirmation(
+        MainWindowViewModel.SnapshotModUpdates([herikaItem, individualUpdateItem]),
+        forceGitUpdates: true);
+    Assert(!modsUpdateConfirmation.Contains("Force Updates", StringComparison.Ordinal),
+        "A mod update must not mention forced updates while the setting is off.");
+    Assert(forcedModsUpdateConfirmation.Contains(MainWindowViewModel.ForceGitUpdatesUpdateWarning, StringComparison.Ordinal)
+           && forcedModsUpdateConfirmation.EndsWith("Are you sure?", StringComparison.Ordinal),
+        "A mod update must repeat the destructive warning while Force Updates is on.");
+    Assert(MainWindowViewModel.ForceGitUpdatesUpdateWarning.Contains("permanently discarded", StringComparison.Ordinal)
+           && MainWindowViewModel.ForceGitUpdatesUpdateWarning.Contains("Git-tracked", StringComparison.Ordinal)
+           && MainWindowViewModel.ForceGitUpdatesUpdateWarning.Contains(
+               "Databases, uploads, profiles, memories, voices, and other untracked data are not deleted",
+               StringComparison.Ordinal),
+        "The repeated warning must separate discarded tracked edits from untracked data that survives.");
+
+    var forceGitUpdatesConfirmation = MainWindowViewModel.BuildForceGitUpdatesConfirmation();
+    Assert(forceGitUpdatesConfirmation.Contains("destructive", StringComparison.Ordinal)
+           && forceGitUpdatesConfirmation.Contains("permanently", StringComparison.Ordinal)
+           && forceGitUpdatesConfirmation.Contains("no undo", StringComparison.Ordinal),
+        "Enabling Force Updates must state that manual edits are permanently discarded.");
+    Assert(forceGitUpdatesConfirmation.Contains("HerikaServer, StobeServer, or DialecticServer", StringComparison.Ordinal)
+           && forceGitUpdatesConfirmation.Contains("track in Git", StringComparison.Ordinal),
+        "The confirmation must name the servers it rewrites and limit the damage to Git-tracked files.");
+    Assert(forceGitUpdatesConfirmation.Contains(
+               "Nothing untracked is removed: databases, uploads, profiles, memories, voices",
+               StringComparison.Ordinal)
+           && !forceGitUpdatesConfirmation.Contains("git clean", StringComparison.OrdinalIgnoreCase),
+        "The confirmation must never claim that untracked or runtime data is deleted.");
+
+    var defaultUpdateArguments = ServerManagementService.BuildUpdateArguments(
+        ServerProduct.Herika, ServerBranchChannel.Main);
+    Assert(!defaultUpdateArguments.Contains("--force"),
+        "A launcher update must not force over a dirty worktree unless the setting is on.");
+    var forcedUpdateArguments = ServerManagementService.BuildUpdateArguments(
+        ServerProduct.Herika, ServerBranchChannel.Main, forceGitUpdates: true);
+    Assert(forcedUpdateArguments.Length == defaultUpdateArguments.Length + 1
+           && forcedUpdateArguments.Take(defaultUpdateArguments.Length).SequenceEqual(defaultUpdateArguments)
+           && forcedUpdateArguments[^1] == "--force",
+        "Force Updates must append --force to the otherwise unchanged update command.");
+    Assert(!ServerManagementService.BuildInstallArguments(ServerProduct.Herika, ServerBranchChannel.Main).Contains("--force")
+           && !ServerManagementService.BuildRepairArguments(ServerProduct.Herika, ServerBranchChannel.Main).Contains("--force")
+           && !ServerManagementService.BuildUninstallArguments(ServerProduct.Herika).Contains("--force"),
+        "Only update may force; install, repair, and uninstall must never carry the flag.");
+
+    var enablePrompts = 0;
+    Assert(!MainWindowViewModel.ResolveForceGitUpdatesToggle(true, () => { enablePrompts++; return false; })
+           && enablePrompts == 1,
+        "Enabling Force Updates must ask once and stay off when the confirmation is canceled.");
+    Assert(MainWindowViewModel.ResolveForceGitUpdatesToggle(true, () => { enablePrompts++; return true; })
+           && enablePrompts == 2,
+        "A confirmed enable must turn Force Updates on.");
+    Assert(!MainWindowViewModel.ResolveForceGitUpdatesToggle(
+            false,
+            () => throw new InvalidOperationException("Turning the option off must never confirm.")),
+        "Turning Force Updates off must apply without a confirmation.");
+
+    var updatePreferencesDirectory = Path.Combine(root, "update-preferences");
+    var updatePreferences = new UpdatePreferencesService(updatePreferencesDirectory);
+    Assert(updatePreferences.StatePath.EndsWith(
+            Path.Combine("DwemerDistro", "update-preferences.json"), StringComparison.OrdinalIgnoreCase),
+        "Update preferences must live in the launcher's existing local application data area.");
+    Assert(!updatePreferences.GetForceGitUpdates(),
+        "Force Updates must default to off when no preference has been saved.");
+    Assert(updatePreferences.TrySetForceGitUpdates(true, out var updatePreferencesError),
+        "Saving the Force Updates preference failed: " + updatePreferencesError);
+    Assert(new UpdatePreferencesService(updatePreferencesDirectory).GetForceGitUpdates(),
+        "An enabled Force Updates preference must survive a new service instance.");
+
+    File.WriteAllText(updatePreferences.StatePath, "{ this is not json");
+    Assert(!new UpdatePreferencesService(updatePreferencesDirectory).GetForceGitUpdates(),
+        "A malformed preferences file must fail closed to off rather than forcing an update.");
+
+    File.WriteAllText(updatePreferences.StatePath, """
+    { "forceGitUpdates": true, "futureSetting": "keep" }
+    """);
+    Assert(new UpdatePreferencesService(updatePreferencesDirectory).GetForceGitUpdates(),
+        "A saved preference must be read back whatever casing wrote it.");
+    Assert(updatePreferences.TrySetForceGitUpdates(false, out updatePreferencesError),
+        "Turning Force Updates off failed: " + updatePreferencesError);
+    Assert(!new UpdatePreferencesService(updatePreferencesDirectory).GetForceGitUpdates()
+           && File.ReadAllText(updatePreferences.StatePath).Contains("futureSetting", StringComparison.Ordinal),
+        "Turning the option off must persist, and must keep preferences this build does not know.");
 
     var systemUpdateConfirmation = MainWindowViewModel.BuildSystemUpdateConfirmation();
     Assert(systemUpdateConfirmation.Contains("DwemerDistro and its shared components", StringComparison.Ordinal)
