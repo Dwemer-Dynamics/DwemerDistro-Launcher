@@ -91,7 +91,7 @@ fi
 
 if [ ! -d CHIM-MCP/.git ]; then
     rm -rf CHIM-MCP
-    git clone https://github.com/Dwemer-Dynamics/CHIM-MCP.git CHIM-MCP
+    git clone --depth 1 https://github.com/Dwemer-Dynamics/CHIM-MCP.git CHIM-MCP
 else
     git -C CHIM-MCP reset --hard HEAD
     git -C CHIM-MCP pull --ff-only
@@ -103,6 +103,7 @@ if [ -f package-lock.json ]; then
 else
     npm install
 fi
+npm cache clean --force || echo "CHIM-MCP installed, but the npm download cache could not be removed."
 
 npm run build
 test -f dist/index.js
@@ -4737,6 +4738,7 @@ fi
                 fi
                 export PIP_NO_INPUT=1
                 export PIP_DISABLE_PIP_VERSION_CHECK=1
+                export PIP_NO_CACHE_DIR=1
                 cd /home/dwemer
                 POCKETTTS_FRESH=0
                 if [ ! -d pocket-tts/venv ]; then
@@ -4744,7 +4746,7 @@ fi
                 fi
                 if [ ! -d pocket-tts/.git ]; then
                     rm -rf pocket-tts
-                    git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
+                    git clone --depth 1 https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
                 else
                     git -C pocket-tts pull --ff-only
                 fi
@@ -4760,9 +4762,9 @@ fi
                     python3 -m venv venv
                 fi
                 . venv/bin/activate
-                python -m pip install --upgrade pip wheel setuptools
-                python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
-                python -m pip install -e .
+                python -m pip install --no-cache-dir --upgrade pip wheel setuptools
+                python -m pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+                python -m pip install --no-cache-dir -e .
                 ln -sfn /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
                 rm -f /home/dwemer/audio.cpp/start.sh
                 """,
@@ -4779,7 +4781,7 @@ fi
                 cd /home/dwemer
                 if [ ! -d omnivoice-tts/.git ]; then
                     rm -rf omnivoice-tts
-                    git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts
+                    git clone --depth 1 https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts
                 fi
                 /home/dwemer/omnivoice-tts/ddistro_install.sh
                 """,
@@ -4811,7 +4813,7 @@ fi
                 cd /home/dwemer
                 if [ ! -d parakeet-api-server/.git ]; then
                     rm -rf parakeet-api-server
-                    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
+                    git clone --depth 1 https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
                 fi
                 /home/dwemer/parakeet-api-server/ddistro_install.sh
                 """,
@@ -4828,6 +4830,8 @@ fi
     private static string BuildComponentInstallWrapper(ComponentInstallDefinition definition)
     {
         var payload = $$"""
+        export PIP_NO_CACHE_DIR=1
+        export PIP_DISABLE_PIP_VERSION_CHECK=1
         set +e
         (
             set -e
@@ -4888,6 +4892,26 @@ fi
             status=${PIPESTATUS[0]}
         fi
         set -e
+
+        if command -v ddistro_storage >/dev/null 2>&1; then
+            echo
+            echo "Removing reproducible installer downloads..."
+            set +e
+            if [ "$(id -u)" -eq 0 ]; then
+                ddistro_storage safe-cleanup
+            elif sudo -n true >/dev/null 2>&1; then
+                sudo -n ddistro_storage safe-cleanup
+            else
+                printf '%s\n' dwemer | sudo -S -p '' ddistro_storage safe-cleanup
+            fi
+            cleanup_status=$?
+            set -e
+            if [ "$cleanup_status" -ne 0 ]; then
+                echo "Storage cleanup was skipped; the component result is unchanged."
+            fi
+        else
+            rm -rf /home/dwemer/.cache/pip /home/dwemer/.cache/uv /home/dwemer/.npm/_cacache
+        fi
 
         echo
         if [ "$status" -eq 0 ]; then
