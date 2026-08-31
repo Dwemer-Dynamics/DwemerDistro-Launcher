@@ -778,6 +778,31 @@
                             </Grid>
                         </Border>
 
+                        <TextBlock Text="UPDATE OPTIONS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <!-- Checkbox-led row, like Dwemer Dashboard WebUI below: the checkbox label is
+                                 the row title, and the description, the standing warning, and the saved
+                                 state indent 32px so they hang under the label rather than the box. The
+                                 warning is permanent text, not a state message, because the danger applies
+                                 whenever the option is on. -->
+                            <StackPanel>
+                                <CheckBox Content="Force Updates" IsChecked="{Binding ForceGitUpdatesEnabled}"
+                                          Command="{Binding ConfirmForceGitUpdatesCommand}" Style="{StaticResource GameCenter.SettingCheckBox}"
+                                          AutomationProperties.Name="Force Updates, overwrite manually edited server files"
+                                          AutomationProperties.HelpText="Destructive. When checked, launcher updates for HerikaServer, StobeServer, and DialecticServer permanently discard your manual edits to files those servers track in Git, with no undo. Databases, uploads, profiles, memories, voices, and other untracked runtime data are not deleted. Turning this on asks for confirmation first; turning it off does not. Off by default." />
+                                <TextBlock Text="Allow launcher server updates to overwrite tracked files changed manually. This does not delete databases, uploads, profiles, memories, voices, or other runtime data."
+                                           Style="{StaticResource GameCenter.SettingRowDescription}"
+                                           Margin="32,4,0,0" />
+                                <TextBlock Text="Warning: while this is on, updating a mod server permanently discards your manual edits to its tracked files. There is no undo."
+                                           Foreground="{DynamicResource GameCenter.DangerText}"
+                                           FontSize="11" Margin="32,6,0,0" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding ForceGitUpdatesStatusText}"
+                                           Foreground="{Binding ForceGitUpdatesStatusColor}"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           FontSize="11" Margin="32,8,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
                         <TextBlock Text="MAINTENANCE AND BACKUPS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
                         <Border Style="{StaticResource GameCenter.SettingRow}">
                             <Grid>

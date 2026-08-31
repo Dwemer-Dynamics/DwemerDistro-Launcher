@@ -197,8 +197,12 @@ public sealed partial class MainWindowViewModel
         }
 
         var updates = SnapshotModUpdates([item]);
+        // Capture the destructive setting with the branch selection shown in this confirmation.
+        // A user may change Settings while the system stage runs, but that must affect only the
+        // next update rather than changing what this already-confirmed operation will do.
+        var forceGitUpdates = ForceGitUpdatesEnabled;
         if (MessageBox.Show(
-                BuildModsUpdateConfirmation(updates),
+                BuildModsUpdateConfirmation(updates, forceGitUpdates),
                 item.UpdateActionName,
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -207,7 +211,7 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        await RunModUpdatesAsync(updates).ConfigureAwait(true);
+        await RunModUpdatesAsync(updates, forceGitUpdates).ConfigureAwait(true);
     }
 
     private async Task RepairServerAsync(ServerManagerItemViewModel item)
@@ -232,6 +236,7 @@ public sealed partial class MainWindowViewModel
         ServerManagerItemViewModel item,
         ServerOperation operation,
         ServerBranchChannel branch,
+        bool forceGitUpdates = false,
         CancellationToken cancellationToken = default)
     {
         var service = _serverManagement;
@@ -259,8 +264,10 @@ public sealed partial class MainWindowViewModel
                 ServerOperation.Repair => await service
                     .RepairAsync(item.Product, branch, line => AppendLog(line), cancellationToken)
                     .ConfigureAwait(false),
+                // Only update can force: the setting exists so a dirty worktree stops blocking an
+                // update, and install and repair have no confirmed edits to discard.
                 _ => await service
-                    .UpdateAsync(item.Product, branch, line => AppendLog(line), cancellationToken)
+                    .UpdateAsync(item.Product, branch, forceGitUpdates, line => AppendLog(line), cancellationToken)
                     .ConfigureAwait(false)
             };
 

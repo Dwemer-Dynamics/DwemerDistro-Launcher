@@ -71,13 +71,19 @@ public sealed class ServerManagementService(WslService wsl)
     /// Updates an existing install. The manager never installs a missing product, and callers must
     /// still gate on <see cref="ServerStatus.IsUsable"/> so a not-installed product is never asked.
     /// </summary>
+    /// <param name="forceGitUpdates">
+    /// Passes <c>--force</c>, which lets the manager update over a dirty worktree by discarding
+    /// manual edits to tracked files. Only the launcher's confirmed Force Updates setting turns
+    /// this on, and only for update: install and repair never force.
+    /// </param>
     public Task<Models.CommandResult> UpdateAsync(
         ServerProduct product,
         ServerBranchChannel branch,
+        bool forceGitUpdates = false,
         Action<string>? output = null,
         CancellationToken cancellationToken = default)
     {
-        return RunManagerAsync(BuildUpdateArguments(product, branch), output, cancellationToken);
+        return RunManagerAsync(BuildUpdateArguments(product, branch, forceGitUpdates), output, cancellationToken);
     }
 
     public Task<Models.CommandResult> RepairAsync(
@@ -122,9 +128,17 @@ public sealed class ServerManagementService(WslService wsl)
         return BuildBranchOperationArguments("install", product, branch);
     }
 
-    internal static string[] BuildUpdateArguments(ServerProduct product, ServerBranchChannel branch)
+    /// <summary>
+    /// <c>--force</c> is appended last and only for update, so the manager's argument order stays the
+    /// same as every other operation and a default update can never carry the destructive flag.
+    /// </summary>
+    internal static string[] BuildUpdateArguments(
+        ServerProduct product,
+        ServerBranchChannel branch,
+        bool forceGitUpdates = false)
     {
-        return BuildBranchOperationArguments("update", product, branch);
+        var arguments = BuildBranchOperationArguments("update", product, branch);
+        return forceGitUpdates ? [.. arguments, "--force"] : arguments;
     }
 
     internal static string[] BuildRepairArguments(ServerProduct product, ServerBranchChannel branch)
