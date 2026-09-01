@@ -4764,6 +4764,13 @@ fi
                 . venv/bin/activate
                 python -m pip install --no-cache-dir --upgrade pip wheel setuptools
                 python -m pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+                mapfile -t gpu_packages < <(
+                    python -m pip list --format=freeze |
+                        sed -n 's/^\(cuda-bindings\|cuda-pathfinder\|cuda-toolkit\|nvidia-[^=]*\|triton\)==.*$/\1/p'
+                )
+                if [ "${#gpu_packages[@]}" -gt 0 ]; then
+                    python -m pip uninstall -y "${gpu_packages[@]}"
+                fi
                 python -m pip install --no-cache-dir -e .
                 ln -sfn /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
                 rm -f /home/dwemer/audio.cpp/start.sh
