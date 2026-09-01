@@ -105,6 +105,8 @@ try
         .GetRawConstantValue()!;
     var audioCppInstallCommand = (string)setupServiceType.GetField("PocketTtsAudioCppInstallCommand", privateStatic)!
         .GetRawConstantValue()!;
+    var pocketTtsInstallCommand = (string)setupServiceType.GetField("PocketTtsInstallCommand", privateStatic)!
+        .GetRawConstantValue()!;
     var minimeInstallCommand = (string)setupServiceType.GetField("MinimeInstallCommand", privateStatic)!
         .GetRawConstantValue()!;
     var parakeetInstallCommand = (string)setupServiceType.GetField("ParakeetInstallCommand", privateStatic)!
@@ -114,6 +116,29 @@ try
         "NVIDIA Quickstart must let DwemerDistro select the CUDA toolkit for the active GPU.");
     Assert(audioCppInstallCommand.Contains("install_audiocpp_pockettts auto", StringComparison.Ordinal),
         "Pocket-TTS audio.cpp must build against the automatically selected CUDA toolkit.");
+    Assert(pocketTtsInstallCommand.Contains("nvidia-[^=]*", StringComparison.Ordinal)
+           && pocketTtsInstallCommand.Contains("pip uninstall -y", StringComparison.Ordinal),
+        "Pocket-TTS CPU migration must remove CUDA-only Python packages left by an older GPU install.");
+    var componentPocketTts = typeof(MainWindowViewModel)
+        .GetMethod("GetComponentInstallDefinition", privateStatic)!
+        .Invoke(null, new object[] { "pockettts" })!;
+    var componentPocketTtsScript = (string)componentPocketTts.GetType()
+        .GetProperty("InstallScript")!
+        .GetValue(componentPocketTts)!;
+    foreach (var (installPath, script) in new[]
+             {
+                 ("Quickstart", pocketTtsInstallCommand),
+                 ("Components", componentPocketTtsScript)
+             })
+    {
+        var torchRemoval = script.IndexOf("pip uninstall -y torch", StringComparison.Ordinal);
+        var cpuTorchInstall = script.IndexOf(
+            "pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cpu",
+            StringComparison.Ordinal);
+        Assert(torchRemoval >= 0 && cpuTorchInstall > torchRemoval,
+            $"{installPath} Pocket-TTS CPU migration must uninstall a CUDA Torch build "
+            + $"before installing the CPU wheel, so the CUDA-only sweep cannot break the venv.");
+    }
     Assert(minimeInstallCommand.Contains("CUDA_PYTORCH_SUPPORTED=1", StringComparison.Ordinal)
            && parakeetInstallCommand.Contains("CUDA_PYTORCH_SUPPORTED=1", StringComparison.Ordinal),
         "Python GPU components must honor Core's capability result instead of assuming every nvcc GPU is supported.");

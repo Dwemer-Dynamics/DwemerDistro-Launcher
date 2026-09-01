@@ -7,6 +7,19 @@ public sealed class DistroSetupService(WslService wsl)
 {
     private const int ComponentInstallTimeoutSeconds = 7200;
     private const string NonInteractiveInstallInput = "";
+    private const string StorageCleanupCommand = """
+set -e
+
+if command -v ddistro_storage >/dev/null 2>&1; then
+    ddistro_storage safe-cleanup
+else
+    apt-get clean
+    find /var/lib/apt/lists -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+    rm -rf /home/dwemer/.cache/pip /root/.cache/pip
+    rm -rf /home/dwemer/.cache/uv /root/.cache/uv
+    rm -rf /home/dwemer/.npm/_cacache /root/.npm/_cacache
+fi
+""";
     private const string CudaInstallCommand = """
 set -e
 
@@ -51,7 +64,7 @@ cd /home/dwemer
 
 if [ ! -d parakeet-api-server/.git ]; then
     rm -rf parakeet-api-server
-    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
+    git clone --depth 1 https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
 else
     git -C parakeet-api-server pull --ff-only || echo 'Skipping parakeet-api-server update; local changes or divergent history.'
 fi
@@ -100,6 +113,7 @@ echo "Pocket-TTS audio.cpp installed and enabled in GPU / CUDA mode."
 set -e
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_NO_CACHE_DIR=1
 export GIT_TERMINAL_PROMPT=0
 
 if [ ! -s /home/dwemer/.cache/huggingface/token ]; then
@@ -117,7 +131,7 @@ fi
 
 if [ ! -d /home/dwemer/pocket-tts/.git ]; then
     rm -rf /home/dwemer/pocket-tts
-    git clone https://github.com/Dwemer-Dynamics/pocket-tts /home/dwemer/pocket-tts
+    git clone --depth 1 https://github.com/Dwemer-Dynamics/pocket-tts /home/dwemer/pocket-tts
 else
     git -C /home/dwemer/pocket-tts pull --ff-only
 fi
@@ -137,11 +151,35 @@ if [ ! -d venv ]; then
 fi
 
 . venv/bin/activate
-python -m pip install --upgrade pip wheel setuptools
+python -m pip install --no-cache-dir --upgrade pip wheel setuptools
 
-python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+list_cuda_only_packages() {
+    python -m pip list --format=freeze |
+        sed -n 's/^\(cuda-bindings\|cuda-pathfinder\|cuda-toolkit\|nvidia-[^=]*\|triton\)==.*$/\1/p'
+}
 
-python -m pip install -e .
+remove_cuda_only_packages() {
+    local packages
+    mapfile -t packages < <(list_cuda_only_packages)
+    if [ "${#packages[@]}" -gt 0 ]; then
+        python -m pip uninstall -y "${packages[@]}"
+    fi
+}
+
+# A CUDA Torch wheel can carry the same public version as the CPU wheel, so
+# pip is allowed to keep it on --upgrade. Remove Torch together with its
+# CUDA-only packages first; sweeping those out from under an installed CUDA
+# Torch leaves the venv broken.
+if python -m pip list --format=freeze | grep -q '^torch==.*+cu' || [ -n "$(list_cuda_only_packages)" ]; then
+    python -m pip uninstall -y torch
+    remove_cuda_only_packages
+fi
+
+python -m pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+
+remove_cuda_only_packages
+
+python -m pip install --no-cache-dir -e .
 
 ln -sf /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
 rm -f /home/dwemer/audio.cpp/start.sh
@@ -151,6 +189,7 @@ echo "Pocket-TTS installed and enabled in CPU mode."
 set -e
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_NO_CACHE_DIR=1
 
 if [ ! -d /home/dwemer/minime-t5 ]; then
     echo "Missing /home/dwemer/minime-t5. Cannot install Minime/TXT2VEC."
@@ -164,7 +203,7 @@ if [ ! -d /home/dwemer/python-minime ]; then
 fi
 
 . /home/dwemer/python-minime/bin/activate
-python -m pip install --upgrade pip wheel setuptools
+python -m pip install --no-cache-dir --upgrade pip wheel setuptools
 
 pytorch_gpu_available() {
     local cuda_home
@@ -176,12 +215,12 @@ pytorch_gpu_available() {
 }
 
 if pytorch_gpu_available; then
-    python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu128
+    python -m pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cu128
 else
-    python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+    python -m pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cpu
 fi
 
-python -m pip install -r requirements.txt
+python -m pip install --no-cache-dir -r requirements.txt
 
 if pytorch_gpu_available; then
     ln -sf /home/dwemer/minime-t5/start-gpu.sh /home/dwemer/minime-t5/start.sh
@@ -195,6 +234,7 @@ fi
 set -e
 export PIP_NO_INPUT=1
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_NO_CACHE_DIR=1
 export GIT_TERMINAL_PROMPT=0
 
 mkdir -p /home/dwemer
@@ -202,7 +242,7 @@ cd /home/dwemer
 
 if [ ! -d /home/dwemer/parakeet-api-server/.git ]; then
     rm -rf /home/dwemer/parakeet-api-server
-    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server /home/dwemer/parakeet-api-server
+    git clone --depth 1 https://github.com/Dwemer-Dynamics/parakeet-api-server /home/dwemer/parakeet-api-server
 else
     git -C /home/dwemer/parakeet-api-server pull --ff-only
 fi
@@ -214,7 +254,7 @@ if [ ! -d venv ]; then
 fi
 
 . venv/bin/activate
-python -m pip install --upgrade pip wheel setuptools
+python -m pip install --no-cache-dir --upgrade pip wheel setuptools
 
 cuda_home=""
 if [ -r /var/lib/dwemerdistro/cuda-selection.env ] &&
@@ -224,15 +264,15 @@ fi
 
 if [ -n "$cuda_home" ] && [ -x "$cuda_home/bin/nvcc" ]; then
     python -m pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-    python -m pip install sherpa-onnx==1.12.13+cuda12.cudnn9 -f https://k2-fsa.github.io/sherpa/onnx/cuda.html
-    python -m pip install nvidia-cudnn-cu12
-    python -m pip install -r requirements.txt
+    python -m pip install --no-cache-dir sherpa-onnx==1.12.13+cuda12.cudnn9 -f https://k2-fsa.github.io/sherpa/onnx/cuda.html
+    python -m pip install --no-cache-dir nvidia-cudnn-cu12
+    python -m pip install --no-cache-dir -r requirements.txt
     ln -sf /home/dwemer/parakeet-api-server/start-gpu.sh /home/dwemer/parakeet-api-server/start.sh
     echo "Parakeet installed and enabled in GPU / CUDA mode."
 else
     python -m pip install --upgrade --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-    python -m pip install "sherpa-onnx>=1.10.0"
-    python -m pip install -r requirements.txt
+    python -m pip install --no-cache-dir "sherpa-onnx>=1.10.0"
+    python -m pip install --no-cache-dir -r requirements.txt
     ln -sf /home/dwemer/parakeet-api-server/start-cpu.sh /home/dwemer/parakeet-api-server/start.sh
     echo "Parakeet installed and enabled in CPU mode."
 fi
@@ -627,6 +667,7 @@ PY
                     componentTimeout.Token)
                 .ConfigureAwait(false);
             output?.Invoke($"{component.Title} exited with code {result.ExitCode}." + Environment.NewLine);
+            await CleanupInstallerStorageAsync(output).ConfigureAwait(false);
             return result;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -643,6 +684,29 @@ PY
             catch (OperationCanceledException)
             {
             }
+        }
+    }
+
+    // Reclaim only reproducible installer downloads without changing the component result.
+    private async Task CleanupInstallerStorageAsync(Action<string>? output)
+    {
+        using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
+        try
+        {
+            output?.Invoke("Removing reproducible installer downloads..." + Environment.NewLine);
+            var result = await wsl.RunWslAsync(
+                    ["-d", LauncherConstants.DistroName, "-u", "root", "--", "bash", "-lc", StorageCleanupCommand],
+                    cancellationToken: cleanupTimeout.Token)
+                .ConfigureAwait(false);
+            if (!result.Succeeded)
+            {
+                output?.Invoke("Storage cleanup was skipped; the component result is unchanged." + Environment.NewLine);
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            output?.Invoke($"Storage cleanup was skipped: {ex.Message}" + Environment.NewLine);
         }
     }
 
@@ -769,6 +833,7 @@ PY
                 "UCF_FORCE_CONFFOLD=1",
                 "PIP_NO_INPUT=1",
                 "PIP_DISABLE_PIP_VERSION_CHECK=1",
+                "PIP_NO_CACHE_DIR=1",
                 "timeout",
                 "--foreground",
                 "--kill-after=30s",
