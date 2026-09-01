@@ -846,9 +846,16 @@ try
            && !MainWindowViewModel.CanRunUpdateOperation(false, false, false, [false, true, false]),
         "A system update, component operation, exclusive distro operation, or individual server operation must block every competing update action.");
 
-    Assert(MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, [false, false, false])
-           && !MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, true, [false, false, false]),
+    Assert(MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, false, false, [false, false, false])
+           && !MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, false, true, [false, false, false]),
         "Distro maintenance must be available when idle and blocked while the server is starting.");
+    Assert(!MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, true, false, false, [false, false, false]),
+        "A Quickstart install or update must block Compact Distro, Export, Import, and Fix WSL DNS.");
+    Assert(!MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, true, false, [false, false, false]),
+        "A passive WSL status task must block Compact Distro, Export, Import, and Fix WSL DNS.");
+    Assert(MainWindowViewModel.CompactDistroPreparingStatus.Length > 0
+           && MainWindowViewModel.ExclusiveDistroOperationBusyMessage.Contains("already running", StringComparison.Ordinal),
+        "Compact Distro must have busy text to show on acquiring the lock, and one shared refusal line.");
 
     var compactConfirmation = MainWindowViewModel.BuildCompactDistroConfirmation();
     Assert(compactConfirmation.Contains("mods, installed servers and components, models, voices, databases, settings, logs", StringComparison.Ordinal)

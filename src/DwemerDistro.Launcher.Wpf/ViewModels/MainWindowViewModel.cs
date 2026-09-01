@@ -33,6 +33,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static readonly TimeSpan ServerWebPageProbeTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan ServerWebPageStartupTimeout = TimeSpan.FromSeconds(150);
     private static readonly TimeSpan ServerWebPageStartupPollInterval = TimeSpan.FromSeconds(3);
+    // How long a critical operation waits for an already-running passive status check to finish
+    // before it gives up rather than risk running DiskPart against a distro something reopened.
+    private static readonly TimeSpan PassiveStatusDrainTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PassiveStatusDrainPollInterval = TimeSpan.FromMilliseconds(200);
     private const string DashboardAutoOpenFlagPath = "/home/dwemer/.dashboard_autoopen";
     /// <summary>Records the launcher build that last synchronized this distro.</summary>
     private const string LauncherSyncMarkerPath = "/home/dwemer/.launcher_synced_version";
@@ -85,6 +89,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         "Stopping the server and all running WSL distributions...";
     internal const string CompactDistroCompactingStatus =
         "Handing the freed space back to Windows. Approve the administrator prompt...";
+    // Shown the moment the exclusive lock is taken, so the row never keeps showing an earlier
+    // run's outcome while this one is already working.
+    internal const string CompactDistroPreparingStatus = "Preparing Compact Distro...";
+
+    /// <summary>The one line every exclusive distro operation uses when the shared gate refuses it.</summary>
+    internal const string ExclusiveDistroOperationBusyMessage =
+        "Another server, component, or system operation is already running.";
     private const string DistroStorageProbeCommand = "command -v ddistro_storage >/dev/null 2>&1";
     private const string DistroStorageCleanupCommand = "ddistro_storage safe-cleanup";
 
@@ -178,6 +189,13 @@ echo "CHIM-MCP installed and enabled."
     private bool _isDistroUpdateInProgress;
     private bool _isComponentsOperationInProgress;
     private bool _isExclusiveDistroOperationInProgress;
+    // Quickstart is modeless, so its open window and any still-finishing distro work claim the
+    // shared gate used by exclusive distro operations. A counter lets an install remain protected
+    // if the window closes before that install has finished.
+    private int _quickstartDistroActivityCount;
+    // Claim and check happen together under this gate, so neither window can slip an operation
+    // in between another one's guard check and its flag being set.
+    private readonly object _distroOperationGate = new();
     private bool _dashboardAutoOpenEnabled = true;
     private bool _lastSavedDashboardAutoOpenEnabled = true;
     private bool _isDashboardAutoOpenReady;
@@ -196,7 +214,10 @@ echo "CHIM-MCP installed and enabled."
     private string _targetStobeBranch = "Main";
     private string _targetDialecticBranch = "Main";
     private int _startAnimationDots;
-    private bool _isServerStatusRefreshInProgress;
+    // Passive startup and retry checks can run together, so count every WSL-using task under the
+    // same gate rather than relying on a single check/set flag.
+    private int _passiveDistroActivityCount;
+    private bool _isServerStatusRetryInProgress;
     private LauncherReleaseInfo? _pendingLauncherUpdate;
     private GameProfile _selectedGame;
 
@@ -621,6 +642,21 @@ echo "CHIM-MCP installed and enabled."
 
     public bool IsCriticalMaintenanceInProgress => _isExclusiveDistroOperationInProgress;
 
+    /// <summary>
+    /// True while Quickstart is open or still finishing distro work. It does not disable the rest
+    /// of the launcher; it only holds off the exclusive distro operations.
+    /// </summary>
+    public bool IsQuickstartDistroActivityInProgress
+    {
+        get
+        {
+            lock (_distroOperationGate)
+            {
+                return _quickstartDistroActivityCount > 0;
+            }
+        }
+    }
+
     public bool IsDistroUpdateInProgress
     {
         get => _isDistroUpdateInProgress;
@@ -789,10 +825,10 @@ echo "CHIM-MCP installed and enabled."
         LauncherLogService.Startup("MainWindowViewModel initialization started.");
         StartProxyAndDiscovery();
         await RunStartupStepAsync("Load dashboard auto-open setting", LoadDashboardAutoOpenAsync, StartupSettingsTimeout).ConfigureAwait(true);
-        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
         QueueSystemUpdateCheck();
         QueueServerStatusRefresh();
         LauncherLogService.Startup("MainWindowViewModel initialization completed.");
@@ -884,7 +920,8 @@ echo "CHIM-MCP installed and enabled."
         QueueBackgroundTask(
             "System update check",
             cancellationToken => CheckSystemUpdatesAsync(cancellationToken),
-            StartupVersionCheckTimeout);
+            StartupVersionCheckTimeout,
+            accessesDistro: true);
     }
 
     /// <summary>
@@ -896,7 +933,8 @@ echo "CHIM-MCP installed and enabled."
         QueueBackgroundTask(
             "Launcher version sync",
             cancellationToken => SyncLauncherVersionAsync(cancellationToken),
-            LauncherVersionSyncTimeout);
+            LauncherVersionSyncTimeout,
+            accessesDistro: true);
     }
 
     private void ShowPendingDedicatedTtsPortsNotice()
@@ -1033,8 +1071,15 @@ echo "CHIM-MCP installed and enabled."
     private void QueueBackgroundTask(
         string name,
         Func<CancellationToken, Task> action,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        bool accessesDistro = false)
     {
+        if (accessesDistro && !TryBeginPassiveDistroActivity())
+        {
+            LauncherLogService.Startup($"{name} deferred because critical distro maintenance is running.");
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             using var timeoutCts = new CancellationTokenSource(timeout);
@@ -1050,6 +1095,13 @@ echo "CHIM-MCP installed and enabled."
             {
                 LauncherLogService.Startup($"{name} failed.", ex);
                 AppendLog($"{name} failed: {ex.Message}{Environment.NewLine}", "yellow");
+            }
+            finally
+            {
+                if (accessesDistro)
+                {
+                    EndPassiveDistroActivity();
+                }
             }
         });
     }
@@ -1588,20 +1640,94 @@ echo "CHIM-MCP installed and enabled."
         OnPropertyChanged(nameof(IsComponentInteractionEnabled));
     }
 
-    private void SetExclusiveDistroOperationInProgress(bool value)
+    /// <summary>
+    /// Claims the exclusive distro slot in one atomic step. Every critical operation goes through
+    /// this instead of checking and then setting, because Quickstart is modeless and can start an
+    /// install on the same dispatcher between those two moments.
+    /// </summary>
+    private bool TryBeginExclusiveDistroOperation()
     {
-        if (_isExclusiveDistroOperationInProgress == value)
+        lock (_distroOperationGate)
         {
-            return;
+            if (!CanRunExclusiveDistroOperation())
+            {
+                return false;
+            }
+
+            _isExclusiveDistroOperationInProgress = true;
         }
 
-        _isExclusiveDistroOperationInProgress = value;
-        OnPropertyChanged(nameof(IsCriticalMaintenanceInProgress));
-        OnPropertyChanged(nameof(IsComponentInteractionEnabled));
-        RaiseUpdateCommandStates();
-        RaiseServerCommandStates();
-        RefreshServerUpdateConflictState();
-        RaiseDistroAccessCommandStates();
+        NotifyDistroOperationGateChanged();
+        return true;
+    }
+
+    private void SetExclusiveDistroOperationInProgress(bool value)
+    {
+        lock (_distroOperationGate)
+        {
+            if (_isExclusiveDistroOperationInProgress == value)
+            {
+                return;
+            }
+
+            _isExclusiveDistroOperationInProgress = value;
+        }
+
+        NotifyDistroOperationGateChanged();
+    }
+
+    /// <summary>
+    /// Registers the Quickstart window or one of its distro operations with the shared gate so
+    /// Compact Distro, Export, Import, and Fix WSL DNS cannot start underneath it. Returns false
+    /// when a critical operation already holds the gate, which is the caller's cue to do nothing.
+    /// </summary>
+    internal bool TryBeginQuickstartDistroActivity()
+    {
+        lock (_distroOperationGate)
+        {
+            if (_isExclusiveDistroOperationInProgress)
+            {
+                return false;
+            }
+
+            _quickstartDistroActivityCount++;
+        }
+
+        NotifyDistroOperationGateChanged();
+        return true;
+    }
+
+    internal void EndQuickstartDistroActivity()
+    {
+        lock (_distroOperationGate)
+        {
+            if (_quickstartDistroActivityCount == 0)
+            {
+                return;
+            }
+
+            _quickstartDistroActivityCount--;
+        }
+
+        NotifyDistroOperationGateChanged();
+    }
+
+    /// <summary>
+    /// Marshals to the UI thread because Quickstart releases the gate from whichever thread its
+    /// install finished on, and every listener below touches command state.
+    /// </summary>
+    private void NotifyDistroOperationGateChanged()
+    {
+        RunOnUi(() =>
+        {
+            OnPropertyChanged(nameof(IsCriticalMaintenanceInProgress));
+            OnPropertyChanged(nameof(IsQuickstartDistroActivityInProgress));
+            OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+            RaiseUpdateCommandStates();
+            RaiseServerCommandStates();
+            RefreshServerUpdateConflictState();
+            RaiseDistroAccessCommandStates();
+        });
     }
 
     private void RaiseUpdateCommandStates()
@@ -1889,26 +2015,155 @@ echo "CHIM-MCP installed and enabled."
 
     private bool CanRunExclusiveDistroOperation()
     {
-        return CanRunExclusiveDistroOperation(
-            IsDistroUpdateInProgress,
-            _isComponentsOperationInProgress,
-            _isExclusiveDistroOperationInProgress,
-            IsServerStarting,
-            ServerManagers.Select(manager => manager.IsBusy));
+        lock (_distroOperationGate)
+        {
+            return CanRunExclusiveDistroOperation(
+                IsDistroUpdateInProgress,
+                _isComponentsOperationInProgress,
+                _isExclusiveDistroOperationInProgress,
+                _quickstartDistroActivityCount > 0,
+                _passiveDistroActivityCount > 0,
+                IsServerStarting,
+                ServerManagers.Select(manager => manager.IsBusy));
+        }
     }
 
     internal static bool CanRunExclusiveDistroOperation(
         bool isGlobalUpdateRunning,
         bool isComponentsOperationRunning,
         bool isExclusiveDistroOperationRunning,
+        bool isQuickstartDistroActivityRunning,
+        bool isPassiveDistroActivityRunning,
         bool isServerStarting,
         IEnumerable<bool> serverBusyStates)
     {
-        return !isServerStarting && CanRunUpdateOperation(
-            isGlobalUpdateRunning,
-            isComponentsOperationRunning,
-            isExclusiveDistroOperationRunning,
-            serverBusyStates);
+        return !isServerStarting &&
+               !isQuickstartDistroActivityRunning &&
+               !isPassiveDistroActivityRunning &&
+               CanRunUpdateOperation(
+                   isGlobalUpdateRunning,
+                   isComponentsOperationRunning,
+                   isExclusiveDistroOperationRunning,
+                   serverBusyStates);
+    }
+
+    /// <summary>
+    /// Reports the shared gate refusing an operation the user already confirmed. The console is
+    /// collapsed by default, so the answer has to be visible on its own.
+    /// </summary>
+    private void ReportExclusiveDistroOperationBusy(string title)
+    {
+        AppendLog(ExclusiveDistroOperationBusyMessage + Environment.NewLine, "yellow");
+        RunOnUi(() => MessageBox.Show(
+            ExclusiveDistroOperationBusyMessage + "\n\nWait for it to finish, then try again.",
+            title,
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning));
+    }
+
+    /// <summary>
+    /// Waits for an already-running passive status check to finish. A passive check runs WSL
+    /// commands, so one still in flight would reopen the distro between the stopped-state
+    /// verification and DiskPart. New checks are already held off by the gate, so only the
+    /// in-flight one has to drain, and the wait never blocks the UI thread it needs.
+    /// </summary>
+    private async Task<bool> WaitForPassiveDistroActivityIdleAsync()
+    {
+        if (!IsPassiveDistroActivityInProgress())
+        {
+            return true;
+        }
+
+        AppendLog("Waiting for the background status check to finish..." + Environment.NewLine);
+        var deadline = DateTime.UtcNow + PassiveStatusDrainTimeout;
+        while (IsPassiveDistroActivityInProgress())
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                return false;
+            }
+
+            await Task.Delay(PassiveStatusDrainPollInterval).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Atomically registers a passive refresh unless critical maintenance already owns the gate.
+    /// This closes the check/set gap where a timer tick could start after compaction had begun.
+    /// </summary>
+    private bool TryBeginPassiveDistroActivity()
+    {
+        lock (_distroOperationGate)
+        {
+            if (_isExclusiveDistroOperationInProgress)
+            {
+                return false;
+            }
+
+            _passiveDistroActivityCount++;
+        }
+
+        NotifyDistroOperationGateChanged();
+        return true;
+    }
+
+    private void EndPassiveDistroActivity()
+    {
+        lock (_distroOperationGate)
+        {
+            if (_passiveDistroActivityCount == 0)
+            {
+                return;
+            }
+
+            _passiveDistroActivityCount--;
+        }
+
+        NotifyDistroOperationGateChanged();
+    }
+
+    /// <summary>Registers the timer retry once while still counting it as passive distro work.</summary>
+    private bool TryBeginServerStatusRetry()
+    {
+        lock (_distroOperationGate)
+        {
+            if (_isServerStatusRetryInProgress || _isExclusiveDistroOperationInProgress)
+            {
+                return false;
+            }
+
+            _isServerStatusRetryInProgress = true;
+            _passiveDistroActivityCount++;
+        }
+
+        NotifyDistroOperationGateChanged();
+        return true;
+    }
+
+    private void EndServerStatusRetry()
+    {
+        lock (_distroOperationGate)
+        {
+            if (!_isServerStatusRetryInProgress)
+            {
+                return;
+            }
+
+            _isServerStatusRetryInProgress = false;
+            _passiveDistroActivityCount--;
+        }
+
+        NotifyDistroOperationGateChanged();
+    }
+
+    private bool IsPassiveDistroActivityInProgress()
+    {
+        lock (_distroOperationGate)
+        {
+            return _passiveDistroActivityCount > 0;
+        }
     }
 
     private bool CanAccessDistro()
@@ -1977,10 +2232,10 @@ echo "CHIM-MCP installed and enabled."
             IsDistroUpdateInProgress = false;
             SetSystemUpdateRunningButtonText(null);
         });
-        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
         QueueSystemUpdateCheck();
     }
 
@@ -2422,13 +2677,12 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
-        if (!CanRunExclusiveDistroOperation())
+        if (!TryBeginExclusiveDistroOperation())
         {
-            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            ReportExclusiveDistroOperationBusy("Fix WSL DNS");
             return;
         }
 
-        SetExclusiveDistroOperationInProgress(true);
         try
         {
             AppendLog("Starting WSL DNS repair..." + Environment.NewLine);
@@ -3322,7 +3576,7 @@ fi
     {
         if (!CanRunExclusiveDistroOperation())
         {
-            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            ReportExclusiveDistroOperationBusy(CompactDistroSettingName);
             return;
         }
 
@@ -3354,15 +3608,18 @@ fi
             return;
         }
 
-        if (!CanRunExclusiveDistroOperation())
+        var serverStopWasAttempted = false;
+        var serverWasStopped = false;
+        if (!TryBeginExclusiveDistroOperation())
         {
-            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            SetCompactDistroStatus(ExclusiveDistroOperationBusyMessage, CompactDistroWarningColor);
+            ReportExclusiveDistroOperationBusy(CompactDistroSettingName);
             return;
         }
 
-        var serverStopWasAttempted = false;
-        var serverWasStopped = false;
-        SetExclusiveDistroOperationInProgress(true);
+        // The row says it is working before the first WSL round trip, so an earlier run's terminal
+        // status can never be mistaken for this one's result.
+        SetCompactDistroStatus(CompactDistroPreparingStatus, CompactDistroBusyColor);
         try
         {
             var vhdxPath = NormalizeDistroVhdxPath(_wsl.GetDistroVhdxPath());
@@ -3371,7 +3628,6 @@ fi
                 SetCompactDistroStatus(
                     "The distro disk file could not be found. Nothing was deleted or stopped.",
                     CompactDistroErrorColor);
-                SetExclusiveDistroOperationInProgress(false);
                 MessageBox.Show(
                     "The launcher could not safely locate the distro's disk file. Nothing was deleted or stopped.\n\n" +
                     "Restart Windows and try again. If the problem continues, run Update Distro first.",
@@ -3392,7 +3648,6 @@ fi
             if (!cleanupProbe.Succeeded)
             {
                 SetCompactDistroStatus("Update Distro first, then run Compact Distro again.", CompactDistroWarningColor);
-                SetExclusiveDistroOperationInProgress(false);
                 MessageBox.Show(
                     "This installation does not have the safe storage cleanup tool yet.\n\n" +
                     "Run Update Distro, then run Compact Distro again. Nothing was deleted or stopped.",
@@ -3420,7 +3675,6 @@ fi
                         ? "A component installer is still running. Wait for it to finish and try again."
                         : "Safe cache cleanup could not finish. Nothing was stopped or compacted.",
                     installerActive ? CompactDistroWarningColor : CompactDistroErrorColor);
-                SetExclusiveDistroOperationInProgress(false);
                 MessageBox.Show(
                     installerActive
                         ? "A component installer is still running. Wait for it to finish, then run Compact Distro again.\n\nNothing was stopped or compacted."
@@ -3444,7 +3698,6 @@ fi
                 SetCompactDistroStatus(
                     "Installer caches were removed, but the freed space could not be prepared for Windows. The server is still running if it was running before.",
                     CompactDistroWarningColor);
-                SetExclusiveDistroOperationInProgress(false);
                 MessageBox.Show(
                     $"Installer caches were removed, but the freed space could not be prepared for Windows.\n\n{trimError}\n\n" +
                     "The server and WSL were not stopped. Run Compact Distro again after resolving the error.",
@@ -3469,10 +3722,30 @@ fi
                 SetCompactDistroStatus(
                     "Installer caches were removed, but the distro disk could not be verified for Windows compaction. The server is stopped.",
                     CompactDistroWarningColor);
-                SetExclusiveDistroOperationInProgress(false);
                 MessageBox.Show(
                     "Installer caches were removed and the space was freed inside the distro, but the disk file could not be safely verified after WSL stopped. No Windows compaction was attempted.\n\n" +
                     "Start the server again when you're ready.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            // Nothing may reopen the distro between the stopped-state verification and DiskPart.
+            // A passive status check that was already in flight when the gate closed is the one
+            // thing that still could, so it is drained and the stopped state is confirmed again.
+            if (!await WaitForPassiveDistroActivityIdleAsync().ConfigureAwait(true) ||
+                await _wsl.DistroRunningAsync().ConfigureAwait(true))
+            {
+                AppendLog(
+                    $"{LauncherConstants.DistroName} reopened after it was stopped. Windows compaction was skipped.{Environment.NewLine}",
+                    "yellow");
+                SetCompactDistroStatus(
+                    "Installer caches were removed, but the distro reopened before Windows could compact it. Run Compact Distro again.",
+                    CompactDistroWarningColor);
+                MessageBox.Show(
+                    "Installer caches were removed and the space was freed inside the distro, but the distro reopened before Windows compaction could start. No compaction was attempted.\n\n" +
+                    $"Close any open \\\\wsl.localhost\\{LauncherConstants.DistroName} Explorer windows and run Compact Distro again.",
                     CompactDistroSettingName,
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -3492,7 +3765,6 @@ fi
                         ? "Stopped at the Windows administrator prompt. Space was freed inside the distro but not handed back to Windows. The server is stopped."
                         : "Space was freed inside the distro, but Windows could not reclaim it. The server is stopped.",
                     elevationDeclined ? CompactDistroWarningColor : CompactDistroErrorColor);
-                SetExclusiveDistroOperationInProgress(false);
                 MessageBox.Show(
                     (elevationDeclined
                         ? "The administrator prompt was not approved, so the freed space was not handed back to Windows."
@@ -3509,7 +3781,6 @@ fi
             AppendLog(summary + Environment.NewLine, "green");
 
             SetCompactDistroStatus($"Done. {summary} The server is stopped.", CompactDistroSuccessColor);
-            SetExclusiveDistroOperationInProgress(false);
             MessageBox.Show(
                 $"Compact Distro finished.\n\n{summary}\n\nStart the server again when you're ready.",
                 CompactDistroSettingName,
@@ -3526,7 +3797,6 @@ fi
                         ? "Could not finish. The server may be stopped. Open the console for details."
                         : "Could not finish. The server and WSL were not stopped.",
                 CompactDistroErrorColor);
-            SetExclusiveDistroOperationInProgress(false);
             MessageBox.Show(
                 $"Compact Distro could not finish.\n\n{ex.Message}\n\n" +
                 (serverWasStopped
@@ -3541,6 +3811,9 @@ fi
         finally
         {
             SetExclusiveDistroOperationInProgress(false);
+            // Passive checks were held off for the whole run. Restarting the timer lets an unknown
+            // status be re-read on its own schedule instead of forcing the distro back open here.
+            QueueServerStatusRefresh();
         }
     }
 
@@ -3560,6 +3833,14 @@ fi
 
     private async Task PrepareDistroForSafeCompactionAsync()
     {
+        // A passive status check that started before the gate closed runs WSL commands of its own,
+        // so it has to finish before the stop sequence begins.
+        if (!await WaitForPassiveDistroActivityIdleAsync().ConfigureAwait(true))
+        {
+            throw new InvalidOperationException(
+                "A background status check is still running, so Windows compaction was not attempted.");
+        }
+
         AppendLog("Stopping Dwemer Distro for disk maintenance..." + Environment.NewLine);
 
         if (_serverProcess is { HasExited: false })
@@ -3649,13 +3930,12 @@ fi
             return;
         }
 
-        if (!CanRunExclusiveDistroOperation())
+        if (!TryBeginExclusiveDistroOperation())
         {
-            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            ReportExclusiveDistroOperationBusy("Export Full Distro");
             return;
         }
 
-        SetExclusiveDistroOperationInProgress(true);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
@@ -3826,13 +4106,12 @@ fi
             }
         }
 
-        if (!CanRunExclusiveDistroOperation())
+        if (!TryBeginExclusiveDistroOperation())
         {
-            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            ReportExclusiveDistroOperationBusy("Import Full Distro");
             return;
         }
 
-        SetExclusiveDistroOperationInProgress(true);
         try
         {
             Directory.CreateDirectory(installPath);
@@ -4115,6 +4394,13 @@ fi
 
     private void QueueServerStatusRefresh(bool immediate = false)
     {
+        // A passive check runs WSL commands, which would reopen the distro a critical operation
+        // just stopped. Callers re-queue once the gate reopens.
+        if (IsCriticalMaintenanceInProgress)
+        {
+            return;
+        }
+
         RunOnUi(() =>
         {
             if (!_serverStatusRetryTimer.IsEnabled)
@@ -4131,18 +4417,22 @@ fi
 
     private async Task RetryServerStatusChecksAsync()
     {
-        if (_isServerStatusRefreshInProgress)
-        {
-            return;
-        }
-
         if (!NeedsServerStatusRefresh())
         {
             RunOnUi(() => _serverStatusRetryTimer.Stop());
             return;
         }
 
-        _isServerStatusRefreshInProgress = true;
+        if (!TryBeginServerStatusRetry())
+        {
+            if (IsCriticalMaintenanceInProgress)
+            {
+                RunOnUi(() => _serverStatusRetryTimer.Stop());
+            }
+
+            return;
+        }
+
         try
         {
             using var timeoutCts = new CancellationTokenSource(StartupVersionCheckTimeout);
@@ -4162,7 +4452,7 @@ fi
         }
         finally
         {
-            _isServerStatusRefreshInProgress = false;
+            EndServerStatusRetry();
         }
 
         if (!NeedsServerStatusRefresh())
@@ -4681,7 +4971,8 @@ fi
                     QueueBackgroundTask(
                         "QuickStart server status refresh",
                         cancellationToken => RefreshServerManagementAsync(cancellationToken),
-                        StartupVersionCheckTimeout);
+                        StartupVersionCheckTimeout,
+                        accessesDistro: true);
                 };
                 window.Show();
                 window.Activate();
@@ -4997,9 +5288,9 @@ fi
             AppendLog($"{config.DisplayName} rollback completed successfully. HEAD: {rolledBackSha ?? "unknown"}{Environment.NewLine}", "green");
             RunOnUi(rollbackWindow.Close);
 
-            QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+            QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+            QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
         }
         catch (Exception ex)
         {

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -45,6 +46,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private readonly object _visibleSetupLogBufferLock = new();
     private readonly StringBuilder _visibleSetupLogBuffer = new();
     private readonly object _setupInstallProgressLock = new();
+    private bool _ownsQuickstartWindowDistroGate;
 
     private SetupPreset _selectedPreset;
     private DistroSetupStatus? _setupStatus;
@@ -134,16 +136,18 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
         InstallSelectedProductsCommand = new AsyncRelayCommand(
             InstallSelectedProductsAsync,
-            () => !IsBusy && HasSelectedProducts);
+            () => !IsBusy && CanRunDistroWork && HasSelectedProducts);
         RefreshProductsCommand = new AsyncRelayCommand(RefreshProductsAsync, () => !IsBusy);
 
-        InstallRecommendedCommand = new AsyncRelayCommand(InstallRecommendedAsync, () => !IsBusy);
+        InstallRecommendedCommand = new AsyncRelayCommand(InstallRecommendedAsync, () => !IsBusy && CanRunDistroWork);
         ContinueCommand = new AsyncRelayCommand(ContinueAsync, CanContinue);
         SkipRecommendedSetupCommand = new AsyncRelayCommand(SkipRecommendedSetupAsync, () => !IsBusy && IsSetupIntroStep);
         BackCommand = new RelayCommand(Back, () => !IsBusy && CurrentStepIndex > 0);
         ToggleTechnicalDetailsCommand = new RelayCommand(() => ShowTechnicalDetails = !ShowTechnicalDetails, () => !IsBusy);
         TogglePresetOptionsCommand = new RelayCommand(() => ShowPresetOptions = !ShowPresetOptions, () => !IsBusy);
-        UpdateDistroCommand = new AsyncRelayCommand(UpdateDistroAsync, () => !IsBusy && !_mainWindowViewModel.IsDistroUpdateInProgress);
+        UpdateDistroCommand = new AsyncRelayCommand(
+            UpdateDistroAsync,
+            () => !IsBusy && CanRunDistroWork && !_mainWindowViewModel.IsDistroUpdateInProgress);
         RefreshSetupCommand = new AsyncRelayCommand(RefreshSetupAsync, () => !IsBusy);
         SaveOpenRouterCommand = new AsyncRelayCommand(SaveOpenRouterAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(OpenRouterKey));
         RefreshOpenRouterCommand = new AsyncRelayCommand(RefreshOpenRouterStatusAsync, () => !IsBusy);
@@ -158,6 +162,14 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
         ApplySelectedPresetToOptions();
         RebuildSetupComponentItems([]);
+        _ownsQuickstartWindowDistroGate = _mainWindowViewModel.TryBeginQuickstartDistroActivity();
+        if (!_ownsQuickstartWindowDistroGate)
+        {
+            throw new InvalidOperationException(
+                "First-time setup cannot open while critical distro maintenance is running.");
+        }
+
+        _mainWindowViewModel.PropertyChanged += MainWindowViewModel_PropertyChanged;
     }
 
     public event Action? RequestClose;
@@ -271,6 +283,13 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             }
         }
     }
+
+    /// <summary>
+    /// False while the launcher holds the shared distro gate for Compact Distro, Export, Import,
+    /// or Fix WSL DNS. Only the install and update actions read it, so every other step of
+    /// Quickstart, including moving between steps, stays usable.
+    /// </summary>
+    public bool CanRunDistroWork => !_mainWindowViewModel.IsCriticalMaintenanceInProgress;
 
     public bool IsSetupSelectionEnabled => !IsBusy && IsSetupStep;
 
@@ -596,7 +615,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
 
         var setupComplete = false;
-        await RunBusyAsync($"Installing {_selectedPreset.Title}", async () =>
+        await RunDistroBusyAsync($"Installing {_selectedPreset.Title}", async () =>
         {
             ResetSetupOutputBuffers();
             SetupLogText = string.Empty;
@@ -636,7 +655,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private async Task UpdateDistroAsync()
     {
-        await RunBusyAsync("Updating distro", async () =>
+        await RunDistroBusyAsync("Updating distro", async () =>
         {
             ResetSetupOutputBuffers();
             SetupLogText = string.Empty;
@@ -1127,6 +1146,89 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             : CurrentStepIndex + 1;
     }
 
+    /// <summary>
+    /// Runs a Quickstart step that mutates the distro. Quickstart is modeless, so the step is
+    /// registered with the launcher's shared gate for its whole duration: Compact Distro, Export,
+    /// Import, and Fix WSL DNS cannot start underneath it, and it refuses to start while one of
+    /// those is already running.
+    /// </summary>
+    private async Task RunDistroBusyAsync(string busyText, Func<Task> action)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        if (!_mainWindowViewModel.TryBeginQuickstartDistroActivity())
+        {
+            ReportDistroMaintenanceBusy();
+            return;
+        }
+
+        try
+        {
+            await RunBusyAsync(busyText, action).ConfigureAwait(true);
+        }
+        finally
+        {
+            _mainWindowViewModel.EndQuickstartDistroActivity();
+        }
+    }
+
+    /// <summary>Quickstart has no console of its own, so the refusal has to be a dialog.</summary>
+    private void ReportDistroMaintenanceBusy()
+    {
+        MessageBox.Show(
+            MainWindowViewModel.ExclusiveDistroOperationBusyMessage +
+            "\n\nWait for it to finish, then try again.",
+            "DwemerDistro Quickstart",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
+    /// <summary>
+    /// Keeps the install and update buttons in step with the launcher's shared gate while this
+    /// modeless window stays open.
+    /// </summary>
+    private void MainWindowViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MainWindowViewModel.IsCriticalMaintenanceInProgress) &&
+            e.PropertyName != nameof(MainWindowViewModel.IsDistroUpdateInProgress))
+        {
+            return;
+        }
+
+        if (_dispatcher.CheckAccess())
+        {
+            RefreshDistroWorkAvailability();
+            return;
+        }
+
+        if (!_dispatcher.HasShutdownStarted)
+        {
+            _ = _dispatcher.BeginInvoke((Action)RefreshDistroWorkAvailability);
+        }
+    }
+
+    private void RefreshDistroWorkAvailability()
+    {
+        OnPropertyChanged(nameof(CanRunDistroWork));
+        RaiseCommandStates();
+    }
+
+    /// <summary>Releases the launcher-level subscription and window gate when Quickstart closes.</summary>
+    public void Detach()
+    {
+        _mainWindowViewModel.PropertyChanged -= MainWindowViewModel_PropertyChanged;
+        if (!_ownsQuickstartWindowDistroGate)
+        {
+            return;
+        }
+
+        _ownsQuickstartWindowDistroGate = false;
+        _mainWindowViewModel.EndQuickstartDistroActivity();
+    }
+
     private async Task RunBusyAsync(string busyText, Func<Task> action)
     {
         if (IsBusy)
@@ -1494,7 +1596,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
-        await RunBusyAsync("Installing mods", async () =>
+        await RunDistroBusyAsync("Installing mods", async () =>
         {
             IsInstallingProducts = true;
             ResetSetupOutputBuffers();
@@ -1671,7 +1773,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
-        await RunBusyAsync($"Installing {product.Title}", async () =>
+        await RunDistroBusyAsync($"Installing {product.Title}", async () =>
         {
             IsInstallingProducts = true;
             try

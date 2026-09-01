@@ -813,7 +813,8 @@
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
                                     <TextBlock Text="This stops the DwemerDistro server and every other running WSL distribution, and Windows asks you to approve an administrator prompt. The server stays stopped afterwards, so start it again when you are ready."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
-                                    <TextBlock Text="{Binding CompactDistroStatusText}"
+                                    <TextBlock x:Name="CompactDistroStatusTextBlock"
+                                               Text="{Binding CompactDistroStatusText}"
                                                Foreground="{Binding CompactDistroStatusColor}"
                                                Visibility="{Binding HasCompactDistroStatus, Converter={StaticResource BoolToVisibility}}"
                                                AutomationProperties.LiveSetting="Polite"
