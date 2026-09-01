@@ -4763,14 +4763,27 @@ fi
                 fi
                 . venv/bin/activate
                 python -m pip install --no-cache-dir --upgrade pip wheel setuptools
-                python -m pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cpu
-                mapfile -t gpu_packages < <(
+                list_cuda_only_packages() {
                     python -m pip list --format=freeze |
                         sed -n 's/^\(cuda-bindings\|cuda-pathfinder\|cuda-toolkit\|nvidia-[^=]*\|triton\)==.*$/\1/p'
-                )
-                if [ "${#gpu_packages[@]}" -gt 0 ]; then
-                    python -m pip uninstall -y "${gpu_packages[@]}"
+                }
+                remove_cuda_only_packages() {
+                    local packages
+                    mapfile -t packages < <(list_cuda_only_packages)
+                    if [ "${#packages[@]}" -gt 0 ]; then
+                        python -m pip uninstall -y "${packages[@]}"
+                    fi
+                }
+                # A CUDA Torch wheel can carry the same public version as the CPU wheel, so
+                # pip is allowed to keep it on --upgrade. Remove Torch together with its
+                # CUDA-only packages first; sweeping those out from under an installed CUDA
+                # Torch leaves the venv broken.
+                if python -m pip list --format=freeze | grep -q '^torch==.*+cu' || [ -n "$(list_cuda_only_packages)" ]; then
+                    python -m pip uninstall -y torch
+                    remove_cuda_only_packages
                 fi
+                python -m pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+                remove_cuda_only_packages
                 python -m pip install --no-cache-dir -e .
                 ln -sfn /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
                 rm -f /home/dwemer/audio.cpp/start.sh
