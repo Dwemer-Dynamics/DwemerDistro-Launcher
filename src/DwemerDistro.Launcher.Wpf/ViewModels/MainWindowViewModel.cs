@@ -49,6 +49,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     // never reported in the same tone as an ordinary saved preference.
     private const string ForceGitUpdatesWarningColor = "#FFB641";
     private const string ForceGitUpdatesErrorColor = "#FF8A80";
+    private const string CompactDistroNeutralColor = "#C8C8C8";
+    private const string CompactDistroBusyColor = "#F4D8A6";
+    private const string CompactDistroSuccessColor = "#8FD694";
+    private const string CompactDistroWarningColor = "#FFB641";
+    private const string CompactDistroErrorColor = "#FF8A80";
     private const string SystemStatusNeutralColor = "#C8C8C8";
     private const string SystemStatusBusyColor = "#F4D8A6";
     private const string SystemStatusSuccessColor = "#8FD694";
@@ -65,6 +70,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
         "Force Updates is ON: manual edits to Git-tracked files in these servers will be " +
         "permanently discarded. Databases, uploads, profiles, memories, voices, and other untracked " +
         "data are not deleted.";
+
+    /// <summary>The Settings label, reused as the title of every Compact Distro message.</summary>
+    internal const string CompactDistroSettingName = "Compact Distro";
+
+    // The four stages the row reports while it runs, in order. Each one names the user-visible
+    // effect rather than the tool that produces it, so the status line reads the same way as the
+    // row description above it.
+    internal const string CompactDistroCleaningCachesStatus =
+        "Deleting installer caches the launcher can download again...";
+    internal const string CompactDistroFreeingSpaceStatus =
+        "Freeing the unused space inside the distro...";
+    internal const string CompactDistroStoppingWslStatus =
+        "Stopping the server and all running WSL distributions...";
+    internal const string CompactDistroCompactingStatus =
+        "Handing the freed space back to Windows. Approve the administrator prompt...";
+    private const string DistroStorageProbeCommand = "command -v ddistro_storage >/dev/null 2>&1";
+    private const string DistroStorageCleanupCommand = "ddistro_storage safe-cleanup";
 
     // The top button says what it does; only a confirmed available update says so instead.
     internal const string SystemUpdateDefaultButtonText = "Update Distro";
@@ -155,6 +177,7 @@ echo "CHIM-MCP installed and enabled."
     private string? _availableSystemVersion;
     private bool _isDistroUpdateInProgress;
     private bool _isComponentsOperationInProgress;
+    private bool _isExclusiveDistroOperationInProgress;
     private bool _dashboardAutoOpenEnabled = true;
     private bool _lastSavedDashboardAutoOpenEnabled = true;
     private bool _isDashboardAutoOpenReady;
@@ -165,6 +188,9 @@ echo "CHIM-MCP installed and enabled."
     private bool _lastSavedForceGitUpdatesEnabled;
     private string _forceGitUpdatesStatusText = string.Empty;
     private string _forceGitUpdatesStatusColor = ForceGitUpdatesNeutralColor;
+    // Empty until the row has actually run something, so it collapses out of the layout at rest.
+    private string _compactDistroStatusText = string.Empty;
+    private string _compactDistroStatusColor = CompactDistroNeutralColor;
     private bool _canUpdateLauncher;
     private string _targetHerikaBranch = "Main";
     private string _targetStobeBranch = "Main";
@@ -201,20 +227,20 @@ echo "CHIM-MCP installed and enabled."
         GameProfiles = new ObservableCollection<GameProfile>(GameProfile.CreateCatalog());
         _selectedGame = GameProfiles[0];
 
-        StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
-        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
-        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
+        StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsCriticalMaintenanceInProgress && !IsServerRunning && !IsServerStarting);
+        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && (IsServerRunning || IsServerStarting));
+        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress);
         // Update Distro is also the recovery action, so it stays available whether the distro
         // reports itself as current, out of date, or not at all.
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
-        OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
-        OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
-        SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
+        OpenServerFolderCommand = new RelayCommand(OpenServerFolder, CanAccessDistro);
+        OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow, CanAccessDistro);
+        SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady && CanAccessDistro());
         ConfirmForceGitUpdatesCommand = new RelayCommand(ConfirmForceGitUpdates);
         // Webpage and rollback are meaningless for a product that is not installed.
-        OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => HerikaManager.CanUseInstalledFeatures);
-        OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => StobeManager.CanUseInstalledFeatures);
-        OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"), () => DialecticManager.CanUseInstalledFeatures);
+        OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
+        OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
+        OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
         // Nexus pages are plain external links: they never probe WSL, never start a server, and
         // stay usable whatever the local server is doing.
         OpenChimNexusCommand = new RelayCommand(() => OpenModNexusPage("CHIM"));
@@ -223,31 +249,31 @@ echo "CHIM-MCP installed and enabled."
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
-        OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"));
+        OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"), CanAccessDistro);
 
-        OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"));
-        ViewMemoryUsageCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- htop"));
-        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync);
-        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync);
-        OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => HerikaManager.CanUseInstalledFeatures);
-        OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => StobeManager.CanUseInstalledFeatures);
-        OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => DialecticManager.CanUseInstalledFeatures);
-        ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"));
-        ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"));
-        ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""));
-        ViewOmniVoiceLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/omnivoice-tts/logs/server.log"));
-        ViewMeloTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/MeloTTS/melo/log.txt"));
-        ViewPiperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/piper/log.txt"));
-        ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"));
-        ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"));
-        ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"));
-        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync);
-        DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow);
-        ReclaimDistroDiskSpaceCommand = new AsyncRelayCommand(ReclaimDistroDiskSpaceAsync);
-        OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync());
-        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher);
-        CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync);
-        GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync);
+        OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"), CanAccessDistro);
+        ViewMemoryUsageCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- htop"), CanAccessDistro);
+        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync, CanRunExclusiveDistroOperation);
+        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync, CanRunExclusiveDistroOperation);
+        OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
+        OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
+        OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"), CanAccessDistro);
+        ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"), CanAccessDistro);
+        ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""), CanAccessDistro);
+        ViewOmniVoiceLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/omnivoice-tts/logs/server.log"), CanAccessDistro);
+        ViewMeloTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/MeloTTS/melo/log.txt"), CanAccessDistro);
+        ViewPiperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/piper/log.txt"), CanAccessDistro);
+        ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"), CanAccessDistro);
+        ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"), CanAccessDistro);
+        ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"), CanAccessDistro);
+        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanRunExclusiveDistroOperation);
+        DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
+        CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanRunExclusiveDistroOperation);
+        OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
+        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress);
+        CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
+        GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
     }
 
     public string OutputText
@@ -278,6 +304,7 @@ echo "CHIM-MCP installed and enabled."
             if (SetProperty(ref _isServerStarting, value))
             {
                 RaiseServerCommandStates();
+                RaiseUpdateCommandStates();
             }
         }
     }
@@ -587,7 +614,12 @@ echo "CHIM-MCP installed and enabled."
     }
 
     public bool IsComponentInteractionEnabled =>
-        !IsDistroUpdateInProgress && !ServerManagers.Any(manager => manager.IsBusy);
+        !IsDistroUpdateInProgress &&
+        !_isComponentsOperationInProgress &&
+        !IsCriticalMaintenanceInProgress &&
+        !ServerManagers.Any(manager => manager.IsBusy);
+
+    public bool IsCriticalMaintenanceInProgress => _isExclusiveDistroOperationInProgress;
 
     public bool IsDistroUpdateInProgress
     {
@@ -645,6 +677,30 @@ echo "CHIM-MCP installed and enabled."
         get => _forceGitUpdatesStatusColor;
         private set => SetProperty(ref _forceGitUpdatesStatusColor, value);
     }
+
+    /// <summary>
+    /// The Compact Distro row's live status line. Empty means "nothing to report", which
+    /// <see cref="HasCompactDistroStatus"/> turns into a collapsed, heightless line.
+    /// </summary>
+    public string CompactDistroStatusText
+    {
+        get => _compactDistroStatusText;
+        private set
+        {
+            if (SetProperty(ref _compactDistroStatusText, value))
+            {
+                OnPropertyChanged(nameof(HasCompactDistroStatus));
+            }
+        }
+    }
+
+    public string CompactDistroStatusColor
+    {
+        get => _compactDistroStatusColor;
+        private set => SetProperty(ref _compactDistroStatusColor, value);
+    }
+
+    public bool HasCompactDistroStatus => !string.IsNullOrWhiteSpace(CompactDistroStatusText);
 
     public bool CanUpdateLauncher
     {
@@ -722,7 +778,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand ViewApacheLogsCommand { get; }
     public AsyncRelayCommand FixWslDnsCommand { get; }
     public RelayCommand DistroDoctorCommand { get; }
-    public AsyncRelayCommand ReclaimDistroDiskSpaceCommand { get; }
+    public AsyncRelayCommand CompactDistroCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
     public AsyncRelayCommand CleanLogsCommand { get; }
@@ -1529,12 +1585,63 @@ echo "CHIM-MCP installed and enabled."
         _isComponentsOperationInProgress = value;
         RaiseUpdateCommandStates();
         RefreshServerUpdateConflictState();
+        OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+    }
+
+    private void SetExclusiveDistroOperationInProgress(bool value)
+    {
+        if (_isExclusiveDistroOperationInProgress == value)
+        {
+            return;
+        }
+
+        _isExclusiveDistroOperationInProgress = value;
+        OnPropertyChanged(nameof(IsCriticalMaintenanceInProgress));
+        OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+        RaiseUpdateCommandStates();
+        RaiseServerCommandStates();
+        RefreshServerUpdateConflictState();
+        RaiseDistroAccessCommandStates();
     }
 
     private void RaiseUpdateCommandStates()
     {
         UpdateSystemCommand?.RaiseCanExecuteChanged();
+        CompactDistroCommand?.RaiseCanExecuteChanged();
+        ExportDistroCommand?.RaiseCanExecuteChanged();
+        ImportDistroCommand?.RaiseCanExecuteChanged();
+        FixWslDnsCommand?.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(UpdateSystemHelpText));
+    }
+
+    private void RaiseDistroAccessCommandStates()
+    {
+        OpenServerFolderCommand?.RaiseCanExecuteChanged();
+        OpenFirstRunSetupCommand?.RaiseCanExecuteChanged();
+        SaveDashboardAutoOpenCommand?.RaiseCanExecuteChanged();
+        OpenChimCommand?.RaiseCanExecuteChanged();
+        OpenStobeCommand?.RaiseCanExecuteChanged();
+        OpenDialecticCommand?.RaiseCanExecuteChanged();
+        OpenPiperVoicesFolderCommand?.RaiseCanExecuteChanged();
+        OpenTerminalCommand?.RaiseCanExecuteChanged();
+        ViewMemoryUsageCommand?.RaiseCanExecuteChanged();
+        OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
+        OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
+        OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
+        ViewXttsLogsCommand?.RaiseCanExecuteChanged();
+        ViewChatterboxLogsCommand?.RaiseCanExecuteChanged();
+        ViewPocketTtsLogsCommand?.RaiseCanExecuteChanged();
+        ViewOmniVoiceLogsCommand?.RaiseCanExecuteChanged();
+        ViewMeloTtsLogsCommand?.RaiseCanExecuteChanged();
+        ViewPiperLogsCommand?.RaiseCanExecuteChanged();
+        ViewLocalWhisperLogsCommand?.RaiseCanExecuteChanged();
+        ViewParakeetLogsCommand?.RaiseCanExecuteChanged();
+        ViewApacheLogsCommand?.RaiseCanExecuteChanged();
+        DistroDoctorCommand?.RaiseCanExecuteChanged();
+        OpenCudaConfigCommand?.RaiseCanExecuteChanged();
+        UpdateLauncherCommand?.RaiseCanExecuteChanged();
+        CleanLogsCommand?.RaiseCanExecuteChanged();
+        GenerateDiagnosticsCommand?.RaiseCanExecuteChanged();
     }
 
     /// <summary>
@@ -1764,17 +1871,49 @@ echo "CHIM-MCP installed and enabled."
         return CanRunUpdateOperation(
             IsDistroUpdateInProgress,
             _isComponentsOperationInProgress,
+            _isExclusiveDistroOperationInProgress,
             ServerManagers.Select(manager => manager.IsBusy));
     }
 
     internal static bool CanRunUpdateOperation(
         bool isGlobalUpdateRunning,
         bool isComponentsOperationRunning,
+        bool isExclusiveDistroOperationRunning,
         IEnumerable<bool> serverBusyStates)
     {
         return !isGlobalUpdateRunning &&
                !isComponentsOperationRunning &&
+               !isExclusiveDistroOperationRunning &&
                !serverBusyStates.Any(isBusy => isBusy);
+    }
+
+    private bool CanRunExclusiveDistroOperation()
+    {
+        return CanRunExclusiveDistroOperation(
+            IsDistroUpdateInProgress,
+            _isComponentsOperationInProgress,
+            _isExclusiveDistroOperationInProgress,
+            IsServerStarting,
+            ServerManagers.Select(manager => manager.IsBusy));
+    }
+
+    internal static bool CanRunExclusiveDistroOperation(
+        bool isGlobalUpdateRunning,
+        bool isComponentsOperationRunning,
+        bool isExclusiveDistroOperationRunning,
+        bool isServerStarting,
+        IEnumerable<bool> serverBusyStates)
+    {
+        return !isServerStarting && CanRunUpdateOperation(
+            isGlobalUpdateRunning,
+            isComponentsOperationRunning,
+            isExclusiveDistroOperationRunning,
+            serverBusyStates);
+    }
+
+    private bool CanAccessDistro()
+    {
+        return !IsCriticalMaintenanceInProgress;
     }
 
     internal static string BuildModsUpdateConfirmation(
@@ -2258,6 +2397,19 @@ echo "CHIM-MCP installed and enabled."
         ForceGitUpdatesStatusColor = color;
     }
 
+    /// <summary>
+    /// Marshals to the UI thread because the Compact Distro run awaits with
+    /// <c>ConfigureAwait(false)</c> in places, so a stage can report from a pool thread.
+    /// </summary>
+    private void SetCompactDistroStatus(string text, string color)
+    {
+        RunOnUi(() =>
+        {
+            CompactDistroStatusText = text;
+            CompactDistroStatusColor = color;
+        });
+    }
+
     private async Task FixWslDnsAsync()
     {
         if (MessageBox.Show(
@@ -2270,31 +2422,45 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
-        AppendLog("Starting WSL DNS repair..." + Environment.NewLine);
-        var dnsFixCommand =
-            "echo 'dwemer' | sudo -S sh -c 'printf \"[network]\\ngenerateResolvConf = false\\n\" > /etc/wsl.conf' && " +
-            "echo 'dwemer' | sudo -S rm -f /etc/resolv.conf && " +
-            "echo 'dwemer' | sudo -S sh -c 'printf \"nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n\" > /etc/resolv.conf' && " +
-            "echo 'dwemer' | sudo -S chmod 644 /etc/resolv.conf && echo 'DNS_FIX_APPLIED'";
-
-        var result = await _wsl.RunBashAsync(dnsFixCommand, text => AppendLog(text)).ConfigureAwait(false);
-        if (!result.Succeeded)
+        if (!CanRunExclusiveDistroOperation())
         {
-            AppendLog("WSL DNS repair failed." + Environment.NewLine, "red");
+            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
             return;
         }
 
-        AppendLog("Restarting WSL to apply DNS settings..." + Environment.NewLine);
-        await _wsl.RunWslAsync(new[] { "--shutdown" }).ConfigureAwait(false);
-        var verify = await _wsl.RunBashAsync("getent hosts github.com | head -n 1").ConfigureAwait(false);
-        if (verify.Succeeded && !string.IsNullOrWhiteSpace(verify.StandardOutput))
+        SetExclusiveDistroOperationInProgress(true);
+        try
         {
-            AppendLog("WSL DNS repair completed successfully." + Environment.NewLine, "green");
-            AppendLog($"github.com resolves to: {verify.StandardOutput.Trim()}{Environment.NewLine}", "green");
+            AppendLog("Starting WSL DNS repair..." + Environment.NewLine);
+            var dnsFixCommand =
+                "echo 'dwemer' | sudo -S sh -c 'printf \"[network]\\ngenerateResolvConf = false\\n\" > /etc/wsl.conf' && " +
+                "echo 'dwemer' | sudo -S rm -f /etc/resolv.conf && " +
+                "echo 'dwemer' | sudo -S sh -c 'printf \"nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n\" > /etc/resolv.conf' && " +
+                "echo 'dwemer' | sudo -S chmod 644 /etc/resolv.conf && echo 'DNS_FIX_APPLIED'";
+
+            var result = await _wsl.RunBashAsync(dnsFixCommand, text => AppendLog(text)).ConfigureAwait(false);
+            if (!result.Succeeded)
+            {
+                AppendLog("WSL DNS repair failed." + Environment.NewLine, "red");
+                return;
+            }
+
+            AppendLog("Restarting WSL to apply DNS settings..." + Environment.NewLine);
+            await _wsl.RunWslAsync(new[] { "--shutdown" }).ConfigureAwait(false);
+            var verify = await _wsl.RunBashAsync("getent hosts github.com | head -n 1").ConfigureAwait(false);
+            if (verify.Succeeded && !string.IsNullOrWhiteSpace(verify.StandardOutput))
+            {
+                AppendLog("WSL DNS repair completed successfully." + Environment.NewLine, "green");
+                AppendLog($"github.com resolves to: {verify.StandardOutput.Trim()}{Environment.NewLine}", "green");
+            }
+            else
+            {
+                AppendLog("WSL DNS settings updated, but github.com still does not resolve." + Environment.NewLine, "yellow");
+            }
         }
-        else
+        finally
         {
-            AppendLog("WSL DNS settings updated, but github.com still does not resolve." + Environment.NewLine, "yellow");
+            SetExclusiveDistroOperationInProgress(false);
         }
     }
 
@@ -3152,112 +3318,244 @@ fi
         lines.Add("");
     }
 
-    private async Task ReclaimDistroDiskSpaceAsync()
+    private async Task CompactDistroAsync()
     {
+        if (!CanRunExclusiveDistroOperation())
+        {
+            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            return;
+        }
+
         if (!await _wsl.DistroExistsAsync().ConfigureAwait(false))
         {
+            SetCompactDistroStatus(
+                $"{LauncherConstants.DistroName} is not installed, so there is nothing to compact.",
+                CompactDistroWarningColor);
             MessageBox.Show(
                 $"{LauncherConstants.DistroName} is not currently installed.",
-                "Reclaim Distro Disk Space",
+                CompactDistroSettingName,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             return;
         }
 
+        // Defaults to No because this stops every WSL distro on the machine.
         var confirmed = MessageBox.Show(
-            $"This will run fstrim inside {LauncherConstants.DistroName}, request a clean server stop, flush filesystem buffers, shut down WSL, and attempt to compact ext4.vhdx using an elevated Windows prompt.\n\n" +
-            $"Close any open \\\\wsl.localhost\\{LauncherConstants.DistroName} Explorer windows first.\n\n" +
-            "This will also stop any other running WSL distros.\n\n" +
-            "This may take a few minutes.\n\nContinue?",
-            "Reclaim Distro Disk Space",
+            BuildCompactDistroConfirmation(),
+            CompactDistroSettingName,
             MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
 
         if (confirmed != MessageBoxResult.Yes)
         {
-            AppendLog("Distro disk reclaim canceled." + Environment.NewLine);
+            SetCompactDistroStatus("Canceled. Nothing was deleted or changed.", CompactDistroNeutralColor);
+            AppendLog("Compact Distro canceled." + Environment.NewLine);
             return;
         }
 
+        if (!CanRunExclusiveDistroOperation())
+        {
+            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            return;
+        }
+
+        var serverStopWasAttempted = false;
+        var serverWasStopped = false;
+        SetExclusiveDistroOperationInProgress(true);
         try
         {
-            var vhdxPath = _wsl.GetDistroVhdxPath();
-            var beforeSnapshot = vhdxPath is not null ? TryGetFileProgressSnapshot(vhdxPath) : null;
-
-            if (!string.IsNullOrWhiteSpace(vhdxPath))
+            var vhdxPath = NormalizeDistroVhdxPath(_wsl.GetDistroVhdxPath());
+            if (vhdxPath is null || !File.Exists(vhdxPath))
             {
-                AppendLog($"Detected distro VHDX: {vhdxPath}{Environment.NewLine}");
+                SetCompactDistroStatus(
+                    "The distro disk file could not be found. Nothing was deleted or stopped.",
+                    CompactDistroErrorColor);
+                SetExclusiveDistroOperationInProgress(false);
+                MessageBox.Show(
+                    "The launcher could not safely locate the distro's disk file. Nothing was deleted or stopped.\n\n" +
+                    "Restart Windows and try again. If the problem continues, run Update Distro first.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
             }
 
+            var beforeSnapshot = TryGetFileProgressSnapshot(vhdxPath);
+            AppendLog($"Detected distro VHDX: {vhdxPath}{Environment.NewLine}");
             if (beforeSnapshot is not null)
             {
                 AppendLog($"Current VHDX size: {FormatByteSize(beforeSnapshot.Value.Length)}{Environment.NewLine}");
             }
 
-            AppendLog("Running fstrim inside Dwemer Distro..." + Environment.NewLine);
-            var trimResult = await _wsl.RunBashAsync("fstrim -av", text => AppendLog(text), user: "root").ConfigureAwait(true);
-            if (trimResult.Succeeded)
+            var cleanupProbe = await _wsl.RunBashAsync(DistroStorageProbeCommand, user: "root").ConfigureAwait(true);
+            if (!cleanupProbe.Succeeded)
             {
-                AppendLog("Filesystem trim completed." + Environment.NewLine, "green");
-            }
-            else
-            {
-                AppendLog($"Filesystem trim note: {GetCommandError(trimResult)}{Environment.NewLine}", "yellow");
-            }
-
-            await PrepareDistroForSafeCompactionAsync().ConfigureAwait(true);
-
-            if (string.IsNullOrWhiteSpace(vhdxPath))
-            {
-                AppendLog("Could not locate ext4.vhdx automatically. Immediate Windows compaction was skipped." + Environment.NewLine, "yellow");
+                SetCompactDistroStatus("Update Distro first, then run Compact Distro again.", CompactDistroWarningColor);
+                SetExclusiveDistroOperationInProgress(false);
                 MessageBox.Show(
-                    "Filesystem trim and WSL shutdown completed, but the launcher could not locate ext4.vhdx for an immediate compact pass.\n\n" +
-                    "Start the server again when you're ready.",
-                    "Disk Reclaim Partial",
+                    "This installation does not have the safe storage cleanup tool yet.\n\n" +
+                    "Run Update Distro, then run Compact Distro again. Nothing was deleted or stopped.",
+                    CompactDistroSettingName,
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
 
-            AppendLog("Running elevated Windows VHDX compact..." + Environment.NewLine);
-            var compactResult = await CompactVhdxAsync(vhdxPath).ConfigureAwait(true);
-            if (!compactResult.Succeeded)
+            var usedBytesBeforeCleanup = await ReadDistroUsedBytesAsync().ConfigureAwait(true);
+            SetCompactDistroStatus(CompactDistroCleaningCachesStatus, CompactDistroBusyColor);
+            AppendLog("Removing reproducible installer caches..." + Environment.NewLine);
+            var cleanupResult = await _wsl.RunBashAsync(
+                    DistroStorageCleanupCommand,
+                    text => AppendLog(text),
+                    user: "root")
+                .ConfigureAwait(true);
+            if (!cleanupResult.Succeeded)
             {
-                var compactError = GetCommandError(compactResult);
-                var compactTag = compactResult.ExitCode == 1223 ? "yellow" : "red";
-                AppendLog($"Disk compaction failed: {compactError}{Environment.NewLine}", compactTag);
-                if (!string.IsNullOrWhiteSpace(compactResult.StandardOutput))
-                {
-                    AppendLog(compactResult.StandardOutput.Trim() + Environment.NewLine, compactTag);
-                }
-
+                var installerActive = cleanupResult.ExitCode == 3;
+                var cleanupError = GetCommandError(cleanupResult);
+                AppendLog($"Safe storage cleanup stopped: {cleanupError}{Environment.NewLine}", "yellow");
+                SetCompactDistroStatus(
+                    installerActive
+                        ? "A component installer is still running. Wait for it to finish and try again."
+                        : "Safe cache cleanup could not finish. Nothing was stopped or compacted.",
+                    installerActive ? CompactDistroWarningColor : CompactDistroErrorColor);
+                SetExclusiveDistroOperationInProgress(false);
                 MessageBox.Show(
-                    $"Disk compaction did not complete.\n\n{compactError}\n\nStart the server again when you're ready.",
-                    compactResult.ExitCode == 1223 ? "Disk Reclaim Canceled" : "Disk Reclaim Failed",
+                    installerActive
+                        ? "A component installer is still running. Wait for it to finish, then run Compact Distro again.\n\nNothing was stopped or compacted."
+                        : $"Safe cache cleanup could not finish.\n\n{cleanupError}\n\nNothing was stopped or compacted.",
+                    CompactDistroSettingName,
                     MessageBoxButton.OK,
-                    compactResult.ExitCode == 1223 ? MessageBoxImage.Warning : MessageBoxImage.Error);
+                    installerActive ? MessageBoxImage.Warning : MessageBoxImage.Error);
                 return;
             }
 
-            var afterSnapshot = TryGetFileProgressSnapshot(vhdxPath);
-            var summary = BuildDiskReclaimSummary(vhdxPath, beforeSnapshot, afterSnapshot);
+            var usedBytesAfterCleanup = await ReadDistroUsedBytesAsync().ConfigureAwait(true);
+            var cleanedBytes = CalculateReclaimedBytes(usedBytesBeforeCleanup, usedBytesAfterCleanup);
+
+            SetCompactDistroStatus(CompactDistroFreeingSpaceStatus, CompactDistroBusyColor);
+            AppendLog("Marking unused distro space as free..." + Environment.NewLine);
+            var trimResult = await _wsl.RunBashAsync("fstrim -v /", text => AppendLog(text), user: "root").ConfigureAwait(true);
+            if (!trimResult.Succeeded)
+            {
+                var trimError = GetCommandError(trimResult);
+                AppendLog($"Filesystem trim failed: {trimError}{Environment.NewLine}", "red");
+                SetCompactDistroStatus(
+                    "Installer caches were removed, but the freed space could not be prepared for Windows. The server is still running if it was running before.",
+                    CompactDistroWarningColor);
+                SetExclusiveDistroOperationInProgress(false);
+                MessageBox.Show(
+                    $"Installer caches were removed, but the freed space could not be prepared for Windows.\n\n{trimError}\n\n" +
+                    "The server and WSL were not stopped. Run Compact Distro again after resolving the error.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            AppendLog("Unused distro space is ready for Windows compaction." + Environment.NewLine, "green");
+            SetCompactDistroStatus(CompactDistroStoppingWslStatus, CompactDistroBusyColor);
+            serverStopWasAttempted = true;
+            await PrepareDistroForSafeCompactionAsync().ConfigureAwait(true);
+            serverWasStopped = true;
+
+            var stoppedVhdxPath = NormalizeDistroVhdxPath(_wsl.GetDistroVhdxPath());
+            if (stoppedVhdxPath is null ||
+                !File.Exists(stoppedVhdxPath) ||
+                !string.Equals(vhdxPath, stoppedVhdxPath, StringComparison.OrdinalIgnoreCase))
+            {
+                AppendLog("The registered distro disk path changed or disappeared after WSL shutdown. Windows compaction was skipped." + Environment.NewLine, "yellow");
+                SetCompactDistroStatus(
+                    "Installer caches were removed, but the distro disk could not be verified for Windows compaction. The server is stopped.",
+                    CompactDistroWarningColor);
+                SetExclusiveDistroOperationInProgress(false);
+                MessageBox.Show(
+                    "Installer caches were removed and the space was freed inside the distro, but the disk file could not be safely verified after WSL stopped. No Windows compaction was attempted.\n\n" +
+                    "Start the server again when you're ready.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            SetCompactDistroStatus(CompactDistroCompactingStatus, CompactDistroBusyColor);
+            AppendLog("Running elevated Windows VHDX compact..." + Environment.NewLine);
+            var compactResult = await CompactVhdxAsync(stoppedVhdxPath).ConfigureAwait(true);
+            if (!compactResult.Succeeded)
+            {
+                var compactError = GetCommandError(compactResult);
+                var elevationDeclined = compactResult.ExitCode == 1223;
+                AppendLog($"Disk compaction failed: {compactError}{Environment.NewLine}", elevationDeclined ? "yellow" : "red");
+                SetCompactDistroStatus(
+                    elevationDeclined
+                        ? "Stopped at the Windows administrator prompt. Space was freed inside the distro but not handed back to Windows. The server is stopped."
+                        : "Space was freed inside the distro, but Windows could not reclaim it. The server is stopped.",
+                    elevationDeclined ? CompactDistroWarningColor : CompactDistroErrorColor);
+                SetExclusiveDistroOperationInProgress(false);
+                MessageBox.Show(
+                    (elevationDeclined
+                        ? "The administrator prompt was not approved, so the freed space was not handed back to Windows."
+                        : "Windows could not reclaim the freed space.") +
+                    $"\n\nSpace was still freed inside the distro.\n\n{compactError}\n\nStart the server again when you're ready.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    elevationDeclined ? MessageBoxImage.Warning : MessageBoxImage.Error);
+                return;
+            }
+
+            var afterSnapshot = TryGetFileProgressSnapshot(stoppedVhdxPath);
+            var summary = BuildCompactDistroSummary(beforeSnapshot, afterSnapshot, cleanedBytes);
             AppendLog(summary + Environment.NewLine, "green");
 
+            SetCompactDistroStatus($"Done. {summary} The server is stopped.", CompactDistroSuccessColor);
+            SetExclusiveDistroOperationInProgress(false);
             MessageBox.Show(
-                $"Distro disk reclaim completed.\n\n{summary}\n\nStart the server again when you're ready.",
-                "Disk Reclaim Complete",
+                $"Compact Distro finished.\n\n{summary}\n\nStart the server again when you're ready.",
+                CompactDistroSettingName,
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            AppendLog($"Disk reclaim error: {ex.Message}{Environment.NewLine}", "red");
+            AppendLog($"Compact Distro error: {ex.Message}{Environment.NewLine}", "red");
+            SetCompactDistroStatus(
+                serverWasStopped
+                    ? "Could not finish. The server is stopped. Open the console for details."
+                    : serverStopWasAttempted
+                        ? "Could not finish. The server may be stopped. Open the console for details."
+                        : "Could not finish. The server and WSL were not stopped.",
+                CompactDistroErrorColor);
+            SetExclusiveDistroOperationInProgress(false);
             MessageBox.Show(
-                $"Failed to reclaim distro disk space.\n\n{ex.Message}",
-                "Disk Reclaim Failed",
+                $"Compact Distro could not finish.\n\n{ex.Message}\n\n" +
+                (serverWasStopped
+                    ? "The server is stopped. Start it again when you're ready."
+                    : serverStopWasAttempted
+                        ? "The server may be stopped. Check it before playing."
+                        : "The server and WSL were not stopped."),
+                CompactDistroSettingName,
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
+        finally
+        {
+            SetExclusiveDistroOperationInProgress(false);
+        }
+    }
+
+    internal static string BuildCompactDistroConfirmation()
+    {
+        return "Compact Distro frees up Windows disk space in three steps:\n\n" +
+               "1. Delete installer caches the launcher can download again.\n" +
+               "2. Release that space inside the distro.\n" +
+               "3. Hand it back to Windows.\n\n" +
+               "Your mods, installed servers and components, models, voices, databases, settings, logs, " +
+               "and Hugging Face sign-in are kept.\n\n" +
+               $"Before it starts, the {LauncherConstants.DistroName} server and every other running WSL " +
+               "distribution are stopped, and Windows asks you to approve an administrator prompt. " +
+               $"Close any open \\\\wsl.localhost\\{LauncherConstants.DistroName} Explorer windows first.\n\n" +
+               "This can take a few minutes, and the server stays stopped when it finishes.\n\nContinue?";
     }
 
     private async Task PrepareDistroForSafeCompactionAsync()
@@ -3303,6 +3601,12 @@ fi
             }
         }
 
+        if (await _wsl.DistroRunningAsync().ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                $"{LauncherConstants.DistroName} is still running, so Windows compaction was not attempted.");
+        }
+
         _serverProcess = null;
         RunOnUi(() =>
         {
@@ -3345,6 +3649,13 @@ fi
             return;
         }
 
+        if (!CanRunExclusiveDistroOperation())
+        {
+            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            return;
+        }
+
+        SetExclusiveDistroOperationInProgress(true);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
@@ -3388,6 +3699,7 @@ fi
         }
         finally
         {
+            SetExclusiveDistroOperationInProgress(false);
             QueueServerStatusRefresh(immediate: true);
         }
     }
@@ -3514,6 +3826,13 @@ fi
             }
         }
 
+        if (!CanRunExclusiveDistroOperation())
+        {
+            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
+            return;
+        }
+
+        SetExclusiveDistroOperationInProgress(true);
         try
         {
             Directory.CreateDirectory(installPath);
@@ -3604,6 +3923,7 @@ fi
         }
         finally
         {
+            SetExclusiveDistroOperationInProgress(false);
             QueueServerStatusRefresh(immediate: true);
         }
     }
@@ -4005,6 +4325,13 @@ fi
 
     private async Task<CommandResult> CompactVhdxAsync(string vhdxPath)
     {
+        vhdxPath = NormalizeDistroVhdxPath(vhdxPath)
+            ?? throw new InvalidOperationException("The distro disk path is not safe to pass to Windows compaction.");
+        if (!File.Exists(vhdxPath))
+        {
+            throw new FileNotFoundException("The distro disk file disappeared before Windows compaction.", vhdxPath);
+        }
+
         var scriptPath = Path.Combine(Path.GetTempPath(), $"dwemerdistro-compact-{Guid.NewGuid():N}.ps1");
         var logPath = Path.Combine(Path.GetTempPath(), $"dwemerdistro-compact-{Guid.NewGuid():N}.log");
         var script = """
@@ -4076,25 +4403,76 @@ fi
         }
     }
 
-    private static string BuildDiskReclaimSummary(
-        string vhdxPath,
-        FileProgressSnapshot? beforeSnapshot,
-        FileProgressSnapshot? afterSnapshot)
+    private async Task<long?> ReadDistroUsedBytesAsync()
     {
+        var result = await _wsl.RunBashAsync(
+                "df -B1 --output=used / | tail -n 1",
+                user: "root")
+            .ConfigureAwait(false);
+        return result.Succeeded ? ParseDistroUsedBytes(result.StandardOutput) : null;
+    }
+
+    internal static long? ParseDistroUsedBytes(string? output)
+    {
+        var value = output?
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .LastOrDefault();
+        return long.TryParse(value, out var bytes) && bytes >= 0 ? bytes : null;
+    }
+
+    internal static long? CalculateReclaimedBytes(long? beforeBytes, long? afterBytes)
+    {
+        return beforeBytes is not null && afterBytes is not null && beforeBytes >= afterBytes
+            ? beforeBytes.Value - afterBytes.Value
+            : null;
+    }
+
+    internal static string? NormalizeDistroVhdxPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) ||
+            path.Contains('"', StringComparison.Ordinal) ||
+            path.Any(char.IsControl))
+        {
+            return null;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            return Path.IsPathFullyQualified(fullPath) &&
+                   string.Equals(Path.GetExtension(fullPath), ".vhdx", StringComparison.OrdinalIgnoreCase)
+                ? fullPath
+                : null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    private static string BuildCompactDistroSummary(
+        FileProgressSnapshot? beforeSnapshot,
+        FileProgressSnapshot? afterSnapshot,
+        long? cleanedBytes)
+    {
+        var cleanupSummary = cleanedBytes is > 0
+            ? $"Removed {FormatByteSize(cleanedBytes.Value)} of reproducible caches. "
+            : string.Empty;
+
         if (beforeSnapshot is not null && afterSnapshot is not null)
         {
             var reclaimedBytes = beforeSnapshot.Value.Length - afterSnapshot.Value.Length;
-            return reclaimedBytes > 0
-                ? $"Reclaimed {FormatByteSize(reclaimedBytes)} from {vhdxPath}.{Environment.NewLine}Before: {FormatByteSize(beforeSnapshot.Value.Length)} | After: {FormatByteSize(afterSnapshot.Value.Length)}"
-                : $"Compaction completed for {vhdxPath}.{Environment.NewLine}Size is now {FormatByteSize(afterSnapshot.Value.Length)}.";
+            return cleanupSummary + (reclaimedBytes > 0
+                ? $"Returned {FormatByteSize(reclaimedBytes)} to Windows. The distro now uses {FormatByteSize(afterSnapshot.Value.Length)}, down from {FormatByteSize(beforeSnapshot.Value.Length)}."
+                : $"Windows did not reduce the distro disk file further. It uses {FormatByteSize(afterSnapshot.Value.Length)}.");
         }
 
         if (afterSnapshot is not null)
         {
-            return $"Compaction completed for {vhdxPath}.{Environment.NewLine}Current size: {FormatByteSize(afterSnapshot.Value.Length)}.";
+            return cleanupSummary + $"Returned unused space to Windows. The distro now uses {FormatByteSize(afterSnapshot.Value.Length)}.";
         }
 
-        return $"Compaction completed for {vhdxPath}.";
+        return cleanupSummary + "Returned unused space to Windows.";
     }
 
     private static string GetCommandError(CommandResult result)
@@ -5069,6 +5447,7 @@ fi
     {
         StartServerCommand.RaiseCanExecuteChanged();
         StopServerCommand.RaiseCanExecuteChanged();
+        ForceStopServerCommand.RaiseCanExecuteChanged();
     }
 
     private void StartStartAnimation()

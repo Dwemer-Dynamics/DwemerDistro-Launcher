@@ -808,14 +808,21 @@
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <StackPanel Margin="0,0,16,0">
-                                    <TextBlock Text="Reclaim Distro Disk Space" Style="{StaticResource GameCenter.SettingRowTitle}" />
-                                    <TextBlock Text="Compact and recover unused WSL disk space after large installs, updates, or cleanup work."
+                                    <TextBlock Text="Compact Distro" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Delete installer caches the launcher can download again, release that space inside the distro, and hand that space back to Windows. Your mods, installed servers and components, models, voices, databases, settings, logs, and Hugging Face sign-in are kept."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                    <TextBlock Text="This stops the DwemerDistro server and every other running WSL distribution, and Windows asks you to approve an administrator prompt. The server stays stopped afterwards, so start it again when you are ready."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                    <TextBlock Text="{Binding CompactDistroStatusText}"
+                                               Foreground="{Binding CompactDistroStatusColor}"
+                                               Visibility="{Binding HasCompactDistroStatus, Converter={StaticResource BoolToVisibility}}"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="Run" Command="{Binding ReclaimDistroDiskSpaceCommand}"
+                                <Button Grid.Column="1" Content="Compact" Command="{Binding CompactDistroCommand}"
                                         Style="{StaticResource GameCenter.SettingRowButton}"
-                                        AutomationProperties.Name="Reclaim distro disk space"
-                                        AutomationProperties.HelpText="Compact and recover unused WSL disk space after large installs, updates, or cleanup work." />
+                                        AutomationProperties.Name="Compact distro"
+                                        AutomationProperties.HelpText="Delete installer caches the launcher can download again, release that space inside the distro, and hand that space back to Windows. Mods, installed servers and components, models, voices, databases, settings, logs, and Hugging Face sign-in are kept. This stops the DwemerDistro server and every other running WSL distribution, needs Windows administrator approval, and leaves the server stopped. You are asked to confirm first, and the confirmation defaults to No." />
                             </Grid>
                         </Border>
                         <Border Style="{StaticResource GameCenter.SettingRow}">

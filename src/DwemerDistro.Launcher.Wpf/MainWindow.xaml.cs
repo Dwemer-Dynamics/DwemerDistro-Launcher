@@ -67,6 +67,17 @@ public partial class MainWindow : Window
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (_viewModel.IsCriticalMaintenanceInProgress)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                "Compact Distro or another critical distro operation is still running. Wait for it to finish before closing the launcher.",
+                "Dwemer Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
         await _viewModel.ShutdownAsync();
     }
