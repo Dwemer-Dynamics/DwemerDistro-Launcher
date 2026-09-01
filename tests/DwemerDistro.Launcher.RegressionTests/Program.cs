@@ -838,12 +838,43 @@ try
            && systemUpdateConfirmation.Contains("Installed mods will not be changed", StringComparison.Ordinal),
         "Update Distro must clearly exclude every installed mod server.");
 
-    Assert(MainWindowViewModel.CanRunUpdateOperation(false, false, [false, false, false]),
+    Assert(MainWindowViewModel.CanRunUpdateOperation(false, false, false, [false, false, false]),
         "Update actions must be available when every shared operation gate is idle.");
-    Assert(!MainWindowViewModel.CanRunUpdateOperation(true, false, [false, false, false])
-           && !MainWindowViewModel.CanRunUpdateOperation(false, true, [false, false, false])
-           && !MainWindowViewModel.CanRunUpdateOperation(false, false, [false, true, false]),
-        "A system update, component operation, or individual server operation must block every competing update action.");
+    Assert(!MainWindowViewModel.CanRunUpdateOperation(true, false, false, [false, false, false])
+           && !MainWindowViewModel.CanRunUpdateOperation(false, true, false, [false, false, false])
+           && !MainWindowViewModel.CanRunUpdateOperation(false, false, true, [false, false, false])
+           && !MainWindowViewModel.CanRunUpdateOperation(false, false, false, [false, true, false]),
+        "A system update, component operation, exclusive distro operation, or individual server operation must block every competing update action.");
+
+    Assert(MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, false, false, [false, false, false])
+           && !MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, false, true, [false, false, false]),
+        "Distro maintenance must be available when idle and blocked while the server is starting.");
+    Assert(!MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, true, false, false, [false, false, false]),
+        "A Quickstart install or update must block Compact Distro, Export, Import, and Fix WSL DNS.");
+    Assert(!MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, true, false, [false, false, false]),
+        "A passive WSL status task must block Compact Distro, Export, Import, and Fix WSL DNS.");
+    Assert(MainWindowViewModel.CompactDistroPreparingStatus.Length > 0
+           && MainWindowViewModel.ExclusiveDistroOperationBusyMessage.Contains("already running", StringComparison.Ordinal),
+        "Compact Distro must have busy text to show on acquiring the lock, and one shared refusal line.");
+
+    var compactConfirmation = MainWindowViewModel.BuildCompactDistroConfirmation();
+    Assert(compactConfirmation.Contains("mods, installed servers and components, models, voices, databases, settings, logs", StringComparison.Ordinal)
+           && compactConfirmation.Contains("Hugging Face sign-in", StringComparison.Ordinal)
+           && compactConfirmation.Contains("every other running WSL", StringComparison.Ordinal)
+           && compactConfirmation.Contains("administrator prompt", StringComparison.Ordinal)
+           && compactConfirmation.Contains("server stays stopped", StringComparison.Ordinal),
+        "Compact Distro must explain what is preserved and that WSL stops, elevation is required, and the server remains stopped.");
+
+    Assert(MainWindowViewModel.ParseDistroUsedBytes("Used\n 12345\n") == 12345
+           && MainWindowViewModel.ParseDistroUsedBytes("not-a-number") is null,
+        "Compact Distro must parse only a valid non-negative filesystem byte count.");
+    Assert(MainWindowViewModel.CalculateReclaimedBytes(20_000, 12_000) == 8_000
+           && MainWindowViewModel.CalculateReclaimedBytes(12_000, 20_000) is null,
+        "Compact Distro must never report negative reclaimed space.");
+    Assert(MainWindowViewModel.NormalizeDistroVhdxPath(@"C:\Distro\ext4.vhdx") == @"C:\Distro\ext4.vhdx"
+           && MainWindowViewModel.NormalizeDistroVhdxPath(@"C:\Distro\ext4.txt") is null
+           && MainWindowViewModel.NormalizeDistroVhdxPath("C:\\Distro\\bad\"path.vhdx") is null,
+        "Compact Distro must accept only a fully-qualified quote-free VHDX path.");
 
     // --- System-first mod update sequence (no live WSL commands) -----------------------------
 

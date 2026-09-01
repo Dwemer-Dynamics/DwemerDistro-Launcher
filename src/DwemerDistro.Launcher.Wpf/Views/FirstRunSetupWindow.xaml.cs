@@ -55,6 +55,7 @@ public partial class FirstRunSetupWindow : Window
     {
         _viewModel.RequestClose -= ViewModel_RequestClose;
         _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        _viewModel.Detach();
     }
 
     private void ViewModel_RequestClose()

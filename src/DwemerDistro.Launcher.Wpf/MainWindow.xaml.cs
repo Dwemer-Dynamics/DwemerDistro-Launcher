@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
@@ -67,6 +68,17 @@ public partial class MainWindow : Window
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (_viewModel.IsCriticalMaintenanceInProgress)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                "Compact Distro or another critical distro operation is still running. Wait for it to finish before closing the launcher.",
+                "Dwemer Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
         await _viewModel.ShutdownAsync();
     }
@@ -76,6 +88,11 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainWindowViewModel.SelectedGame))
         {
             _ = Dispatcher.BeginInvoke(UpdateSelectedGameDetails);
+        }
+
+        if (e.PropertyName == nameof(MainWindowViewModel.CompactDistroStatusText))
+        {
+            _ = Dispatcher.BeginInvoke(AnnounceCompactDistroStatus);
         }
 
         if (e.PropertyName != nameof(MainWindowViewModel.OutputText))
@@ -89,6 +106,24 @@ public partial class MainWindow : Window
             var generation = _viewModel.OutputGeneration;
             _ = Dispatcher.BeginInvoke(() => RenderOutputText(output, generation));
         }
+    }
+
+    /// <summary>
+    /// AutomationProperties.LiveSetting only marks the region as polite. The change still has to be
+    /// raised for a screen reader to speak each Compact Distro stage while the row is on screen.
+    /// </summary>
+    private void AnnounceCompactDistroStatus()
+    {
+        if (CompactDistroStatusTextBlock is null ||
+            !_viewModel.HasCompactDistroStatus ||
+            !AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+        {
+            return;
+        }
+
+        var peer = UIElementAutomationPeer.FromElement(CompactDistroStatusTextBlock)
+                   ?? UIElementAutomationPeer.CreatePeerForElement(CompactDistroStatusTextBlock);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
     private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)

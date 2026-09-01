@@ -73,6 +73,7 @@ public sealed partial class MainWindowViewModel
     {
         var busy = IsDistroUpdateInProgress ||
                    _isComponentsOperationInProgress ||
+                   IsCriticalMaintenanceInProgress ||
                    ServerManagers.Any(manager => manager.IsBusy);
         foreach (var manager in ServerManagers)
         {
