@@ -1144,7 +1144,11 @@ echo "CHIM-MCP installed and enabled."
         {
             _discoveryService = new DiscoveryService(
                 cancellationToken => GetWslIpAsync(forceRefresh: false, cancellationToken),
-                text => AppendLog(text));
+                text => AppendLog(text),
+                (destinationPath, _) => GenerateDiagnosticsAsync(
+                    requireConfirmation: false,
+                    openOutputFolder: false,
+                    destinationPath: destinationPath));
             _discoveryService.Start();
         }
         catch (Exception ex)

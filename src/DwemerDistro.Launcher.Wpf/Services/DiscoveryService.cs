@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -7,15 +8,21 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 public sealed class DiscoveryService
 {
     private readonly Func<CancellationToken, Task<string?>> _wslIpResolver;
+    private readonly Func<string, CancellationToken, Task<string?>>? _diagnosticReportGenerator;
     private readonly Action<string> _log;
+    private readonly SemaphoreSlim _diagnosticDownloadGate = new(1, 1);
     private CancellationTokenSource? _cts;
     private TcpListener? _listener;
     private Task? _acceptLoopTask;
 
-    public DiscoveryService(Func<CancellationToken, Task<string?>> wslIpResolver, Action<string> log)
+    public DiscoveryService(
+        Func<CancellationToken, Task<string?>> wslIpResolver,
+        Action<string> log,
+        Func<string, CancellationToken, Task<string?>>? diagnosticReportGenerator = null)
     {
         _wslIpResolver = wslIpResolver;
         _log = log;
+        _diagnosticReportGenerator = diagnosticReportGenerator;
     }
 
     public void Start()
@@ -101,6 +108,12 @@ public sealed class DiscoveryService
             var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
             var request = Encoding.UTF8.GetString(buffer, 0, read);
 
+            if (IsDiagnosticDownloadRequest(request))
+            {
+                await SendDiagnosticDownloadAsync(stream, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             var response = request.Contains("GET /discover", StringComparison.OrdinalIgnoreCase)
                 ? await BuildDiscoveryResponseAsync(request, cancellationToken).ConfigureAwait(false)
                 : BuildHttpResponse("404 Not Found", "Not Found");
@@ -111,6 +124,82 @@ public sealed class DiscoveryService
         catch
         {
             // Match Python behavior: discovery request failures are non-fatal.
+        }
+    }
+
+    internal static bool IsDiagnosticDownloadRequest(string request)
+    {
+        return request.StartsWith("GET /download-diagnostics HTTP/1.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task SendDiagnosticDownloadAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        if (_diagnosticReportGenerator is null)
+        {
+            await WriteHttpResponseAsync(
+                stream,
+                BuildHttpResponse("503 Service Unavailable", "Diagnostic download is unavailable."),
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!await _diagnosticDownloadGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+        {
+            await WriteHttpResponseAsync(
+                stream,
+                BuildHttpResponse("409 Conflict", "A diagnostic report is already being generated."),
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var temporaryPath = DiagnosticReportPaths.CreateTemporaryPath("diagnostics");
+        try
+        {
+            var outputPath = await _diagnosticReportGenerator(temporaryPath, cancellationToken)
+                .ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(outputPath) || !File.Exists(outputPath))
+            {
+                await WriteHttpResponseAsync(
+                    stream,
+                    BuildHttpResponse("500 Internal Server Error", "Diagnostic generation failed."),
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            await BrowserDownloadService.WriteAttachmentAsync(stream, outputPath, cancellationToken)
+                .ConfigureAwait(false);
+            _log($"Diagnostic file sent to the browser download manager.{Environment.NewLine}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LauncherLogService.Startup("Browser diagnostic download failed.", ex);
+            _log($"Browser diagnostic download failed: {ex.Message}{Environment.NewLine}");
+            try
+            {
+                await WriteHttpResponseAsync(
+                    stream,
+                    BuildHttpResponse("500 Internal Server Error", "Diagnostic generation failed."),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The connection may already be closed if transfer failed after response headers.
+            }
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (Exception ex)
+            {
+                LauncherLogService.Startup("Temporary browser diagnostic cleanup failed.", ex);
+            }
+            finally
+            {
+                _diagnosticDownloadGate.Release();
+            }
         }
     }
 
@@ -196,5 +285,14 @@ public sealed class DiscoveryService
             "Connection: close\r\n" +
             "\r\n" +
             body;
+    }
+
+    private static async Task WriteHttpResponseAsync(
+        NetworkStream stream,
+        string response,
+        CancellationToken cancellationToken)
+    {
+        var bytes = Encoding.UTF8.GetBytes(response);
+        await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
     }
 }

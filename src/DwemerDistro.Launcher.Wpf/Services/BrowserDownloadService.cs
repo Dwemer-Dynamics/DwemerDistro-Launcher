@@ -59,6 +59,15 @@ internal static class BrowserDownloadService
             return;
         }
 
+        await WriteAttachmentAsync(stream, filePath, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Writes a completed report as a browser-managed file download on an existing HTTP connection.
+    internal static async Task WriteAttachmentAsync(
+        NetworkStream stream,
+        string filePath,
+        CancellationToken cancellationToken)
+    {
         await using var file = new FileStream(
             filePath,
             FileMode.Open,

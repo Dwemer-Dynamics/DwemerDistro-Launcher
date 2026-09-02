@@ -21,6 +21,9 @@ try
                == "127.0.0.1:7514"
            && DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=reign HTTP/1.1\r\n\r\n") is null,
         "Discovery must return the LORKHAN loopback proxy without capturing Reign.");
+    Assert(DiscoveryService.IsDiagnosticDownloadRequest("GET /download-diagnostics HTTP/1.1\r\nHost: 127.0.0.1:7135\r\n\r\n")
+           && !DiscoveryService.IsDiagnosticDownloadRequest("GET /discover?game=skyrim HTTP/1.1\r\n\r\n"),
+        "Discovery must route only the dedicated browser diagnostic download request.");
 
     var service = new LauncherReleaseNoticeService(installDirectory, localAppDataDirectory);
     var targetVersion = new Version(3, 1, 13);
