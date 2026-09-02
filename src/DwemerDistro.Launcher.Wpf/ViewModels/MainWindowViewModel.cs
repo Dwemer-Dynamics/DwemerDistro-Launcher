@@ -2271,9 +2271,14 @@ echo "CHIM-MCP installed and enabled."
     internal static string BuildSystemUpdateCommand()
     {
         return
-            "cd /home/dwemer/dwemerdistro && " +
-            $"if [ ! -d .git ]; then git init && git remote add origin {DistroRepositoryUrl}; fi && " +
-            "git fetch origin && git reset --hard origin/main && " +
+            "export GIT_TERMINAL_PROMPT=0 && cd /home/dwemer/dwemerdistro && " +
+            "if [ ! -d .git ]; then git init; fi && " +
+            "if [ -f /home/dwemer/.gitconfig ] && ! command -v git-credential-manager >/dev/null 2>&1 && " +
+            "git config --file /home/dwemer/.gitconfig --get-all credential.helper 2>/dev/null | grep -Fxq manager; then " +
+            "git config --file /home/dwemer/.gitconfig --unset-all credential.helper '^manager$'; fi && " +
+            $"if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin {DistroRepositoryUrl}; " +
+            $"else git remote add origin {DistroRepositoryUrl}; fi && " +
+            "git -c credential.helper= fetch origin && git reset --hard origin/main && " +
             "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
             $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand() + " && " +
             BuildSystemReleaseMarkerWriteCommand();
