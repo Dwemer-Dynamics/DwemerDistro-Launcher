@@ -730,11 +730,13 @@ try
     var systemFetch = systemUpdateCommand.IndexOf(
         "git -c credential.helper= fetch origin",
         StringComparison.Ordinal);
-    Assert(systemUpdateCommand.StartsWith("export GIT_TERMINAL_PROMPT=0", StringComparison.Ordinal)
+    Assert(systemUpdateCommand.StartsWith(
+               "export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null",
+               StringComparison.Ordinal)
            && credentialRepair >= 0
            && originRepair > credentialRepair
            && systemFetch > originRepair,
-        "Update Distro must disable prompts, remove the unavailable image helper, and repair the Core origin before fetching.");
+        "Update Distro must ignore stale global Git authentication, disable prompts, remove the unavailable image helper, and repair the Core origin before fetching.");
     var systemReleaseMarkerWrite = MainWindowViewModel.BuildSystemReleaseMarkerWriteCommand();
     Assert(systemUpdateCommand.Contains("git -c credential.helper= fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
            && systemUpdateCommand.Contains(sharedUpdateCommand + " && ", StringComparison.Ordinal)
