@@ -22,6 +22,15 @@ public partial class App : Application
 
         LauncherLogService.Startup($"Launcher startup {LauncherConstants.LauncherVersion}.");
 
+        try
+        {
+            DiagnosticProtocolRegistrationService.EnsureRegistered();
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Diagnostic browser protocol registration failed.", ex);
+        }
+
         if (e.Args.Contains("--generate-diagnostics", StringComparer.OrdinalIgnoreCase))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;

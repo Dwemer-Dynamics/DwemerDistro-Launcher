@@ -98,6 +98,11 @@ try
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
     Assert(LauncherConstants.LauncherVersion == "3.3.12", "Launcher constants must report version 3.3.12.");
+    Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
+               == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --generate-diagnostics --open-output-folder \"%1\"",
+        "The server-page browser protocol must invoke the existing diagnostic command and open its output folder.");
+    Assert(ThrowsArgumentException(() => DiagnosticProtocolRegistrationService.BuildOpenCommand("invalid\"path.exe")),
+        "The diagnostic protocol must reject an executable path that could alter its registered command.");
 
     var setupServiceType = typeof(DistroSetupService);
     var privateStatic = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
@@ -1480,6 +1485,19 @@ static bool Throws(Action action)
         return false;
     }
     catch (ArgumentOutOfRangeException)
+    {
+        return true;
+    }
+}
+
+static bool ThrowsArgumentException(Action action)
+{
+    try
+    {
+        action();
+        return false;
+    }
+    catch (ArgumentException)
     {
         return true;
     }
