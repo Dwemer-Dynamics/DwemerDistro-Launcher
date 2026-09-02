@@ -2271,7 +2271,11 @@ echo "CHIM-MCP installed and enabled."
     internal static string BuildSystemUpdateCommand()
     {
         return
-            "export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null && cd /home/dwemer/dwemerdistro && " +
+            "export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null " +
+            "GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= " +
+            "GIT_CONFIG_KEY_1=http.extraHeader GIT_CONFIG_VALUE_1= " +
+            "GIT_CONFIG_KEY_2=http.https://github.com/.extraheader GIT_CONFIG_VALUE_2= && " +
+            "cd /home/dwemer/dwemerdistro && " +
             "if [ ! -d .git ]; then git init; fi && " +
             "if [ -f /home/dwemer/.gitconfig ] && ! command -v git-credential-manager >/dev/null 2>&1 && " +
             "git config --file /home/dwemer/.gitconfig --get-all credential.helper 2>/dev/null | grep -Fxq manager; then " +
