@@ -97,7 +97,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.12", "Launcher constants must report version 3.3.12.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.13", "Launcher constants must report version 3.3.13.");
 
     var setupServiceType = typeof(DistroSetupService);
     var privateStatic = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
