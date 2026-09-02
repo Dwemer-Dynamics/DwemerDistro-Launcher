@@ -36,6 +36,6 @@ internal static class DiagnosticProtocolRegistrationService
             throw new ArgumentException("A valid launcher executable path is required.", nameof(executablePath));
         }
 
-        return $"\"{executablePath}\" --generate-diagnostics --open-output-folder \"%1\"";
+        return $"\"{executablePath}\" --download-diagnostics \"%1\"";
     }
 }

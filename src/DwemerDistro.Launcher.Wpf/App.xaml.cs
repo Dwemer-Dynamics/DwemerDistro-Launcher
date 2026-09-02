@@ -31,11 +31,12 @@ public partial class App : Application
             LauncherLogService.Startup("Diagnostic browser protocol registration failed.", ex);
         }
 
-        if (e.Args.Contains("--generate-diagnostics", StringComparer.OrdinalIgnoreCase))
+        var downloadDiagnostics = e.Args.Contains("--download-diagnostics", StringComparer.OrdinalIgnoreCase);
+        if (downloadDiagnostics || e.Args.Contains("--generate-diagnostics", StringComparer.OrdinalIgnoreCase))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             var openOutputFolder = e.Args.Contains("--open-output-folder", StringComparer.OrdinalIgnoreCase);
-            await GenerateDiagnosticsAndExitAsync(openOutputFolder);
+            await GenerateDiagnosticsAndExitAsync(openOutputFolder, downloadDiagnostics);
             return;
         }
 
@@ -66,7 +67,7 @@ public partial class App : Application
     }
 
     // Runs diagnostic collection without opening the launcher window or taking its instance mutex.
-    private async Task GenerateDiagnosticsAndExitAsync(bool openOutputFolder)
+    private async Task GenerateDiagnosticsAndExitAsync(bool openOutputFolder, bool downloadInBrowser)
     {
         const string semaphoreName = "Local\\DwemerDistro.Diagnostics";
         using var diagnosticSemaphore = new Semaphore(initialCount: 1, maximumCount: 1, semaphoreName);
@@ -80,10 +81,28 @@ public partial class App : Application
         try
         {
             var viewModel = new MainWindowViewModel();
+            var temporaryPath = downloadInBrowser
+                ? DiagnosticReportPaths.CreateTemporaryPath("diagnostics")
+                : null;
             var outputPath = await viewModel.GenerateDiagnosticsAsync(
                 requireConfirmation: false,
-                openOutputFolder: openOutputFolder);
+                openOutputFolder: openOutputFolder,
+                destinationPath: temporaryPath);
             LauncherLogService.Startup($"Diagnostic file created: {outputPath}");
+
+            if (downloadInBrowser && !string.IsNullOrWhiteSpace(outputPath))
+            {
+                try
+                {
+                    await BrowserDownloadService.DownloadOnceAsync(outputPath);
+                    LauncherLogService.Startup("Diagnostic file sent to the browser download manager.");
+                }
+                finally
+                {
+                    File.Delete(outputPath);
+                }
+            }
+
             Shutdown(string.IsNullOrWhiteSpace(outputPath) ? 1 : 0);
         }
         catch (Exception ex)
