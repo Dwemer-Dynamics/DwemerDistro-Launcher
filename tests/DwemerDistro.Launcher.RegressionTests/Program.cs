@@ -708,8 +708,22 @@ try
     Assert(systemUpdateCommand.Contains("if [ ! -d .git ]; then git init", StringComparison.Ordinal)
             && systemUpdateCommand.Contains("git remote add origin https://github.com/Dwemer-Dynamics/DwemerDistro-Core.git", StringComparison.Ordinal),
         "Update Distro must bootstrap Git metadata for a freshly installed empty distro.");
+    var credentialRepair = systemUpdateCommand.IndexOf(
+        "git config --file /home/dwemer/.gitconfig --unset-all credential.helper '^manager$'",
+        StringComparison.Ordinal);
+    var originRepair = systemUpdateCommand.IndexOf(
+        "git remote set-url origin https://github.com/Dwemer-Dynamics/DwemerDistro-Core.git",
+        StringComparison.Ordinal);
+    var systemFetch = systemUpdateCommand.IndexOf(
+        "git -c credential.helper= fetch origin",
+        StringComparison.Ordinal);
+    Assert(systemUpdateCommand.StartsWith("export GIT_TERMINAL_PROMPT=0", StringComparison.Ordinal)
+           && credentialRepair >= 0
+           && originRepair > credentialRepair
+           && systemFetch > originRepair,
+        "Update Distro must disable prompts, remove the unavailable image helper, and repair the Core origin before fetching.");
     var systemReleaseMarkerWrite = MainWindowViewModel.BuildSystemReleaseMarkerWriteCommand();
-    Assert(systemUpdateCommand.Contains("git fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
+    Assert(systemUpdateCommand.Contains("git -c credential.helper= fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
            && systemUpdateCommand.Contains(sharedUpdateCommand + " && ", StringComparison.Ordinal)
            && systemUpdateCommand.EndsWith(systemReleaseMarkerWrite, StringComparison.Ordinal),
         "Update Distro must update the distro and shared components before recording the successful system release.");
