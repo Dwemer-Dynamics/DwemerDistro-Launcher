@@ -21,6 +21,14 @@ try
                == "127.0.0.1:7514"
            && DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=reign HTTP/1.1\r\n\r\n") is null,
         "Discovery must return the LORKHAN loopback proxy without capturing Reign.");
+    Assert(DiscoveryService.IsDiagnosticDownloadRequest("GET /download-diagnostics HTTP/1.1\r\nHost: 127.0.0.1:7135\r\n\r\n")
+           && !DiscoveryService.IsDiagnosticDownloadRequest("GET /discover?game=skyrim HTTP/1.1\r\n\r\n"),
+        "Discovery must route only the dedicated browser diagnostic download request.");
+    var diagnosticToken = new string('a', 48);
+    Assert(DiscoveryService.GetDiagnosticDownloadToken($"GET /download-diagnostics/file/{diagnosticToken} HTTP/1.1\r\n\r\n")
+               == diagnosticToken
+           && DiscoveryService.GetDiagnosticDownloadToken("GET /download-diagnostics/file/not-a-token HTTP/1.1\r\n\r\n") is null,
+        "Prepared diagnostic downloads must require the exact route and a 192-bit hexadecimal token.");
 
     var service = new LauncherReleaseNoticeService(installDirectory, localAppDataDirectory);
     var targetVersion = new Version(3, 1, 13);
@@ -98,6 +106,11 @@ try
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
     Assert(LauncherConstants.LauncherVersion == "3.3.13", "Launcher constants must report version 3.3.13.");
+    Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
+               == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --download-diagnostics \"%1\"",
+        "The server-page browser protocol must send the diagnostic report through the browser download manager.");
+    Assert(ThrowsArgumentException(() => DiagnosticProtocolRegistrationService.BuildOpenCommand("invalid\"path.exe")),
+        "The diagnostic protocol must reject an executable path that could alter its registered command.");
 
     var setupServiceType = typeof(DistroSetupService);
     var privateStatic = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
@@ -1494,6 +1507,19 @@ static bool Throws(Action action)
         return false;
     }
     catch (ArgumentOutOfRangeException)
+    {
+        return true;
+    }
+}
+
+static bool ThrowsArgumentException(Action action)
+{
+    try
+    {
+        action();
+        return false;
+    }
+    catch (ArgumentException)
     {
         return true;
     }

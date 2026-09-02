@@ -1144,7 +1144,11 @@ echo "CHIM-MCP installed and enabled."
         {
             _discoveryService = new DiscoveryService(
                 cancellationToken => GetWslIpAsync(forceRefresh: false, cancellationToken),
-                text => AppendLog(text));
+                text => AppendLog(text),
+                (destinationPath, _) => GenerateDiagnosticsAsync(
+                    requireConfirmation: false,
+                    openOutputFolder: false,
+                    destinationPath: destinationPath));
             _discoveryService.Start();
         }
         catch (Exception ex)
@@ -2756,7 +2760,10 @@ echo "CHIM-MCP installed and enabled."
     }
 
     // Creates the same support report for both the launcher UI and the headless CHIM command.
-    internal async Task<string?> GenerateDiagnosticsAsync(bool requireConfirmation, bool openOutputFolder)
+    internal async Task<string?> GenerateDiagnosticsAsync(
+        bool requireConfirmation,
+        bool openOutputFolder,
+        string? destinationPath = null)
     {
         if (requireConfirmation)
         {
@@ -2830,9 +2837,10 @@ echo "CHIM-MCP installed and enabled."
         await AddDatabaseSchemaDiagnosticsAsync(lines).ConfigureAwait(false);
         await AddConnectorDiagnosticsAsync(lines).ConfigureAwait(false);
 
-        var outputDir = DiagnosticReportPaths.OutputDirectory;
+        var outputPath = destinationPath ?? DiagnosticReportPaths.CreateTimestampedPath("diagnostics");
+        var outputDir = Path.GetDirectoryName(outputPath)
+            ?? throw new InvalidOperationException("The diagnostic output path has no directory.");
         Directory.CreateDirectory(outputDir);
-        var outputPath = DiagnosticReportPaths.CreateTimestampedPath("diagnostics");
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
         if (openOutputFolder)

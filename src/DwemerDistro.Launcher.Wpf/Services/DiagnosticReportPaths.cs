@@ -12,4 +12,12 @@ internal static class DiagnosticReportPaths
     {
         return Path.Combine(OutputDirectory, $"{prefix}-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
     }
+
+    // Keeps browser-delivered reports out of the user's Desktop while they are transferred.
+    public static string CreateTemporaryPath(string prefix)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "DwemerDistro", "Diagnostics");
+        Directory.CreateDirectory(directory);
+        return Path.Combine(directory, $"{prefix}-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+    }
 }
