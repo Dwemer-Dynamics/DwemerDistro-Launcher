@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
@@ -11,6 +13,7 @@ public sealed class DiscoveryService
     private readonly Func<string, CancellationToken, Task<string?>>? _diagnosticReportGenerator;
     private readonly Action<string> _log;
     private readonly SemaphoreSlim _diagnosticDownloadGate = new(1, 1);
+    private readonly ConcurrentDictionary<string, string> _pendingDiagnosticDownloads = new();
     private CancellationTokenSource? _cts;
     private TcpListener? _listener;
     private Task? _acceptLoopTask;
@@ -108,6 +111,13 @@ public sealed class DiscoveryService
             var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
             var request = Encoding.UTF8.GetString(buffer, 0, read);
 
+            var downloadToken = GetDiagnosticDownloadToken(request);
+            if (downloadToken is not null)
+            {
+                await SendPreparedDiagnosticAsync(stream, downloadToken, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             if (IsDiagnosticDownloadRequest(request))
             {
                 await SendDiagnosticDownloadAsync(stream, cancellationToken).ConfigureAwait(false);
@@ -132,13 +142,33 @@ public sealed class DiscoveryService
         return request.StartsWith("GET /download-diagnostics HTTP/1.", StringComparison.OrdinalIgnoreCase);
     }
 
+    internal static string? GetDiagnosticDownloadToken(string request)
+    {
+        const string routePrefix = "/download-diagnostics/file/";
+        var requestLine = request.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
+        var requestParts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (requestParts.Length < 2 || !requestParts[0].Equals("GET", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var target = requestParts[1];
+        if (!target.StartsWith(routePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var token = target[routePrefix.Length..];
+        return token.Length == 48 && token.All(Uri.IsHexDigit) ? token.ToLowerInvariant() : null;
+    }
+
     private async Task SendDiagnosticDownloadAsync(NetworkStream stream, CancellationToken cancellationToken)
     {
         if (_diagnosticReportGenerator is null)
         {
             await WriteHttpResponseAsync(
                 stream,
-                BuildHttpResponse("503 Service Unavailable", "Diagnostic download is unavailable."),
+                BuildDownloadErrorResponse("503 Service Unavailable"),
                 cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -147,12 +177,13 @@ public sealed class DiscoveryService
         {
             await WriteHttpResponseAsync(
                 stream,
-                BuildHttpResponse("409 Conflict", "A diagnostic report is already being generated."),
+                BuildDownloadErrorResponse("409 Conflict"),
                 cancellationToken).ConfigureAwait(false);
             return;
         }
 
         var temporaryPath = DiagnosticReportPaths.CreateTemporaryPath("diagnostics");
+        var preparedForDownload = false;
         try
         {
             var outputPath = await _diagnosticReportGenerator(temporaryPath, cancellationToken)
@@ -161,14 +192,19 @@ public sealed class DiscoveryService
             {
                 await WriteHttpResponseAsync(
                     stream,
-                    BuildHttpResponse("500 Internal Server Error", "Diagnostic generation failed."),
+                    BuildDownloadErrorResponse("500 Internal Server Error"),
                     cancellationToken).ConfigureAwait(false);
                 return;
             }
 
-            await BrowserDownloadService.WriteAttachmentAsync(stream, outputPath, cancellationToken)
-                .ConfigureAwait(false);
-            _log($"Diagnostic file sent to the browser download manager.{Environment.NewLine}");
+            var downloadToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
+            _pendingDiagnosticDownloads[downloadToken] = outputPath;
+            preparedForDownload = true;
+            SchedulePreparedDiagnosticCleanup(downloadToken);
+            await WriteHttpResponseAsync(
+                stream,
+                BuildDownloadReadyResponse(downloadToken),
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -178,7 +214,7 @@ public sealed class DiscoveryService
             {
                 await WriteHttpResponseAsync(
                     stream,
-                    BuildHttpResponse("500 Internal Server Error", "Diagnostic generation failed."),
+                    BuildDownloadErrorResponse("500 Internal Server Error"),
                     cancellationToken).ConfigureAwait(false);
             }
             catch
@@ -188,18 +224,91 @@ public sealed class DiscoveryService
         }
         finally
         {
-            try
+            if (!preparedForDownload)
             {
-                File.Delete(temporaryPath);
+                DeleteTemporaryDiagnostic(temporaryPath);
             }
-            catch (Exception ex)
+
+            _diagnosticDownloadGate.Release();
+        }
+    }
+
+    private async Task SendPreparedDiagnosticAsync(
+        NetworkStream stream,
+        string downloadToken,
+        CancellationToken cancellationToken)
+    {
+        if (!_pendingDiagnosticDownloads.TryRemove(downloadToken, out var filePath) || !File.Exists(filePath))
+        {
+            await WriteHttpResponseAsync(
+                stream,
+                BuildHttpResponse("404 Not Found", "Diagnostic download expired."),
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            await BrowserDownloadService.WriteAttachmentAsync(stream, filePath, cancellationToken)
+                .ConfigureAwait(false);
+            _log($"Diagnostic file sent to the browser download manager.{Environment.NewLine}");
+        }
+        finally
+        {
+            DeleteTemporaryDiagnostic(filePath);
+        }
+    }
+
+    private void SchedulePreparedDiagnosticCleanup(string downloadToken)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+            if (_pendingDiagnosticDownloads.TryRemove(downloadToken, out var expiredPath))
             {
-                LauncherLogService.Startup("Temporary browser diagnostic cleanup failed.", ex);
+                DeleteTemporaryDiagnostic(expiredPath);
             }
-            finally
-            {
-                _diagnosticDownloadGate.Release();
-            }
+        });
+    }
+
+    private static string BuildDownloadReadyResponse(string downloadToken)
+    {
+        var script =
+            "parent.postMessage({type:'dwemerdistro-diagnostics-ready'},'*');" +
+            $"window.location.replace('/download-diagnostics/file/{downloadToken}');";
+        return BuildDownloadBridgeResponse("200 OK", script);
+    }
+
+    private static string BuildDownloadErrorResponse(string status)
+    {
+        return BuildDownloadBridgeResponse(
+            status,
+            "parent.postMessage({type:'dwemerdistro-diagnostics-error'},'*');");
+    }
+
+    private static string BuildDownloadBridgeResponse(string status, string script)
+    {
+        var body = $"<!doctype html><meta charset=\"utf-8\"><script>{script}</script>";
+        return
+            $"HTTP/1.1 {status}\r\n" +
+            "Content-Type: text/html; charset=utf-8\r\n" +
+            $"Content-Length: {Encoding.UTF8.GetByteCount(body)}\r\n" +
+            "Cache-Control: no-store\r\n" +
+            "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'\r\n" +
+            "X-Content-Type-Options: nosniff\r\n" +
+            "Connection: close\r\n\r\n" +
+            body;
+    }
+
+    private static void DeleteTemporaryDiagnostic(string filePath)
+    {
+        try
+        {
+            File.Delete(filePath);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Temporary browser diagnostic cleanup failed.", ex);
         }
     }
 

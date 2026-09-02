@@ -24,6 +24,11 @@ try
     Assert(DiscoveryService.IsDiagnosticDownloadRequest("GET /download-diagnostics HTTP/1.1\r\nHost: 127.0.0.1:7135\r\n\r\n")
            && !DiscoveryService.IsDiagnosticDownloadRequest("GET /discover?game=skyrim HTTP/1.1\r\n\r\n"),
         "Discovery must route only the dedicated browser diagnostic download request.");
+    var diagnosticToken = new string('a', 48);
+    Assert(DiscoveryService.GetDiagnosticDownloadToken($"GET /download-diagnostics/file/{diagnosticToken} HTTP/1.1\r\n\r\n")
+               == diagnosticToken
+           && DiscoveryService.GetDiagnosticDownloadToken("GET /download-diagnostics/file/not-a-token HTTP/1.1\r\n\r\n") is null,
+        "Prepared diagnostic downloads must require the exact route and a 192-bit hexadecimal token.");
 
     var service = new LauncherReleaseNoticeService(installDirectory, localAppDataDirectory);
     var targetVersion = new Version(3, 1, 13);
