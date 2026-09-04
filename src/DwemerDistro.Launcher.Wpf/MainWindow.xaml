@@ -345,6 +345,15 @@
                                                     Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,0" Height="38"
                                                     AutomationProperties.Name="Install HerikaServer"
                                                     AutomationProperties.HelpText="Download and install this server on the selected branch. Nothing else is changed." />
+                                            <!-- Local game plugin logs. The plugin can exist without the WSL
+                                                 server, so these stay available in every install state and
+                                                 never probe or start WSL. -->
+                                            <Button Content="Open CHIM Skyrim Logs" Command="{Binding OpenChimSkyrimLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,12,0,6"
+                                                    AutomationProperties.Name="Open CHIM Skyrim Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Skyrim AIAgent.log selected. The local server is not started or contacted." />
+                                            <Button Content="Open CHIM Skyrim VR Logs" Command="{Binding OpenChimSkyrimVrLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
+                                                    AutomationProperties.Name="Open CHIM Skyrim VR Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Skyrim VR AIAgent.log selected. The local server is not started or contacted." />
                                         </StackPanel>
 
                                         <!-- Installed: branch, system + mod update, webpage, rollback, then the destructive purge. -->
@@ -376,6 +385,14 @@
                                             <Button Content="CHIM Nexus Page" Command="{Binding OpenChimNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="CHIM Nexus Page"
                                                     AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
+                                            <!-- Local game plugin logs. Windows-side only, so they never probe
+                                                 or start WSL and stay usable during server operations. -->
+                                            <Button Content="Open CHIM Skyrim Logs" Command="{Binding OpenChimSkyrimLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Open CHIM Skyrim Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Skyrim AIAgent.log selected. The local server is not started or contacted." />
+                                            <Button Content="Open CHIM Skyrim VR Logs" Command="{Binding OpenChimSkyrimVrLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Open CHIM Skyrim VR Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Skyrim VR AIAgent.log selected. The local server is not started or contacted." />
                                             <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.ModAction.ChimSecondaryButton}"
                                                     AutomationProperties.Name="Rollback HerikaServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
@@ -400,6 +417,14 @@
                                                     Style="{StaticResource GameCenter.Brand.ChimButton}" Margin="0,16,0,8" Height="38"
                                                     AutomationProperties.Name="Repair HerikaServer"
                                                     AutomationProperties.HelpText="Restore this server's files and database without deleting your data." />
+                                            <!-- Local game plugin logs. Windows-side only, so they never probe
+                                                 or start WSL and stay usable while the server needs repair. -->
+                                            <Button Content="Open CHIM Skyrim Logs" Command="{Binding OpenChimSkyrimLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Open CHIM Skyrim Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Skyrim AIAgent.log selected. The local server is not started or contacted." />
+                                            <Button Content="Open CHIM Skyrim VR Logs" Command="{Binding OpenChimSkyrimVrLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="Open CHIM Skyrim VR Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Skyrim VR AIAgent.log selected. The local server is not started or contacted." />
                                             <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall CHIM"
@@ -452,6 +477,12 @@
                                                     Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,0" Height="38"
                                                     AutomationProperties.Name="Install StobeServer"
                                                     AutomationProperties.HelpText="Download and install this server on the selected branch. Nothing else is changed." />
+                                            <!-- Local game plugin log. The plugin can exist without the WSL
+                                                 server, so this stays available in every install state and
+                                                 never probes or starts WSL. -->
+                                            <Button Content="Open STOBE Logs" Command="{Binding OpenStobeLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,12,0,0"
+                                                    AutomationProperties.Name="Open STOBE Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Kenshi Stobe.log selected, or RE_Kenshi_log.txt if STOBE has not written a log. The local server is not started or contacted." />
                                         </StackPanel>
 
                                         <!-- Installed: branch, system + mod update, webpage, rollback, then the destructive purge. -->
@@ -483,6 +514,11 @@
                                             <Button Content="STOBE Nexus Page" Command="{Binding OpenStobeNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="STOBE Nexus Page"
                                                     AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
+                                            <!-- Local game plugin log. Windows-side only, so it never probes
+                                                 or starts WSL and stays usable during server operations. -->
+                                            <Button Content="Open STOBE Logs" Command="{Binding OpenStobeLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Open STOBE Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Kenshi Stobe.log selected, or RE_Kenshi_log.txt if STOBE has not written a log. The local server is not started or contacted." />
                                             <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.ModAction.StobeSecondaryButton}"
                                                     AutomationProperties.Name="Rollback StobeServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
@@ -507,6 +543,11 @@
                                                     Style="{StaticResource GameCenter.Brand.StobeButton}" Margin="0,16,0,8" Height="38"
                                                     AutomationProperties.Name="Repair StobeServer"
                                                     AutomationProperties.HelpText="Restore this server's files and database without deleting your data." />
+                                            <!-- Local game plugin log. Windows-side only, so it never probes
+                                                 or starts WSL and stays usable while the server needs repair. -->
+                                            <Button Content="Open STOBE Logs" Command="{Binding OpenStobeLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="Open STOBE Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Kenshi Stobe.log selected, or RE_Kenshi_log.txt if STOBE has not written a log. The local server is not started or contacted." />
                                             <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall STOBE"
@@ -559,6 +600,12 @@
                                                     Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,0" Height="38"
                                                     AutomationProperties.Name="Install DialecticServer"
                                                     AutomationProperties.HelpText="Download and install this server on the selected branch. Nothing else is changed." />
+                                            <!-- Local game plugin log. The plugin can exist without the WSL
+                                                 server, so this stays available in every install state and
+                                                 never probes or starts WSL. -->
+                                            <Button Content="Open DIALECTIC Logs" Command="{Binding OpenDialecticLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,12,0,0"
+                                                    AutomationProperties.Name="Open DIALECTIC Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Fallout New Vegas dialectic.log selected. The local server is not started or contacted." />
                                         </StackPanel>
 
                                         <!-- Installed: branch, system + mod update, webpage, rollback, then the destructive purge. -->
@@ -590,6 +637,11 @@
                                             <Button Content="DIALECTIC Nexus Page" Command="{Binding OpenDialecticNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="DIALECTIC Nexus Page"
                                                     AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
+                                            <!-- Local game plugin log. Windows-side only, so it never probes
+                                                 or starts WSL and stays usable during server operations. -->
+                                            <Button Content="Open DIALECTIC Logs" Command="{Binding OpenDialecticLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Open DIALECTIC Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Fallout New Vegas dialectic.log selected. The local server is not started or contacted." />
                                             <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.ModAction.DialecticSecondaryButton}"
                                                     AutomationProperties.Name="Rollback DialecticServer"
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
@@ -614,6 +666,11 @@
                                                     Style="{StaticResource GameCenter.Brand.DialecticButton}" Margin="0,16,0,8" Height="38"
                                                     AutomationProperties.Name="Repair DialecticServer"
                                                     AutomationProperties.HelpText="Restore this server's files and database without deleting your data." />
+                                            <!-- Local game plugin log. Windows-side only, so it never probes
+                                                 or starts WSL and stays usable while the server needs repair. -->
+                                            <Button Content="Open DIALECTIC Logs" Command="{Binding OpenDialecticLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,8"
+                                                    AutomationProperties.Name="Open DIALECTIC Logs"
+                                                    AutomationProperties.HelpText="Open File Explorer with the local Fallout New Vegas dialectic.log selected. The local server is not started or contacted." />
                                             <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall Dialectic"

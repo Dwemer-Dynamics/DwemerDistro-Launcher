@@ -267,6 +267,12 @@ echo "CHIM-MCP installed and enabled."
         OpenChimNexusCommand = new RelayCommand(() => OpenModNexusPage("CHIM"));
         OpenStobeNexusCommand = new RelayCommand(() => OpenModNexusPage("STOBE"));
         OpenDialecticNexusCommand = new RelayCommand(() => OpenModNexusPage("DIALECTIC"));
+        // Local game plugin logs live on the Windows side. Like the Nexus links these never probe
+        // or start WSL, so they stay usable in every install state and during server operations.
+        OpenChimSkyrimLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM"));
+        OpenChimSkyrimVrLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM_VR"));
+        OpenDialecticLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("DIALECTIC"));
+        OpenStobeLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("STOBE"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
 
@@ -793,6 +799,10 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenChimNexusCommand { get; }
     public RelayCommand OpenStobeNexusCommand { get; }
     public RelayCommand OpenDialecticNexusCommand { get; }
+    public RelayCommand OpenChimSkyrimLogsCommand { get; }
+    public RelayCommand OpenChimSkyrimVrLogsCommand { get; }
+    public RelayCommand OpenDialecticLogsCommand { get; }
+    public RelayCommand OpenStobeLogsCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
@@ -1261,6 +1271,111 @@ echo "CHIM-MCP installed and enabled."
         {
             AppendLog($"Could not open the {gameKey} Nexus page: {ex.Message}{Environment.NewLine}", "red");
         }
+    }
+
+    /// <summary>
+    /// Everything the log buttons need to reveal a product's local game plugin log: the file name
+    /// shown to the user, the game to run when the log does not exist yet, and the ordered
+    /// absolute candidate paths.
+    /// </summary>
+    internal sealed record LocalGameLogTarget(string LogFileName, string GameName, string[] Candidates);
+
+    internal static LocalGameLogTarget? ResolveLocalGameLogTarget(string? gameKey, string? documentsFolder)
+    {
+        return gameKey switch
+        {
+            "CHIM" => new LocalGameLogTarget("AIAgent.log", "Skyrim",
+                BuildChimSkyrimAgentLogButtonCandidates(documentsFolder)),
+            "CHIM_VR" => new LocalGameLogTarget("AIAgent.log", "Skyrim VR",
+                BuildChimSkyrimVrAgentLogCandidates(documentsFolder)),
+            "DIALECTIC" => new LocalGameLogTarget("dialectic.log", "Fallout New Vegas",
+                BuildDialecticPluginLogCandidates(documentsFolder)),
+            "STOBE" => new LocalGameLogTarget("Stobe.log", "Kenshi",
+                BuildStobeModLogCandidates()),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Reveals the product's local game plugin log in File Explorer. This is purely Windows-side:
+    /// it never probes or starts WSL, never creates folders or files, and an Explorer that refuses
+    /// to start is reported in the console rather than taking the launcher down.
+    /// </summary>
+    private void OpenLocalGameLogLocation(string gameKey)
+    {
+        var target = ResolveLocalGameLogTarget(gameKey, GetWindowsDocumentsFolder());
+        if (target is null)
+        {
+            AppendLog($"No local game log is configured for {gameKey}.{Environment.NewLine}", "yellow");
+            return;
+        }
+
+        try
+        {
+            var existingLog = target.Candidates.FirstOrDefault(File.Exists);
+            if (existingLog is not null)
+            {
+                _processRunner.RevealFileInExplorer(existingLog);
+                return;
+            }
+
+            if (gameKey == "STOBE")
+            {
+                var reKenshiLog = BuildStobeReKenshiLogCandidates(target.Candidates).FirstOrDefault(File.Exists);
+                if (reKenshiLog is not null)
+                {
+                    MessageBox.Show(
+                        "Stobe.log was not found.\n\nFile Explorer will select RE_Kenshi_log.txt instead. STOBE may not have loaded.",
+                        "STOBE Logs",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    _processRunner.RevealFileInExplorer(reKenshiLog);
+                    AppendLog(
+                        $"Stobe.log was not found, so RE_Kenshi_log.txt is selected instead. STOBE may not have loaded.{Environment.NewLine}",
+                        "yellow");
+                    return;
+                }
+            }
+
+            var fallbackFolder = FindBestExistingLogParentFolder(
+                target.Candidates, Directory.Exists, Environment.CurrentDirectory);
+            if (fallbackFolder is not null)
+            {
+                ShowMissingLocalGameLogMessage(target, fallbackFolder);
+                _processRunner.OpenFolder(fallbackFolder);
+                AppendLog(
+                    $"{target.LogFileName} has not been created yet; opened {fallbackFolder} instead. Run {target.GameName} with the mod enabled to generate the log.{Environment.NewLine}",
+                    "yellow");
+                return;
+            }
+
+            ShowMissingLocalGameLogMessage(target, null);
+            AppendLog(
+                $"{target.LogFileName} has not been created yet and its folder does not exist. Expected location: {target.Candidates[0]}. Run {target.GameName} with the mod enabled to generate the log.{Environment.NewLine}",
+                "yellow");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Could not open the {target.LogFileName} location: {ex.Message}{Environment.NewLine}", "red");
+        }
+    }
+
+    private static void ShowMissingLocalGameLogMessage(LocalGameLogTarget target, string? openedFolder)
+    {
+        var location = openedFolder is null
+            ? $"Expected location: {target.Candidates[0]}"
+            : $"File Explorer will open the expected folder: {openedFolder}";
+        MessageBox.Show(
+            $"{target.LogFileName} was not found.\n\n{location}\n\nRun {target.GameName} with the mod enabled, then try again.",
+            $"{target.GameName} Log",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    private static string? GetWindowsDocumentsFolder()
+    {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        return string.IsNullOrWhiteSpace(documents) ? null : documents;
     }
 
     /// <summary>Compares the published system release with the last fully successful local update.</summary>
@@ -3157,14 +3272,7 @@ echo "CHIM-MCP installed and enabled."
         var localLogGroups = new List<(string Name, string[] Paths)>
         {
             ("AIAgent.log",
-            [
-                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\Plugins\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\Plugins\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\Plugins\AIAgent.log"
-            ]),
+                BuildChimSkyrimAgentLogTemplates()),
             ("Papyrus.0.log",
             [
                 @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\Logs\Script\Papyrus.0.log"
@@ -3206,10 +3314,157 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private static string[] BuildDialecticPluginLogCandidates()
+    private const string DocumentsTemplatePrefix = @"%USERPROFILE%\Documents\";
+
+    /// <summary>
+    /// The raw AIAgent.log templates embedded in diagnostic reports. Their text and order feed the
+    /// report's "Attempted paths" section verbatim, so they must not change when the log buttons
+    /// evolve; the buttons derive their own candidate list from this one.
+    /// </summary>
+    internal static string[] BuildChimSkyrimAgentLogTemplates() =>
+    [
+        @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\Plugins\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\Plugins\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\Plugins\AIAgent.log"
+    ];
+
+    /// <summary>
+    /// Candidates for the "Open CHIM Skyrim Logs" button: the same templates the diagnostics scan,
+    /// reordered so the SKSE folders current CHIM builds write to (Skyrim Special Edition and
+    /// Skyrim.INI) win over the legacy and Plugins-subfolder locations.
+    /// </summary>
+    internal static string[] BuildChimSkyrimAgentLogButtonCandidates(string? documentsFolder)
     {
-        var candidates = new List<string>
+        static bool IsPreferred(string template) =>
+            template.EndsWith(@"\Skyrim Special Edition\SKSE\AIAgent.log", StringComparison.OrdinalIgnoreCase)
+            || template.EndsWith(@"\Skyrim.INI\SKSE\AIAgent.log", StringComparison.OrdinalIgnoreCase);
+
+        var templates = BuildChimSkyrimAgentLogTemplates();
+        return ExpandDocumentsLogTemplates(
+            templates.Where(IsPreferred).Concat(templates.Where(template => !IsPreferred(template))),
+            documentsFolder);
+    }
+
+    /// <summary>
+    /// Skyrim VR keeps its own button and candidate list so its log is never mistaken for the
+    /// Special Edition one.
+    /// </summary>
+    internal static string[] BuildChimSkyrimVrAgentLogCandidates(string? documentsFolder) =>
+        ExpandDocumentsLogTemplates(
+            [@"%USERPROFILE%\Documents\My Games\Skyrim VR\SKSE\AIAgent.log"],
+            documentsFolder);
+
+    /// <summary>
+    /// Expands Documents-based templates for the log buttons: the real Windows Documents folder
+    /// first, because it survives OneDrive and other redirection, then the literal
+    /// %USERPROFILE% expansion as a fallback.
+    /// </summary>
+    internal static string[] ExpandDocumentsLogTemplates(IEnumerable<string> templates, string? documentsFolder)
+    {
+        var candidates = new List<string>();
+        foreach (var template in templates)
         {
+            if (!string.IsNullOrWhiteSpace(documentsFolder)
+                && template.StartsWith(DocumentsTemplatePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                candidates.Add(Path.Combine(documentsFolder, template[DocumentsTemplatePrefix.Length..]));
+            }
+
+            candidates.Add(Environment.ExpandEnvironmentVariables(template));
+        }
+
+        return candidates
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// RE_Kenshi's own log beside each Kenshi root implied by the Stobe.log candidates. It is
+    /// revealed when Stobe.log is missing, because RE_Kenshi logging without a Stobe.log usually
+    /// means the STOBE mod never loaded.
+    /// </summary>
+    internal static string[] BuildStobeReKenshiLogCandidates(IEnumerable<string> stobeLogCandidates)
+    {
+        const string stobeLogSuffix = @"\mods\Stobe\Stobe.log";
+        return stobeLogCandidates
+            .Where(candidate => candidate.EndsWith(stobeLogSuffix, StringComparison.OrdinalIgnoreCase))
+            .Select(candidate => candidate[..^stobeLogSuffix.Length] + @"\RE_Kenshi_log.txt")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The folder a missing log would most plausibly appear in: the first candidate whose exact
+    /// parent exists, otherwise the deepest existing ancestor of any candidate. Drive roots are
+    /// never returned, and candidates under the launcher's own directory are ignored because they
+    /// only mean anything when the launcher itself runs from the game folder.
+    /// </summary>
+    internal static string? FindBestExistingLogParentFolder(
+        IReadOnlyList<string> candidates,
+        Func<string, bool> directoryExists,
+        string? currentDirectory)
+    {
+        var launcherRoot = string.IsNullOrWhiteSpace(currentDirectory)
+            ? null
+            : currentDirectory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        var parents = candidates
+            .Where(candidate => launcherRoot is null
+                || !candidate.StartsWith(launcherRoot, StringComparison.OrdinalIgnoreCase))
+            .Select(Path.GetDirectoryName)
+            .OfType<string>()
+            .ToArray();
+
+        var exactParent = parents.FirstOrDefault(directoryExists);
+        if (exactParent is not null)
+        {
+            return exactParent;
+        }
+
+        string? best = null;
+        var bestDepth = -1;
+        foreach (var parent in parents)
+        {
+            // Stop above drive roots: an ancestor whose own parent is null is a root.
+            for (var ancestor = Path.GetDirectoryName(parent);
+                 ancestor is not null && Path.GetDirectoryName(ancestor) is not null;
+                 ancestor = Path.GetDirectoryName(ancestor))
+            {
+                if (!directoryExists(ancestor))
+                {
+                    continue;
+                }
+
+                var depth = ancestor.Count(ch => ch == Path.DirectorySeparatorChar);
+                if (depth > bestDepth)
+                {
+                    best = ancestor;
+                    bestDepth = depth;
+                }
+
+                // The first existing ancestor is already the deepest one for this candidate.
+                break;
+            }
+        }
+
+        return best;
+    }
+
+    private static string[] BuildDialecticPluginLogCandidates(string? documentsFolder = null)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(documentsFolder))
+        {
+            candidates.Add(Path.Combine(documentsFolder, "My Games", "FalloutNV", "NVSE", "dialectic.log"));
+            candidates.Add(Path.Combine(documentsFolder, "My Games", "FalloutNV", "dialectic.log"));
+        }
+
+        candidates.AddRange(
+        [
             @"%USERPROFILE%\Documents\My Games\FalloutNV\NVSE\dialectic.log",
             @"%USERPROFILE%\Documents\My Games\FalloutNV\dialectic.log",
             @"%ProgramFiles(x86)%\Steam\steamapps\common\Fallout New Vegas\dialectic.log",
@@ -3221,7 +3476,7 @@ echo "CHIM-MCP installed and enabled."
             @"%ProgramFiles%\GOG Galaxy\Games\Fallout New Vegas\dialectic.log",
             @"%ProgramFiles%\GOG Galaxy\Games\Fallout New Vegas\Data\NVSE\Plugins\dialectic.log",
             Path.GetFullPath("dialectic.log")
-        };
+        ]);
 
         var globalInstances = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

@@ -1423,6 +1423,109 @@ try
         "A status probe that throws must block the install instead of falling through to it.");
     Console.WriteLine("Quickstart guard: initial/stale selection, all-product blocked callbacks, Retry recovery and throwing status: OK");
 
+    // --- local game plugin log buttons --------------------------------------------------------
+
+    // The raw templates feed the diagnostic report's "Attempted paths" section verbatim, so the
+    // log buttons must never change their text or order.
+    Assert(MainWindowViewModel.BuildChimSkyrimAgentLogTemplates().SequenceEqual(new[]
+    {
+        @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\Plugins\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\Plugins\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\Plugins\AIAgent.log"
+    }), "The diagnostic AIAgent.log templates must keep their exact paths and order so generated reports do not change.");
+
+    var redirectedDocuments = @"C:\Redirected\Documents";
+    var chimSeCandidates = MainWindowViewModel.BuildChimSkyrimAgentLogButtonCandidates(redirectedDocuments);
+    Assert(chimSeCandidates[0] == @"C:\Redirected\Documents\My Games\Skyrim Special Edition\SKSE\AIAgent.log"
+           && chimSeCandidates[1] == Environment.ExpandEnvironmentVariables(
+               @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\AIAgent.log")
+           && chimSeCandidates[2] == @"C:\Redirected\Documents\My Games\Skyrim.INI\SKSE\AIAgent.log",
+        "The CHIM Skyrim log button must prefer the redirected Documents SKSE folders, Special Edition first then Skyrim.INI.");
+    Assert(chimSeCandidates.Count(candidate =>
+               candidate.EndsWith(@"\SKSE\Plugins\AIAgent.log", StringComparison.OrdinalIgnoreCase)) == 6
+           && chimSeCandidates.Any(candidate =>
+               candidate.EndsWith(@"\My Games\Skyrim\SKSE\AIAgent.log", StringComparison.OrdinalIgnoreCase)),
+        "The CHIM Skyrim log button must preserve the legacy and Plugins-subfolder candidates.");
+
+    var chimVrCandidates = MainWindowViewModel.BuildChimSkyrimVrAgentLogCandidates(redirectedDocuments);
+    Assert(chimVrCandidates.Length == 2
+           && chimVrCandidates[0] == @"C:\Redirected\Documents\My Games\Skyrim VR\SKSE\AIAgent.log"
+           && chimVrCandidates[1] == Environment.ExpandEnvironmentVariables(
+               @"%USERPROFILE%\Documents\My Games\Skyrim VR\SKSE\AIAgent.log"),
+        "The CHIM Skyrim VR log button must try the real Documents folder first, then the literal USERPROFILE path.");
+    Assert(!chimSeCandidates.Any(candidate => candidate.Contains(@"\Skyrim VR\", StringComparison.OrdinalIgnoreCase))
+           && chimVrCandidates.All(candidate => candidate.Contains(@"\Skyrim VR\", StringComparison.OrdinalIgnoreCase)),
+        "The Skyrim and Skyrim VR log buttons must never share candidates.");
+
+    Assert(MainWindowViewModel.ResolveLocalGameLogTarget("REIGN", redirectedDocuments) is null
+           && MainWindowViewModel.ResolveLocalGameLogTarget(null, redirectedDocuments) is null,
+        "Unknown products must not resolve a local game log target.");
+    var dialecticTarget = MainWindowViewModel.ResolveLocalGameLogTarget("DIALECTIC", redirectedDocuments);
+    Assert(dialecticTarget is not null
+           && dialecticTarget.LogFileName == "dialectic.log"
+           && dialecticTarget.Candidates[0] ==
+               @"C:\Redirected\Documents\My Games\FalloutNV\NVSE\dialectic.log"
+           && dialecticTarget.Candidates.Any(candidate => candidate.EndsWith(
+               @"\Documents\My Games\FalloutNV\NVSE\dialectic.log", StringComparison.OrdinalIgnoreCase)),
+        "The DIALECTIC log button must prefer redirected Documents and preserve the diagnostics candidates.");
+    var stobeTarget = MainWindowViewModel.ResolveLocalGameLogTarget("STOBE", redirectedDocuments);
+    Assert(stobeTarget is not null
+           && stobeTarget.LogFileName == "Stobe.log"
+           && stobeTarget.Candidates.All(candidate =>
+               candidate.EndsWith(@"\mods\Stobe\Stobe.log", StringComparison.OrdinalIgnoreCase)),
+        "The STOBE log button must reuse the diagnostics Stobe.log candidates.");
+
+    Assert(MainWindowViewModel.BuildStobeReKenshiLogCandidates(new[]
+    {
+        @"C:\Games\Steam\steamapps\common\Kenshi\mods\Stobe\Stobe.log",
+        @"D:\SteamLibrary\steamapps\common\Kenshi\mods\Stobe\Stobe.log",
+        @"D:\Elsewhere\Stobe.log"
+    }).SequenceEqual(new[]
+    {
+        @"C:\Games\Steam\steamapps\common\Kenshi\RE_Kenshi_log.txt",
+        @"D:\SteamLibrary\steamapps\common\Kenshi\RE_Kenshi_log.txt"
+    }), "The STOBE fallback must reveal RE_Kenshi_log.txt beside each Kenshi root and skip malformed candidates.");
+
+    var kenshiLogCandidates = new[]
+    {
+        @"C:\Program Files (x86)\Steam\steamapps\common\Kenshi\mods\Stobe\Stobe.log",
+        @"D:\SteamLibrary\steamapps\common\Kenshi\mods\Stobe\Stobe.log",
+        @"C:\Launcher\Kenshi\mods\Stobe\Stobe.log"
+    };
+    var exactStobeFolder = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        @"D:\SteamLibrary\steamapps\common\Kenshi\mods\Stobe"
+    };
+    Assert(MainWindowViewModel.FindBestExistingLogParentFolder(kenshiLogCandidates, exactStobeFolder.Contains, @"C:\Launcher")
+               == @"D:\SteamLibrary\steamapps\common\Kenshi\mods\Stobe",
+        "An exact expected log folder must win the missing-log fallback.");
+    var deepKenshiRoot = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        @"C:\Program Files (x86)",
+        @"D:\SteamLibrary\steamapps\common\Kenshi"
+    };
+    Assert(MainWindowViewModel.FindBestExistingLogParentFolder(kenshiLogCandidates, deepKenshiRoot.Contains, @"C:\Launcher")
+               == @"D:\SteamLibrary\steamapps\common\Kenshi",
+        "The deepest existing game folder must beat a shallow Program Files ancestor.");
+    Assert(MainWindowViewModel.FindBestExistingLogParentFolder(
+               new[] { @"C:\Launcher\Kenshi\mods\Stobe\Stobe.log" },
+               _ => true,
+               @"C:\Launcher") is null,
+        "Candidates under the launcher's own directory must never be opened as a fallback.");
+    Assert(MainWindowViewModel.FindBestExistingLogParentFolder(kenshiLogCandidates, _ => false, @"C:\Launcher") is null,
+        "When no expected folder exists the fallback must report the expected path instead of opening anything.");
+
+    var explorerArguments = ProcessRunner.BuildExplorerSelectArguments(@"C:\My Games\Skyrim VR\SKSE\AIAgent.log");
+    Assert(explorerArguments.Length == 2
+           && explorerArguments[0] == "/select,"
+           && explorerArguments[1] == @"C:\My Games\Skyrim VR\SKSE\AIAgent.log",
+        "Explorer must be asked to select the log through discrete arguments, never hand-built quoting.");
+
+    Console.WriteLine("Local game log buttons: diagnostics templates, candidate priority, VR separation, RE_Kenshi fallback, folder fallback and Explorer arguments: OK");
+
     // --- onboarding schema version 2 ---------------------------------------------------------
 
     var v2StatePath = Path.Combine(root, "onboarding-v2.json");

@@ -312,6 +312,28 @@ public sealed class ProcessRunner
         Process.Start(startInfo);
     }
 
+    /// <summary>
+    /// Explorer's select switch and the file as discrete arguments, so paths with spaces or
+    /// quotes never need hand-built quoting.
+    /// </summary>
+    internal static string[] BuildExplorerSelectArguments(string filePath) =>
+        new[] { "/select,", Path.GetFullPath(filePath) };
+
+    public void RevealFileInExplorer(string filePath)
+    {
+        var startInfo = new ProcessStartInfo("explorer.exe")
+        {
+            UseShellExecute = true
+        };
+
+        foreach (var argument in BuildExplorerSelectArguments(filePath))
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        Process.Start(startInfo);
+    }
+
     public void StartDetached(string fileName, IEnumerable<string> arguments)
     {
         var startInfo = new ProcessStartInfo(fileName)
