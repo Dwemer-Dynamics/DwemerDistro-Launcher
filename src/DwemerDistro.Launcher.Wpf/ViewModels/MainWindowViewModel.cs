@@ -3392,7 +3392,17 @@ echo "CHIM-MCP installed and enabled."
         const string stobeLogSuffix = @"\mods\Stobe\Stobe.log";
         return stobeLogCandidates
             .Where(candidate => candidate.EndsWith(stobeLogSuffix, StringComparison.OrdinalIgnoreCase))
-            .Select(candidate => candidate[..^stobeLogSuffix.Length] + @"\RE_Kenshi_log.txt")
+            .Select(candidate =>
+            {
+                var gameRoot = candidate[..^stobeLogSuffix.Length];
+                const string reKenshiSuffix = @"\RE_Kenshi";
+                if (gameRoot.EndsWith(reKenshiSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    gameRoot = gameRoot[..^reKenshiSuffix.Length];
+                }
+
+                return gameRoot + @"\RE_Kenshi_log.txt";
+            })
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -3555,9 +3565,17 @@ echo "CHIM-MCP installed and enabled."
             candidates.Add(Path.Combine(root, "Program Files (x86)", "Steam", "steamapps", "common", "Kenshi", "mods", "Stobe", "Stobe.log"));
         }
 
+        // RE_Kenshi can run Kenshi from its child directory, which relocates the plugin log.
+        // Keep the original path as a fallback for installations running from the game root.
+        const string stobeLogSuffix = @"\mods\Stobe\Stobe.log";
         return candidates
             .Select(Environment.ExpandEnvironmentVariables)
             .Where(path => !string.IsNullOrWhiteSpace(path))
+            .SelectMany(path => new[]
+            {
+                path[..^stobeLogSuffix.Length] + @"\RE_Kenshi" + stobeLogSuffix,
+                path
+            })
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }

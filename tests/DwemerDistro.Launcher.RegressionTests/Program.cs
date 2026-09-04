@@ -105,7 +105,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.17", "Launcher constants must report version 3.3.17.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.18", "Launcher constants must report version 3.3.18.");
     Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
                == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --download-diagnostics \"%1\"",
         "The server-page browser protocol must send the diagnostic report through the browser download manager.");
@@ -1478,9 +1478,24 @@ try
                candidate.EndsWith(@"\mods\Stobe\Stobe.log", StringComparison.OrdinalIgnoreCase)),
         "The STOBE log button must reuse the diagnostics Stobe.log candidates.");
 
+    var standardStobeLog = stobeTarget!.Candidates.First(path =>
+        !path.Contains(@"\RE_Kenshi\", StringComparison.OrdinalIgnoreCase));
+    var relocatedStobeLog = standardStobeLog[..^@"\mods\Stobe\Stobe.log".Length]
+        + @"\RE_Kenshi\mods\Stobe\Stobe.log";
+    foreach (var existingPath in new[] { standardStobeLog, relocatedStobeLog })
+    {
+        Assert(stobeTarget.Candidates.FirstOrDefault(path => path == existingPath) == existingPath,
+            "Either STOBE log layout must be discoverable when the other path is absent.");
+    }
+    Assert(Array.IndexOf(stobeTarget.Candidates, relocatedStobeLog)
+           < Array.IndexOf(stobeTarget.Candidates, standardStobeLog),
+        "Prefer the RE_Kenshi runtime log when both layouts contain logs.");
+
     Assert(MainWindowViewModel.BuildStobeReKenshiLogCandidates(new[]
     {
         @"C:\Games\Steam\steamapps\common\Kenshi\mods\Stobe\Stobe.log",
+        @"C:\Games\Steam\steamapps\common\Kenshi\RE_Kenshi\mods\Stobe\Stobe.log",
+        @"D:\SteamLibrary\steamapps\common\Kenshi\RE_Kenshi\mods\Stobe\Stobe.log",
         @"D:\SteamLibrary\steamapps\common\Kenshi\mods\Stobe\Stobe.log",
         @"D:\Elsewhere\Stobe.log"
     }).SequenceEqual(new[]
