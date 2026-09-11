@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
@@ -80,6 +81,16 @@ public partial class App : Application
 
         try
         {
+            // CHIM's MO2 hooks reach this helper and crash its WSL children. Detach
+            // this diagnostics process only; the game and MO2 instance stay hooked.
+            var vfs = GetModuleHandle("usvfs_x64.dll");
+            if (vfs != IntPtr.Zero)
+            {
+                var disconnect = NativeLibrary.GetExport(vfs, "usvfsDisconnectVFS");
+                Marshal.GetDelegateForFunctionPointer<DisconnectVfs>(disconnect)();
+                LauncherLogService.Startup("Diagnostic process disconnected from Mod Organizer hooks.");
+            }
+
             var viewModel = new MainWindowViewModel();
             var temporaryPath = downloadInBrowser
                 ? DiagnosticReportPaths.CreateTemporaryPath("diagnostics")
@@ -115,6 +126,12 @@ public partial class App : Application
             diagnosticSemaphore.Release();
         }
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetModuleHandleW")]
+    private static extern IntPtr GetModuleHandle(string moduleName);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate void DisconnectVfs();
 
     protected override void OnExit(ExitEventArgs e)
     {
