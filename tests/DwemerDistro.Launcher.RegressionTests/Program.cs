@@ -13,6 +13,44 @@ Directory.CreateDirectory(logDirectory);
 
 try
 {
+    var olderLog = Path.Combine(logDirectory, "older.log");
+    var newerLog = Path.Combine(logDirectory, "newer.log");
+    File.WriteAllText(olderLog, "old session");
+    File.WriteAllText(newerLog, "new session");
+    File.SetLastWriteTimeUtc(olderLog, DateTime.UtcNow.AddDays(-2));
+    File.SetLastWriteTimeUtc(newerLog, DateTime.UtcNow.AddMinutes(-1));
+    var evidence = new List<string>();
+    Assert(DiagnosticEvidenceService.AddNewestLog(evidence, "session", [olderLog, newerLog]) == newerLog
+           && evidence.Any(line => line.Contains("Modified UTC:")), "Diagnostics must choose the newest session and report its timestamp.");
+    using (var lockedLog = new FileStream(newerLog, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+    {
+        Assert(DiagnosticEvidenceService.AddNewestLog([], "session", [olderLog, newerLog]) == olderLog,
+            "An unreadable newest log must fall back to a readable candidate.");
+    }
+    File.WriteAllText(newerLog, new string('x', DiagnosticEvidenceService.MaxLogBytes * 2) + "\nlatest line");
+    var boundedTail = DiagnosticEvidenceService.ReadTail(newerLog);
+    Assert(boundedTail.Contains("latest line") && boundedTail.Length < DiagnosticEvidenceService.MaxLogBytes + 100,
+        "Diagnostic log reads must stay bounded and retain the latest output.");
+    File.WriteAllText(newerLog, "Unicode session\nlatest line", System.Text.Encoding.Unicode);
+    Assert(DiagnosticEvidenceService.ReadTail(newerLog).Contains("Unicode session"), "UTF16 game logs must remain readable.");
+    var safeOverride = DiagnosticEvidenceService.DescribePluginOverride("SERVER=http://user:password@127.0.0.1:8081/?token=hidden\nPORT=8081\nPATH=/HerikaServer/?secret=hidden\nAPI_KEY=hidden");
+    Assert(safeOverride.Contains("127.0.0.1:8081") && !safeOverride.Contains("hidden") && !safeOverride.Contains("password"),
+        "Plugin overrides must omit credentials, query strings, and unrelated keys.");
+    Assert(!DiagnosticEvidenceService.DescribePluginOverride("SERVER=user:private@host").Contains("private"),
+        "Malformed host overrides must not leak user information.");
+    Assert(!DiagnosticEvidenceService.Sanitize("https://user:private@example.com/api?key=hidden\npassword=hidden").Contains("hidden"),
+        "New evidence must redact credential assignments and URL queries.");
+    Assert(DiagnosticEvidenceService.ProbeTcpAsync("8.8.8.8", 443, CancellationToken.None).GetAwaiter().GetResult().StartsWith("[not probed]"),
+        "Diagnostics must not probe public endpoints.");
+    var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    try
+    {
+        Assert(DiagnosticEvidenceService.ProbeTcpAsync("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port, CancellationToken.None)
+            .GetAwaiter().GetResult().StartsWith("TCP connected"), "The bounded Windows connection probe must detect a listening local endpoint.");
+    }
+    finally { listener.Stop(); }
+
     Assert(LauncherConstants.LorkhanProxyPort == 7514 && LauncherConstants.LorkhanServerPort == 8090,
         "LORKHAN must keep its dedicated launcher proxy and WSL server ports.");
     Assert(DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=lorkhan HTTP/1.1\r\n\r\n")
@@ -105,7 +143,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.20", "Launcher constants must report version 3.3.20.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.21", "Launcher constants must report version 3.3.21.");
     Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
                == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --download-diagnostics \"%1\"",
         "The server-page browser protocol must send the diagnostic report through the browser download manager.");

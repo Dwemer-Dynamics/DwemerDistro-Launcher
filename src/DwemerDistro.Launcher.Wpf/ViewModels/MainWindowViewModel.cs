@@ -2485,19 +2485,30 @@ echo "CHIM-MCP installed and enabled."
         var bashCommand = BuildSystemUpdateCommand();
 
         var sharedComponentsStarted = false;
-        var result = await _wsl.RunBashAsync(bashCommand, line =>
+        LauncherLogService.Operation("START distro and shared components update");
+        try
         {
-            if (line.Contains(SharedComponentsMarker, StringComparison.OrdinalIgnoreCase))
+            var result = await _wsl.RunBashAsync(bashCommand, line =>
             {
-                sharedComponentsStarted = true;
-                AppendLog(Environment.NewLine + "Shared components update" + Environment.NewLine, "green");
-                return;
-            }
+                LauncherLogService.Operation(line);
+                if (line.Contains(SharedComponentsMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    sharedComponentsStarted = true;
+                    AppendLog(Environment.NewLine + "Shared components update" + Environment.NewLine, "green");
+                    return;
+                }
 
-            AppendLog(line);
-        }, loginShell: false, lineBuffered: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+                AppendLog(line);
+            }, loginShell: false, lineBuffered: true, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        return result.Succeeded && sharedComponentsStarted;
+            LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; shared components started={sharedComponentsStarted}");
+            return result.Succeeded && sharedComponentsStarted;
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Operation($"END distro and shared components update; no exit code: {ex.GetType().Name}");
+            throw;
+        }
     }
 
     /// <summary>Bootstraps the distro checkout when an empty-base installer ships source files without Git metadata.</summary>
@@ -3026,6 +3037,8 @@ echo "CHIM-MCP installed and enabled."
             ""
         };
 
+        await AddConnectionEvidenceAsync(lines).ConfigureAwait(false);
+        await AddUpdateInstallEvidenceAsync(lines).ConfigureAwait(false);
         await AddServerVersionDiagnosticsAsync(lines).ConfigureAwait(false);
 
         var diagnosticCommands = new List<(string Display, Func<Task<CommandResult>> Run)>
@@ -3387,48 +3400,29 @@ echo "CHIM-MCP installed and enabled."
 
     private static void AddLocalGameLogDiagnostics(List<string> lines, int maxLogLines)
     {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var stobeCandidates = BuildStobeModLogCandidates();
         var localLogGroups = new List<(string Name, string[] Paths)>
         {
-            ("AIAgent.log",
-                BuildChimSkyrimAgentLogTemplates()),
-            ("Papyrus.0.log",
-            [
-                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\Logs\Script\Papyrus.0.log"
-            ]),
+            ("CHIM Skyrim AIAgent.log", BuildChimSkyrimAgentLogButtonCandidates(documents)),
+            ("CHIM Skyrim VR AIAgent.log", BuildChimSkyrimVrAgentLogCandidates(documents)),
+            ("Skyrim Papyrus.0.log", ExpandDocumentsLogTemplates([
+                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\Logs\Script\Papyrus.0.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim.INI\Logs\Script\Papyrus.0.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim\Logs\Script\Papyrus.0.log"
+            ], documents)),
+            ("Skyrim VR Papyrus.0.log", ExpandDocumentsLogTemplates([
+                @"%USERPROFILE%\Documents\My Games\Skyrim VR\Logs\Script\Papyrus.0.log"
+            ], documents)),
             ("Dialectic Fallout New Vegas Plugin Log",
                 BuildDialecticPluginLogCandidates()),
-            ("STOBE Mod Log",
-                BuildStobeModLogCandidates())
+            ("STOBE Mod Log", stobeCandidates),
+            ("RE_Kenshi_log.txt", BuildStobeReKenshiLogCandidates(stobeCandidates))
         };
 
         foreach (var (name, paths) in localLogGroups)
         {
-            var selectedTemplate = paths.FirstOrDefault(path => File.Exists(Environment.ExpandEnvironmentVariables(path)));
-            if (selectedTemplate is null)
-            {
-                lines.Add($"--- Start of {name} ---");
-                lines.Add("[missing]");
-                lines.Add("Attempted paths:");
-                lines.AddRange(paths);
-                lines.Add($"--- End of {name} ---");
-                lines.Add("");
-                continue;
-            }
-
-            var selectedPath = Environment.ExpandEnvironmentVariables(selectedTemplate);
-            lines.Add($"--- Start of {selectedTemplate} ---");
-            lines.Add($"# Resolved path: {selectedPath}");
-            try
-            {
-                lines.Add(SanitizeDiagnosticText(ReadTextFileTail(selectedPath, maxLogLines)));
-            }
-            catch (Exception ex)
-            {
-                lines.Add(ex.ToString());
-            }
-
-            lines.Add($"--- End of {selectedTemplate} ---");
-            lines.Add("");
+            DiagnosticEvidenceService.AddNewestLog(lines, name, paths, maxLogLines);
         }
     }
 
@@ -5477,6 +5471,7 @@ fi
         try
         {
             var wrapperScript = BuildComponentInstallWrapper(definition);
+            LauncherLogService.Operation($"START component installer: {definition.DisplayName}; log {definition.LogPath}");
             AppendLog($"Starting {definition.DisplayName} installer. Log: {definition.LogPath}{Environment.NewLine}");
 
             var exitCode = await _processRunner.RunWslScriptInNewConsoleAndWaitAsync(
@@ -5487,10 +5482,12 @@ fi
             AppendLog(
                 $"{definition.DisplayName} installer exited with code {exitCode}.{Environment.NewLine}",
                 exitCode == 0 ? "green" : "red");
+            LauncherLogService.Operation($"END component installer: {definition.DisplayName}; exit code {exitCode}");
         }
         catch (Exception ex)
         {
             AppendLog($"{definition.DisplayName} installer could not be started: {ex.Message}{Environment.NewLine}", "red");
+            LauncherLogService.Operation($"END component installer: {definition.DisplayName}; no exit code: {ex.GetType().Name}");
             MessageBox.Show(
                 $"{definition.DisplayName} could not be installed.\n\n{ex.Message}",
                 "Component Install Failed",

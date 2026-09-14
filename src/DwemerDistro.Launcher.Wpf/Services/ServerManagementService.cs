@@ -103,7 +103,7 @@ public sealed class ServerManagementService(WslService wsl)
         return RunManagerAsync(BuildUninstallArguments(product), output, cancellationToken);
     }
 
-    private Task<Models.CommandResult> RunManagerAsync(
+    private async Task<Models.CommandResult> RunManagerAsync(
         IReadOnlyList<string> arguments,
         Action<string>? output,
         CancellationToken cancellationToken)
@@ -111,7 +111,23 @@ public sealed class ServerManagementService(WslService wsl)
         // Lifecycle mutations own system files, Apache configuration, and PostgreSQL databases.
         // WSL's explicit root user avoids interactive sudo prompts and keeps credentials out of
         // launcher input while the read-only status probe continues under the application account.
-        return wsl.RunDistroAsUserAsync("root", arguments, output, cancellationToken);
+        var operation = string.Join(" ", arguments);
+        LauncherLogService.Operation($"START {operation}");
+        try
+        {
+            var result = await wsl.RunDistroAsUserAsync("root", arguments, line =>
+            {
+                LauncherLogService.Operation(line);
+                output?.Invoke(line);
+            }, cancellationToken).ConfigureAwait(false);
+            LauncherLogService.Operation($"END {operation}; exit code {result.ExitCode}");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Operation($"END {operation}; no exit code: {ex.GetType().Name}");
+            throw;
+        }
     }
 
     // --- Command construction -------------------------------------------------------------
