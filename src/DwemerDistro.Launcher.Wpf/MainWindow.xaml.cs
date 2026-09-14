@@ -95,6 +95,19 @@ public partial class MainWindow : Window
             _ = Dispatcher.BeginInvoke(AnnounceCompactDistroStatus);
         }
 
+        if (e.PropertyName == nameof(MainWindowViewModel.ConnectionDetailsStatus))
+        {
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (MainTabs.SelectedIndex == 3 && AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+                {
+                    var peer = UIElementAutomationPeer.FromElement(ConnectionDetailsStatusTextBlock)
+                               ?? UIElementAutomationPeer.CreatePeerForElement(ConnectionDetailsStatusTextBlock);
+                    peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+                }
+            });
+        }
+
         if (e.PropertyName != nameof(MainWindowViewModel.OutputText))
         {
             return;
@@ -137,6 +150,10 @@ public partial class MainWindow : Window
         }
 
         UpdateComponentsPageLifetime();
+        if (MainTabs.SelectedIndex == 3)
+        {
+            _viewModel.RefreshConnectionDetailsCommand.Execute(null);
+        }
     }
 
     private void ComponentsViewModel_ActiveOperationsCompleted(object? sender, EventArgs e)

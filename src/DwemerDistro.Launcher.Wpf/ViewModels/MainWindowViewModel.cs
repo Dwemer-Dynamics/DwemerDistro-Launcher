@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -160,6 +162,11 @@ echo "CHIM-MCP installed and enabled."
     private DiscoveryService? _discoveryService;
     private Process? _serverProcess;
     private string? _wslIp;
+    private CancellationTokenSource? _connectionDetailsCts;
+    private bool _connectionDetailsClosed;
+    private string _thisPcAddressText = "Not checked";
+    private string _wslAddressText = "Not checked";
+    private string _connectionDetailsStatus = string.Empty;
     private Window? _firstRunSetupWindow;
 
     private string _outputText = string.Empty;
@@ -301,6 +308,8 @@ echo "CHIM-MCP installed and enabled."
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress);
         CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
         GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
+        RefreshConnectionDetailsCommand = new AsyncRelayCommand(RefreshConnectionDetailsAsync);
+        CopyConnectionDetailsCommand = new RelayCommand(CopyConnectionDetails, () => _connectionDetailsCts is null);
     }
 
     public string OutputText
@@ -829,6 +838,113 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand UpdateLauncherCommand { get; }
     public AsyncRelayCommand CleanLogsCommand { get; }
     public AsyncRelayCommand GenerateDiagnosticsCommand { get; }
+    public AsyncRelayCommand RefreshConnectionDetailsCommand { get; }
+    public RelayCommand CopyConnectionDetailsCommand { get; }
+    public string ThisPcAddressText { get => _thisPcAddressText; private set => SetProperty(ref _thisPcAddressText, value); }
+    public string WslAddressText { get => _wslAddressText; private set => SetProperty(ref _wslAddressText, value); }
+    public string ConnectionDetailsStatus { get => _connectionDetailsStatus; private set => SetProperty(ref _connectionDetailsStatus, value); }
+
+    // An on-demand snapshot only: never poll, use the discovery cache, or enter a stopped distro.
+    private async Task RefreshConnectionDetailsAsync()
+    {
+        if (_connectionDetailsClosed) return;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        _connectionDetailsCts = timeout;
+        CopyConnectionDetailsCommand.RaiseCanExecuteChanged();
+        ThisPcAddressText = "Checking...";
+        WslAddressText = "Checking...";
+        ConnectionDetailsStatus = string.Empty;
+        var ownsPassiveActivity = false;
+        try
+        {
+            ThisPcAddressText = await Task.Run(() =>
+            {
+                var addresses = NetworkInterface.GetAllNetworkInterfaces()
+                    .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up &&
+                        adapter.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)
+                    .SelectMany(adapter =>
+                    {
+                        var properties = adapter.GetIPProperties();
+                        // Ignore isolated virtual switches. Name every remaining adapter so a VPN
+                        // or second network is not silently advertised as the user's home network.
+                        if (!properties.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork &&
+                            !g.Address.Equals(IPAddress.Any))) return Array.Empty<string>();
+                        return properties.UnicastAddresses
+                            .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork &&
+                                !IPAddress.IsLoopback(a.Address) && !a.Address.Equals(IPAddress.Any) &&
+                                !a.Address.ToString().StartsWith("169.254.", StringComparison.Ordinal))
+                            .Select(a => $"{a.Address} ({adapter.Name})").ToArray();
+                    }).Distinct().OrderBy(address => address).ToArray();
+                return addresses.Length == 0 ? "No active network address" : string.Join(Environment.NewLine, addresses);
+            }, timeout.Token);
+
+            ownsPassiveActivity = TryBeginPassiveDistroActivity();
+            if (!ownsPassiveActivity)
+            {
+                WslAddressText = "Unavailable during maintenance";
+                return;
+            }
+
+            var running = await _wsl.RunWslAsync(new[] { "-l", "-q", "--running" }, cancellationToken: timeout.Token);
+            if (!running.Succeeded)
+            {
+                WslAddressText = "Unavailable";
+                return;
+            }
+            static bool ContainsDistro(string text) => text.Replace("\0", string.Empty)
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Contains(LauncherConstants.DistroName, StringComparer.OrdinalIgnoreCase);
+
+            if (!ContainsDistro(running.StandardOutput))
+            {
+                var installed = await _wsl.RunWslAsync(new[] { "-l", "-q" }, cancellationToken: timeout.Token);
+                if (!installed.Succeeded)
+                {
+                    WslAddressText = "Unavailable";
+                }
+                else
+                {
+                    WslAddressText = ContainsDistro(installed.StandardOutput) ? "Distro stopped" : "Distro not installed";
+                }
+                return;
+            }
+
+            var address = await _wsl.GetWslIpAsync(timeout.Token);
+            WslAddressText = IPAddress.TryParse(address, out var parsed) ? parsed.ToString() : "Unavailable";
+        }
+        catch (OperationCanceledException)
+        {
+            if (ThisPcAddressText == "Checking...") ThisPcAddressText = "Unavailable";
+            WslAddressText = "Unavailable";
+            ConnectionDetailsStatus = "Check cancelled or timed out. Refresh to try again.";
+        }
+        catch (Exception ex)
+        {
+            if (ThisPcAddressText == "Checking...") ThisPcAddressText = "Unavailable";
+            WslAddressText = "Unavailable";
+            ConnectionDetailsStatus = "Could not read connection details. Refresh to try again.";
+            LauncherLogService.Startup("Connection details check failed.", ex);
+        }
+        finally
+        {
+            if (ownsPassiveActivity) EndPassiveDistroActivity();
+            _connectionDetailsCts = null;
+            CopyConnectionDetailsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private void CopyConnectionDetails()
+    {
+        try
+        {
+            System.Windows.Clipboard.SetText($"This PC: {ThisPcAddressText}{Environment.NewLine}WSL address: {WslAddressText}");
+            ConnectionDetailsStatus = "Copied connection details.";
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            ConnectionDetailsStatus = "Clipboard is busy. Try Copy details again.";
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -846,6 +962,8 @@ echo "CHIM-MCP installed and enabled."
 
     public async Task ShutdownAsync()
     {
+        _connectionDetailsClosed = true;
+        _connectionDetailsCts?.Cancel();
         LauncherLogService.Startup("Launcher shutdown started.");
         _startAnimationTimer.Stop();
         _serverStatusRetryTimer.Stop();
