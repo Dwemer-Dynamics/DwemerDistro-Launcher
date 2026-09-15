@@ -294,6 +294,7 @@ echo "CHIM-MCP installed and enabled."
         OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
         OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
         OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        OpenReignRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("reign"), () => CanAccessDistro() && ReignManager.CanUseInstalledFeatures);
         ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"), CanAccessDistro);
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"), CanAccessDistro);
         ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""), CanAccessDistro);
@@ -826,6 +827,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenHerikaRollbackCommand { get; }
     public RelayCommand OpenStobeRollbackCommand { get; }
     public RelayCommand OpenDialecticRollbackCommand { get; }
+    public RelayCommand OpenReignRollbackCommand { get; }
     public RelayCommand ViewXttsLogsCommand { get; }
     public RelayCommand ViewChatterboxLogsCommand { get; }
     public RelayCommand ViewPocketTtsLogsCommand { get; }
@@ -1999,6 +2001,7 @@ echo "CHIM-MCP installed and enabled."
         OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
         OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
         OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
+        OpenReignRollbackCommand?.RaiseCanExecuteChanged();
         ViewXttsLogsCommand?.RaiseCanExecuteChanged();
         ViewChatterboxLogsCommand?.RaiseCanExecuteChanged();
         ViewPocketTtsLogsCommand?.RaiseCanExecuteChanged();
@@ -4671,6 +4674,12 @@ fi
             return;
         }
 
+        if (serverKey == "reign")
+        {
+            await RequestReignRollbackAsync(selectedTarget, rollbackWindow).ConfigureAwait(true);
+            return;
+        }
+
         var confirmed = MessageBox.Show(
             $"Rollback {displayName} to:\n\n{selectedTarget.Label}\n\n" +
             "Warning: Rolling back to much older versions can cause data/config incompatibility\n" +
@@ -5450,6 +5459,11 @@ fi
     {
         try
         {
+            if (serverKey == "reign")
+            {
+                await OpenReignRollbackWindowAsync().ConfigureAwait(true);
+                return;
+            }
             var config = GetRollbackServerConfig(serverKey);
             var (currentBranch, currentSha) = await GetServerHeadInfoAsync(config.Key).ConfigureAwait(false);
             var rollbackTargets = await GetRollbackTargetsAsync(config.Key).ConfigureAwait(false);

@@ -71,6 +71,7 @@ public sealed partial class MainWindowViewModel
             OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
             OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
             OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
+            OpenReignRollbackCommand?.RaiseCanExecuteChanged();
         }
     }
 
@@ -207,6 +208,7 @@ public sealed partial class MainWindowViewModel
         OpenHerikaRollbackCommand.RaiseCanExecuteChanged();
         OpenStobeRollbackCommand.RaiseCanExecuteChanged();
         OpenDialecticRollbackCommand.RaiseCanExecuteChanged();
+        OpenReignRollbackCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>Feeds the existing version status into the matching product's status line.</summary>

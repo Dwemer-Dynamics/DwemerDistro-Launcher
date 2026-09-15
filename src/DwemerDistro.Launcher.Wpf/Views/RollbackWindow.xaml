@@ -70,7 +70,7 @@
                    HorizontalAlignment="Center"
                    Margin="0,0,0,10" />
 
-        <TextBlock Grid.Row="2"
+        <TextBlock x:Name="InstructionsTextBlock" Grid.Row="2"
                    Text="Select a version rollback point.&#10;Note: database/config compatibility may vary by version."
                    Foreground="#CCCCCC"
                    FontSize="9"

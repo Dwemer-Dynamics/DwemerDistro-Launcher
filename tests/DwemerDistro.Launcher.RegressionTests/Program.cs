@@ -230,6 +230,19 @@ try
 
     // --- mod version status line ------------------------------------------------------------
 
+    Assert(MainWindowViewModel.IsReignRollbackId("20260915052412-1234")
+           && !MainWindowViewModel.IsReignRollbackId("../current")
+           && !MainWindowViewModel.IsReignRollbackId("20260915052412-1234; reboot")
+           && !MainWindowViewModel.IsReignRollbackId("20260915052412-1234\n"),
+        "Reign rollback accepts only retained build IDs, never shell text or paths.");
+    var retainedReign = MainWindowViewModel.ParseReignRollbackTargets("""
+        {"current":"20260915052512-2","targets":[
+          {"id":"20260915052412-1","version":"0.1.0","date":"2026-09-15","label":"0.1.0 | schema 2"},
+          {"id":"../current"}]}
+        """);
+    Assert(retainedReign.Count == 1 && retainedReign[0].Ref == "20260915052412-1",
+        "The Reign rollback picker must ignore invalid retained IDs.");
+
     Assert(MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "2026091521", "0.1.0"),
         "Reign must detect a newer dated build without requiring a semantic version bump.");
     Assert(!MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "2026091521", "0.0.9")
