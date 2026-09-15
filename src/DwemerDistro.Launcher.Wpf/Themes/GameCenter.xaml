@@ -278,17 +278,17 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Reign uses warm gold fills with dark text; focus and disabled states use the shared template. -->
+    <!-- Reign's primary action uses a muted gold fill with the shared light label. -->
     <Style x:Key="GameCenter.Brand.ReignButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
-        <Setter Property="Background" Value="{DynamicResource GameCenter.GoldSoft}" />
+        <Setter Property="Background" Value="#806515" />
         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
-        <Setter Property="Foreground" Value="#17130A" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="Background" Value="#6B5512" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
-                <Setter Property="Background" Value="#B89320" />
+                <Setter Property="Background" Value="#57450E" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
@@ -522,6 +522,10 @@
          rest - the fill is reserved for that panel's Update action. Hover and pressed move the
          same two channels as the filled brand buttons (fill to the brand tint, outline to the
          brand tone), and disabled drops the brand for the shared neutral treatment. -->
+    <Style x:Key="GameCenter.ModAction.ReignSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+    </Style>
+
     <Style x:Key="GameCenter.ModAction.ChimSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
         <Style.Triggers>

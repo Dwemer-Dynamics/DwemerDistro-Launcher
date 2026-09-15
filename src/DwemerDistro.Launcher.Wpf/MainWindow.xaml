@@ -741,7 +741,7 @@
                                                     AutomationProperties.Name="{Binding UpdateActionName}"
                                                     ToolTip="{Binding UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
-                                            <Button Content="REIGN Webpage" Command="{Binding OpenReignCommand}" Style="{StaticResource GameCenter.Brand.ReignButton}" Margin="0,0,0,6"
+                                            <Button Content="REIGN Webpage" Command="{Binding OpenReignCommand}" Style="{StaticResource GameCenter.ModAction.ReignSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="REIGN Webpage"
                                                     AutomationProperties.HelpText="Open the Reign server webpage. If it is unavailable, the launcher can start the server first." />
                                             <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
