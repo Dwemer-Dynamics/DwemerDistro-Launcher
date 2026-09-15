@@ -230,6 +230,15 @@ try
 
     // --- mod version status line ------------------------------------------------------------
 
+    Assert(MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "2026091521", "0.1.0"),
+        "Reign must detect a newer dated build without requiring a semantic version bump.");
+    Assert(!MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "2026091521", "0.0.9")
+           && !MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "2026091421", "0.1.0")
+           && !MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "invalid", null),
+        "Older releases, identical builds and unavailable remote metadata must not claim an update.");
+    Assert(MainWindowViewModel.IsReignUpdateAvailable(null, "0.1.0", null, "0.2.0"),
+        "An older Reign install without a date must still detect a newer release.");
+
     Assert(MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3")
                == "aiagent | 01-01-2026 | 1.2.3",
         "A mod with no confirmed update must keep the plain branch | date | semantic version line.");
@@ -710,8 +719,13 @@ try
     });
     Assert(reignItem.Branches.SequenceEqual(new[] { "Reign", "Dev" })
            && reignItem.SelectedBranch == "Dev"
-           && reignItem.StatusText == "0.1.0" && reignItem.StatusColor == "White",
-        "Reign exposes only production and Dev, with neutral version text for a local development installation.");
+           && reignItem.StatusText == "0.1.0" && reignItem.StatusColor == "LimeGreen",
+        "Reign exposes only production and Dev, with the shared green installed-version status.");
+    reignItem.ApplyVersionStatus("dev | 09-14-2026 | 0.1.0 | Update Available", "Yellow", true);
+    Assert(reignItem.StatusColor == "Yellow", "Reign update notices use the same yellow as the other mods.");
+    reignItem.ApplyStatusError("Version check failed");
+    Assert(reignItem.StatusColor == ServerManagerItemViewModel.ErrorColor,
+        "Reign errors use the shared red status color.");
 
     Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "aiagent", "dev") == ServerBranchChannel.Main
            && ServerManagerItemViewModel.MapBranchToChannel("dev", "aiagent", "dev") == ServerBranchChannel.Dev

@@ -158,26 +158,41 @@ public sealed partial class MainWindowViewModel
             QueueBackgroundTask("Reign version check", CheckReignServerUpdatesAsync, StartupVersionCheckTimeout);
     }
 
-    // Reign reports its semantic version from the activated compiled artifact, outside the source checkout.
+    // Read the activated artifact so rollback and failed builds cannot report uninstalled source metadata.
     private async Task CheckReignServerUpdatesAsync(CancellationToken cancellationToken = default)
     {
         string branch = ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel);
         string? installed = ReignManager.InstalledVersion;
-        if (!ReignManager.IsInstalled || !Version.TryParse(installed, out var current)) return;
-        string? payload = await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/ReignServer/{branch}/ReignRelease/release.json", cancellationToken).ConfigureAwait(false);
-        if (payload is null) return;
-        try
+        if (!ReignManager.IsInstalled) return;
+
+        var dateVersion = await ReadWslFileFirstLineAsync("/opt/dwemerdistro/reign/current/.version.txt", cancellationToken).ConfigureAwait(false);
+        var semanticVersion = await ReadWslFileFirstLineAsync("/opt/dwemerdistro/reign/current/.version_number.txt", cancellationToken).ConfigureAwait(false) ?? installed;
+        RunOnUi(() =>
         {
-            using var document = System.Text.Json.JsonDocument.Parse(payload);
-            if (!document.RootElement.TryGetProperty("version", out var value) || !Version.TryParse(value.GetString(), out var available)) return;
-            RunOnUi(() =>
-            {
-                if (ReignManager.InstalledVersion != installed || ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel) != branch) return;
-                bool updateAvailable = available > current;
-                ReignManager.ApplyVersionStatus(installed + (updateAvailable ? " | Update available" : ""), updateAvailable ? "White" : "LightGreen", updateAvailable);
-            });
-        }
-        catch (System.Text.Json.JsonException) { /* Keep the installed artifact version when remote metadata is invalid. */ }
+            if (!ReignManager.IsInstalled || ReignManager.InstalledVersion != installed || ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel) != branch) return;
+            ReignManager.ApplyVersionStatus(
+                BuildServerVersionStatusText("reign", branch, FormatDateVersion(dateVersion), semanticVersion),
+                string.IsNullOrWhiteSpace(semanticVersion) && string.IsNullOrWhiteSpace(dateVersion) ? "Yellow" : "LimeGreen", false);
+        });
+
+        var remoteDate = await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/ReignServer/{branch}/.version.txt", cancellationToken).ConfigureAwait(false);
+        var remoteVersion = await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/ReignServer/{branch}/.version_number.txt", cancellationToken).ConfigureAwait(false);
+        bool updateAvailable = IsReignUpdateAvailable(dateVersion, semanticVersion, remoteDate, remoteVersion);
+        RunOnUi(() =>
+        {
+            if (!ReignManager.IsInstalled || ReignManager.InstalledVersion != installed || ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel) != branch) return;
+            ReignManager.ApplyVersionStatus(
+                BuildServerVersionStatusText("reign", branch, FormatDateVersion(dateVersion), semanticVersion, updateAvailable),
+                updateAvailable || (string.IsNullOrWhiteSpace(semanticVersion) && string.IsNullOrWhiteSpace(dateVersion)) ? "Yellow" : "LimeGreen", updateAvailable);
+        });
+    }
+
+    // A newer dated build on the same version is an update, but an older release is never an upgrade.
+    internal static bool IsReignUpdateAvailable(string? installedDate, string? installedVersion, string? remoteDate, string? remoteVersion)
+    {
+        if (!Version.TryParse(installedVersion?.Trim(), out var current) || !Version.TryParse(remoteVersion?.Trim(), out var available)) return false;
+        if (available != current) return available > current;
+        return long.TryParse(installedDate, out var currentStamp) && long.TryParse(remoteDate, out var availableStamp) && availableStamp > currentStamp;
     }
 
     private void RaiseServerManagerDependentStates()

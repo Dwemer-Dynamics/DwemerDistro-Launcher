@@ -358,7 +358,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         if (Product == ServerProduct.Reign)
         {
             _versionStatusText = status?.Version ?? "Version unavailable";
-            _versionStatusColor = "White";
+            _versionStatusColor = string.IsNullOrWhiteSpace(status?.Version) ? "Yellow" : "LimeGreen";
             _isVersionUpdateAvailable = false;
         }
 
