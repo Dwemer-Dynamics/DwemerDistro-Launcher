@@ -280,6 +280,7 @@ echo "CHIM-MCP installed and enabled."
         OpenChimSkyrimLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM"));
         OpenChimSkyrimVrLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM_VR"));
         OpenDialecticLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("DIALECTIC"));
+        OpenReignLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("REIGN"));
         OpenStobeLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("STOBE"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
@@ -813,6 +814,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenChimSkyrimLogsCommand { get; }
     public RelayCommand OpenChimSkyrimVrLogsCommand { get; }
     public RelayCommand OpenDialecticLogsCommand { get; }
+    public RelayCommand OpenReignLogsCommand { get; }
     public RelayCommand OpenStobeLogsCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
@@ -1413,6 +1415,8 @@ echo "CHIM-MCP installed and enabled."
                 BuildDialecticPluginLogCandidates(documentsFolder)),
             "STOBE" => new LocalGameLogTarget("Stobe.log", "Kenshi",
                 BuildStobeModLogCandidates()),
+            "REIGN" => new LocalGameLogTarget("reignbeta.log", "Mount & Blade II: Bannerlord",
+                BuildReignModLogCandidates()),
             _ => null
         };
     }
@@ -3657,6 +3661,38 @@ echo "CHIM-MCP installed and enabled."
         {
             // A disconnected or changing drive should not prevent diagnostic creation.
         }
+    }
+
+    // Prefer the module selected by Reign's installer, then discover ordinary Steam installs.
+    private static string[] BuildReignModLogCandidates()
+    {
+        var candidates = new List<string>();
+        var recordPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".reign", "installation.json");
+        try
+        {
+            if (File.Exists(recordPath) && new FileInfo(recordPath).Length <= 65536)
+            {
+                using var record = JsonDocument.Parse(File.ReadAllText(recordPath));
+                if (record.RootElement.ValueKind == JsonValueKind.Object
+                    && record.RootElement.TryGetProperty("moduleRoot", out var root)
+                    && root.ValueKind == JsonValueKind.String
+                    && root.GetString() is { Length: > 2 } moduleRoot
+                    && char.IsLetter(moduleRoot[0]) && moduleRoot[1] == ':'
+                    && Path.IsPathFullyQualified(moduleRoot))
+                    candidates.Add(Path.Combine(moduleRoot, "logs", "reignbeta.log"));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // An absent or damaged installation record must not prevent Steam discovery.
+        }
+
+        foreach (var library in GetSteamLibraryPaths().Prepend(
+                     Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Steam")))
+            candidates.Add(Path.Combine(library, "steamapps", "common", "Mount & Blade II Bannerlord",
+                "Modules", "ReignBeta", "logs", "reignbeta.log"));
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static string[] BuildStobeModLogCandidates()

@@ -744,6 +744,9 @@
                                             <Button Content="REIGN Webpage" Command="{Binding OpenReignCommand}" Style="{StaticResource GameCenter.ModAction.ReignSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="REIGN Webpage"
                                                     AutomationProperties.HelpText="Open the Reign server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <Button Content="Open REIGN Logs" Command="{Binding OpenReignLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Open REIGN Logs"
+                                                    AutomationProperties.HelpText="Select the local Bannerlord reignbeta.log in File Explorer, or open its folder if the log has not been created yet." />
                                             <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall Reign" Command="{Binding ReignManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"

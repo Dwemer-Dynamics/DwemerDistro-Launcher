@@ -1519,7 +1519,13 @@ try
            && chimVrCandidates.All(candidate => candidate.Contains(@"\Skyrim VR\", StringComparison.OrdinalIgnoreCase)),
         "The Skyrim and Skyrim VR log buttons must never share candidates.");
 
-    Assert(MainWindowViewModel.ResolveLocalGameLogTarget("REIGN", redirectedDocuments) is null
+    var reignLogTarget = MainWindowViewModel.ResolveLocalGameLogTarget("REIGN", redirectedDocuments);
+    Assert(reignLogTarget is not null && reignLogTarget.LogFileName == "reignbeta.log"
+           && reignLogTarget.Candidates.Length > 0
+           && reignLogTarget.Candidates.All(path => Path.IsPathFullyQualified(path)
+               && path.EndsWith(@"\logs\reignbeta.log", StringComparison.OrdinalIgnoreCase)),
+        "Reign must resolve an absolute client log location without starting the game or server.");
+    Assert(MainWindowViewModel.ResolveLocalGameLogTarget("UNKNOWN", redirectedDocuments) is null
            && MainWindowViewModel.ResolveLocalGameLogTarget(null, redirectedDocuments) is null,
         "Unknown products must not resolve a local game log target.");
     var dialecticTarget = MainWindowViewModel.ResolveLocalGameLogTarget("DIALECTIC", redirectedDocuments);
