@@ -287,18 +287,8 @@
                             <StackPanel Grid.Row="1" Margin="18,14">
                                 <TextBlock Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.ModTitle}" />
                                 <TextBlock Text="{Binding SelectedGame.GameTitle}"
-                                           FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Gold}" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding SelectedGame.Key}" Value="REIGN">
-                                                    <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
+                                           Foreground="{DynamicResource GameCenter.Text}"
+                                           FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
                             </StackPanel>
                         </Grid>
                     </Border>
