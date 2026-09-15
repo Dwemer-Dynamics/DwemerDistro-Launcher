@@ -3288,6 +3288,10 @@ echo "CHIM-MCP installed and enabled."
             ("DialecticServer context_sent_to_llm_fast", "/var/www/html/DialecticServer/log/context_sent_to_llm_fast.log"),
             ("DialecticServer debugStream", "/var/www/html/DialecticServer/log/debugStream.log"),
             ("DialecticServer monitor", "/var/www/html/DialecticServer/log/monitor.log"),
+            ("ReignServer process and vector worker", "/var/lib/dwemerdistro/reign/logs/server.log"),
+            ("ReignServer events", "/var/lib/dwemerdistro/reign/logs/server-log.jsonl"),
+            ("ReignServer LLM requests", "/var/lib/dwemerdistro/reign/logs/llm-log.jsonl"),
+            ("ReignServer traces", "/var/lib/dwemerdistro/reign/logs/otel-traces.ndjson"),
             ("Apache error", "/var/log/apache2/error.log"),
             ("Apache vhost access", "/var/log/apache2/other_vhosts_access.log"),
             ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
@@ -3307,21 +3311,30 @@ echo "CHIM-MCP installed and enabled."
         {
             lines.Add($"--- Start of {name} ({path}) ---");
             var escapedPath = EscapeForSingleQuotedBash(path);
+            // Structured Reign events can be long single lines; bound bytes as well as lines.
+            var isReignLog = path.StartsWith("/var/lib/dwemerdistro/reign/", StringComparison.Ordinal);
+            var tailCommand = isReignLog
+                ? $"tail -c 262144 {escapedPath} | tail -n {maxLogLines}"
+                : $"tail -n {maxLogLines} {escapedPath}";
             var command =
-                $"if [ -f {escapedPath} ]; then tail -n {maxLogLines} {escapedPath}; else echo '[missing] {path}'; fi";
+                $"if [ -f {escapedPath} ]; then {tailCommand}; else echo '[missing] {path}'; fi";
 
             try
             {
                 var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(result.StandardOutput))
                 {
-                    lines.Add(SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
+                    lines.Add(isReignLog
+                        ? DiagnosticEvidenceService.Sanitize(result.StandardOutput.TrimEnd())
+                        : SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
                 }
 
                 if (!string.IsNullOrWhiteSpace(result.StandardError))
                 {
                     lines.Add("[stderr]");
-                    lines.Add(SanitizeDiagnosticText(result.StandardError.TrimEnd()));
+                    lines.Add(isReignLog
+                        ? DiagnosticEvidenceService.Sanitize(result.StandardError.TrimEnd())
+                        : SanitizeDiagnosticText(result.StandardError.TrimEnd()));
                 }
 
                 if (!result.Succeeded)
@@ -3425,6 +3438,7 @@ echo "CHIM-MCP installed and enabled."
             ("Dialectic Fallout New Vegas Plugin Log",
                 BuildDialecticPluginLogCandidates()),
             ("STOBE Mod Log", stobeCandidates),
+            ("REIGN Bannerlord Plugin Log", BuildReignModLogCandidates()),
             ("RE_Kenshi_log.txt", BuildStobeReKenshiLogCandidates(stobeCandidates))
         };
 
