@@ -269,6 +269,7 @@ echo "CHIM-MCP installed and enabled."
         OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
         OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
         OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        OpenReignCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("REIGN"), () => CanAccessDistro() && ReignManager.CanUseInstalledFeatures);
         // Nexus pages are plain external links: they never probe WSL, never start a server, and
         // stay usable whatever the local server is doing.
         OpenChimNexusCommand = new RelayCommand(() => OpenModNexusPage("CHIM"));
@@ -805,6 +806,7 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand OpenChimCommand { get; }
     public AsyncRelayCommand OpenStobeCommand { get; }
     public AsyncRelayCommand OpenDialecticCommand { get; }
+    public AsyncRelayCommand OpenReignCommand { get; }
     public RelayCommand OpenChimNexusCommand { get; }
     public RelayCommand OpenStobeNexusCommand { get; }
     public RelayCommand OpenDialecticNexusCommand { get; }
@@ -1348,6 +1350,7 @@ echo "CHIM-MCP installed and enabled."
             "CHIM" => LauncherConstants.ChimServerUiUrl,
             "STOBE" => LauncherConstants.StobeServerUiUrl,
             "DIALECTIC" => LauncherConstants.DialecticServerUiUrl,
+            "REIGN" => "http://127.0.0.1:8089/",
             _ => null
         };
     }
@@ -1985,6 +1988,7 @@ echo "CHIM-MCP installed and enabled."
         OpenChimCommand?.RaiseCanExecuteChanged();
         OpenStobeCommand?.RaiseCanExecuteChanged();
         OpenDialecticCommand?.RaiseCanExecuteChanged();
+        OpenReignCommand?.RaiseCanExecuteChanged();
         OpenPiperVoicesFolderCommand?.RaiseCanExecuteChanged();
         OpenTerminalCommand?.RaiseCanExecuteChanged();
         ViewMemoryUsageCommand?.RaiseCanExecuteChanged();

@@ -26,15 +26,16 @@ public partial class ServerUninstallWindow : Window
 
         Title = $"Uninstall {displayName}";
         HeadingTextBlock.Text = $"Uninstall {displayName}";
-        WarningTextBlock.Text =
-            $"This permanently deletes {displayName}, all its files, and all saved data. This cannot be undone.";
+        WarningTextBlock.Text = product == ServerProduct.Reign
+            ? "This removes ReignServer. Its database, settings, memories, and previous runtimes are retained. Use Repair to reinstall."
+            : $"This permanently deletes {displayName}, all its files, and all saved data. This cannot be undone.";
 
         ConfirmPromptTextBlock.Text = $"Type {_purgeToken} to confirm.";
 
         AutomationProperties.SetName(UninstallButton, $"Uninstall {displayName} permanently");
         AutomationProperties.SetHelpText(
             UninstallButton,
-            $"Permanently deletes {displayName}, all its files, and all saved data. This cannot be undone. " +
+            WarningTextBlock.Text + " " +
             $"Enabled only after {_purgeToken} is typed exactly.");
         AutomationProperties.SetName(ConfirmTokenTextBox, $"Type {_purgeToken} to confirm uninstall");
         AutomationProperties.SetHelpText(

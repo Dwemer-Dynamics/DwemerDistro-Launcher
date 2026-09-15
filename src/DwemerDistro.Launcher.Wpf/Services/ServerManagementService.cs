@@ -191,6 +191,7 @@ public sealed class ServerManagementService(WslService wsl)
             ServerProduct.Herika => "herika",
             ServerProduct.Stobe => "stobe",
             ServerProduct.Dialectic => "dialectic",
+            ServerProduct.Reign => "reign",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }
@@ -202,6 +203,7 @@ public sealed class ServerManagementService(WslService wsl)
         {
             ServerBranchChannel.Main => "main",
             ServerBranchChannel.Dev => "dev",
+            ServerBranchChannel.Reign => "reign",
             _ => throw new ArgumentOutOfRangeException(nameof(branch), branch, "Unknown branch channel.")
         };
     }
@@ -217,6 +219,7 @@ public sealed class ServerManagementService(WslService wsl)
             ServerProduct.Herika => "PURGE-HERIKA",
             ServerProduct.Stobe => "PURGE-STOBE",
             ServerProduct.Dialectic => "PURGE-DIALECTIC",
+            ServerProduct.Reign => "PURGE-REIGN",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }
@@ -224,14 +227,18 @@ public sealed class ServerManagementService(WslService wsl)
     /// <summary>Maps a launcher branch choice ("Main"/"Dev") onto the manager's channel.</summary>
     public static ServerBranchChannel ParseBranchChannel(string? choice)
     {
-        return string.Equals(choice?.Trim(), "Dev", StringComparison.OrdinalIgnoreCase)
-            ? ServerBranchChannel.Dev
-            : ServerBranchChannel.Main;
+        return choice?.Trim().ToLowerInvariant() switch
+        {
+            "dev" => ServerBranchChannel.Dev,
+            "reign" => ServerBranchChannel.Reign,
+            "unstable" => ServerBranchChannel.Dev,
+            _ => ServerBranchChannel.Main
+        };
     }
 
     public static string ToBranchChoice(ServerBranchChannel branch)
     {
-        return branch == ServerBranchChannel.Dev ? "Dev" : "Main";
+        return branch.ToString();
     }
 
     /// <summary>The display name used in the Mods page, the console, and the uninstall dialog.</summary>
@@ -242,6 +249,7 @@ public sealed class ServerManagementService(WslService wsl)
             ServerProduct.Herika => "HerikaServer",
             ServerProduct.Stobe => "StobeServer",
             ServerProduct.Dialectic => "DialecticServer",
+            ServerProduct.Reign => "ReignServer",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }
@@ -254,6 +262,7 @@ public sealed class ServerManagementService(WslService wsl)
             "CHIM" => ServerProduct.Herika,
             "STOBE" => ServerProduct.Stobe,
             "DIALECTIC" => ServerProduct.Dialectic,
+            "REIGN" => ServerProduct.Reign,
             _ => null
         };
     }
@@ -355,6 +364,7 @@ public sealed class ServerManagementService(WslService wsl)
             "herika" => ServerProduct.Herika,
             "stobe" => ServerProduct.Stobe,
             "dialectic" => ServerProduct.Dialectic,
+            "reign" => ServerProduct.Reign,
             _ => null
         };
     }

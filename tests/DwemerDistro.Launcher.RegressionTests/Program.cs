@@ -206,11 +206,16 @@ try
         "Quickstart must repair legacy CUDA installs that do not have Core's trusted selection state.");
 
     var gameCatalog = GameProfile.CreateCatalog();
-    Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
-        "The launcher rail must expose exactly three unique game profiles.");
-    Assert(gameCatalog.All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
+    Assert(gameCatalog.Count == 4 && gameCatalog.Select(game => game.Key).Distinct().Count() == 4,
+        "The launcher rail must expose four unique game profiles, including Reign.");
+    Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
                                    && game.RailImageSource.EndsWith("-rail.jpg", StringComparison.Ordinal)),
         "Every game profile must use local hero and rail artwork.");
+    Assert(gameCatalog.Single(game => game.Key == "REIGN").HeroImageSource == "pack://application:,,,/Assets/ReignLogo.png"
+           && ServerManagementService.ToProductToken(ServerProduct.Reign) == "reign"
+           && ServerManagementService.ParseBranchChannel("unstable") == ServerBranchChannel.Dev
+           && ServerManagementService.ParseBranchChannel("Reign") == ServerBranchChannel.Reign,
+        "Reign must use bundled artwork and map development installs onto the exposed Dev channel.");
 
     Assert(MainWindowViewModel.ResolveServerBranchChoice("Main", "aiagent") == "aiagent"
            && MainWindowViewModel.ResolveServerBranchChoice("Main", "stobe") == "stobe"
@@ -258,11 +263,12 @@ try
            && MainWindowViewModel.ResolveNexusPageUrl("STOBE") == "https://www.nexusmods.com/kenshi/mods/1891"
            && MainWindowViewModel.ResolveNexusPageUrl("DIALECTIC") == "https://www.nexusmods.com/newvegas/mods/99233",
         "Each Nexus button must open that mod's own Nexus page.");
-    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null),
-        "Every game profile on the rail must resolve to a Nexus page.");
+    Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null)
+           && MainWindowViewModel.ResolveNexusPageUrl("REIGN") is null,
+        "Only mods with a configured Nexus page expose that external action.");
     Assert(MainWindowViewModel.ResolveNexusPageUrl("UNKNOWN") is null,
         "An unknown product must resolve to no Nexus page rather than another mod's page.");
-    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
+    Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
             .StartsWith("https://www.nexusmods.com/", StringComparison.Ordinal)),
         "A Nexus button must open an external page, never a local server URL.");
     Assert(MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.OK)
@@ -393,7 +399,7 @@ try
         "Empty status output must be reported as a failure.");
 
     Assert(ServerManagementService.TryParseStatus(
-            "{\"schema_version\":1,\"servers\":[{\"product\":\"reign\",\"state\":\"installed\"}]}",
+            "{\"schema_version\":1,\"servers\":[{\"product\":\"future-product\",\"state\":\"installed\"}]}",
             out var futureSnapshot, out _)
            && futureSnapshot!.Servers.Count == 0,
         "A product this build does not know must be ignored, not fatal.");
@@ -475,7 +481,8 @@ try
     Assert(ServerManagementService.TryParseGameKey("CHIM") == ServerProduct.Herika
            && ServerManagementService.TryParseGameKey("stobe") == ServerProduct.Stobe
            && ServerManagementService.TryParseGameKey("DIALECTIC") == ServerProduct.Dialectic
-           && ServerManagementService.TryParseGameKey("REIGN") is null,
+           && ServerManagementService.TryParseGameKey("REIGN") == ServerProduct.Reign
+           && ServerManagementService.TryParseGameKey("UNKNOWN") is null,
         "Rail keys must map onto managed products, and an unmanaged key must map to nothing.");
 
     Assert(gameCatalog.All(game => ServerManagementService.TryParseGameKey(game.Key) is not null),
@@ -693,6 +700,19 @@ try
         DatabasePresent = true
     });
 
+    var reignItem = new ServerManagerItemViewModel(ServerProduct.Reign, "REIGN",
+        _ => Task.CompletedTask, _ => Task.CompletedTask,
+        _ => Task.CompletedTask, _ => Task.CompletedTask);
+    reignItem.ApplyStatus(stobeStatus with
+    {
+        Product = ServerProduct.Reign, State = ServerInstallState.Installed,
+        Branch = "unstable", ProductionBranch = "reign", Version = "0.1.0"
+    });
+    Assert(reignItem.Branches.SequenceEqual(new[] { "Reign", "Dev" })
+           && reignItem.SelectedBranch == "Dev"
+           && reignItem.StatusText == "0.1.0" && reignItem.StatusColor == "White",
+        "Reign exposes only production and Dev, with neutral version text for a local development installation.");
+
     Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "aiagent", "dev") == ServerBranchChannel.Main
            && ServerManagerItemViewModel.MapBranchToChannel("dev", "aiagent", "dev") == ServerBranchChannel.Dev
            && ServerManagerItemViewModel.MapBranchToChannel("unstable", null, null) == ServerBranchChannel.Dev
@@ -752,7 +772,8 @@ try
         "The shared distro update must still run update_gws.");
     Assert(sharedUpdateCommand.Contains("--skip-herika", StringComparison.Ordinal)
            && sharedUpdateCommand.Contains("--skip-stobe", StringComparison.Ordinal)
-           && sharedUpdateCommand.Contains("--skip-dialectic", StringComparison.Ordinal),
+           && sharedUpdateCommand.Contains("--skip-dialectic", StringComparison.Ordinal)
+           && sharedUpdateCommand.Contains("--skip-reign", StringComparison.Ordinal),
         "update_gws must skip every application server; the server manager owns those repositories.");
 
     var systemUpdateCommand = MainWindowViewModel.BuildSystemUpdateCommand();

@@ -25,6 +25,8 @@ public sealed partial class MainWindowViewModel
 
     public ServerManagerItemViewModel DialecticManager { get; private set; } = null!;
 
+    public ServerManagerItemViewModel ReignManager { get; private set; } = null!;
+
     /// <summary>The three products in rail order. Backs status refresh and every mod update.</summary>
     public IReadOnlyList<ServerManagerItemViewModel> ServerManagers { get; private set; } = [];
 
@@ -35,7 +37,8 @@ public sealed partial class MainWindowViewModel
         HerikaManager = CreateServerManagerItem(ServerProduct.Herika, "CHIM");
         StobeManager = CreateServerManagerItem(ServerProduct.Stobe, "STOBE");
         DialecticManager = CreateServerManagerItem(ServerProduct.Dialectic, "DIALECTIC");
-        ServerManagers = [HerikaManager, StobeManager, DialecticManager];
+        ReignManager = CreateServerManagerItem(ServerProduct.Reign, "REIGN");
+        ServerManagers = [HerikaManager, StobeManager, DialecticManager, ReignManager];
 
         // The three items live for the window's lifetime, so watching each one's busy flag needs no
         // detach: it is how one product's running operation disables the others' single-product
@@ -48,6 +51,10 @@ public sealed partial class MainWindowViewModel
 
     private void OnServerManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (ReferenceEquals(sender, ReignManager) && e.PropertyName == nameof(ServerManagerItemViewModel.SelectedBranch))
+        {
+            QueueBackgroundTask("Reign version check", CheckReignServerUpdatesAsync, StartupVersionCheckTimeout);
+        }
         if (e.PropertyName == nameof(ServerManagerItemViewModel.IsBusy))
         {
             RefreshServerUpdateConflictState();
@@ -60,6 +67,7 @@ public sealed partial class MainWindowViewModel
             OpenChimCommand?.RaiseCanExecuteChanged();
             OpenStobeCommand?.RaiseCanExecuteChanged();
             OpenDialecticCommand?.RaiseCanExecuteChanged();
+            OpenReignCommand?.RaiseCanExecuteChanged();
             OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
             OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
             OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
@@ -146,6 +154,30 @@ public sealed partial class MainWindowViewModel
 
             RaiseServerManagerDependentStates();
         });
+        if (result.IsSuccess && ReignManager.IsInstalled)
+            QueueBackgroundTask("Reign version check", CheckReignServerUpdatesAsync, StartupVersionCheckTimeout);
+    }
+
+    // Reign reports its semantic version from the activated compiled artifact, outside the source checkout.
+    private async Task CheckReignServerUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        string branch = ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel);
+        string? installed = ReignManager.InstalledVersion;
+        if (!ReignManager.IsInstalled || !Version.TryParse(installed, out var current)) return;
+        string? payload = await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/ReignServer/{branch}/ReignRelease/release.json", cancellationToken).ConfigureAwait(false);
+        if (payload is null) return;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(payload);
+            if (!document.RootElement.TryGetProperty("version", out var value) || !Version.TryParse(value.GetString(), out var available)) return;
+            RunOnUi(() =>
+            {
+                if (ReignManager.InstalledVersion != installed || ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel) != branch) return;
+                bool updateAvailable = available > current;
+                ReignManager.ApplyVersionStatus(installed + (updateAvailable ? " | Update available" : ""), updateAvailable ? "White" : "LightGreen", updateAvailable);
+            });
+        }
+        catch (System.Text.Json.JsonException) { /* Keep the installed artifact version when remote metadata is invalid. */ }
     }
 
     private void RaiseServerManagerDependentStates()
@@ -156,6 +188,7 @@ public sealed partial class MainWindowViewModel
         OpenChimCommand.RaiseCanExecuteChanged();
         OpenStobeCommand.RaiseCanExecuteChanged();
         OpenDialecticCommand.RaiseCanExecuteChanged();
+        OpenReignCommand.RaiseCanExecuteChanged();
         OpenHerikaRollbackCommand.RaiseCanExecuteChanged();
         OpenStobeRollbackCommand.RaiseCanExecuteChanged();
         OpenDialecticRollbackCommand.RaiseCanExecuteChanged();
@@ -447,7 +480,7 @@ public sealed partial class MainWindowViewModel
     /// </summary>
     internal static string BuildSharedComponentsUpdateCommand()
     {
-        return "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic";
+        return "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic --skip-reign";
     }
 
     /// <summary>
