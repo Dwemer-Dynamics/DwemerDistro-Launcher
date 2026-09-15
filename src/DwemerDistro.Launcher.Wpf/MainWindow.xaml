@@ -689,7 +689,7 @@
                                         </StackPanel>
                                     </StackPanel>
                                     <StackPanel x:Name="ReignDetails" Visibility="Collapsed">
-                                        <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="Reign" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / ReignServer" /></TextBlock>
+                                        <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="{Binding SelectedGame.Name}" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / ReignServer" /></TextBlock>
                                         <Grid Height="52" Margin="0,8,0,10">
                                             <Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                             <TextBlock Grid.Row="0" Text="{Binding ReignManager.StatusText}" Foreground="{Binding ReignManager.StatusColor}"
