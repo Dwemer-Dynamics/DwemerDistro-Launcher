@@ -25,6 +25,8 @@ public sealed partial class MainWindowViewModel
 
     public ServerManagerItemViewModel DialecticManager { get; private set; } = null!;
 
+    public ServerManagerItemViewModel ReignManager { get; private set; } = null!;
+
     /// <summary>The three products in rail order. Backs status refresh and every mod update.</summary>
     public IReadOnlyList<ServerManagerItemViewModel> ServerManagers { get; private set; } = [];
 
@@ -35,7 +37,8 @@ public sealed partial class MainWindowViewModel
         HerikaManager = CreateServerManagerItem(ServerProduct.Herika, "CHIM");
         StobeManager = CreateServerManagerItem(ServerProduct.Stobe, "STOBE");
         DialecticManager = CreateServerManagerItem(ServerProduct.Dialectic, "DIALECTIC");
-        ServerManagers = [HerikaManager, StobeManager, DialecticManager];
+        ReignManager = CreateServerManagerItem(ServerProduct.Reign, "REIGN");
+        ServerManagers = [HerikaManager, StobeManager, DialecticManager, ReignManager];
 
         // The three items live for the window's lifetime, so watching each one's busy flag needs no
         // detach: it is how one product's running operation disables the others' single-product
@@ -48,6 +51,10 @@ public sealed partial class MainWindowViewModel
 
     private void OnServerManagerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (ReferenceEquals(sender, ReignManager) && e.PropertyName == nameof(ServerManagerItemViewModel.SelectedBranch))
+        {
+            QueueBackgroundTask("Reign version check", CheckReignServerUpdatesAsync, StartupVersionCheckTimeout);
+        }
         if (e.PropertyName == nameof(ServerManagerItemViewModel.IsBusy))
         {
             RefreshServerUpdateConflictState();
@@ -60,9 +67,11 @@ public sealed partial class MainWindowViewModel
             OpenChimCommand?.RaiseCanExecuteChanged();
             OpenStobeCommand?.RaiseCanExecuteChanged();
             OpenDialecticCommand?.RaiseCanExecuteChanged();
+            OpenReignCommand?.RaiseCanExecuteChanged();
             OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
             OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
             OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
+            OpenReignRollbackCommand?.RaiseCanExecuteChanged();
         }
     }
 
@@ -146,6 +155,45 @@ public sealed partial class MainWindowViewModel
 
             RaiseServerManagerDependentStates();
         });
+        if (result.IsSuccess && ReignManager.IsInstalled)
+            QueueBackgroundTask("Reign version check", CheckReignServerUpdatesAsync, StartupVersionCheckTimeout);
+    }
+
+    // Read the activated artifact so rollback and failed builds cannot report uninstalled source metadata.
+    private async Task CheckReignServerUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        string branch = ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel);
+        string? installed = ReignManager.InstalledVersion;
+        if (!ReignManager.IsInstalled) return;
+
+        var dateVersion = await ReadWslFileFirstLineAsync("/opt/dwemerdistro/reign/current/.version.txt", cancellationToken).ConfigureAwait(false);
+        var semanticVersion = await ReadWslFileFirstLineAsync("/opt/dwemerdistro/reign/current/.version_number.txt", cancellationToken).ConfigureAwait(false) ?? installed;
+        RunOnUi(() =>
+        {
+            if (!ReignManager.IsInstalled || ReignManager.InstalledVersion != installed || ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel) != branch) return;
+            ReignManager.ApplyVersionStatus(
+                BuildServerVersionStatusText("reign", branch, FormatDateVersion(dateVersion), semanticVersion),
+                string.IsNullOrWhiteSpace(semanticVersion) && string.IsNullOrWhiteSpace(dateVersion) ? "Yellow" : "LimeGreen", false);
+        });
+
+        var remoteDate = await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/ReignServer/{branch}/.version.txt", cancellationToken).ConfigureAwait(false);
+        var remoteVersion = await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/ReignServer/{branch}/.version_number.txt", cancellationToken).ConfigureAwait(false);
+        bool updateAvailable = IsReignUpdateAvailable(dateVersion, semanticVersion, remoteDate, remoteVersion);
+        RunOnUi(() =>
+        {
+            if (!ReignManager.IsInstalled || ReignManager.InstalledVersion != installed || ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel) != branch) return;
+            ReignManager.ApplyVersionStatus(
+                BuildServerVersionStatusText("reign", branch, FormatDateVersion(dateVersion), semanticVersion, updateAvailable),
+                updateAvailable || (string.IsNullOrWhiteSpace(semanticVersion) && string.IsNullOrWhiteSpace(dateVersion)) ? "Yellow" : "LimeGreen", updateAvailable);
+        });
+    }
+
+    // A newer dated build on the same version is an update, but an older release is never an upgrade.
+    internal static bool IsReignUpdateAvailable(string? installedDate, string? installedVersion, string? remoteDate, string? remoteVersion)
+    {
+        if (!Version.TryParse(installedVersion?.Trim(), out var current) || !Version.TryParse(remoteVersion?.Trim(), out var available)) return false;
+        if (available != current) return available > current;
+        return long.TryParse(installedDate, out var currentStamp) && long.TryParse(remoteDate, out var availableStamp) && availableStamp > currentStamp;
     }
 
     private void RaiseServerManagerDependentStates()
@@ -156,9 +204,11 @@ public sealed partial class MainWindowViewModel
         OpenChimCommand.RaiseCanExecuteChanged();
         OpenStobeCommand.RaiseCanExecuteChanged();
         OpenDialecticCommand.RaiseCanExecuteChanged();
+        OpenReignCommand.RaiseCanExecuteChanged();
         OpenHerikaRollbackCommand.RaiseCanExecuteChanged();
         OpenStobeRollbackCommand.RaiseCanExecuteChanged();
         OpenDialecticRollbackCommand.RaiseCanExecuteChanged();
+        OpenReignRollbackCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>Feeds the existing version status into the matching product's status line.</summary>
@@ -447,7 +497,7 @@ public sealed partial class MainWindowViewModel
     /// </summary>
     internal static string BuildSharedComponentsUpdateCommand()
     {
-        return "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic";
+        return "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic --skip-reign";
     }
 
     /// <summary>

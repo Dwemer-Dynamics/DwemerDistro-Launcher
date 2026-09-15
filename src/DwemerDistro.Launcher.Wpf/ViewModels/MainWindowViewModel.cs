@@ -269,6 +269,7 @@ echo "CHIM-MCP installed and enabled."
         OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
         OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
         OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        OpenReignCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("REIGN"), () => CanAccessDistro() && ReignManager.CanUseInstalledFeatures);
         // Nexus pages are plain external links: they never probe WSL, never start a server, and
         // stay usable whatever the local server is doing.
         OpenChimNexusCommand = new RelayCommand(() => OpenModNexusPage("CHIM"));
@@ -279,6 +280,7 @@ echo "CHIM-MCP installed and enabled."
         OpenChimSkyrimLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM"));
         OpenChimSkyrimVrLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM_VR"));
         OpenDialecticLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("DIALECTIC"));
+        OpenReignLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("REIGN"));
         OpenStobeLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("STOBE"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
@@ -292,6 +294,7 @@ echo "CHIM-MCP installed and enabled."
         OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
         OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
         OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        OpenReignRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("reign"), () => CanAccessDistro() && ReignManager.CanUseInstalledFeatures);
         ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"), CanAccessDistro);
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"), CanAccessDistro);
         ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""), CanAccessDistro);
@@ -805,12 +808,14 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand OpenChimCommand { get; }
     public AsyncRelayCommand OpenStobeCommand { get; }
     public AsyncRelayCommand OpenDialecticCommand { get; }
+    public AsyncRelayCommand OpenReignCommand { get; }
     public RelayCommand OpenChimNexusCommand { get; }
     public RelayCommand OpenStobeNexusCommand { get; }
     public RelayCommand OpenDialecticNexusCommand { get; }
     public RelayCommand OpenChimSkyrimLogsCommand { get; }
     public RelayCommand OpenChimSkyrimVrLogsCommand { get; }
     public RelayCommand OpenDialecticLogsCommand { get; }
+    public RelayCommand OpenReignLogsCommand { get; }
     public RelayCommand OpenStobeLogsCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
@@ -822,6 +827,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenHerikaRollbackCommand { get; }
     public RelayCommand OpenStobeRollbackCommand { get; }
     public RelayCommand OpenDialecticRollbackCommand { get; }
+    public RelayCommand OpenReignRollbackCommand { get; }
     public RelayCommand ViewXttsLogsCommand { get; }
     public RelayCommand ViewChatterboxLogsCommand { get; }
     public RelayCommand ViewPocketTtsLogsCommand { get; }
@@ -1348,6 +1354,7 @@ echo "CHIM-MCP installed and enabled."
             "CHIM" => LauncherConstants.ChimServerUiUrl,
             "STOBE" => LauncherConstants.StobeServerUiUrl,
             "DIALECTIC" => LauncherConstants.DialecticServerUiUrl,
+            "REIGN" => "http://127.0.0.1:8089/",
             _ => null
         };
     }
@@ -1410,6 +1417,8 @@ echo "CHIM-MCP installed and enabled."
                 BuildDialecticPluginLogCandidates(documentsFolder)),
             "STOBE" => new LocalGameLogTarget("Stobe.log", "Kenshi",
                 BuildStobeModLogCandidates()),
+            "REIGN" => new LocalGameLogTarget("reignbeta.log", "Mount & Blade II: Bannerlord",
+                BuildReignModLogCandidates()),
             _ => null
         };
     }
@@ -1985,12 +1994,14 @@ echo "CHIM-MCP installed and enabled."
         OpenChimCommand?.RaiseCanExecuteChanged();
         OpenStobeCommand?.RaiseCanExecuteChanged();
         OpenDialecticCommand?.RaiseCanExecuteChanged();
+        OpenReignCommand?.RaiseCanExecuteChanged();
         OpenPiperVoicesFolderCommand?.RaiseCanExecuteChanged();
         OpenTerminalCommand?.RaiseCanExecuteChanged();
         ViewMemoryUsageCommand?.RaiseCanExecuteChanged();
         OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
         OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
         OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
+        OpenReignRollbackCommand?.RaiseCanExecuteChanged();
         ViewXttsLogsCommand?.RaiseCanExecuteChanged();
         ViewChatterboxLogsCommand?.RaiseCanExecuteChanged();
         ViewPocketTtsLogsCommand?.RaiseCanExecuteChanged();
@@ -3280,6 +3291,10 @@ echo "CHIM-MCP installed and enabled."
             ("DialecticServer context_sent_to_llm_fast", "/var/www/html/DialecticServer/log/context_sent_to_llm_fast.log"),
             ("DialecticServer debugStream", "/var/www/html/DialecticServer/log/debugStream.log"),
             ("DialecticServer monitor", "/var/www/html/DialecticServer/log/monitor.log"),
+            ("ReignServer process and vector worker", "/var/lib/dwemerdistro/reign/logs/server.log"),
+            ("ReignServer events", "/var/lib/dwemerdistro/reign/logs/server-log.jsonl"),
+            ("ReignServer LLM requests", "/var/lib/dwemerdistro/reign/logs/llm-log.jsonl"),
+            ("ReignServer traces", "/var/lib/dwemerdistro/reign/logs/otel-traces.ndjson"),
             ("Apache error", "/var/log/apache2/error.log"),
             ("Apache vhost access", "/var/log/apache2/other_vhosts_access.log"),
             ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
@@ -3299,21 +3314,30 @@ echo "CHIM-MCP installed and enabled."
         {
             lines.Add($"--- Start of {name} ({path}) ---");
             var escapedPath = EscapeForSingleQuotedBash(path);
+            // Structured Reign events can be long single lines; bound bytes as well as lines.
+            var isReignLog = path.StartsWith("/var/lib/dwemerdistro/reign/", StringComparison.Ordinal);
+            var tailCommand = isReignLog
+                ? $"tail -c 262144 {escapedPath} | tail -n {maxLogLines}"
+                : $"tail -n {maxLogLines} {escapedPath}";
             var command =
-                $"if [ -f {escapedPath} ]; then tail -n {maxLogLines} {escapedPath}; else echo '[missing] {path}'; fi";
+                $"if [ -f {escapedPath} ]; then {tailCommand}; else echo '[missing] {path}'; fi";
 
             try
             {
                 var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(result.StandardOutput))
                 {
-                    lines.Add(SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
+                    lines.Add(isReignLog
+                        ? DiagnosticEvidenceService.Sanitize(result.StandardOutput.TrimEnd())
+                        : SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
                 }
 
                 if (!string.IsNullOrWhiteSpace(result.StandardError))
                 {
                     lines.Add("[stderr]");
-                    lines.Add(SanitizeDiagnosticText(result.StandardError.TrimEnd()));
+                    lines.Add(isReignLog
+                        ? DiagnosticEvidenceService.Sanitize(result.StandardError.TrimEnd())
+                        : SanitizeDiagnosticText(result.StandardError.TrimEnd()));
                 }
 
                 if (!result.Succeeded)
@@ -3417,6 +3441,7 @@ echo "CHIM-MCP installed and enabled."
             ("Dialectic Fallout New Vegas Plugin Log",
                 BuildDialecticPluginLogCandidates()),
             ("STOBE Mod Log", stobeCandidates),
+            ("REIGN Bannerlord Plugin Log", BuildReignModLogCandidates()),
             ("RE_Kenshi_log.txt", BuildStobeReKenshiLogCandidates(stobeCandidates))
         };
 
@@ -3653,6 +3678,38 @@ echo "CHIM-MCP installed and enabled."
         {
             // A disconnected or changing drive should not prevent diagnostic creation.
         }
+    }
+
+    // Prefer the module selected by Reign's installer, then discover ordinary Steam installs.
+    private static string[] BuildReignModLogCandidates()
+    {
+        var candidates = new List<string>();
+        var recordPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".reign", "installation.json");
+        try
+        {
+            if (File.Exists(recordPath) && new FileInfo(recordPath).Length <= 65536)
+            {
+                using var record = JsonDocument.Parse(File.ReadAllText(recordPath));
+                if (record.RootElement.ValueKind == JsonValueKind.Object
+                    && record.RootElement.TryGetProperty("moduleRoot", out var root)
+                    && root.ValueKind == JsonValueKind.String
+                    && root.GetString() is { Length: > 2 } moduleRoot
+                    && char.IsLetter(moduleRoot[0]) && moduleRoot[1] == ':'
+                    && Path.IsPathFullyQualified(moduleRoot))
+                    candidates.Add(Path.Combine(moduleRoot, "logs", "reignbeta.log"));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // An absent or damaged installation record must not prevent Steam discovery.
+        }
+
+        foreach (var library in GetSteamLibraryPaths().Prepend(
+                     Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Steam")))
+            candidates.Add(Path.Combine(library, "steamapps", "common", "Mount & Blade II Bannerlord",
+                "Modules", "ReignBeta", "logs", "reignbeta.log"));
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static string[] BuildStobeModLogCandidates()
@@ -4617,6 +4674,12 @@ fi
             return;
         }
 
+        if (serverKey == "reign")
+        {
+            await RequestReignRollbackAsync(selectedTarget, rollbackWindow).ConfigureAwait(true);
+            return;
+        }
+
         var confirmed = MessageBox.Show(
             $"Rollback {displayName} to:\n\n{selectedTarget.Label}\n\n" +
             "Warning: Rolling back to much older versions can cause data/config incompatibility\n" +
@@ -5396,6 +5459,11 @@ fi
     {
         try
         {
+            if (serverKey == "reign")
+            {
+                await OpenReignRollbackWindowAsync().ConfigureAwait(true);
+                return;
+            }
             var config = GetRollbackServerConfig(serverKey);
             var (currentBranch, currentSha) = await GetServerHeadInfoAsync(config.Key).ConfigureAwait(false);
             var rollbackTargets = await GetRollbackTargetsAsync(config.Key).ConfigureAwait(false);
