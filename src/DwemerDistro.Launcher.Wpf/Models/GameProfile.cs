@@ -34,7 +34,7 @@ public sealed record GameProfile(
                 "pack://application:,,,/Assets/GameCenter/dialectic-hero.jpg",
                 "pack://application:,,,/Assets/GameCenter/dialectic-rail.jpg"),
             new GameProfile(
-                "REIGN", "REIGN (Alpha)", "Mount & Blade II: Bannerlord",
+                "REIGN", "REIGN (Closed Alpha)", "Mount & Blade II: Bannerlord",
                 "Character conversations, relationships, and persistent memories across Calradia.",
                 "pack://application:,,,/Assets/ReignLogo.png",
                 "pack://application:,,,/Assets/ReignLogo.png")
