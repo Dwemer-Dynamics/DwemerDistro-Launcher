@@ -166,8 +166,8 @@ public sealed partial class MainWindowViewModel
         string? installed = ReignManager.InstalledVersion;
         if (!ReignManager.IsInstalled) return;
 
-        var dateVersion = await ReadWslFileFirstLineAsync("/opt/dwemerdistro/reign/current/.version.txt", cancellationToken).ConfigureAwait(false);
-        var semanticVersion = await ReadWslFileFirstLineAsync("/opt/dwemerdistro/reign/current/.version_number.txt", cancellationToken).ConfigureAwait(false) ?? installed;
+        var dateVersion = await ReadWslFileFirstLineAsync("/var/www/html/ReignServer/runtime/current/.version.txt", cancellationToken).ConfigureAwait(false);
+        var semanticVersion = await ReadWslFileFirstLineAsync("/var/www/html/ReignServer/runtime/current/.version_number.txt", cancellationToken).ConfigureAwait(false) ?? installed;
         RunOnUi(() =>
         {
             if (!ReignManager.IsInstalled || ReignManager.InstalledVersion != installed || ServerManagementService.ToBranchToken(ReignManager.SelectedBranchChannel) != branch) return;

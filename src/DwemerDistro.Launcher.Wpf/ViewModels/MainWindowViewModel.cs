@@ -3291,10 +3291,10 @@ echo "CHIM-MCP installed and enabled."
             ("DialecticServer context_sent_to_llm_fast", "/var/www/html/DialecticServer/log/context_sent_to_llm_fast.log"),
             ("DialecticServer debugStream", "/var/www/html/DialecticServer/log/debugStream.log"),
             ("DialecticServer monitor", "/var/www/html/DialecticServer/log/monitor.log"),
-            ("ReignServer process and vector worker", "/var/lib/dwemerdistro/reign/logs/server.log"),
-            ("ReignServer events", "/var/lib/dwemerdistro/reign/logs/server-log.jsonl"),
-            ("ReignServer LLM requests", "/var/lib/dwemerdistro/reign/logs/llm-log.jsonl"),
-            ("ReignServer traces", "/var/lib/dwemerdistro/reign/logs/otel-traces.ndjson"),
+            ("ReignServer process and vector worker", "/var/www/html/ReignServer/data/logs/server.log"),
+            ("ReignServer events", "/var/www/html/ReignServer/data/logs/server-log.jsonl"),
+            ("ReignServer LLM requests", "/var/www/html/ReignServer/data/logs/llm-log.jsonl"),
+            ("ReignServer traces", "/var/www/html/ReignServer/data/logs/otel-traces.ndjson"),
             ("Apache error", "/var/log/apache2/error.log"),
             ("Apache vhost access", "/var/log/apache2/other_vhosts_access.log"),
             ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
@@ -3315,7 +3315,7 @@ echo "CHIM-MCP installed and enabled."
             lines.Add($"--- Start of {name} ({path}) ---");
             var escapedPath = EscapeForSingleQuotedBash(path);
             // Structured Reign events can be long single lines; bound bytes as well as lines.
-            var isReignLog = path.StartsWith("/var/lib/dwemerdistro/reign/", StringComparison.Ordinal);
+            var isReignLog = path.StartsWith("/var/www/html/ReignServer/data/", StringComparison.Ordinal);
             var tailCommand = isReignLog
                 ? $"tail -c 262144 {escapedPath} | tail -n {maxLogLines}"
                 : $"tail -n {maxLogLines} {escapedPath}";
