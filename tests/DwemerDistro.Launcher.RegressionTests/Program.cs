@@ -730,10 +730,22 @@ try
         Product = ServerProduct.Reign, State = ServerInstallState.Installed,
         Branch = "unstable", ProductionBranch = "reign", Version = "0.1.0"
     });
-    Assert(reignItem.Branches.SequenceEqual(new[] { "Reign", "Dev" })
+    Assert(reignItem.Branches.SequenceEqual(new[] { "Dev" })
            && reignItem.SelectedBranch == "Dev"
            && reignItem.StatusText == "0.1.0" && reignItem.StatusColor == "LimeGreen",
-        "Reign exposes only production and Dev, with the shared green installed-version status.");
+        "Reign exposes only Dev, with the shared green installed-version status.");
+    foreach (var hiddenBranch in new[] { "main", "reign", "unstable" })
+    {
+        reignItem.ApplyStatus(stobeStatus with
+        {
+            Product = ServerProduct.Reign, State = ServerInstallState.Installed,
+            Branch = hiddenBranch, ProductionBranch = "reign", Version = "0.1.0"
+        });
+        Assert(reignItem.SelectedBranch == "Dev", "Installed branches cannot restore a hidden Reign choice.");
+        reignItem.SelectedBranch = hiddenBranch;
+        Assert(reignItem.SelectedBranchChannel == ServerBranchChannel.Dev,
+            "Reign install, update and repair must target Dev even for a stale branch selection.");
+    }
     reignItem.ApplyVersionStatus("dev | 09-14-2026 | 0.1.0 | Update Available", "Yellow", true);
     Assert(reignItem.StatusColor == "Yellow", "Reign update notices use the same yellow as the other mods.");
     reignItem.ApplyStatusError("Version check failed");

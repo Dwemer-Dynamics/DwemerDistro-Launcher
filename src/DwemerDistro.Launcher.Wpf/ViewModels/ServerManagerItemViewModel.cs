@@ -60,7 +60,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         RailProductName = BuildRailProductName(product);
         UpdateActionName = BuildUpdateActionName(product);
         Branches = new ObservableCollection<string>(product == ServerProduct.Reign
-            ? new[] { "Reign", "Dev" } : new[] { "Main", "Dev" });
+            ? new[] { "Dev" } : new[] { "Main", "Dev" });
         _selectedBranch = Branches[0];
         _install = install;
         _update = update;
@@ -206,7 +206,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         get => _selectedBranch;
         set
         {
-            if (SetProperty(ref _selectedBranch, value))
+            if (SetProperty(ref _selectedBranch, Product == ServerProduct.Reign ? "Dev" : value))
             {
                 _hasExplicitBranchSelection = true;
                 OnPropertyChanged(nameof(UpdateActionHelpText));
@@ -363,7 +363,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         }
 
         // Follow the installed branch until the user stages a different update target.
-        if (!_hasExplicitBranchSelection && status?.Branch is not null)
+        if (Product != ServerProduct.Reign && !_hasExplicitBranchSelection && status?.Branch is not null)
         {
             var channel = MapBranchToChannel(status.Branch, status.ProductionBranch, status.DevelopmentBranch);
             if (channel is not null)
