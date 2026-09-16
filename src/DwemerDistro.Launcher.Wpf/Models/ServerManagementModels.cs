@@ -1,14 +1,15 @@
 namespace DwemerDistro.Launcher.Wpf.Models;
 
 /// <summary>
-/// The three optional application servers <c>ddistro_server</c> manages. The launcher never
+/// The optional application servers <c>ddistro_server</c> manages. The launcher never
 /// forwards a caller-supplied product string; every command is built from this closed set.
 /// </summary>
 public enum ServerProduct
 {
     Herika,
     Stobe,
-    Dialectic
+    Dialectic,
+    Reign
 }
 
 /// <summary>Install state reported by <c>ddistro_server status all --json</c>.</summary>
@@ -30,11 +31,12 @@ public enum ServerRepositoryState
     Managed
 }
 
-/// <summary>The two branch channels the manager accepts on install/update/repair.</summary>
+/// <summary>The branch channels the manager accepts on install/update/repair.</summary>
 public enum ServerBranchChannel
 {
     Main,
-    Dev
+    Dev,
+    Reign
 }
 
 /// <summary>

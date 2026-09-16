@@ -59,7 +59,9 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         PurgeToken = ServerManagementService.GetPurgeToken(product);
         RailProductName = BuildRailProductName(product);
         UpdateActionName = BuildUpdateActionName(product);
-        Branches = new ObservableCollection<string>(new[] { "Main", "Dev" });
+        Branches = new ObservableCollection<string>(product == ServerProduct.Reign
+            ? new[] { "Dev" } : new[] { "Main", "Dev" });
+        _selectedBranch = Branches[0];
         _install = install;
         _update = update;
         _repair = repair;
@@ -204,7 +206,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         get => _selectedBranch;
         set
         {
-            if (SetProperty(ref _selectedBranch, value))
+            if (SetProperty(ref _selectedBranch, Product == ServerProduct.Reign ? "Dev" : value))
             {
                 _hasExplicitBranchSelection = true;
                 OnPropertyChanged(nameof(UpdateActionHelpText));
@@ -336,6 +338,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
             ServerProduct.Herika => "CHIM",
             ServerProduct.Stobe => "STOBE",
             ServerProduct.Dialectic => "Dialectic",
+            ServerProduct.Reign => "Reign",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }
@@ -352,9 +355,15 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         _version = status?.Version;
         _port = status?.Port;
         _errorText = null;
+        if (Product == ServerProduct.Reign)
+        {
+            _versionStatusText = status?.Version ?? "Version unavailable";
+            _versionStatusColor = string.IsNullOrWhiteSpace(status?.Version) ? "Yellow" : "LimeGreen";
+            _isVersionUpdateAvailable = false;
+        }
 
         // Follow the installed branch until the user stages a different update target.
-        if (!_hasExplicitBranchSelection && status?.Branch is not null)
+        if (Product != ServerProduct.Reign && !_hasExplicitBranchSelection && status?.Branch is not null)
         {
             var channel = MapBranchToChannel(status.Branch, status.ProductionBranch, status.DevelopmentBranch);
             if (channel is not null)
@@ -442,7 +451,8 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         if (!string.IsNullOrWhiteSpace(productionBranch) &&
             string.Equals(normalized, productionBranch.Trim(), StringComparison.OrdinalIgnoreCase))
         {
-            return ServerBranchChannel.Main;
+            return string.Equals(productionBranch, "reign", StringComparison.OrdinalIgnoreCase)
+                ? ServerBranchChannel.Reign : ServerBranchChannel.Main;
         }
 
         if (!string.IsNullOrWhiteSpace(developmentBranch) &&
@@ -454,7 +464,9 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         return normalized.ToLowerInvariant() switch
         {
             "main" or "master" or "aiagent" or "stobe" or "dialectic" => ServerBranchChannel.Main,
-            "dev" or "unstable" => ServerBranchChannel.Dev,
+            "dev" => ServerBranchChannel.Dev,
+            "reign" => ServerBranchChannel.Reign,
+            "unstable" => ServerBranchChannel.Dev,
             _ => null
         };
     }

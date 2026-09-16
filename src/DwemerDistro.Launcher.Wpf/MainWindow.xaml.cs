@@ -276,6 +276,7 @@ public partial class MainWindow : Window
         ChimDetails.Visibility = key == "CHIM" ? Visibility.Visible : Visibility.Collapsed;
         StobeDetails.Visibility = key == "STOBE" ? Visibility.Visible : Visibility.Collapsed;
         DialecticDetails.Visibility = key == "DIALECTIC" ? Visibility.Visible : Visibility.Collapsed;
+        ReignDetails.Visibility = key == "REIGN" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ToggleConsoleButton_Click(object sender, RoutedEventArgs e)

@@ -206,11 +206,16 @@ try
         "Quickstart must repair legacy CUDA installs that do not have Core's trusted selection state.");
 
     var gameCatalog = GameProfile.CreateCatalog();
-    Assert(gameCatalog.Count == 3 && gameCatalog.Select(game => game.Key).Distinct().Count() == 3,
-        "The launcher rail must expose exactly three unique game profiles.");
-    Assert(gameCatalog.All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
+    Assert(gameCatalog.Count == 4 && gameCatalog.Select(game => game.Key).Distinct().Count() == 4,
+        "The launcher rail must expose four unique game profiles, including Reign.");
+    Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
                                    && game.RailImageSource.EndsWith("-rail.jpg", StringComparison.Ordinal)),
         "Every game profile must use local hero and rail artwork.");
+    Assert(gameCatalog.Single(game => game.Key == "REIGN").HeroImageSource == "pack://application:,,,/Assets/ReignLogo.png"
+           && ServerManagementService.ToProductToken(ServerProduct.Reign) == "reign"
+           && ServerManagementService.ParseBranchChannel("unstable") == ServerBranchChannel.Dev
+           && ServerManagementService.ParseBranchChannel("Reign") == ServerBranchChannel.Reign,
+        "Reign must use bundled artwork and map development installs onto the exposed Dev channel.");
 
     Assert(MainWindowViewModel.ResolveServerBranchChoice("Main", "aiagent") == "aiagent"
            && MainWindowViewModel.ResolveServerBranchChoice("Main", "stobe") == "stobe"
@@ -224,6 +229,28 @@ try
         "Existing production and development branches must map back to visible choices.");
 
     // --- mod version status line ------------------------------------------------------------
+
+    Assert(MainWindowViewModel.IsReignRollbackId("20260915052412-1234")
+           && !MainWindowViewModel.IsReignRollbackId("../current")
+           && !MainWindowViewModel.IsReignRollbackId("20260915052412-1234; reboot")
+           && !MainWindowViewModel.IsReignRollbackId("20260915052412-1234\n"),
+        "Reign rollback accepts only retained build IDs, never shell text or paths.");
+    var retainedReign = MainWindowViewModel.ParseReignRollbackTargets("""
+        {"current":"20260915052512-2","targets":[
+          {"id":"20260915052412-1","version":"0.1.0","date":"2026-09-15","label":"0.1.0 | schema 2"},
+          {"id":"../current"}]}
+        """);
+    Assert(retainedReign.Count == 1 && retainedReign[0].Ref == "20260915052412-1",
+        "The Reign rollback picker must ignore invalid retained IDs.");
+
+    Assert(MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "2026091521", "0.1.0"),
+        "Reign must detect a newer dated build without requiring a semantic version bump.");
+    Assert(!MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "2026091521", "0.0.9")
+           && !MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "2026091421", "0.1.0")
+           && !MainWindowViewModel.IsReignUpdateAvailable("2026091421", "0.1.0", "invalid", null),
+        "Older releases, identical builds and unavailable remote metadata must not claim an update.");
+    Assert(MainWindowViewModel.IsReignUpdateAvailable(null, "0.1.0", null, "0.2.0"),
+        "An older Reign install without a date must still detect a newer release.");
 
     Assert(MainWindowViewModel.BuildServerVersionStatusText("herika", "aiagent", "01-01-2026", "1.2.3")
                == "aiagent | 01-01-2026 | 1.2.3",
@@ -258,11 +285,12 @@ try
            && MainWindowViewModel.ResolveNexusPageUrl("STOBE") == "https://www.nexusmods.com/kenshi/mods/1891"
            && MainWindowViewModel.ResolveNexusPageUrl("DIALECTIC") == "https://www.nexusmods.com/newvegas/mods/99233",
         "Each Nexus button must open that mod's own Nexus page.");
-    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null),
-        "Every game profile on the rail must resolve to a Nexus page.");
+    Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null)
+           && MainWindowViewModel.ResolveNexusPageUrl("REIGN") is null,
+        "Only mods with a configured Nexus page expose that external action.");
     Assert(MainWindowViewModel.ResolveNexusPageUrl("UNKNOWN") is null,
         "An unknown product must resolve to no Nexus page rather than another mod's page.");
-    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
+    Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
             .StartsWith("https://www.nexusmods.com/", StringComparison.Ordinal)),
         "A Nexus button must open an external page, never a local server URL.");
     Assert(MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.OK)
@@ -393,7 +421,7 @@ try
         "Empty status output must be reported as a failure.");
 
     Assert(ServerManagementService.TryParseStatus(
-            "{\"schema_version\":1,\"servers\":[{\"product\":\"reign\",\"state\":\"installed\"}]}",
+            "{\"schema_version\":1,\"servers\":[{\"product\":\"future-product\",\"state\":\"installed\"}]}",
             out var futureSnapshot, out _)
            && futureSnapshot!.Servers.Count == 0,
         "A product this build does not know must be ignored, not fatal.");
@@ -475,7 +503,8 @@ try
     Assert(ServerManagementService.TryParseGameKey("CHIM") == ServerProduct.Herika
            && ServerManagementService.TryParseGameKey("stobe") == ServerProduct.Stobe
            && ServerManagementService.TryParseGameKey("DIALECTIC") == ServerProduct.Dialectic
-           && ServerManagementService.TryParseGameKey("REIGN") is null,
+           && ServerManagementService.TryParseGameKey("REIGN") == ServerProduct.Reign
+           && ServerManagementService.TryParseGameKey("UNKNOWN") is null,
         "Rail keys must map onto managed products, and an unmanaged key must map to nothing.");
 
     Assert(gameCatalog.All(game => ServerManagementService.TryParseGameKey(game.Key) is not null),
@@ -693,6 +722,36 @@ try
         DatabasePresent = true
     });
 
+    var reignItem = new ServerManagerItemViewModel(ServerProduct.Reign, "REIGN",
+        _ => Task.CompletedTask, _ => Task.CompletedTask,
+        _ => Task.CompletedTask, _ => Task.CompletedTask);
+    reignItem.ApplyStatus(stobeStatus with
+    {
+        Product = ServerProduct.Reign, State = ServerInstallState.Installed,
+        Branch = "unstable", ProductionBranch = "reign", Version = "0.1.0"
+    });
+    Assert(reignItem.Branches.SequenceEqual(new[] { "Dev" })
+           && reignItem.SelectedBranch == "Dev"
+           && reignItem.StatusText == "0.1.0" && reignItem.StatusColor == "LimeGreen",
+        "Reign exposes only Dev, with the shared green installed-version status.");
+    foreach (var hiddenBranch in new[] { "main", "reign", "unstable" })
+    {
+        reignItem.ApplyStatus(stobeStatus with
+        {
+            Product = ServerProduct.Reign, State = ServerInstallState.Installed,
+            Branch = hiddenBranch, ProductionBranch = "reign", Version = "0.1.0"
+        });
+        Assert(reignItem.SelectedBranch == "Dev", "Installed branches cannot restore a hidden Reign choice.");
+        reignItem.SelectedBranch = hiddenBranch;
+        Assert(reignItem.SelectedBranchChannel == ServerBranchChannel.Dev,
+            "Reign install, update and repair must target Dev even for a stale branch selection.");
+    }
+    reignItem.ApplyVersionStatus("dev | 09-14-2026 | 0.1.0 | Update Available", "Yellow", true);
+    Assert(reignItem.StatusColor == "Yellow", "Reign update notices use the same yellow as the other mods.");
+    reignItem.ApplyStatusError("Version check failed");
+    Assert(reignItem.StatusColor == ServerManagerItemViewModel.ErrorColor,
+        "Reign errors use the shared red status color.");
+
     Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "aiagent", "dev") == ServerBranchChannel.Main
            && ServerManagerItemViewModel.MapBranchToChannel("dev", "aiagent", "dev") == ServerBranchChannel.Dev
            && ServerManagerItemViewModel.MapBranchToChannel("unstable", null, null) == ServerBranchChannel.Dev
@@ -752,7 +811,8 @@ try
         "The shared distro update must still run update_gws.");
     Assert(sharedUpdateCommand.Contains("--skip-herika", StringComparison.Ordinal)
            && sharedUpdateCommand.Contains("--skip-stobe", StringComparison.Ordinal)
-           && sharedUpdateCommand.Contains("--skip-dialectic", StringComparison.Ordinal),
+           && sharedUpdateCommand.Contains("--skip-dialectic", StringComparison.Ordinal)
+           && sharedUpdateCommand.Contains("--skip-reign", StringComparison.Ordinal),
         "update_gws must skip every application server; the server manager owns those repositories.");
 
     var systemUpdateCommand = MainWindowViewModel.BuildSystemUpdateCommand();
@@ -1498,7 +1558,13 @@ try
            && chimVrCandidates.All(candidate => candidate.Contains(@"\Skyrim VR\", StringComparison.OrdinalIgnoreCase)),
         "The Skyrim and Skyrim VR log buttons must never share candidates.");
 
-    Assert(MainWindowViewModel.ResolveLocalGameLogTarget("REIGN", redirectedDocuments) is null
+    var reignLogTarget = MainWindowViewModel.ResolveLocalGameLogTarget("REIGN", redirectedDocuments);
+    Assert(reignLogTarget is not null && reignLogTarget.LogFileName == "reignbeta.log"
+           && reignLogTarget.Candidates.Length > 0
+           && reignLogTarget.Candidates.All(path => Path.IsPathFullyQualified(path)
+               && path.EndsWith(@"\logs\reignbeta.log", StringComparison.OrdinalIgnoreCase)),
+        "Reign must resolve an absolute client log location without starting the game or server.");
+    Assert(MainWindowViewModel.ResolveLocalGameLogTarget("UNKNOWN", redirectedDocuments) is null
            && MainWindowViewModel.ResolveLocalGameLogTarget(null, redirectedDocuments) is null,
         "Unknown products must not resolve a local game log target.");
     var dialecticTarget = MainWindowViewModel.ResolveLocalGameLogTarget("DIALECTIC", redirectedDocuments);

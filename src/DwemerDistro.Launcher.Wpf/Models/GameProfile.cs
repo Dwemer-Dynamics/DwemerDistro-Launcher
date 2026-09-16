@@ -32,7 +32,12 @@ public sealed record GameProfile(
                 "Fallout: New Vegas / TTW",
                 "Natural dialogue, durable memories, and character actions across New Vegas and the Capital Wasteland.",
                 "pack://application:,,,/Assets/GameCenter/dialectic-hero.jpg",
-                "pack://application:,,,/Assets/GameCenter/dialectic-rail.jpg")
+                "pack://application:,,,/Assets/GameCenter/dialectic-rail.jpg"),
+            new GameProfile(
+                "REIGN", "REIGN (Closed Alpha)", "Mount & Blade II: Bannerlord",
+                "Character conversations, relationships, and persistent memories across Calradia.",
+                "pack://application:,,,/Assets/ReignLogo.png",
+                "pack://application:,,,/Assets/ReignLogo.png")
         };
     }
 }

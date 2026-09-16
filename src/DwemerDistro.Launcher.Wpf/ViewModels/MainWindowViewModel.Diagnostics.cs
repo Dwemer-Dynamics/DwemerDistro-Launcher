@@ -37,7 +37,7 @@ public sealed partial class MainWindowViewModel
             lines.Add($"WSL address: {wslIp ?? "[unavailable; distro stopped, missing, or status check failed]"}");
             var targets = new HashSet<(string Host, int Port)>();
             using var http = new HttpClient(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(3) };
-            foreach (var (game, port) in new[] { ("skyrim", LauncherConstants.SkyrimServerPort), ("stobe", LauncherConstants.StobeServerPort), ("dialectic", LauncherConstants.DialecticServerPort) })
+            foreach (var (game, port) in new[] { ("skyrim", LauncherConstants.SkyrimServerPort), ("stobe", LauncherConstants.StobeServerPort), ("dialectic", LauncherConstants.DialecticServerPort), ("reign", LauncherConstants.ReignServerPort) })
             {
                 foreach (var host in new[] { "127.0.0.1", wslIp }.OfType<string>()) targets.Add((host, port));
                 foreach (var address in pcAddresses.Where(a => DiagnosticEvidenceService.IsLocalAddress(a.Address)).Take(3))
@@ -110,7 +110,7 @@ public sealed partial class MainWindowViewModel
     private async Task AddUpdateInstallEvidenceAsync(List<string> lines)
     {
         lines.Add("Update / Install Evidence");
-        lines.Add($"Selected launcher branches: CHIM={TargetHerikaBranch}; STOBE={TargetStobeBranch}; DIALECTIC={TargetDialecticBranch}");
+        lines.Add($"Selected launcher branches: CHIM={TargetHerikaBranch}; STOBE={TargetStobeBranch}; DIALECTIC={TargetDialecticBranch}; REIGN={ReignManager.SelectedBranch}");
         lines.Add("Persistent logs retain previous operations; use their timestamps. Missing logs may predate this launcher.");
         try
         {
@@ -163,7 +163,7 @@ public sealed partial class MainWindowViewModel
                 $"elif [ ! -r {InstalledSystemReleaseManifestPath} ]; then echo '[unreadable] {InstalledSystemReleaseManifestPath}'; " +
                 $"else head -c 16384 {InstalledSystemReleaseManifestPath}; echo; fi; " +
                 "echo 'Launcher sync marker:'; head -c 256 /home/dwemer/.launcher_synced_version 2>&1; echo; " +
-                "for repo in /home/dwemer/dwemerdistro /var/www/html/HerikaServer /var/www/html/StobeServer /var/www/html/DialecticServer; do " +
+                "for repo in /home/dwemer/dwemerdistro /var/www/html/HerikaServer /var/www/html/StobeServer /var/www/html/DialecticServer /var/www/html/ReignServer; do " +
                 "echo \"Repository: $repo\"; if [ -d \"$repo/.git\" ]; then " +
                 "git -C \"$repo\" rev-parse --abbrev-ref HEAD; git -C \"$repo\" remote get-url origin; git -C \"$repo\" rev-parse HEAD; " +
                 "else echo '[not installed or no Git metadata]'; fi; done; " +
