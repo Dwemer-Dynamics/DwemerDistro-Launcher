@@ -122,6 +122,7 @@ public sealed class VoiceEngineService(WslService wsl)
     {
         return NormalizeEngineKey(engineKey) switch
         {
+            "higgs" => "Higgs TTS 3",
             "chatterbox" => "Chatterbox",
             "omnivoice" => "Multilingual OmniVoice",
             "pockettts" => "Pocket-TTS",
@@ -133,6 +134,7 @@ public sealed class VoiceEngineService(WslService wsl)
     {
         return (engineKey ?? string.Empty).Trim().ToLowerInvariant() switch
         {
+            "higgs" => "higgs",
             "chatterbox" => "chatterbox",
             "omnivoice" or "omni_voice" or "omni-voice" => "omnivoice",
             "pocket_tts" or "pocket-tts" or "pockettts" => "pockettts",
@@ -142,7 +144,7 @@ public sealed class VoiceEngineService(WslService wsl)
 
     private static bool IsClonedVoiceEngine(string key)
     {
-        return NormalizeEngineKey(key) is "pockettts" or "chatterbox" or "omnivoice";
+        return NormalizeEngineKey(key) is "pockettts" or "chatterbox" or "omnivoice" or "higgs";
     }
 
     private async Task EnsurePostgresStartedAsync(CancellationToken cancellationToken)
@@ -196,7 +198,7 @@ import urllib.request
 from pathlib import Path
 
 engine = (sys.argv[1] if len(sys.argv) > 1 else "pockettts").strip().lower()
-if engine not in ("pockettts", "chatterbox", "omnivoice"):
+if engine not in ("pockettts", "chatterbox", "omnivoice", "higgs"):
     engine = "pockettts"
 
 def read_omnivoice_language():
@@ -280,6 +282,22 @@ if engine == "chatterbox":
     stobe_name = "Chatterbox Default"
     stobe_url = herika_url
     display = "Chatterbox"
+elif engine == "higgs":
+    herika_driver = stobe_type = "higgs"
+    herika_label = stobe_name = "Higgs TTS 3 (DwemerDistro)"
+    display = "Higgs TTS 3"
+    herika_url = stobe_url = "http://127.0.0.1:8025"
+    service_error = "Higgs is not ready; start it under service controls."
+    try:
+        config = json.loads(Path("/home/dwemer/higgs-tts/server.json").read_text())
+        port = int(config["port"])
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=3) as response:
+            models = json.load(response).get("data", [])
+        if any(m.get("id") == "higgs-v3" and m.get("family") == "higgs_audio_tts" for m in models):
+            herika_url = stobe_url = f"http://127.0.0.1:{port}"
+            service_error = None
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
 elif engine == "omnivoice":
     service_error = None if identify_provider(8021) == "omnivoice" else "omnivoice is not running on port 8021"
     herika_driver = "omnivoice"
@@ -338,9 +356,9 @@ def apply_herika_style(db):
     driver = sql_literal(herika_driver)
     label = sql_literal(herika_label)
     url = sql_literal(herika_url)
-    fallback_male = "default_male" if engine == "omnivoice" and db == "dialectic" else "malenord"
-    fallback_female = "default_female" if engine == "omnivoice" and db == "dialectic" else "femalenord"
-    if engine == "omnivoice":
+    fallback_male = "default_male" if engine in ("omnivoice", "higgs") and db == "dialectic" else "malenord"
+    fallback_female = "default_female" if engine in ("omnivoice", "higgs") and db == "dialectic" else "femalenord"
+    if engine in ("omnivoice", "higgs"):
         metadata = sql_literal(json.dumps({
             "language": active_language,
             "voicelogic": "voicetype",
@@ -361,6 +379,8 @@ def apply_herika_style(db):
             if pockettts_audio_cpp:
                 metadata_data["model"] = "pocket-tts"
         metadata = sql_literal(json.dumps(metadata_data))
+    if engine == "higgs":
+        metadata = sql_literal(json.dumps({"model": "higgs-v3", "voicelogic": "voicetype", "fallback_male": fallback_male, "fallback_female": fallback_female}))
     managed_labels = {
         "pockettts": ["ddistro pockettts", "pocket tts audio.cpp", "pocket tts default"],
         "chatterbox": ["ddistro chatterbox", "chatterbox default"],
@@ -409,7 +429,7 @@ WHERE {" OR ".join(player_conditions)};
 """)
 
     sql = "\n".join(statements)
-    return psql(db, sql)
+    return psql(db, "BEGIN;\n" + sql + "\nCOMMIT;" if engine == "higgs" else sql)
 
 def apply_stobe_style(db):
     provider = sql_literal(stobe_type)
@@ -434,6 +454,8 @@ def apply_stobe_style(db):
         config_data["api_format"] = "audio_cpp" if pockettts_audio_cpp else "legacy"
         if pockettts_audio_cpp:
             config_data["model"] = "pocket-tts"
+    if engine == "higgs":
+        config_data = {"model": "higgs-v3", "fallback_male": fallback_male, "fallback_female": fallback_female}
     config = sql_literal(json.dumps(config_data))
     managed_names = {
         "pocket_tts": ["Pocket TTS Default", "Pocket TTS audio.cpp"],
@@ -446,7 +468,7 @@ def apply_stobe_style(db):
     statements = [f"""
 UPDATE core_tts_connector
 SET is_default = FALSE
-WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'cartesia', 'inworld');
+WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'higgs', 'cartesia', 'inworld');
 
 INSERT INTO core_tts_connector(name, connector_type, base_url, is_default, config)
 SELECT {name}, {provider}, {url}, TRUE, {config}::jsonb
@@ -477,7 +499,7 @@ WHERE {" OR ".join(profile_conditions)};
 """)
 
     sql = "\n".join(statements)
-    return psql(db, sql)
+    return psql(db, "BEGIN;\n" + sql + "\nCOMMIT;" if engine == "higgs" else sql)
 
 statuses = []
 for target in TARGETS:
@@ -492,6 +514,13 @@ for target in TARGETS:
             "error": service_error,
         })
         continue
+    if engine == "higgs":
+        server = {"dwemer": "HerikaServer", "stobe": "StobeServer", "dialectic": "DialecticServer"}.get(db)
+        if server and not (Path("/var/www/html") / server / "tts/tts-higgs.php").is_file():
+            statuses.append({"targetName": target["targetName"], "databaseName": db,
+                "applied": False, "skipped": True, "statusText": "Server update required",
+                "error": "Update this mod server to a version with the Higgs provider before selecting it."})
+            continue
     columns, error = columns_for(db, "core_tts_connector")
     if error:
         statuses.append({

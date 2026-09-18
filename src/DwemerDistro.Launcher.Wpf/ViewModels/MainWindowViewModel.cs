@@ -5931,6 +5931,12 @@ fi
                 rm -f /home/dwemer/audio.cpp/start.sh
                 """,
                 "[ -x /home/dwemer/pocket-tts/venv/bin/python ] && [ -e /home/dwemer/pocket-tts/start.sh ]"),
+            "higgs" => new(
+                "higgs",
+                "Higgs TTS 3 (experimental)",
+                "[ -x /usr/local/bin/install_higgs_tts ] || { echo 'Update DwemerDistro before installing Higgs.'; exit 1; }; /usr/local/bin/install_higgs_tts auto",
+                "[ -x /home/dwemer/higgs-tts/runtime/audiocpp_server ] && [ -f /home/dwemer/higgs-tts/server.json ]",
+                "root"),
             "chatterbox" => new(
                 "chatterbox",
                 "Chatterbox",
