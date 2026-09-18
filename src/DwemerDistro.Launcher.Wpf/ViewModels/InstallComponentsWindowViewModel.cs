@@ -938,8 +938,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 supportsAmdCpu: true),
             CreateItem(
                 key: "higgs",
-                title: "Higgs TTS 3 (experimental)",
-                description: "Optional NVIDIA voice cloning. Allow roughly 10 GB VRAM.\nExperimental. Port: 8025",
+                title: "Higgs TTS 3",
+                description: "Optional NVIDIA voice cloning. Allow roughly 10 GB VRAM.\nPort: 8025",
                 installCheckExpression: "Path('/home/dwemer/higgs-tts/runtime/audiocpp_server').is_file() and Path('/home/dwemer/higgs-tts/server.json').is_file()",
                 primaryCommand: CreateInstallCommand("higgs"),
                 supportsNvidiaCuda: true,
