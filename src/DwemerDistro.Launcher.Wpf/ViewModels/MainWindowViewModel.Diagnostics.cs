@@ -11,8 +11,57 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 public sealed partial class MainWindowViewModel
 {
+    // Inventory installed files without loading plugin code or reading plugin configuration.
+    private async Task AddServerPluginDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
+    {
+        lines.Add("Installed Server ext Plugins");
+        lines.Add("Filesystem inventory only; presence does not prove enabled or loaded state.");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ownsActivity = TryBeginPassiveDistroActivity();
+        if (!ownsActivity)
+        {
+            lines.Add("[skipped] Critical distro maintenance is running.");
+            summary.Problems.Add("Collection skipped during critical distro maintenance");
+            lines.Add("");
+            return;
+        }
+        try
+        {
+            if (!await _wsl.DistroRunningAsync(timeout.Token).ConfigureAwait(false))
+            {
+                lines.Add("[unavailable] Distro is stopped or missing; inventory did not start it.");
+                summary.Problems.Add("Plugin inventory: distro stopped or missing");
+                return;
+            }
+            var result = await _wsl.RunBashAsync(
+                "python3 - <<'DWEMER_PLUGIN_INVENTORY'\n" + DiagnosticEvidenceService.PluginInventoryScript + "\nDWEMER_PLUGIN_INVENTORY",
+                loginShell: false, cancellationToken: timeout.Token).ConfigureAwait(false);
+            lines.Add(SanitizeDiagnosticText(result.StandardOutput));
+            var server = "Plugin inventory";
+            foreach (var row in result.StandardOutput.Split('\n'))
+            {
+                if (row.StartsWith("--- ")) server = row.Trim('-', ' ', '\r');
+                if (row.StartsWith("[not installed]")) summary.MissingServers.Add(server);
+                if (row.StartsWith("[truncated]")) summary.Truncated.Add(server + ": plugin inventory");
+                if (row.StartsWith("[unavailable]") || row.StartsWith("[not inspected]") ||
+                    row.Contains(" | [invalid]") || row.Contains(" | [unavailable]") || row.Contains(" | [not inspected]"))
+                    summary.Problems.Add(server + ": plugin metadata incomplete");
+            }
+            if (!result.Succeeded) summary.Problems.Add("Plugin inventory command failed");
+            if (!result.Succeeded)
+                lines.Add($"[unavailable] Plugin inventory command exited with code {result.ExitCode}.");
+        }
+        catch (OperationCanceledException) { lines.Add("[timeout] Plugin inventory exceeded its 20-second budget."); summary.Problems.Add("Plugin inventory timed out"); }
+        catch (Exception ex) { lines.Add($"[unavailable] Plugin inventory: {ex.GetType().Name}"); summary.Problems.Add("Plugin inventory failed: " + ex.GetType().Name); }
+        finally
+        {
+            EndPassiveDistroActivity();
+            lines.Add("");
+        }
+    }
+
     // This section never starts a stopped distro or changes discovery/configuration.
-    private async Task AddConnectionEvidenceAsync(List<string> lines)
+    private async Task AddConnectionEvidenceAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Connection Evidence (read-only snapshot; TCP success is not a gameplay test)");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -20,6 +69,7 @@ public sealed partial class MainWindowViewModel
         if (!ownsActivity)
         {
             lines.Add("[skipped] Critical distro maintenance is running.");
+            summary.Problems.Add("Collection skipped during critical distro maintenance");
             return;
         }
         try
@@ -73,8 +123,8 @@ public sealed partial class MainWindowViewModel
                 if (!result.Succeeded) lines.Add($"WSL probe command exit: {result.ExitCode}");
             }
         }
-        catch (OperationCanceledException) { lines.Add("[timeout] Connection evidence exceeded its 30-second budget; remaining probes skipped."); }
-        catch (Exception ex) { lines.Add($"[unavailable] Connection evidence: {ex.GetType().Name}"); }
+        catch (OperationCanceledException) { lines.Add("[timeout] Connection evidence exceeded its 30-second budget; remaining probes skipped."); summary.Problems.Add("Connection evidence timed out"); }
+        catch (Exception ex) { lines.Add($"[unavailable] Connection evidence: {ex.GetType().Name}"); summary.Problems.Add("Connection evidence failed: " + ex.GetType().Name); }
         finally { EndPassiveDistroActivity(); }
 
         lines.Add("Plugin override candidates (physical files only; MO2/Vortex virtual overrides may differ; not proof of the loaded configuration)");
@@ -107,7 +157,7 @@ public sealed partial class MainWindowViewModel
         lines.Add("");
     }
 
-    private async Task AddUpdateInstallEvidenceAsync(List<string> lines)
+    private async Task AddUpdateInstallEvidenceAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Update / Install Evidence");
         lines.Add($"Selected launcher branches: CHIM={TargetHerikaBranch}; STOBE={TargetStobeBranch}; DIALECTIC={TargetDialecticBranch}; REIGN={ReignManager.SelectedBranch}");
@@ -121,21 +171,22 @@ public sealed partial class MainWindowViewModel
             lines.Add("Last recorded lifecycle event: " + (lastOperation is null ? "[not recorded; see timestamped installer logs below]" : DiagnosticEvidenceService.Sanitize(lastOperation)));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { lines.Add("Last recorded lifecycle event: [log unreadable]"); }
+        { lines.Add("Last recorded lifecycle event: [log unreadable]"); summary.Problems.Add("Launcher lifecycle log unreadable"); }
         foreach (var name in new[] { "launcher-startup.log", "launcher-update.log", "quickstart-install.log", "launcher-operations.log", "launcher-operations.previous.log" })
-            DiagnosticEvidenceService.AddNewestLog(lines, name, [Path.Combine(AppContext.BaseDirectory, "Logs", name)]);
+            DiagnosticEvidenceService.AddNewestLog(lines, name, [Path.Combine(AppContext.BaseDirectory, "Logs", name)], summary: summary);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         try
         {
             using var response = await _httpClient.GetAsync(SystemReleaseManifestUrl, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
             lines.Add($"Published distro manifest HTTP: {(int)response.StatusCode}");
+            if (!response.IsSuccessStatusCode) summary.Problems.Add("Published distro manifest: HTTP " + (int)response.StatusCode);
             if (response.IsSuccessStatusCode)
             {
                 using var stream = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
                 var buffer = new byte[16385];
                 var count = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken: timeout.Token).ConfigureAwait(false);
-                if (count > 16384) lines.Add("[invalid] Published manifest exceeds 16 KiB.");
+                if (count > 16384) { lines.Add("[invalid] Published manifest exceeds 16 KiB."); summary.Problems.Add("Published distro manifest exceeds size limit"); }
                 else
                 {
                     var text = System.Text.Encoding.UTF8.GetString(buffer, 0, count);
@@ -146,13 +197,13 @@ public sealed partial class MainWindowViewModel
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException or IOException)
-        { lines.Add($"[unavailable] Published distro manifest: {ex.GetType().Name}"); }
+        { lines.Add($"[unavailable] Published distro manifest: {ex.GetType().Name}"); summary.Problems.Add("Published distro manifest unavailable"); }
 
-        if (!TryBeginPassiveDistroActivity()) { lines.Add("[skipped] Distro evidence unavailable during maintenance."); return; }
+        if (!TryBeginPassiveDistroActivity()) { lines.Add("[skipped] Distro evidence unavailable during maintenance."); summary.Problems.Add("Update/install evidence skipped during maintenance"); return; }
         try
         {
             if (!await _wsl.DistroRunningAsync(timeout.Token).ConfigureAwait(false))
-            { lines.Add("[unavailable] Installed marker/repositories: distro is stopped, missing, or its status check failed."); return; }
+            { lines.Add("[unavailable] Installed marker/repositories: distro is stopped, missing, or its status check failed."); summary.Problems.Add("Update/install evidence: distro unavailable"); return; }
             var marker = await _wsl.RunBashAsync($"head -c 16385 {InstalledSystemReleaseManifestPath}", loginShell: false, cancellationToken: timeout.Token).ConfigureAwait(false);
             lines.Add("Installed distro version: " + (marker.Succeeded && marker.StandardOutput.Length <= 16384
                 ? ParseSystemReleaseVersion(marker.StandardOutput) ?? "[invalid or missing version in marker]"
@@ -173,9 +224,10 @@ public sealed partial class MainWindowViewModel
             lines.Add(DiagnosticEvidenceService.Sanitize(result.StandardOutput));
             if (!string.IsNullOrWhiteSpace(result.StandardError)) lines.Add("[stderr] " + DiagnosticEvidenceService.Sanitize(result.StandardError));
             lines.Add($"Evidence command exit: {result.ExitCode}");
+            if (!result.Succeeded) summary.Problems.Add("Update/install evidence command failed");
         }
-        catch (OperationCanceledException) { lines.Add("[timeout] Update/install evidence exceeded its 20-second budget."); }
-        catch (Exception ex) { lines.Add($"[unavailable] Update/install evidence: {ex.GetType().Name}"); }
+        catch (OperationCanceledException) { lines.Add("[timeout] Update/install evidence exceeded its 20-second budget."); summary.Problems.Add("Update/install evidence timed out"); }
+        catch (Exception ex) { lines.Add($"[unavailable] Update/install evidence: {ex.GetType().Name}"); summary.Problems.Add("Update/install evidence failed: " + ex.GetType().Name); }
         finally { EndPassiveDistroActivity(); lines.Add(""); }
     }
 }

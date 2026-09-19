@@ -11,7 +11,86 @@ internal static class DiagnosticEvidenceService
 {
     internal const int MaxLogBytes = 256 * 1024;
 
-    internal static string ReadTail(string path, int maxLines = 3000)
+    // Standalone read-only collector: bounded metadata only, never import PHP or dump a manifest.
+    internal const string PluginInventoryScript = """
+import datetime, json, os, stat
+
+def label(value):
+    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+        return '[not recorded]'
+    text = str(value)
+    text = ''.join(c if c.isprintable() else ' ' for c in text)
+    return text[:160] if text else '[not recorded]'
+
+def inventory(base):
+    for server in ('HerikaServer', 'StobeServer', 'DialecticServer'):
+        print('\n--- ' + server + ' ---')
+        root = os.path.join(base, server, 'ext')
+        try:
+            if not os.path.isdir(os.path.join(base, server)):
+                print('[not installed] Server directory missing')
+                continue
+            if os.path.islink(os.path.join(base, server)) or os.path.islink(root):
+                print('[not inspected] Server/ext directory is a symbolic link')
+                continue
+            entries = []
+            truncated = False
+            with os.scandir(root) as scan:
+                for i, entry in enumerate(scan):
+                    if i >= 1000:
+                        truncated = True
+                        break
+                    if not entry.name.startswith('.') and (entry.is_symlink() or entry.is_dir(follow_symlinks=False)):
+                        if len(entries) >= 200:
+                            truncated = True
+                            break
+                        entries.append(entry)
+        except FileNotFoundError:
+            print('[none] No ext directory')
+            continue
+        except OSError:
+            print('[unavailable] Cannot read ext directory')
+            continue
+        if not entries:
+            print('[none] No plugin directories found')
+        for entry in sorted(entries, key=lambda e: e.name.casefold()):
+            prefix = 'Folder: ' + label(entry.name)
+            if entry.is_symlink():
+                print(prefix + ' | [not inspected] Symbolic link')
+                continue
+            path = os.path.join(root, entry.name, 'manifest.json')
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(fd, 'rb') as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode):
+                        print(prefix + ' | [unavailable] Manifest is not a regular file')
+                        continue
+                    data = stream.read(65537)
+                if len(data) > 65536:
+                    print(prefix + ' | [unavailable] Manifest exceeds 64 KiB')
+                    continue
+                manifest = json.loads(data.decode('utf-8-sig'))
+                if not isinstance(manifest, dict):
+                    raise ValueError('object required')
+                modified = datetime.datetime.fromtimestamp(info.st_mtime, datetime.timezone.utc).isoformat()
+                print(prefix + ' | Name: ' + label(manifest.get('name')) +
+                      ' | Version: ' + label(manifest.get('version')) +
+                      ' | Channel: ' + label(manifest.get('channel')) +
+                      ' | Manifest modified UTC: ' + modified)
+            except FileNotFoundError:
+                print(prefix + ' | [unknown metadata] No manifest.json (legacy or incomplete plugin)')
+            except (ValueError, UnicodeError, RecursionError):
+                print(prefix + ' | [invalid] Manifest JSON')
+            except OSError:
+                print(prefix + ' | [unavailable] Manifest unreadable or symbolic link')
+        if truncated:
+            print('[truncated] Inventory limit: 200 plugin directories / 1000 ext entries')
+
+inventory('/var/www/html')
+""";
+
+    internal static string ReadTail(string path, int maxLines = 3000, Action? onTruncated = null)
     {
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var length = stream.Length;
@@ -38,12 +117,14 @@ internal static class DiagnosticEvidenceService
             var newline = text.IndexOf('\n');
             if (newline >= 0) text = text[(newline + 1)..];
         }
-        var tail = string.Join(Environment.NewLine, text.Replace("\r", "").Split('\n').TakeLast(maxLines));
+        var sourceLines = text.Replace("\r", "").TrimEnd('\n').Split('\n');
+        if (offset > 0 || sourceLines.Length > maxLines) onTruncated?.Invoke();
+        var tail = string.Join(Environment.NewLine, sourceLines.TakeLast(maxLines));
         return (offset > 0 ? "[truncated to last 256 KiB]" + Environment.NewLine : "") + tail;
     }
 
     // Compare modification times, not candidate order; unreadable newest files fall back explicitly.
-    internal static string? AddNewestLog(List<string> lines, string label, IEnumerable<string> candidates, int maxLines = 3000)
+    internal static string? AddNewestLog(List<string> lines, string label, IEnumerable<string> candidates, int maxLines = 3000, CollectionSummary? summary = null)
     {
         lines.Add($"--- {label} ---");
         var available = new List<FileInfo>();
@@ -59,13 +140,14 @@ internal static class DiagnosticEvidenceService
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
                 lines.Add($"[unreadable candidate] {path}: {ex.GetType().Name}");
+                summary?.Problems.Add(label + ": unreadable candidate");
             }
         }
         foreach (var info in available.OrderByDescending(file => file.LastWriteTimeUtc).ThenBy(file => file.FullName, StringComparer.OrdinalIgnoreCase))
         {
             try
             {
-                var text = ReadTail(info.FullName, maxLines);
+                var text = ReadTail(info.FullName, maxLines, () => summary?.Truncated.Add(label));
                 lines.Add($"Selected newest readable log: {info.FullName}");
                 lines.Add($"Modified UTC: {info.LastWriteTimeUtc:O}; collected UTC: {DateTime.UtcNow:O}");
                 lines.Add(Sanitize(text));
@@ -75,12 +157,60 @@ internal static class DiagnosticEvidenceService
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 lines.Add($"[unreadable] {info.FullName}: {ex.GetType().Name}; trying next candidate");
+                summary?.Problems.Add(label + ": unreadable log; attempted fallback");
             }
         }
         lines.Add("[missing or unreadable] No recent session can be established.");
+        summary?.MissingLogs.Add(label);
         lines.AddRange(candidates.Select(path => "Attempted: " + path).Take(100));
         lines.Add("");
         return null;
+    }
+
+    // Findings come from collectors, never from matching words in game/provider log content.
+    internal sealed class CollectionSummary
+    {
+        internal HashSet<string> Problems { get; } = new(StringComparer.Ordinal);
+        internal HashSet<string> MissingServers { get; } = new(StringComparer.Ordinal);
+        internal HashSet<string> MissingLogs { get; } = new(StringComparer.Ordinal);
+        internal HashSet<string> Truncated { get; } = new(StringComparer.Ordinal);
+
+        internal List<string> Format()
+        {
+            var result = new List<string> { "Collection Summary", "Collection notices only, not a diagnosis of game or service health." };
+            foreach (var (title, items) in new[] { ("Missing servers", MissingServers), ("Collection problems", Problems), ("Missing logs", MissingLogs), ("Truncated sections", Truncated) })
+            {
+                result.Add($"{title}: {items.Count}");
+                result.AddRange(items.OrderBy(item => item, StringComparer.Ordinal).Take(100).Select(item => "  - " + Sanitize(item)));
+                if (items.Count > 100) result.Add("  - Further entries omitted from summary; see report details.");
+            }
+            result.Add("Missing optional servers or logs can be normal. Details follow below.");
+            result.Add("");
+            return result;
+        }
+    }
+
+    // Separate trusted stat metadata from log text and track actual truncation, not error words.
+    internal static void AppendServerLog(List<string> lines, CollectionSummary summary, string name, string output, bool byteLimited, int maxLines)
+    {
+        var split = output.IndexOf('\n');
+        var metadata = (split >= 0 ? output[..split] : output).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (metadata.Length != 2 || !long.TryParse(metadata[0], out var size) || size < 0 ||
+            !long.TryParse(metadata[1], out var seconds) || seconds < -62135596800 || seconds > 253402300799)
+        {
+            summary.Problems.Add(name + ": log metadata unavailable");
+            lines.Add("[unavailable] Log size and modification time could not be read.");
+            return;
+        }
+        lines.Add($"Size bytes: {size}; Modified UTC: {DateTimeOffset.FromUnixTimeSeconds(seconds):O}; Collected UTC: {DateTimeOffset.UtcNow:O}");
+        var body = split >= 0 ? output[(split + 1)..].Replace("\r", "").TrimEnd('\n') : "";
+        var rows = body.Length == 0 ? Array.Empty<string>() : body.Split('\n');
+        if ((byteLimited && size > MaxLogBytes) || rows.Length > maxLines)
+        {
+            summary.Truncated.Add(name);
+            lines.Add($"[truncated] Showing up to the last {maxLines} lines" + (byteLimited ? " and 256 KiB." : "."));
+        }
+        lines.Add(Sanitize(string.Join(Environment.NewLine, rows.TakeLast(maxLines))));
     }
 
     // New network/configuration evidence must never contain URL credentials, queries, or API keys.
