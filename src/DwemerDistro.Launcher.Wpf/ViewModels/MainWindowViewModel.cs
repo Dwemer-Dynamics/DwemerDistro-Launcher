@@ -3048,9 +3048,11 @@ echo "CHIM-MCP installed and enabled."
             ""
         };
 
-        await AddConnectionEvidenceAsync(lines).ConfigureAwait(false);
-        await AddUpdateInstallEvidenceAsync(lines).ConfigureAwait(false);
-        await AddServerVersionDiagnosticsAsync(lines).ConfigureAwait(false);
+        var summary = new DiagnosticEvidenceService.CollectionSummary();
+        await AddConnectionEvidenceAsync(lines, summary).ConfigureAwait(false);
+        await AddUpdateInstallEvidenceAsync(lines, summary).ConfigureAwait(false);
+        await AddServerVersionDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddServerPluginDiagnosticsAsync(lines, summary).ConfigureAwait(false);
 
         var diagnosticCommands = new List<(string Display, Func<Task<CommandResult>> Run)>
         {
@@ -3081,6 +3083,7 @@ echo "CHIM-MCP installed and enabled."
             {
                 var result = await run().ConfigureAwait(false);
                 lines.Add(result.StandardOutput);
+                if (!result.Succeeded) summary.Problems.Add(display + ": command failed (" + result.ExitCode + ")");
                 if (!string.IsNullOrWhiteSpace(result.StandardError))
                 {
                     lines.Add(result.StandardError);
@@ -3089,19 +3092,21 @@ echo "CHIM-MCP installed and enabled."
             catch (Exception ex)
             {
                 lines.Add(ex.ToString());
+                summary.Problems.Add(display + ": " + ex.GetType().Name);
             }
             lines.Add("");
         }
 
-        await AddPermissionDiagnosticsAsync(lines).ConfigureAwait(false);
-        await AddLogDiagnosticsAsync(lines).ConfigureAwait(false);
-        await AddDatabaseSchemaDiagnosticsAsync(lines).ConfigureAwait(false);
-        await AddConnectorDiagnosticsAsync(lines).ConfigureAwait(false);
+        await AddPermissionDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddLogDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddDatabaseSchemaDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddConnectorDiagnosticsAsync(lines, summary).ConfigureAwait(false);
 
         var outputPath = destinationPath ?? DiagnosticReportPaths.CreateTimestampedPath("diagnostics");
         var outputDir = Path.GetDirectoryName(outputPath)
             ?? throw new InvalidOperationException("The diagnostic output path has no directory.");
         Directory.CreateDirectory(outputDir);
+        lines.InsertRange(4, summary.Format());
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
         if (openOutputFolder)
@@ -3112,7 +3117,7 @@ echo "CHIM-MCP installed and enabled."
         return outputPath;
     }
 
-    private async Task AddServerVersionDiagnosticsAsync(List<string> lines)
+    private async Task AddServerVersionDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Installed Server Versions");
         lines.Add("Release metadata and exact Git commits for the currently installed servers.");
@@ -3129,6 +3134,7 @@ echo "CHIM-MCP installed and enabled."
             if (manager?.IsNotInstalled == true)
             {
                 lines.Add("State: Not installed (optional server, nothing to report)");
+                summary.MissingServers.Add(config.DisplayName);
                 lines.Add("");
                 continue;
             }
@@ -3158,11 +3164,14 @@ echo "CHIM-MCP installed and enabled."
 
                 lines.Add($"Date Version: {dateVersion ?? "[missing or unavailable]"}{FormatVersionSource(dateVersionFile)}");
                 lines.Add($"Release Version: {releaseVersion ?? "[missing or unavailable]"}{FormatVersionSource(releaseVersionFile)}");
+                if (dateVersion is null || releaseVersion is null || gitCommit is null)
+                    summary.Problems.Add(config.DisplayName + ": version or Git metadata unavailable");
                 lines.Add($"Git Commit: {gitCommit ?? "[missing or unavailable]"}");
             }
             catch (Exception ex)
             {
                 lines.Add($"[unavailable] {SanitizeDiagnosticText(ex.Message)}");
+                summary.Problems.Add(config.DisplayName + ": version collection failed");
             }
 
             lines.Add("");
@@ -3190,7 +3199,7 @@ echo "CHIM-MCP installed and enabled."
         return string.IsNullOrWhiteSpace(fileName) ? string.Empty : $" ({fileName})";
     }
 
-    private async Task AddPermissionDiagnosticsAsync(List<string> lines)
+    private async Task AddPermissionDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Distro Doctor Diagnostics");
         lines.Add("Read-only checks for common DwemerDistro runtime, service, port, permission, and log issues.");
@@ -3227,17 +3236,19 @@ echo "CHIM-MCP installed and enabled."
             if (!result.Succeeded)
             {
                 lines.Add($"[exit code {result.ExitCode}]");
+                summary.Problems.Add("Permission checks: command failed");
             }
         }
         catch (Exception ex)
         {
             lines.Add(ex.ToString());
+            summary.Problems.Add("Permission checks: " + ex.GetType().Name);
         }
 
         lines.Add("");
     }
 
-    private async Task AddLogDiagnosticsAsync(List<string> lines)
+    private async Task AddLogDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Log Diagnostics");
         lines.Add($"Each log section contains up to the last {MaxConsoleLines} lines.");
@@ -3245,8 +3256,10 @@ echo "CHIM-MCP installed and enabled."
         lines.Add("");
 
         AddLauncherSessionOutputDiagnostics(lines, MaxConsoleLines);
-        await AddWslLogDiagnosticsAsync(lines, MaxConsoleLines).ConfigureAwait(false);
-        AddLocalGameLogDiagnostics(lines, MaxConsoleLines);
+        if ((OutputText ?? "").Split('\n').Length > MaxConsoleLines)
+            summary.Truncated.Add("Launcher session output");
+        await AddWslLogDiagnosticsAsync(lines, MaxConsoleLines, summary).ConfigureAwait(false);
+        AddLocalGameLogDiagnostics(lines, MaxConsoleLines, summary);
     }
 
     private void AddLauncherSessionOutputDiagnostics(List<string> lines, int maxLogLines)
@@ -3265,7 +3278,7 @@ echo "CHIM-MCP installed and enabled."
         lines.Add("");
     }
 
-    private async Task AddWslLogDiagnosticsAsync(List<string> lines, int maxLogLines)
+    private async Task AddWslLogDiagnosticsAsync(List<string> lines, int maxLogLines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         var logFiles = new (string Name, string Path)[]
         {
@@ -3317,19 +3330,22 @@ echo "CHIM-MCP installed and enabled."
             // Structured Reign events can be long single lines; bound bytes as well as lines.
             var isReignLog = path.StartsWith("/var/www/html/ReignServer/data/", StringComparison.Ordinal);
             var tailCommand = isReignLog
-                ? $"tail -c 262144 {escapedPath} | tail -n {maxLogLines}"
-                : $"tail -n {maxLogLines} {escapedPath}";
+                ? $"tail -c 262144 {escapedPath} | tail -n {maxLogLines + 1}"
+                : $"tail -n {maxLogLines + 1} {escapedPath}";
             var command =
-                $"if [ -f {escapedPath} ]; then {tailCommand}; else echo '[missing] {path}'; fi";
+                $"set -o pipefail; if [ -f {escapedPath} ]; then stat -c '%s %Y' -- {escapedPath} && {tailCommand}; else exit 44; fi";
 
             try
             {
                 var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+                if (result.ExitCode == 44)
                 {
-                    lines.Add(isReignLog
-                        ? DiagnosticEvidenceService.Sanitize(result.StandardOutput.TrimEnd())
-                        : SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
+                    lines.Add("[missing] " + path);
+                    summary.MissingLogs.Add(name);
+                }
+                else if (result.Succeeded)
+                {
+                    DiagnosticEvidenceService.AppendServerLog(lines, summary, name, result.StandardOutput, isReignLog, maxLogLines);
                 }
 
                 if (!string.IsNullOrWhiteSpace(result.StandardError))
@@ -3340,14 +3356,16 @@ echo "CHIM-MCP installed and enabled."
                         : SanitizeDiagnosticText(result.StandardError.TrimEnd()));
                 }
 
-                if (!result.Succeeded)
+                if (!result.Succeeded && result.ExitCode != 44)
                 {
                     lines.Add($"[exit code {result.ExitCode}]");
+                    summary.Problems.Add(name + ": log collection failed (" + result.ExitCode + ")");
                 }
             }
             catch (Exception ex)
             {
                 lines.Add(ex.ToString());
+                summary.Problems.Add(name + ": " + ex.GetType().Name);
             }
 
             lines.Add($"--- End of {name} ---");
@@ -3410,11 +3428,13 @@ echo "CHIM-MCP installed and enabled."
                 if (!result.Succeeded)
                 {
                     lines.Add($"[exit code {result.ExitCode}]");
+                    summary.Problems.Add(name + ": probe failed");
                 }
             }
             catch (Exception ex)
             {
                 lines.Add(ex.ToString());
+                summary.Problems.Add(name + ": " + ex.GetType().Name);
             }
 
             lines.Add($"--- End of {name} ---");
@@ -3422,7 +3442,7 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private static void AddLocalGameLogDiagnostics(List<string> lines, int maxLogLines)
+    private static void AddLocalGameLogDiagnostics(List<string> lines, int maxLogLines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var stobeCandidates = BuildStobeModLogCandidates();
@@ -3447,7 +3467,7 @@ echo "CHIM-MCP installed and enabled."
 
         foreach (var (name, paths) in localLogGroups)
         {
-            DiagnosticEvidenceService.AddNewestLog(lines, name, paths, maxLogLines);
+            DiagnosticEvidenceService.AddNewestLog(lines, name, paths, maxLogLines, summary);
         }
     }
 
@@ -3839,7 +3859,7 @@ echo "CHIM-MCP installed and enabled."
             .Replace("psql -h localhost -U dwemer", "psql -h /var/run/postgresql -U postgres", StringComparison.Ordinal);
     }
 
-    private async Task AddDatabaseSchemaDiagnosticsAsync(List<string> lines)
+    private async Task AddDatabaseSchemaDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Database Schema Diagnostics");
         lines.Add("These checks are read-only and cover HerikaServer, StobeServer, and DialecticServer database state.");
@@ -3917,17 +3937,19 @@ fi
             if (!result.Succeeded)
             {
                 lines.Add($"Database schema diagnostics exited with code {result.ExitCode}.");
+                summary.Problems.Add("Database schema collection failed");
             }
         }
         catch (Exception ex)
         {
             lines.Add(ex.ToString());
+            summary.Problems.Add("Database schema: " + ex.GetType().Name);
         }
 
         lines.Add("");
     }
 
-    private async Task AddConnectorDiagnosticsAsync(List<string> lines)
+    private async Task AddConnectorDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Connector Diagnostics");
         lines.Add("These checks are read-only and show active/profile-linked connector IDs plus non-secret connector fields.");
@@ -4021,11 +4043,13 @@ fi
             if (!result.Succeeded)
             {
                 lines.Add($"Connector diagnostics exited with code {result.ExitCode}.");
+                summary.Problems.Add("Connector settings collection failed");
             }
         }
         catch (Exception ex)
         {
             lines.Add(ex.ToString());
+            summary.Problems.Add("Connector settings: " + ex.GetType().Name);
         }
 
         lines.Add("");

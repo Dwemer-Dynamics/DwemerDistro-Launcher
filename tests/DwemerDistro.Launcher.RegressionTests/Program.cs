@@ -13,6 +13,29 @@ Directory.CreateDirectory(logDirectory);
 
 try
 {
+    var collection = new DiagnosticEvidenceService.CollectionSummary();
+    var serverEvidence = new List<string>();
+    DiagnosticEvidenceService.AppendServerLog(serverEvidence, collection, "server", "123 1700000000\nold\n[error] historical game failure\nlatest\n", false, 2);
+    Assert(serverEvidence.Any(line => line.Contains("Size bytes: 123") && line.Contains("2023-11-14T22:13:20"))
+           && serverEvidence.Last().Contains("historical game failure") && !serverEvidence.Last().Contains("old"),
+        "Server logs must show stat size/UTC time and keep the newest requested lines.");
+    Assert(collection.Truncated.SetEquals(["server"]) && collection.Problems.Count == 0,
+        "Truncation must be reported without interpreting game log text as collection failures.");
+    var exact = new DiagnosticEvidenceService.CollectionSummary();
+    DiagnosticEvidenceService.AppendServerLog([], exact, "exact", "12 1700000000\none\ntwo\n", false, 2);
+    DiagnosticEvidenceService.AppendServerLog([], exact, "empty", "0 1700000000\n", false, 2);
+    Assert(exact.Truncated.Count == 0 && exact.Problems.Count == 0, "Exact-limit and empty logs are not truncated.");
+    DiagnosticEvidenceService.AppendServerLog([], exact, "bad stat", "unavailable\nlog", false, 2);
+    DiagnosticEvidenceService.AppendServerLog([], exact, "bad time", "1 9223372036854775807\n", false, 2);
+    Assert(exact.Problems.Count == 2, "Invalid metadata must be reported without crashing report creation.");
+    DiagnosticEvidenceService.AppendServerLog([], exact, "byte limited", "999999 1700000000\nlast", true, 2);
+    Assert(exact.Truncated.Contains("byte limited"), "Existing byte-limited logs must report truncation even with few lines.");
+    exact.MissingServers.Add("StobeServer");
+    exact.MissingServers.Add("StobeServer");
+    exact.MissingLogs.Add("optional voice service");
+    Assert(exact.Format().Contains("Missing servers: 1") && exact.Format().Contains("Missing logs: 1")
+           && exact.Format().Contains("Collection problems: 2"), "Summary must deduplicate and separate missing evidence from collection failures.");
+
     var olderLog = Path.Combine(logDirectory, "older.log");
     var newerLog = Path.Combine(logDirectory, "newer.log");
     File.WriteAllText(olderLog, "old session");
