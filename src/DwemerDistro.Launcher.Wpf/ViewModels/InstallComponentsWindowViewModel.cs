@@ -36,6 +36,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         new("melotts", "MeloTTS", "/home/dwemer/MeloTTS", "/home/dwemer/MeloTTS/conf.sh", "Path('/home/dwemer/python-melotts').is_dir()", "start"),
         new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))", "start"),
         new("parakeet", "Parakeet STT", "/home/dwemer/parakeet-api-server", "/home/dwemer/parakeet-api-server/conf.sh", "Path('/home/dwemer/parakeet-api-server/venv').is_dir()", "start"),
+        new("higgs", "Higgs TTS 3", "/home/dwemer/higgs-tts", "/home/dwemer/higgs-tts/conf.sh", "Path('/home/dwemer/higgs-tts/runtime/audiocpp_server').is_file()", "higgs"),
         new("chatterbox", "Chatterbox", "/home/dwemer/chatterbox", "/home/dwemer/chatterbox/conf.sh", "Path('/home/dwemer/chatterbox/venv').is_dir()", "start"),
         new("audiocpp", "Pocket-TTS (GPU / audio.cpp)", "/home/dwemer/audio.cpp", "/home/dwemer/audio.cpp/conf.sh", "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file()", "start"),
         new("pockettts", "Pocket-TTS (CPU / Python)", "/home/dwemer/pocket-tts", "/home/dwemer/pocket-tts/conf.sh", "Path('/home/dwemer/pocket-tts/venv').is_dir()", "start"),
@@ -559,6 +560,18 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             : string.Empty;
     }
 
+    // Explicit selection is separate from downloading or enabling the service.
+    private async Task ApplyHiggsAsync()
+    {
+        await TrackOperationAsync(async () =>
+        {
+            var targets = await new VoiceEngineService(_wsl).ApplyVoiceEngineAsync("higgs");
+            var message = string.Join(Environment.NewLine, targets.Select(target =>
+                $"{target.TargetName}: {target.StatusText} {target.Error}"));
+            System.Windows.MessageBox.Show(message, "Higgs TTS 3");
+        });
+    }
+
     private async Task ConfigureComponentAsync(ConfigurableComponentDefinition definition)
     {
         if (!ConfigurableComponentsByKey.ContainsKey(definition.Key))
@@ -761,6 +774,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("    return f'{mode} - Language: {language}'");
         builder.AppendLine();
         builder.AppendLine("def current_configuration(base, kind):");
+        builder.AppendLine("    if kind == 'higgs':");
+        builder.AppendLine("        return 'Enabled at startup' if (base / '.enabled').exists() else 'Disabled at startup'");
         builder.AppendLine("    if kind == 'whisper':");
         builder.AppendLine("        return whisper_configuration(base)");
         builder.AppendLine("    if kind == 'omnivoice':");
@@ -921,6 +936,15 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 installCheckExpression: "Path('/home/dwemer/pocket-tts/venv/bin/python').exists()",
                 primaryCommand: CreateInstallCommand("pockettts"),
                 supportsAmdCpu: true),
+            CreateItem(
+                key: "higgs",
+                title: "Higgs TTS 3",
+                description: "Optional NVIDIA voice cloning. Allow roughly 10 GB VRAM.\nPort: 8025",
+                installCheckExpression: "Path('/home/dwemer/higgs-tts/runtime/audiocpp_server').is_file() and Path('/home/dwemer/higgs-tts/server.json').is_file()",
+                primaryCommand: CreateInstallCommand("higgs"),
+                supportsNvidiaCuda: true,
+                secondaryActionText: "Use in Mod Servers",
+                secondaryActionCommand: new AsyncRelayCommand(ApplyHiggsAsync)),
             CreateItem(
                 key: "chatterbox",
                 title: "Chatterbox",
