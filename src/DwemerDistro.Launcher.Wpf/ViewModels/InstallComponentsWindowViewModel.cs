@@ -560,18 +560,6 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             : string.Empty;
     }
 
-    // Explicit selection is separate from downloading or enabling the service.
-    private async Task ApplyHiggsAsync()
-    {
-        await TrackOperationAsync(async () =>
-        {
-            var targets = await new VoiceEngineService(_wsl).ApplyVoiceEngineAsync("higgs");
-            var message = string.Join(Environment.NewLine, targets.Select(target =>
-                $"{target.TargetName}: {target.StatusText} {target.Error}"));
-            System.Windows.MessageBox.Show(message, "Higgs TTS 3");
-        });
-    }
-
     private async Task ConfigureComponentAsync(ConfigurableComponentDefinition definition)
     {
         if (!ConfigurableComponentsByKey.ContainsKey(definition.Key))
@@ -939,12 +927,10 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "higgs",
                 title: "Higgs TTS 3",
-                description: "Optional NVIDIA voice cloning. Allow roughly 10 GB VRAM.\nPort: 8025",
+                description: "Very powerful TTS. Requires 10GB of VRAM. Super computers only!",
                 installCheckExpression: "Path('/home/dwemer/higgs-tts/runtime/audiocpp_server').is_file() and Path('/home/dwemer/higgs-tts/server.json').is_file()",
                 primaryCommand: CreateInstallCommand("higgs"),
-                supportsNvidiaCuda: true,
-                secondaryActionText: "Use in Mod Servers",
-                secondaryActionCommand: new AsyncRelayCommand(ApplyHiggsAsync)),
+                supportsNvidiaCuda: true),
             CreateItem(
                 key: "chatterbox",
                 title: "Chatterbox",
