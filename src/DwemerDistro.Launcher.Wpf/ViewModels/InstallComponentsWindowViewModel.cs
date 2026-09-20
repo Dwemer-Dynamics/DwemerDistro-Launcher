@@ -927,7 +927,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "higgs",
                 title: "Higgs TTS 3",
-                description: "Very powerful TTS. Requires 10GB of VRAM. Super computers only!\nPort: 8025",
+                description: "Very powerful TTS. Choose Higgs — Full or Higgs — Compact (Q8) during installation.\nCompact uses less memory. Its 5.1 GB download size is not its VRAM requirement.\nPort: 8025",
                 installCheckExpression: "Path('/home/dwemer/higgs-tts/runtime/audiocpp_server').is_file() and Path('/home/dwemer/higgs-tts/server.json').is_file()",
                 primaryCommand: CreateInstallCommand("higgs"),
                 supportsNvidiaCuda: true),

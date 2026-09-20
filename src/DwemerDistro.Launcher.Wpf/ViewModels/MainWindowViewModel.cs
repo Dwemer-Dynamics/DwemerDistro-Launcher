@@ -5958,7 +5958,7 @@ fi
             "higgs" => new(
                 "higgs",
                 "Higgs TTS 3",
-                "[ -x /usr/local/bin/install_higgs_tts ] || { echo 'Update DwemerDistro before installing Higgs.'; exit 1; }; /usr/local/bin/install_higgs_tts auto",
+                "[ -x /usr/local/bin/install_higgs_tts ] && grep -Fq -- '--model-options' /usr/local/bin/install_higgs_tts && /usr/local/bin/install_higgs_tts --model-options | grep -qx q8 || { echo 'Update DwemerDistro to install Higgs with model selection.'; exit 1; }; /usr/local/bin/install_higgs_tts auto ask",
                 "[ -x /home/dwemer/higgs-tts/runtime/audiocpp_server ] && [ -f /home/dwemer/higgs-tts/server.json ]",
                 "root"),
             "chatterbox" => new(
