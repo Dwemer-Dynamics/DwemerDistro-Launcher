@@ -293,6 +293,9 @@ try
         "An unknown version must not claim an update: the same yellow also means missing or unknown.");
     Assert(MainWindowViewModel.UpdateAvailableStatusSuffix == "Update Available",
         "Both the mod control menu and the 96px rail tile must show the exact text Update Available.");
+    Assert(MainWindowViewModel.BuildServerVersionStatusText("lorkhan", "unstable", "09-22-2026", "0.1.0")
+               == "unstable | 09-22-2026 | 0.1.0",
+        "Lorkhan must display its installed branch rather than its Dev-only update selection.");
     Assert(MainWindowViewModel.BuildServerVersionStatusText("stobe", "stobe", "01-01-2026", "1.2.3", true).Length <= 48,
         "The status line must stay short enough for the fixed status area and the 96px rail tiles.");
 
@@ -1603,6 +1606,12 @@ try
     Assert(!chimSeCandidates.Any(candidate => candidate.Contains(@"\Skyrim VR\", StringComparison.OrdinalIgnoreCase))
            && chimVrCandidates.All(candidate => candidate.Contains(@"\Skyrim VR\", StringComparison.OrdinalIgnoreCase)),
         "The Skyrim and Skyrim VR log buttons must never share candidates.");
+
+    var lorkhanTarget = MainWindowViewModel.ResolveLocalGameLogTarget("LORKHAN", redirectedDocuments);
+    Assert(lorkhanTarget is not null && lorkhanTarget.LogFileName == "openmw.log"
+           && lorkhanTarget.Candidates.Contains(@"C:\Redirected\Documents\My Games\OpenMW\openmw.log")
+           && lorkhanTarget.Candidates.All(path => Path.IsPathFullyQualified(path)),
+        "LORKHAN must share absolute OpenMW log candidates with diagnostics and honor redirected Documents.");
 
     var reignLogTarget = MainWindowViewModel.ResolveLocalGameLogTarget("REIGN", redirectedDocuments);
     Assert(reignLogTarget is not null && reignLogTarget.LogFileName == "reignbeta.log"

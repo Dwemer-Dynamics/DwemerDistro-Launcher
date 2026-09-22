@@ -221,7 +221,7 @@ inventory('/var/www/html')
             if (!Uri.TryCreate(match.Value, UriKind.Absolute, out var uri)) return "[invalid URL]";
             return uri.GetLeftPart(UriPartial.Authority).Replace(uri.UserInfo + "@", "", StringComparison.Ordinal) + uri.AbsolutePath;
         }, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-        text = Regex.Replace(text, @"(?im)((?:authorization|api[_-]?key|access[_-]?token|password|secret)\s*[\""']?\s*[:=]\s*).*$", "$1[redacted]", RegexOptions.None, TimeSpan.FromSeconds(1));
+        text = Regex.Replace(text, @"(?im)((?:authorization|api[_-]?key|pairing[_-]?key|access[_-]?token|password|secret)\s*[\""']?\s*[:=]\s*).*$", "$1[redacted]", RegexOptions.None, TimeSpan.FromSeconds(1));
         return Regex.Replace(text, @"(?:hf_|sk-)[A-Za-z0-9_-]{16,}", "[redacted]", RegexOptions.None, TimeSpan.FromSeconds(1));
     }
 

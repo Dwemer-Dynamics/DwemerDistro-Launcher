@@ -282,6 +282,7 @@ echo "CHIM-MCP installed and enabled."
         OpenChimSkyrimVrLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM_VR"));
         OpenDialecticLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("DIALECTIC"));
         OpenReignLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("REIGN"));
+        OpenLorkhanLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("LORKHAN"));
         OpenStobeLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("STOBE"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
@@ -819,6 +820,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenChimSkyrimVrLogsCommand { get; }
     public RelayCommand OpenDialecticLogsCommand { get; }
     public RelayCommand OpenReignLogsCommand { get; }
+    public RelayCommand OpenLorkhanLogsCommand { get; }
     public RelayCommand OpenStobeLogsCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
@@ -1421,6 +1423,8 @@ echo "CHIM-MCP installed and enabled."
                 BuildDialecticPluginLogCandidates(documentsFolder)),
             "STOBE" => new LocalGameLogTarget("Stobe.log", "Kenshi",
                 BuildStobeModLogCandidates()),
+            "LORKHAN" => new LocalGameLogTarget("openmw.log", "LORKHAN / OpenMW",
+                BuildLorkhanLogCandidates(documentsFolder)),
             "REIGN" => new LocalGameLogTarget("reignbeta.log", "Mount & Blade II: Bannerlord",
                 BuildReignModLogCandidates()),
             _ => null
@@ -3293,6 +3297,13 @@ echo "CHIM-MCP installed and enabled."
             ("HerikaServer debugStream", "/var/www/html/HerikaServer/log/debugStream.log"),
             ("HerikaServer minai", "/var/www/html/HerikaServer/log/minai.log"),
             ("HerikaServer vision", "/var/www/html/HerikaServer/log/vision.log"),
+            ("LorkhanServer lorkhan", "/var/log/lorkhanserver/lorkhan.log"),
+            ("LorkhanServer context_sent_to_llm", "/var/log/lorkhanserver/context_sent_to_llm.log"),
+            ("LorkhanServer context_sent_to_llm_fast", "/var/log/lorkhanserver/context_sent_to_llm_fast.log"),
+            ("LorkhanServer output_from_llm", "/var/log/lorkhanserver/output_from_llm.log"),
+            ("LorkhanServer output_from_llm_fast", "/var/log/lorkhanserver/output_from_llm_fast.log"),
+            ("LorkhanServer output_to_plugin", "/var/log/lorkhanserver/output_to_plugin.log"),
+            ("LorkhanServer stt", "/var/log/lorkhanserver/stt.log"),
             ("StobeServer stobe", "/var/www/html/StobeServer/log/stobe.log"),
             ("StobeServer stobeserver", "/var/www/html/StobeServer/log/stobeserver.log"),
             ("StobeServer stobe_import", "/var/www/html/StobeServer/log/stobe_import.log"),
@@ -3331,9 +3342,10 @@ echo "CHIM-MCP installed and enabled."
         {
             lines.Add($"--- Start of {name} ({path}) ---");
             var escapedPath = EscapeForSingleQuotedBash(path);
-            // Structured Reign events can be long single lines; bound bytes as well as lines.
-            var isReignLog = path.StartsWith("/var/www/html/ReignServer/data/", StringComparison.Ordinal);
-            var tailCommand = isReignLog
+            // Structured Reign and LORKHAN events can be long single lines; bound bytes as well as lines.
+            var isBoundedLog = path.StartsWith("/var/www/html/ReignServer/data/", StringComparison.Ordinal)
+                || path.StartsWith("/var/log/lorkhanserver/", StringComparison.Ordinal);
+            var tailCommand = isBoundedLog
                 ? $"tail -c 262144 {escapedPath} | tail -n {maxLogLines + 1}"
                 : $"tail -n {maxLogLines + 1} {escapedPath}";
             var command =
@@ -3349,13 +3361,13 @@ echo "CHIM-MCP installed and enabled."
                 }
                 else if (result.Succeeded)
                 {
-                    DiagnosticEvidenceService.AppendServerLog(lines, summary, name, result.StandardOutput, isReignLog, maxLogLines);
+                    DiagnosticEvidenceService.AppendServerLog(lines, summary, name, result.StandardOutput, isBoundedLog, maxLogLines);
                 }
 
                 if (!string.IsNullOrWhiteSpace(result.StandardError))
                 {
                     lines.Add("[stderr]");
-                    lines.Add(isReignLog
+                    lines.Add(isBoundedLog
                         ? DiagnosticEvidenceService.Sanitize(result.StandardError.TrimEnd())
                         : SanitizeDiagnosticText(result.StandardError.TrimEnd()));
                 }
@@ -3465,6 +3477,7 @@ echo "CHIM-MCP installed and enabled."
             ("Dialectic Fallout New Vegas Plugin Log",
                 BuildDialecticPluginLogCandidates()),
             ("STOBE Mod Log", stobeCandidates),
+            ("LORKHAN OpenMW Log", BuildLorkhanLogCandidates(documents)),
             ("REIGN Bannerlord Plugin Log", BuildReignModLogCandidates()),
             ("RE_Kenshi_log.txt", BuildStobeReKenshiLogCandidates(stobeCandidates))
         };
@@ -3473,6 +3486,20 @@ echo "CHIM-MCP installed and enabled."
         {
             DiagnosticEvidenceService.AddNewestLog(lines, name, paths, maxLogLines, summary);
         }
+    }
+
+    // Share OpenMW log discovery between Explorer and the bounded diagnostics collector.
+    internal static string[] BuildLorkhanLogCandidates(string? documentsFolder)
+    {
+        var candidates = new List<string>();
+        var config = Environment.GetEnvironmentVariable("LORKHAN_CLIENT_CONFIG");
+        if (!string.IsNullOrWhiteSpace(config) && Path.IsPathFullyQualified(config)
+            && Path.GetDirectoryName(config) is { } profile)
+            candidates.Add(Path.Combine(profile, "openmw.log"));
+        candidates.AddRange(ExpandDocumentsLogTemplates(
+            [@"%USERPROFILE%\Documents\My Games\OpenMW\openmw.log"], documentsFolder));
+        candidates.Add(@"C:\Modlists\LORKHAN\Config\openmw.log");
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private const string DocumentsTemplatePrefix = @"%USERPROFILE%\Documents\";

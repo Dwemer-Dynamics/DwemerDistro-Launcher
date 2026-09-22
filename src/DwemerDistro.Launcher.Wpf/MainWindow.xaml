@@ -510,6 +510,10 @@
                                                     AutomationProperties.Name="Uninstall LORKHAN"
                                                     AutomationProperties.HelpText="Disable this server while retaining its files and saved data. Use Repair to enable it again. Asks for typed confirmation." />
                                         </StackPanel>
+                                        <Button Content="Open LORKHAN Logs" Command="{Binding OpenLorkhanLogsCommand}"
+                                                Style="{StaticResource GameCenter.Button}" Margin="0,8,0,0" Height="38"
+                                                AutomationProperties.Name="Open LORKHAN Logs"
+                                                AutomationProperties.HelpText="Show the local OpenMW log in File Explorer. Does not start the game or server." />
                                     </StackPanel>
                                     <StackPanel x:Name="StobeDetails" Visibility="Collapsed">
                                         <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="STOBE" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / StobeServer" /></TextBlock>
