@@ -501,7 +501,7 @@ public sealed partial class MainWindowViewModel
     /// </summary>
     internal static string BuildSharedComponentsUpdateCommand()
     {
-        return "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic --skip-reign";
+        return "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic --skip-reign --skip-lorkhan";
     }
 
     /// <summary>
