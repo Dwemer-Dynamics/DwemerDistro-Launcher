@@ -166,7 +166,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.27", "Launcher constants must report version 3.3.27.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.28", "Launcher constants must report version 3.3.28.");
     Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
                == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --download-diagnostics \"%1\"",
         "The server-page browser protocol must send the diagnostic report through the browser download manager.");
@@ -229,8 +229,15 @@ try
         "Quickstart must repair legacy CUDA installs that do not have Core's trusted selection state.");
 
     var gameCatalog = GameProfile.CreateCatalog();
-    Assert(gameCatalog.Count == 4 && gameCatalog.Select(game => game.Key).Distinct().Count() == 4,
-        "The launcher rail must expose four unique game profiles, including Reign.");
+    Assert(gameCatalog.Count == 5 && gameCatalog.Select(game => game.Key).Distinct().Count() == 5,
+        "The launcher rail must expose five unique game profiles, including LORKHAN and Reign.");
+    Assert(gameCatalog.Select(game => game.Key).SequenceEqual(["CHIM", "LORKHAN", "DIALECTIC", "STOBE", "REIGN"]),
+        "The game rail must use the dashboard product order.");
+    Assert(ServerManagementService.ToProductToken(ServerProduct.Lorkhan) == "lorkhan"
+           && ServerManagementService.ParseProduct("lorkhan") == ServerProduct.Lorkhan
+           && ServerManagementService.ToBranchToken(ServerBranchChannel.Unstable) == "unstable"
+           && MainWindowViewModel.ResolveServerWebPageUrl("LORKHAN") == "http://127.0.0.1:7514/LorkhanServer/ui/home.php",
+        "LORKHAN lifecycle and webpage routing must use its own product and proxy.");
     Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => game.HeroImageSource.EndsWith("-hero.jpg", StringComparison.Ordinal)
                                    && game.RailImageSource.EndsWith("-rail.jpg", StringComparison.Ordinal)),
         "Every game profile must use local hero and rail artwork.");
@@ -308,12 +315,12 @@ try
            && MainWindowViewModel.ResolveNexusPageUrl("STOBE") == "https://www.nexusmods.com/kenshi/mods/1891"
            && MainWindowViewModel.ResolveNexusPageUrl("DIALECTIC") == "https://www.nexusmods.com/newvegas/mods/99233",
         "Each Nexus button must open that mod's own Nexus page.");
-    Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null)
+    Assert(gameCatalog.Where(game => game.Key is not ("REIGN" or "LORKHAN")).All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null)
            && MainWindowViewModel.ResolveNexusPageUrl("REIGN") is null,
         "Only mods with a configured Nexus page expose that external action.");
     Assert(MainWindowViewModel.ResolveNexusPageUrl("UNKNOWN") is null,
         "An unknown product must resolve to no Nexus page rather than another mod's page.");
-    Assert(gameCatalog.Where(game => game.Key != "REIGN").All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
+    Assert(gameCatalog.Where(game => game.Key is not ("REIGN" or "LORKHAN")).All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
             .StartsWith("https://www.nexusmods.com/", StringComparison.Ordinal)),
         "A Nexus button must open an external page, never a local server URL.");
     Assert(MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.OK)

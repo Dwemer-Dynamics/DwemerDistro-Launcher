@@ -26,13 +26,15 @@ public partial class ServerUninstallWindow : Window
 
         Title = $"Uninstall {displayName}";
         HeadingTextBlock.Text = $"Uninstall {displayName}";
-        WarningTextBlock.Text = product == ServerProduct.Reign
+        WarningTextBlock.Text = product == ServerProduct.Lorkhan
+            ? "This disables LorkhanServer. Files, database, settings, memories, and voices are retained. Use Repair to enable it again."
+            : product == ServerProduct.Reign
             ? "This removes ReignServer. Its database, settings, memories, and previous runtimes are retained. Use Repair to reinstall."
             : $"This permanently deletes {displayName}, all its files, and all saved data. This cannot be undone.";
 
         ConfirmPromptTextBlock.Text = $"Type {_purgeToken} to confirm.";
 
-        AutomationProperties.SetName(UninstallButton, $"Uninstall {displayName} permanently");
+        AutomationProperties.SetName(UninstallButton, $"Uninstall {displayName}");
         AutomationProperties.SetHelpText(
             UninstallButton,
             WarningTextBlock.Text + " " +

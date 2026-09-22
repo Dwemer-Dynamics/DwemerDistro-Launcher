@@ -59,8 +59,12 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         PurgeToken = ServerManagementService.GetPurgeToken(product);
         RailProductName = BuildRailProductName(product);
         UpdateActionName = BuildUpdateActionName(product);
-        Branches = new ObservableCollection<string>(product == ServerProduct.Reign
-            ? new[] { "Dev" } : new[] { "Main", "Dev" });
+        Branches = new ObservableCollection<string>(product switch
+        {
+            ServerProduct.Reign => new[] { "Dev" },
+            ServerProduct.Lorkhan => new[] { "Dev", "Main", "Unstable" },
+            _ => new[] { "Main", "Dev" }
+        });
         _selectedBranch = Branches[0];
         _install = install;
         _update = update;
@@ -214,7 +218,10 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         }
     }
 
-    public ServerBranchChannel SelectedBranchChannel => ServerManagementService.ParseBranchChannel(_selectedBranch);
+    public ServerBranchChannel SelectedBranchChannel =>
+        Product == ServerProduct.Lorkhan && _selectedBranch == "Unstable"
+            ? ServerBranchChannel.Unstable
+            : ServerManagementService.ParseBranchChannel(_selectedBranch);
 
     /// <summary>
     /// The single status line. Busy and error states take priority, then the manager state, then the
@@ -339,6 +346,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
             ServerProduct.Stobe => "STOBE",
             ServerProduct.Dialectic => "Dialectic",
             ServerProduct.Reign => "Reign",
+            ServerProduct.Lorkhan => "LORKHAN",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }
@@ -355,7 +363,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         _version = status?.Version;
         _port = status?.Port;
         _errorText = null;
-        if (Product == ServerProduct.Reign)
+        if (Product is ServerProduct.Reign or ServerProduct.Lorkhan)
         {
             _versionStatusText = status?.Version ?? "Version unavailable";
             _versionStatusColor = string.IsNullOrWhiteSpace(status?.Version) ? "Yellow" : "LimeGreen";
@@ -365,7 +373,9 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         // Follow the installed branch until the user stages a different update target.
         if (Product != ServerProduct.Reign && !_hasExplicitBranchSelection && status?.Branch is not null)
         {
-            var channel = MapBranchToChannel(status.Branch, status.ProductionBranch, status.DevelopmentBranch);
+            var channel = Product == ServerProduct.Lorkhan && status.Branch == "unstable"
+                ? ServerBranchChannel.Unstable
+                : MapBranchToChannel(status.Branch, status.ProductionBranch, status.DevelopmentBranch);
             if (channel is not null)
             {
                 if (SetProperty(ref _selectedBranch, ServerManagementService.ToBranchChoice(channel.Value), nameof(SelectedBranch)))

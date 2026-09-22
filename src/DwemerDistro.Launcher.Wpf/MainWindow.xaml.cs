@@ -274,6 +274,7 @@ public partial class MainWindow : Window
 
         var key = _viewModel.SelectedGame.Key;
         ChimDetails.Visibility = key == "CHIM" ? Visibility.Visible : Visibility.Collapsed;
+        LorkhanDetails.Visibility = key == "LORKHAN" ? Visibility.Visible : Visibility.Collapsed;
         StobeDetails.Visibility = key == "STOBE" ? Visibility.Visible : Visibility.Collapsed;
         DialecticDetails.Visibility = key == "DIALECTIC" ? Visibility.Visible : Visibility.Collapsed;
         ReignDetails.Visibility = key == "REIGN" ? Visibility.Visible : Visibility.Collapsed;

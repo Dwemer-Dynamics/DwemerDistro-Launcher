@@ -269,6 +269,7 @@ echo "CHIM-MCP installed and enabled."
         OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
         OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
         OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        OpenLorkhanCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("LORKHAN"), () => CanAccessDistro() && LorkhanManager.CanUseInstalledFeatures);
         OpenReignCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("REIGN"), () => CanAccessDistro() && ReignManager.CanUseInstalledFeatures);
         // Nexus pages are plain external links: they never probe WSL, never start a server, and
         // stay usable whatever the local server is doing.
@@ -809,6 +810,8 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand OpenStobeCommand { get; }
     public AsyncRelayCommand OpenDialecticCommand { get; }
     public AsyncRelayCommand OpenReignCommand { get; }
+
+    public AsyncRelayCommand OpenLorkhanCommand { get; }
     public RelayCommand OpenChimNexusCommand { get; }
     public RelayCommand OpenStobeNexusCommand { get; }
     public RelayCommand OpenDialecticNexusCommand { get; }
@@ -1355,6 +1358,7 @@ echo "CHIM-MCP installed and enabled."
             "STOBE" => LauncherConstants.StobeServerUiUrl,
             "DIALECTIC" => LauncherConstants.DialecticServerUiUrl,
             "REIGN" => "http://127.0.0.1:8089/",
+            "LORKHAN" => "http://127.0.0.1:7514/LorkhanServer/ui/home.php",
             _ => null
         };
     }

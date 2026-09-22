@@ -20,12 +20,10 @@ public sealed record GameProfile(
                 "pack://application:,,,/Assets/GameCenter/chim-hero.jpg",
                 "pack://application:,,,/Assets/GameCenter/chim-rail.jpg"),
             new GameProfile(
-                "STOBE",
-                "STOBE",
-                "Kenshi",
-                "Voiced conversations and persistent character memories shaped by your squad and the world.",
-                "pack://application:,,,/Assets/GameCenter/stobe-hero.jpg",
-                "pack://application:,,,/Assets/GameCenter/stobe-rail.jpg"),
+                "LORKHAN", "LORKHAN (Beta)", "Morrowind / OpenMW",
+                "Character conversations, memories, and actions across Morrowind.",
+                "pack://application:,,,/Assets/GameCenter/lorkhan-hero.jpg",
+                "pack://application:,,,/Assets/GameCenter/lorkhan-rail.jpg"),
             new GameProfile(
                 "DIALECTIC",
                 "DIALECTIC",
@@ -33,6 +31,13 @@ public sealed record GameProfile(
                 "Natural dialogue, durable memories, and character actions across New Vegas and the Capital Wasteland.",
                 "pack://application:,,,/Assets/GameCenter/dialectic-hero.jpg",
                 "pack://application:,,,/Assets/GameCenter/dialectic-rail.jpg"),
+            new GameProfile(
+                "STOBE",
+                "STOBE",
+                "Kenshi",
+                "Voiced conversations and persistent character memories shaped by your squad and the world.",
+                "pack://application:,,,/Assets/GameCenter/stobe-hero.jpg",
+                "pack://application:,,,/Assets/GameCenter/stobe-rail.jpg"),
             new GameProfile(
                 "REIGN", "REIGN (Closed Alpha)", "Mount & Blade II: Bannerlord",
                 "Character conversations, relationships, and persistent memories across Calradia.",

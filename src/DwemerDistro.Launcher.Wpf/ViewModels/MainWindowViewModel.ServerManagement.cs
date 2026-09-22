@@ -25,6 +25,8 @@ public sealed partial class MainWindowViewModel
 
     public ServerManagerItemViewModel DialecticManager { get; private set; } = null!;
 
+    public ServerManagerItemViewModel LorkhanManager { get; private set; } = null!;
+
     public ServerManagerItemViewModel ReignManager { get; private set; } = null!;
 
     /// <summary>The three products in rail order. Backs status refresh and every mod update.</summary>
@@ -38,7 +40,8 @@ public sealed partial class MainWindowViewModel
         StobeManager = CreateServerManagerItem(ServerProduct.Stobe, "STOBE");
         DialecticManager = CreateServerManagerItem(ServerProduct.Dialectic, "DIALECTIC");
         ReignManager = CreateServerManagerItem(ServerProduct.Reign, "REIGN");
-        ServerManagers = [HerikaManager, StobeManager, DialecticManager, ReignManager];
+        LorkhanManager = CreateServerManagerItem(ServerProduct.Lorkhan, "LORKHAN");
+        ServerManagers = [HerikaManager, LorkhanManager, DialecticManager, StobeManager, ReignManager];
 
         // The three items live for the window's lifetime, so watching each one's busy flag needs no
         // detach: it is how one product's running operation disables the others' single-product
@@ -68,6 +71,7 @@ public sealed partial class MainWindowViewModel
             OpenStobeCommand?.RaiseCanExecuteChanged();
             OpenDialecticCommand?.RaiseCanExecuteChanged();
             OpenReignCommand?.RaiseCanExecuteChanged();
+            OpenLorkhanCommand?.RaiseCanExecuteChanged();
             OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
             OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
             OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();

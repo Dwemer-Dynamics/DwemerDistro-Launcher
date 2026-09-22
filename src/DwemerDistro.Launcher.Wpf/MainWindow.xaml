@@ -432,6 +432,85 @@
                                                     AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
                                     </StackPanel>
+                                    <StackPanel x:Name="LorkhanDetails" Visibility="Collapsed">
+                                        <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="LORKHAN" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / LorkhanServer" /></TextBlock>
+                                        <Grid Height="52" Margin="0,8,0,10">
+                                            <Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                            <TextBlock Grid.Row="0" Text="{Binding LorkhanManager.StatusText}" Foreground="{Binding LorkhanManager.StatusColor}"
+                                                       TextTrimming="CharacterEllipsis" TextWrapping="Wrap"
+                                                       ToolTip="{Binding LorkhanManager.AccessibleStatusHelpText}"
+                                                       AutomationProperties.Name="LorkhanServer status"
+                                                       AutomationProperties.HelpText="{Binding LorkhanManager.AccessibleStatusHelpText}"
+                                                       AutomationProperties.LiveSetting="Polite" />
+                                            <ProgressBar Grid.Row="1" Height="6" VerticalAlignment="Top"
+                                                         IsIndeterminate="{Binding LorkhanManager.IsBusy}"
+                                                         Background="#151515" BorderThickness="0"
+                                                         Foreground="{DynamicResource GameCenter.Gold}"
+                                                         IsTabStop="False" Focusable="False"
+                                                         AutomationProperties.Name="LorkhanServer operation progress">
+                                                <ProgressBar.Style>
+                                                    <Style TargetType="ProgressBar">
+                                                        <Setter Property="Opacity" Value="0" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding LorkhanManager.IsBusy}" Value="True">
+                                                                <Setter Property="Opacity" Value="1" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ProgressBar.Style>
+                                            </ProgressBar>
+                                        </Grid>
+                                        <StackPanel Visibility="{Binding LorkhanManager.ShowNotInstalledActions, Converter={StaticResource BoolToVisibility}}">
+                                            <TextBlock Text="Install branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding LorkhanManager.Branches}" SelectedItem="{Binding LorkhanManager.SelectedBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      IsEnabled="{Binding LorkhanManager.CanInstall}"
+                                                      AutomationProperties.Name="LorkhanServer install branch"
+                                                      AutomationProperties.HelpText="Branch used when this server is installed." />
+                                            <Button Content="Install Server" Command="{Binding LorkhanManager.InstallCommand}"
+                                                    Style="{StaticResource GameCenter.Brand.LorkhanButton}" Margin="0,16,0,0" Height="38"
+                                                    AutomationProperties.Name="Install LorkhanServer"
+                                                    AutomationProperties.HelpText="Download and install this server on the selected branch. Nothing else is changed." />
+                                        </StackPanel>
+                                        <StackPanel Visibility="{Binding LorkhanManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
+                                            <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding LorkhanManager.Branches}" SelectedItem="{Binding LorkhanManager.SelectedBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      AutomationProperties.Name="LorkhanServer update branch"
+                                                      IsEnabled="{Binding LorkhanManager.CanUseInstalledFeatures}"
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
+                                            <Button DataContext="{Binding LorkhanManager}"
+                                                    Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.LorkhanUpdateButton}" Margin="0,16,0,12" Height="40"
+                                                    AutomationProperties.Name="{Binding UpdateActionName}"
+                                                    ToolTip="{Binding UpdateActionHelpText}"
+                                                    AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
+                                            <Button Content="LORKHAN Webpage" Command="{Binding OpenLorkhanCommand}" Style="{StaticResource GameCenter.ModAction.LorkhanSecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="LORKHAN Webpage"
+                                                    AutomationProperties.HelpText="Open the LORKHAN server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
+                                            <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
+                                                    AutomationProperties.Name="Uninstall LORKHAN"
+                                                    AutomationProperties.HelpText="Disable this server while retaining its files and saved data. Use Repair to enable it again. Asks for typed confirmation." />
+                                        </StackPanel>
+                                        <StackPanel Visibility="{Binding LorkhanManager.ShowRepairActions, Converter={StaticResource BoolToVisibility}}">
+                                            <TextBlock Text="Repair branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding LorkhanManager.Branches}" SelectedItem="{Binding LorkhanManager.SelectedBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      IsEnabled="{Binding LorkhanManager.CanRepair}"
+                                                      AutomationProperties.Name="LorkhanServer repair branch"
+                                                      AutomationProperties.HelpText="Branch this server is repaired onto." />
+                                            <Button Content="Repair Installation" Command="{Binding LorkhanManager.RepairCommand}"
+                                                    Style="{StaticResource GameCenter.Brand.LorkhanButton}" Margin="0,16,0,8" Height="38"
+                                                    AutomationProperties.Name="Repair LorkhanServer"
+                                                    AutomationProperties.HelpText="Restore this server's files and database without deleting your data." />
+                                            <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
+                                                    AutomationProperties.Name="Uninstall LORKHAN"
+                                                    AutomationProperties.HelpText="Disable this server while retaining its files and saved data. Use Repair to enable it again. Asks for typed confirmation." />
+                                        </StackPanel>
+                                    </StackPanel>
                                     <StackPanel x:Name="StobeDetails" Visibility="Collapsed">
                                         <TextBlock FontWeight="SemiBold" FontSize="16"><Run Text="STOBE" Style="{StaticResource GameCenter.ModNameRun}" /><Run Text=" / StobeServer" /></TextBlock>
 

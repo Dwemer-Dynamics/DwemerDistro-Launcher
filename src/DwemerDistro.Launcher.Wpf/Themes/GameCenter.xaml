@@ -34,10 +34,15 @@
     <SolidColorBrush x:Key="GameCenter.Brand.ChimTint" Color="#3D2A1B" />
     <SolidColorBrush x:Key="GameCenter.Brand.ChimTintPressed" Color="#2F2117" />
     <SolidColorBrush x:Key="GameCenter.Brand.Stobe" Color="#E6B76C" />
+    <SolidColorBrush x:Key="GameCenter.Brand.Lorkhan" Color="#BC9D5A" />
     <SolidColorBrush x:Key="GameCenter.Brand.StobeBright" Color="#F4CD8A" />
+    <SolidColorBrush x:Key="GameCenter.Brand.LorkhanBright" Color="#D1B579" />
     <SolidColorBrush x:Key="GameCenter.Brand.StobeSoft" Color="#76562F" />
+    <SolidColorBrush x:Key="GameCenter.Brand.LorkhanSoft" Color="#68562F" />
     <SolidColorBrush x:Key="GameCenter.Brand.StobeTint" Color="#3C3529" />
+    <SolidColorBrush x:Key="GameCenter.Brand.LorkhanTint" Color="#383223" />
     <SolidColorBrush x:Key="GameCenter.Brand.StobeTintPressed" Color="#302B23" />
+    <SolidColorBrush x:Key="GameCenter.Brand.LorkhanTintPressed" Color="#2D281D" />
     <SolidColorBrush x:Key="GameCenter.Brand.Dialectic" Color="#FFB641" />
     <SolidColorBrush x:Key="GameCenter.Brand.DialecticBright" Color="#FFD27A" />
     <SolidColorBrush x:Key="GameCenter.Brand.DialecticSoft" Color="#805814" />
@@ -86,6 +91,10 @@
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
                 <Setter Property="FontWeight" Value="Normal" />
             </DataTrigger>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="LORKHAN">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
                 <Setter Property="FontWeight" Value="Normal" />
@@ -115,6 +124,10 @@
             </DataTrigger>
             <DataTrigger Binding="{Binding Key}" Value="STOBE">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Key}" Value="LORKHAN">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
                 <Setter Property="FontWeight" Value="Normal" />
             </DataTrigger>
             <DataTrigger Binding="{Binding Key}" Value="DIALECTIC">
@@ -147,6 +160,9 @@
             </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="LORKHAN">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
@@ -368,6 +384,27 @@
         </Style.Triggers>
     </Style>
 
+    <Style x:Key="GameCenter.Brand.LorkhanButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Lorkhan}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.LorkhanBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Lorkhan}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
     <Style x:Key="GameCenter.Brand.DialecticButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
         <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticSoft}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
@@ -428,6 +465,35 @@
     </Style>
 
     <Style x:Key="GameCenter.ModAction.StobeUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.StobeButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.LorkhanUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.LorkhanButton}">
         <Style.Triggers>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
@@ -555,6 +621,25 @@
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.StobeTintPressed}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.LorkhanSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Lorkhan}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.LorkhanBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Lorkhan}" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />

@@ -192,6 +192,7 @@ public sealed class ServerManagementService(WslService wsl)
             ServerProduct.Stobe => "stobe",
             ServerProduct.Dialectic => "dialectic",
             ServerProduct.Reign => "reign",
+            ServerProduct.Lorkhan => "lorkhan",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }
@@ -204,6 +205,7 @@ public sealed class ServerManagementService(WslService wsl)
             ServerBranchChannel.Main => "main",
             ServerBranchChannel.Dev => "dev",
             ServerBranchChannel.Reign => "reign",
+            ServerBranchChannel.Unstable => "unstable",
             _ => throw new ArgumentOutOfRangeException(nameof(branch), branch, "Unknown branch channel.")
         };
     }
@@ -220,6 +222,7 @@ public sealed class ServerManagementService(WslService wsl)
             ServerProduct.Stobe => "PURGE-STOBE",
             ServerProduct.Dialectic => "PURGE-DIALECTIC",
             ServerProduct.Reign => "PURGE-REIGN",
+            ServerProduct.Lorkhan => "PURGE-LORKHAN",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }
@@ -250,6 +253,7 @@ public sealed class ServerManagementService(WslService wsl)
             ServerProduct.Stobe => "StobeServer",
             ServerProduct.Dialectic => "DialecticServer",
             ServerProduct.Reign => "ReignServer",
+            ServerProduct.Lorkhan => "LorkhanServer",
             _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
         };
     }
@@ -263,6 +267,7 @@ public sealed class ServerManagementService(WslService wsl)
             "STOBE" => ServerProduct.Stobe,
             "DIALECTIC" => ServerProduct.Dialectic,
             "REIGN" => ServerProduct.Reign,
+            "LORKHAN" => ServerProduct.Lorkhan,
             _ => null
         };
     }
@@ -365,6 +370,7 @@ public sealed class ServerManagementService(WslService wsl)
             "stobe" => ServerProduct.Stobe,
             "dialectic" => ServerProduct.Dialectic,
             "reign" => ServerProduct.Reign,
+            "lorkhan" => ServerProduct.Lorkhan,
             _ => null
         };
     }

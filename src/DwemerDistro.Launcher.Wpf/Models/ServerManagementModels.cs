@@ -9,7 +9,8 @@ public enum ServerProduct
     Herika,
     Stobe,
     Dialectic,
-    Reign
+    Reign,
+    Lorkhan
 }
 
 /// <summary>Install state reported by <c>ddistro_server status all --json</c>.</summary>
@@ -36,7 +37,8 @@ public enum ServerBranchChannel
 {
     Main,
     Dev,
-    Reign
+    Reign,
+    Unstable
 }
 
 /// <summary>
