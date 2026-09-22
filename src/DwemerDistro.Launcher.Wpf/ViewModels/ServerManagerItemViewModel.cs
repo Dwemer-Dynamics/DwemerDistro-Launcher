@@ -62,7 +62,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         Branches = new ObservableCollection<string>(product switch
         {
             ServerProduct.Reign => new[] { "Dev" },
-            ServerProduct.Lorkhan => new[] { "Dev", "Main", "Unstable" },
+            ServerProduct.Lorkhan => new[] { "Dev" },
             _ => new[] { "Main", "Dev" }
         });
         _selectedBranch = Branches[0];
@@ -210,7 +210,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         get => _selectedBranch;
         set
         {
-            if (SetProperty(ref _selectedBranch, Product == ServerProduct.Reign ? "Dev" : value))
+            if (SetProperty(ref _selectedBranch, Product is ServerProduct.Reign or ServerProduct.Lorkhan ? "Dev" : value))
             {
                 _hasExplicitBranchSelection = true;
                 OnPropertyChanged(nameof(UpdateActionHelpText));
@@ -219,9 +219,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     }
 
     public ServerBranchChannel SelectedBranchChannel =>
-        Product == ServerProduct.Lorkhan && _selectedBranch == "Unstable"
-            ? ServerBranchChannel.Unstable
-            : ServerManagementService.ParseBranchChannel(_selectedBranch);
+        ServerManagementService.ParseBranchChannel(_selectedBranch);
 
     /// <summary>
     /// The single status line. Busy and error states take priority, then the manager state, then the
@@ -371,11 +369,9 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         }
 
         // Follow the installed branch until the user stages a different update target.
-        if (Product != ServerProduct.Reign && !_hasExplicitBranchSelection && status?.Branch is not null)
+        if (Product is not (ServerProduct.Reign or ServerProduct.Lorkhan) && !_hasExplicitBranchSelection && status?.Branch is not null)
         {
-            var channel = Product == ServerProduct.Lorkhan && status.Branch == "unstable"
-                ? ServerBranchChannel.Unstable
-                : MapBranchToChannel(status.Branch, status.ProductionBranch, status.DevelopmentBranch);
+            var channel = MapBranchToChannel(status.Branch, status.ProductionBranch, status.DevelopmentBranch);
             if (channel is not null)
             {
                 if (SetProperty(ref _selectedBranch, ServerManagementService.ToBranchChoice(channel.Value), nameof(SelectedBranch)))
