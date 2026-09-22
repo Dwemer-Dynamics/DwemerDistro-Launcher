@@ -1262,6 +1262,10 @@
                                                         <Setter Property="Text" Value="{Binding DataContext.DialecticStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
                                                         <Setter Property="Foreground" Value="{Binding DataContext.DialecticStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
                                                     </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Key}" Value="LORKHAN">
+                                                        <Setter Property="Text" Value="{Binding DataContext.LorkhanManager.StatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                        <Setter Property="Foreground" Value="{Binding DataContext.LorkhanManager.StatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
+                                                    </DataTrigger>
                                                     <DataTrigger Binding="{Binding Key}" Value="REIGN">
                                                         <Setter Property="Text" Value="{Binding DataContext.ReignManager.StatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
                                                         <Setter Property="Foreground" Value="{Binding DataContext.ReignManager.StatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
