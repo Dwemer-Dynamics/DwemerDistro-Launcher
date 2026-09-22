@@ -1607,6 +1607,12 @@ try
            && chimVrCandidates.All(candidate => candidate.Contains(@"\Skyrim VR\", StringComparison.OrdinalIgnoreCase)),
         "The Skyrim and Skyrim VR log buttons must never share candidates.");
 
+    var lorkhanTarget = MainWindowViewModel.ResolveLocalGameLogTarget("LORKHAN", redirectedDocuments);
+    Assert(lorkhanTarget is not null && lorkhanTarget.LogFileName == "openmw.log"
+           && lorkhanTarget.Candidates.Contains(@"C:\Redirected\Documents\My Games\OpenMW\openmw.log")
+           && lorkhanTarget.Candidates.All(path => Path.IsPathFullyQualified(path)),
+        "LORKHAN must share absolute OpenMW log candidates with diagnostics and honor redirected Documents.");
+
     var reignLogTarget = MainWindowViewModel.ResolveLocalGameLogTarget("REIGN", redirectedDocuments);
     Assert(reignLogTarget is not null && reignLogTarget.LogFileName == "reignbeta.log"
            && reignLogTarget.Candidates.Length > 0
