@@ -166,7 +166,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.28", "Launcher constants must report version 3.3.28.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.29", "Launcher constants must report version 3.3.29.");
     Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
                == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --download-diagnostics \"%1\"",
         "The server-page browser protocol must send the diagnostic report through the browser download manager.");
@@ -752,6 +752,22 @@ try
         DatabasePresent = true
     });
 
+    var lorkhanItem = new ServerManagerItemViewModel(ServerProduct.Lorkhan, "LORKHAN",
+        _ => Task.CompletedTask, _ => Task.CompletedTask,
+        _ => Task.CompletedTask, _ => Task.CompletedTask);
+    foreach (var branch in new[] { "unstable", "lorkhan", "main", "dev" })
+    {
+        lorkhanItem.ApplyStatus(stobeStatus with
+        {
+            Product = ServerProduct.Lorkhan, State = ServerInstallState.Installed,
+            Branch = branch, ProductionBranch = "lorkhan", Version = "0.1.0"
+        });
+        Assert(lorkhanItem.SelectedBranch == "Dev" && lorkhanItem.Branches.SequenceEqual(new[] { "Dev" }),
+            "LORKHAN status refreshes must retain its sole Dev choice.");
+        lorkhanItem.SelectedBranch = branch;
+        Assert(lorkhanItem.SelectedBranchChannel == ServerBranchChannel.Dev,
+            "LORKHAN install, update and repair must target Dev even after a stale selection.");
+    }
     var reignItem = new ServerManagerItemViewModel(ServerProduct.Reign, "REIGN",
         _ => Task.CompletedTask, _ => Task.CompletedTask,
         _ => Task.CompletedTask, _ => Task.CompletedTask);
