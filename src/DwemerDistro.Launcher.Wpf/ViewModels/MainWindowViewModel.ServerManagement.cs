@@ -161,6 +161,30 @@ public sealed partial class MainWindowViewModel
         });
         if (result.IsSuccess && ReignManager.IsInstalled)
             QueueBackgroundTask("Reign version check", CheckReignServerUpdatesAsync, StartupVersionCheckTimeout);
+        if (result.IsSuccess && LorkhanManager.IsInstalled)
+            QueueBackgroundTask("Lorkhan version details", RefreshLorkhanVersionDetailsAsync, StartupVersionCheckTimeout);
+    }
+
+    // Lorkhan keeps a semantic version file; its installed Git revision supplies the build date.
+    private async Task RefreshLorkhanVersionDetailsAsync(CancellationToken cancellationToken = default)
+    {
+        var branch = LorkhanManager.InstalledBranch;
+        var installed = LorkhanManager.InstalledVersion;
+        if (!LorkhanManager.IsInstalled) return;
+
+        var dateResult = await _wsl.RunBashAsync(
+            "git -c safe.directory=/opt/dwemerdistro/sources/LorkhanServer " +
+            "-C /opt/dwemerdistro/sources/LorkhanServer log -1 --format=%cd --date=format:%Y%m%d",
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var date = dateResult.Succeeded ? dateResult.StandardOutput.Trim() : null;
+        if (date is not { Length: 8 } || !date.All(char.IsAsciiDigit)) date = null;
+        RunOnUi(() =>
+        {
+            if (!LorkhanManager.IsInstalled || LorkhanManager.InstalledBranch != branch || LorkhanManager.InstalledVersion != installed) return;
+            LorkhanManager.ApplyVersionStatus(
+                BuildServerVersionStatusText("lorkhan", branch, FormatDateVersion(date), installed),
+                string.IsNullOrWhiteSpace(installed) || date is null ? "Yellow" : "LimeGreen", false);
+        });
     }
 
     // Read the activated artifact so rollback and failed builds cannot report uninstalled source metadata.
