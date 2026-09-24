@@ -1231,6 +1231,10 @@
                                             <Setter Property="Visibility" Value="Visible" />
                                             <Setter Property="Stretch" Value="UniformToFill" />
                                             <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Key}" Value="LORKHAN">
+                                                    <Setter Property="HorizontalAlignment" Value="Left" />
+                                                    <Setter Property="VerticalAlignment" Value="Center" />
+                                                </DataTrigger>
                                                 <DataTrigger Binding="{Binding Key}" Value="REIGN">
                                                     <Setter Property="Stretch" Value="Uniform" />
                                                 </DataTrigger>
