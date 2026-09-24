@@ -489,6 +489,10 @@
                                                     AutomationProperties.Name="LORKHAN Webpage"
                                                     AutomationProperties.HelpText="Open the LORKHAN server webpage. If it is unavailable, the launcher can start the server first." />
                                             <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
+                                            <Button Content="Rollback LorkhanServer" Command="{Binding OpenLorkhanRollbackCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.LorkhanSecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Rollback LorkhanServer"
+                                                    AutomationProperties.HelpText="Choose a previous server version. Backs up the database before redeploying; older versions may be incompatible with current data." />
                                             <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall LORKHAN"
