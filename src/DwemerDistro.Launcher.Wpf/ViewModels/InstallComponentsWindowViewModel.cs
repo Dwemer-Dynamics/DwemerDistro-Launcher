@@ -567,8 +567,10 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             throw new InvalidOperationException("The selected component is not in the trusted configuration catalog.");
         }
 
+        // Higgs service controls require root; its model installer still runs as dwemer.
+        var configurationUser = definition.Key == "higgs" ? "root" : LauncherConstants.DistroUser;
         var command =
-            $"wsl.exe -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"{definition.ScriptPath}\"";
+            $"wsl.exe -d {LauncherConstants.DistroName} -u {configurationUser} -- bash -lc \"{definition.ScriptPath}\"";
         await TrackOperationAsync(async () =>
         {
             try
