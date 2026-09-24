@@ -1233,7 +1233,7 @@
                                             <Setter Property="Stretch" Value="UniformToFill" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding Key}" Value="LORKHAN">
-                                                    <Setter Property="Source" Value="/Assets/GameCenter/lorkhan-thumbnail.png" />
+                                                    <Setter Property="Source" Value="/DwemerDistro;component/Assets/GameCenter/lorkhan-thumbnail.png" />
                                                     <Setter Property="HorizontalAlignment" Value="Left" />
                                                     <Setter Property="VerticalAlignment" Value="Center" />
                                                 </DataTrigger>
