@@ -1225,13 +1225,15 @@
                     <DataTemplate>
                         <Grid Height="96">
                             <Grid ClipToBounds="True" Background="#151515">
-                                <Image Source="{Binding RailImageSource}">
+                                <Image>
                                     <Image.Style>
                                         <Style TargetType="Image">
+                                            <Setter Property="Source" Value="{Binding RailImageSource}" />
                                             <Setter Property="Visibility" Value="Visible" />
                                             <Setter Property="Stretch" Value="UniformToFill" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding Key}" Value="LORKHAN">
+                                                    <Setter Property="Source" Value="/Assets/GameCenter/lorkhan-thumbnail.png" />
                                                     <Setter Property="HorizontalAlignment" Value="Left" />
                                                     <Setter Property="VerticalAlignment" Value="Center" />
                                                 </DataTrigger>
