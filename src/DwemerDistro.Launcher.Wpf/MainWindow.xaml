@@ -379,6 +379,7 @@
                                             <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.ModAction.ChimSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="CHIM Webpage"
                                                     AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <!-- External mod page. It opens the browser immediately and never
                                                  probes or starts WSL, so it stays usable while the installed server
                                                  is stopped. Neutral styling keeps it distinct from the
@@ -399,7 +400,6 @@
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
                                             <!-- Decorative rule only. It ends the reversible actions so the purge below reads as a
                                                  separate decision; it is not focusable and adds nothing to the tab order. -->
-                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall CHIM"
@@ -489,6 +489,10 @@
                                                     AutomationProperties.Name="LORKHAN Webpage"
                                                     AutomationProperties.HelpText="Open the LORKHAN server webpage. If it is unavailable, the launcher can start the server first." />
                                             <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
+                                            <Button Content="Rollback LorkhanServer" Command="{Binding OpenLorkhanRollbackCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.LorkhanSecondaryButton}" Margin="0,0,0,6"
+                                                    AutomationProperties.Name="Rollback LorkhanServer"
+                                                    AutomationProperties.HelpText="Choose a previous server version. Backs up the database before redeploying; older versions may be incompatible with current data." />
                                             <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall LORKHAN"
@@ -591,6 +595,7 @@
                                             <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.ModAction.StobeSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="STOBE Webpage"
                                                     AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <!-- External mod page. It opens the browser immediately and never
                                                  probes or starts WSL, so it stays usable while the installed server
                                                  is stopped. Neutral styling keeps it distinct from the
@@ -608,7 +613,6 @@
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
                                             <!-- Decorative rule only. It ends the reversible actions so the purge below reads as a
                                                  separate decision; it is not focusable and adds nothing to the tab order. -->
-                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall STOBE"
@@ -714,6 +718,7 @@
                                             <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.ModAction.DialecticSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="DIALECTIC Webpage"
                                                     AutomationProperties.HelpText="Open the Dialectic server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <!-- External mod page. It opens the browser immediately and never
                                                  probes or starts WSL, so it stays usable while the installed server
                                                  is stopped. Neutral styling keeps it distinct from the
@@ -731,7 +736,6 @@
                                                     AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
                                             <!-- Decorative rule only. It ends the reversible actions so the purge below reads as a
                                                  separate decision; it is not focusable and adds nothing to the tab order. -->
-                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall Dialectic"
@@ -817,6 +821,7 @@
                                             <Button Content="REIGN Webpage" Command="{Binding OpenReignCommand}" Style="{StaticResource GameCenter.ModAction.ReignSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="REIGN Webpage"
                                                     AutomationProperties.HelpText="Open the Reign server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Open REIGN Logs" Command="{Binding OpenReignLogsCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="Open REIGN Logs"
                                                     AutomationProperties.HelpText="Select the local Bannerlord reignbeta.log in File Explorer, or open its folder if the log has not been created yet." />
@@ -824,7 +829,6 @@
                                                     Style="{StaticResource GameCenter.ModAction.ReignSecondaryButton}" Margin="0,0,0,6"
                                                     AutomationProperties.Name="Rollback ReignServer"
                                                     AutomationProperties.HelpText="Restore a compatible retained ReignServer build while preserving campaigns and settings." />
-                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall Reign" Command="{Binding ReignManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ServerUninstallButton}" Height="38"
                                                     AutomationProperties.Name="Uninstall Reign"
@@ -1225,12 +1229,18 @@
                     <DataTemplate>
                         <Grid Height="96">
                             <Grid ClipToBounds="True" Background="#151515">
-                                <Image Source="{Binding RailImageSource}">
+                                <Image>
                                     <Image.Style>
                                         <Style TargetType="Image">
+                                            <Setter Property="Source" Value="{Binding RailImageSource}" />
                                             <Setter Property="Visibility" Value="Visible" />
                                             <Setter Property="Stretch" Value="UniformToFill" />
                                             <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Key}" Value="LORKHAN">
+                                                    <Setter Property="Source" Value="/DwemerDistro;component/Assets/GameCenter/lorkhan-thumbnail.png" />
+                                                    <Setter Property="HorizontalAlignment" Value="Left" />
+                                                    <Setter Property="VerticalAlignment" Value="Center" />
+                                                </DataTrigger>
                                                 <DataTrigger Binding="{Binding Key}" Value="REIGN">
                                                     <Setter Property="Stretch" Value="Uniform" />
                                                 </DataTrigger>

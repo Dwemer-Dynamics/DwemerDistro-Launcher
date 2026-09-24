@@ -296,6 +296,7 @@ echo "CHIM-MCP installed and enabled."
         OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
         OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
         OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        OpenLorkhanRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("lorkhan"), () => CanAccessDistro() && LorkhanManager.CanUseInstalledFeatures);
         OpenReignRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("reign"), () => CanAccessDistro() && ReignManager.CanUseInstalledFeatures);
         ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"), CanAccessDistro);
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"), CanAccessDistro);
@@ -833,6 +834,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenStobeRollbackCommand { get; }
     public RelayCommand OpenDialecticRollbackCommand { get; }
     public RelayCommand OpenReignRollbackCommand { get; }
+    public RelayCommand OpenLorkhanRollbackCommand { get; }
     public RelayCommand ViewXttsLogsCommand { get; }
     public RelayCommand ViewChatterboxLogsCommand { get; }
     public RelayCommand ViewPocketTtsLogsCommand { get; }
@@ -2010,6 +2012,7 @@ echo "CHIM-MCP installed and enabled."
         OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
         OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
         OpenReignRollbackCommand?.RaiseCanExecuteChanged();
+        OpenLorkhanRollbackCommand?.RaiseCanExecuteChanged();
         ViewXttsLogsCommand?.RaiseCanExecuteChanged();
         ViewChatterboxLogsCommand?.RaiseCanExecuteChanged();
         ViewPocketTtsLogsCommand?.RaiseCanExecuteChanged();
@@ -5679,7 +5682,8 @@ fi
     {
         var config = GetRollbackServerConfig(serverKey);
         var result = await _wsl.RunBashAsync(
-                $"cd {config.RepoPath} && git rev-parse --abbrev-ref HEAD && git rev-parse --short HEAD")
+                $"cd {config.RepoPath} && git rev-parse --abbrev-ref HEAD && git rev-parse --short HEAD",
+                user: config.Key == "lorkhan" ? "root" : "dwemer")
             .ConfigureAwait(false);
 
         if (!result.Succeeded)
@@ -5699,7 +5703,7 @@ fi
         var historyFilesArg = string.Join(" ", versionHistoryFiles);
 
         var historyResult = await _wsl.RunBashAsync(
-                $"cd {config.RepoPath} && git fetch --all --tags --quiet && git log --date=short --pretty=format:'%H\t%h\t%cd' -n 40 -- {historyFilesArg}")
+                $"cd {config.RepoPath} && git fetch --all --tags --quiet && git log --date=short --pretty=format:'%H\t%h\t%cd' -n 40 -- {historyFilesArg}", user: config.Key == "lorkhan" ? "root" : "dwemer")
             .ConfigureAwait(false);
 
         if (!historyResult.Succeeded)
@@ -5754,7 +5758,8 @@ fi
         foreach (var fileName in fileCandidates)
         {
             var result = await _wsl.RunBashAsync(
-                    $"cd {repoPath} && git show {commitSha}:{fileName} 2>/dev/null | sed -n '1p'")
+                    $"cd {repoPath} && git show {commitSha}:{fileName} 2>/dev/null | sed -n '1p'",
+                    user: repoPath == "/opt/dwemerdistro/sources/LorkhanServer" ? "root" : "dwemer")
                 .ConfigureAwait(false);
 
             if (!result.Succeeded)
@@ -5781,6 +5786,8 @@ fi
             return;
         }
 
+        if (serverKey == "lorkhan" && !LorkhanManager.CanUseInstalledFeatures) return;
+        if (serverKey == "lorkhan") LorkhanManager.BeginOperation("Rolling back LorkhanServer...");
         try
         {
             AppendLog($"Starting {config.DisplayName} rollback..." + Environment.NewLine);
@@ -5799,7 +5806,17 @@ fi
                 $"git checkout --detach {EscapeForSingleQuotedBash(target.Ref)}; " +
                 "echo ROLLBACK_HEAD:$(git rev-parse --short HEAD)";
 
-            var result = await _wsl.RunBashAsync(bashCommand, text => AppendLog(text)).ConfigureAwait(true);
+            if (serverKey == "lorkhan")
+            {
+                // LORKHAN runs a deployed copy, not its Git checkout. Back up its database first.
+                var preflight = $"git -C {config.RepoPath} cat-file -e {EscapeForSingleQuotedBash(target.Ref + ":scripts/deploy-local-wsl.sh")}; " +
+                    "backup=$(mktemp /var/backups/lorkhan-rollback-XXXXXXXX.sql); " +
+                    "chmod 600 \"$backup\"; runuser -u postgres -- pg_dump lorkhan > \"$backup\"; ";
+                bashCommand = "set -e; export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/opt/dwemerdistro/sources/LorkhanServer; " + preflight + bashCommand +
+                    $"; bash {config.RepoPath}/scripts/deploy-local-wsl.sh {config.RepoPath}";
+            }
+            var result = await _wsl.RunBashAsync(bashCommand, text => AppendLog(text),
+                user: serverKey == "lorkhan" ? "root" : "dwemer").ConfigureAwait(true);
             if (!result.Succeeded)
             {
                 AppendLog("Rollback failed. Review output above for details." + Environment.NewLine, "red");
@@ -5823,6 +5840,14 @@ fi
         catch (Exception ex)
         {
             AppendLog($"Rollback error: {ex.Message}{Environment.NewLine}", "red");
+        }
+        finally
+        {
+            if (serverKey == "lorkhan")
+            {
+                LorkhanManager.EndOperation();
+                await RefreshServerManagementAsync().ConfigureAwait(true);
+            }
         }
     }
 
@@ -5854,6 +5879,9 @@ fi
     {
         return serverKey.Trim().ToLowerInvariant() switch
         {
+            "lorkhan" or "lorkhanserver" => new RollbackServerConfig(
+                "lorkhan", "LorkhanServer", "/opt/dwemerdistro/sources/LorkhanServer",
+                ["version.txt"], []),
             "stobe" or "stobeserver" => new RollbackServerConfig(
                 "stobe",
                 "StobeServer",

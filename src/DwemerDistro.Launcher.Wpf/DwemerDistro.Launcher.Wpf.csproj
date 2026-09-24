@@ -26,6 +26,7 @@
     <Resource Include="Assets\*.gif" />
     <Resource Include="Assets\*.ico" />
     <Resource Include="Assets\GameCenter\*.jpg" />
+    <Resource Include="Assets\GameCenter\lorkhan-thumbnail.png" />
     <!-- Brand title faces are packaged into the assembly so the launcher never
          depends on a system-installed font. The attribution and the full OFL
          licence text are copied out as loose files rather than embedded, so they
