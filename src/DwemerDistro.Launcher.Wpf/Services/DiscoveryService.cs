@@ -333,7 +333,7 @@ public sealed class DiscoveryService
     internal static string? GetLoopbackDiscoveryTarget(string request)
     {
         return GetGame(request) is "lorkhan" or "morrowind" or "openmw"
-            ? $"127.0.0.1:{LauncherConstants.LorkhanProxyPort}"
+            ? $"127.0.0.1:{LauncherConstants.LorkhanServerPort}"
             : null;
     }
 
