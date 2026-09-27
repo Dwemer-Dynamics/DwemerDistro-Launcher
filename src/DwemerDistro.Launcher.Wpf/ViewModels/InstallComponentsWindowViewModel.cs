@@ -890,6 +890,24 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 supportsNvidiaCuda: true)));
 
         sections.Add(CreateSection(
+            "Local Language Models",
+            allItems,
+            CreateItem(
+                key: "lmstudio",
+                title: "LM Studio",
+                description: "Optional local AI inside WSL. Download models and control the engine in your browser.\nPort: 1234 (local only)",
+                installCheckExpression: "Path('/home/dwemer/.lmstudio/bin/lms').is_file()",
+                primaryCommand: CreateInstallCommand("lmstudio"),
+                supportsNvidiaCuda: true,
+                supportsAmdCpu: true,
+                secondaryActionText: "Open Manager",
+                secondaryActionCommand: new AsyncRelayCommand(async () =>
+                {
+                    try { await new LmStudioService(_wsl).OpenManagerAsync(); }
+                    catch (Exception error) { System.Windows.MessageBox.Show(error.Message, "LM Studio"); }
+                }))));
+
+        sections.Add(CreateSection(
             "Service Extensions",
             allItems,
             CreateItem(

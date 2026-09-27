@@ -317,6 +317,25 @@
                     </Border>
                 </StackPanel>
 
+                <StackPanel Visibility="{Binding IsLocalAiStep, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <Border Style="{StaticResource Panel}">
+                        <StackPanel>
+                            <TextBlock Text="Local AI (Optional)" FontSize="24" FontWeight="Bold" Margin="0,0,0,12" />
+                            <TextBlock Text="Run LM Studio inside WSL and manage it in your browser. Choose a download now, before the other components." TextWrapping="Wrap" Margin="0,0,0,14" />
+                            <ComboBox ItemsSource="{Binding LocalAiOptions}" DisplayMemberPath="Name" SelectedValuePath="Id" Style="{StaticResource GameCenter.ComboBox}"
+                                      SelectedValue="{Binding LocalAiChoice}" IsEnabled="{Binding IsLocalAiSelectionEnabled}"
+                                      AutomationProperties.Name="Local AI download option" Margin="0,0,0,12" MinHeight="36" />
+                            <TextBlock Text="The listed community models use 17–19 GB of disk space and need substantial RAM and GPU memory. For a smaller machine, install only the engine and choose a smaller custom model in Manager. Downloading does not load a model." TextWrapping="Wrap" Foreground="#D6D6D6" Margin="0,0,0,14" />
+                            <WrapPanel>
+                                <Button Content="Install / Retry" Command="{Binding InstallLocalAiCommand}" Style="{StaticResource PrimaryButton}" />
+                                <Button Content="Open Manager" Command="{Binding OpenLocalAiManagerCommand}" Style="{StaticResource SecondaryButton}" />
+                                <Button Content="Skip local AI" Command="{Binding SkipLocalAiCommand}" Style="{StaticResource SecondaryButton}" />
+                            </WrapPanel>
+                            <TextBlock Text="{Binding LocalAiStatus}" TextWrapping="Wrap" Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
                 <StackPanel Visibility="{Binding IsUpdateDistroStep, Converter={StaticResource BoolToVisibilityConverter}}">
                     <Border Style="{StaticResource Panel}">
                         <StackPanel Margin="0,8,0,0">
