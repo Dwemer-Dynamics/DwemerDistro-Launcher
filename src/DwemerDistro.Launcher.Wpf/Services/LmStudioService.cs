@@ -15,7 +15,7 @@ public sealed class LmStudioService(WslService wsl)
     {
         var result = await wsl.RunDistroAsUserAsync("dwemer", [Helper, command]).ConfigureAwait(false);
         if (!result.Succeeded)
-            throw new InvalidOperationException("Update Distro first, then retry LM Studio. " + result.StandardOutput.Trim());
+            throw new InvalidOperationException("Update Distro first, then retry LLM Studio. " + result.StandardOutput.Trim());
         using var document = JsonDocument.Parse(result.StandardOutput);
         return document.RootElement.Clone();
     }
@@ -32,7 +32,7 @@ public sealed class LmStudioService(WslService wsl)
     {
         var install = await wsl.RunDistroAsUserAsync("root", ["/usr/local/bin/install_lmstudio"], progress).ConfigureAwait(false);
         if (!install.Succeeded)
-            throw new InvalidOperationException("LM Studio installation failed. " + install.StandardError.Trim());
+            throw new InvalidOperationException("LLM Studio installation failed. " + install.StandardError.Trim());
         if (option == "engine") return;
         var result = await wsl.RunDistroAsUserWithInputAsync("dwemer", [Helper, "submit"],
             JsonSerializer.Serialize(new { action = "download", preset = option })).ConfigureAwait(false);
@@ -47,7 +47,7 @@ public sealed class LmStudioService(WslService wsl)
             var state = await ReadAsync("status").ConfigureAwait(false);
             var job = state.GetProperty("job");
             if (job.GetProperty("id").GetString() != jobId)
-                throw new InvalidOperationException("The operation changed. Check LM Studio Manager before retrying.");
+                throw new InvalidOperationException("The operation changed. Check LLM Studio Manager before retrying.");
             var message = job.GetProperty("message").GetString() ?? "Working...";
             if (job.TryGetProperty("total", out var total) && total.GetInt64() > 0)
                 message += $" {job.GetProperty("downloaded").GetInt64() * 100 / total.GetInt64()}%";
@@ -58,7 +58,7 @@ public sealed class LmStudioService(WslService wsl)
                 case "failed": throw new InvalidOperationException(message);
             }
         }
-        throw new InvalidOperationException("Download is still running. Check LM Studio Manager before retrying.");
+        throw new InvalidOperationException("Download is still running. Check LLM Studio Manager before retrying.");
     }
 
     public async Task OpenManagerAsync()

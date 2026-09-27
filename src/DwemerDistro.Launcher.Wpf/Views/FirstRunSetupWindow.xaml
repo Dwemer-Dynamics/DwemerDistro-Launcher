@@ -326,7 +326,7 @@
                     <Border Style="{StaticResource Panel}">
                         <StackPanel>
                             <TextBlock Text="Local AI (Optional)" FontSize="24" FontWeight="Bold" Margin="0,0,0,12" />
-                            <TextBlock Text="Run LM Studio inside WSL and manage it in your browser. Choose a download now, before the other components." TextWrapping="Wrap" Margin="0,0,0,14" />
+                            <TextBlock Text="Run LLM Studio inside WSL and manage it in your browser. Choose a download now, before the other components." TextWrapping="Wrap" Margin="0,0,0,14" />
                             <ComboBox ItemsSource="{Binding LocalAiOptions}" DisplayMemberPath="Name" SelectedValuePath="Id" Style="{StaticResource GameCenter.ComboBox}"
                                       SelectedValue="{Binding LocalAiChoice}" IsEnabled="{Binding IsLocalAiSelectionEnabled}"
                                       AutomationProperties.Name="Local AI download option" Margin="0,0,0,12" MinHeight="36" />
