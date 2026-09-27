@@ -894,7 +894,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             allItems,
             CreateItem(
                 key: "lmstudio",
-                title: "LM Studio",
+                title: "LLM Studio",
                 description: "Optional local AI inside WSL. Download models and control the engine in your browser.\nPort: 1234 (local only)",
                 installCheckExpression: "Path('/home/dwemer/.lmstudio/bin/lms').is_file()",
                 primaryCommand: CreateInstallCommand("lmstudio"),
@@ -904,7 +904,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 secondaryActionCommand: new AsyncRelayCommand(async () =>
                 {
                     try { await new LmStudioService(_wsl).OpenManagerAsync(); }
-                    catch (Exception error) { System.Windows.MessageBox.Show(error.Message, "LM Studio"); }
+                    catch (Exception error) { System.Windows.MessageBox.Show(error.Message, "LLM Studio"); }
                 }))));
 
         sections.Add(CreateSection(

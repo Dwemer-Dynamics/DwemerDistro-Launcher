@@ -5999,7 +5999,7 @@ fi
                 "[ -x /home/dwemer/pocket-tts/venv/bin/python ] && [ -e /home/dwemer/pocket-tts/start.sh ]"),
             "lmstudio" => new(
                 "lmstudio",
-                "LM Studio",
+                "LLM Studio",
                 "/usr/local/bin/install_lmstudio",
                 "[ -x /home/dwemer/.lmstudio/bin/lms ] && [ -f /etc/sudoers.d/dwemerdistro-lmstudio ]",
                 "root"),
