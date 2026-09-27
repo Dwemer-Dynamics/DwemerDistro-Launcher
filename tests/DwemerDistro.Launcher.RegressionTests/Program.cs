@@ -77,11 +77,11 @@ try
     Assert(LauncherConstants.LorkhanProxyPort == 7514 && LauncherConstants.LorkhanServerPort == 8090,
         "LORKHAN must keep its dedicated launcher proxy and WSL server ports.");
     Assert(DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=lorkhan HTTP/1.1\r\n\r\n")
-               == "127.0.0.1:7514"
+               == "127.0.0.1:8090"
            && DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=openmw HTTP/1.1\r\n\r\n")
-               == "127.0.0.1:7514"
+               == "127.0.0.1:8090"
            && DiscoveryService.GetLoopbackDiscoveryTarget("GET /discover?game=reign HTTP/1.1\r\n\r\n") is null,
-        "Discovery must return the LORKHAN loopback proxy without capturing Reign.");
+        "Discovery must return LORKHAN on loopback port 8090 without capturing Reign.");
     Assert(DiscoveryService.IsDiagnosticDownloadRequest("GET /download-diagnostics HTTP/1.1\r\nHost: 127.0.0.1:7135\r\n\r\n")
            && !DiscoveryService.IsDiagnosticDownloadRequest("GET /discover?game=skyrim HTTP/1.1\r\n\r\n"),
         "Discovery must route only the dedicated browser diagnostic download request.");
