@@ -33,7 +33,6 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         new("xtts", "Dwemer Distro XTTS", "/home/dwemer/xtts-api-server", "/home/dwemer/xtts-api-server/conf.sh", "Path('/home/dwemer/python-tts').is_dir()", "start"),
         new("llamacpp", "llama.cpp", "/home/dwemer/llama-cpp", "/home/dwemer/llama-cpp/conf.sh", "Path('/home/dwemer/llama-cpp').is_dir()", "start"),
         new("minime", "Minime and TXT2VEC", "/home/dwemer/minime-t5", "/home/dwemer/minime-t5/conf.sh", "Path('/home/dwemer/python-minime').is_dir()", "start"),
-        new("melotts", "MeloTTS", "/home/dwemer/MeloTTS", "/home/dwemer/MeloTTS/conf.sh", "Path('/home/dwemer/python-melotts').is_dir()", "start"),
         new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))", "start"),
         new("parakeet", "Parakeet STT", "/home/dwemer/parakeet-api-server", "/home/dwemer/parakeet-api-server/conf.sh", "Path('/home/dwemer/parakeet-api-server/venv').is_dir()", "start"),
         new("higgs", "Higgs TTS 3", "/home/dwemer/higgs-tts", "/home/dwemer/higgs-tts/conf.sh", "Path('/home/dwemer/higgs-tts/runtime/audiocpp_server').is_file()", "higgs"),
@@ -974,14 +973,6 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 primaryCommand: CreateInstallCommand("xtts"),
                 supportsNvidiaCuda: true),
             CreateItem(
-                key: "melotts",
-                title: "MeloTTS",
-                description: "Fast TTS option for lightweight setups with low overhead and strong CPU support.\nPort: 8084",
-                installCheckExpression: "Path('/home/dwemer/python-melotts').exists()",
-                primaryCommand: CreateInstallCommand("melotts"),
-                supportsNvidiaCuda: true,
-                supportsAmdCpu: true),
-            CreateItem(
                 key: "pipertts",
                 title: "Piper-TTS",
                 description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.\nPort: 5000",
@@ -990,13 +981,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true,
                 secondaryActionText: "Open Piper Voice Folder",
-                secondaryActionCommand: _mainWindowViewModel.OpenPiperVoicesFolderCommand),
-            CreateItem(
-                key: "mimic3",
-                title: "Mimic3",
-                description: "Older local TTS service that is still useful when you want a simple, lightweight fallback.\nPort: 59125",
-                installCheckExpression: "Path('/home/dwemer/python-mimic3/bin/python').is_file()",
-                primaryCommand: CreateInstallCommand("mimic3"))));
+                secondaryActionCommand: _mainWindowViewModel.OpenPiperVoicesFolderCommand)));
 
         sections.Add(CreateSection(
             "Speech-to-Text Engines",

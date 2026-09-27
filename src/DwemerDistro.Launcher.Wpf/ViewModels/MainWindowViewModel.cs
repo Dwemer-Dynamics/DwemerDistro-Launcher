@@ -303,7 +303,6 @@ echo "CHIM-MCP installed and enabled."
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"), CanAccessDistro);
         ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""), CanAccessDistro);
         ViewOmniVoiceLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/omnivoice-tts/logs/server.log"), CanAccessDistro);
-        ViewMeloTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/MeloTTS/melo/log.txt"), CanAccessDistro);
         ViewPiperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/piper/log.txt"), CanAccessDistro);
         ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"), CanAccessDistro);
         ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"), CanAccessDistro);
@@ -839,7 +838,6 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand ViewChatterboxLogsCommand { get; }
     public RelayCommand ViewPocketTtsLogsCommand { get; }
     public RelayCommand ViewOmniVoiceLogsCommand { get; }
-    public RelayCommand ViewMeloTtsLogsCommand { get; }
     public RelayCommand ViewPiperLogsCommand { get; }
     public RelayCommand ViewLocalWhisperLogsCommand { get; }
     public RelayCommand ViewParakeetLogsCommand { get; }
@@ -2022,7 +2020,6 @@ echo "CHIM-MCP installed and enabled."
         ViewChatterboxLogsCommand?.RaiseCanExecuteChanged();
         ViewPocketTtsLogsCommand?.RaiseCanExecuteChanged();
         ViewOmniVoiceLogsCommand?.RaiseCanExecuteChanged();
-        ViewMeloTtsLogsCommand?.RaiseCanExecuteChanged();
         ViewPiperLogsCommand?.RaiseCanExecuteChanged();
         ViewLocalWhisperLogsCommand?.RaiseCanExecuteChanged();
         ViewParakeetLogsCommand?.RaiseCanExecuteChanged();
