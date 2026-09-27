@@ -56,7 +56,7 @@ public sealed class OnboardingStateService
         await JsonSerializer.SerializeAsync(stream, state, JsonOptions, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task MarkCompletedAsync(
+    public async Task MarkCompletedAsync(
         SetupPresetKey preset,
         string voiceEngine,
         bool openRouterConfigured,
@@ -65,8 +65,11 @@ public sealed class OnboardingStateService
         IReadOnlyDictionary<string, string>? productInstallResults = null,
         CancellationToken cancellationToken = default)
     {
+        var previous = await LoadAsync(cancellationToken).ConfigureAwait(false);
         var state = new OnboardingState
         {
+            LocalAiChoice = previous.LocalAiChoice,
+            LocalAiCompletedChoice = previous.LocalAiCompletedChoice,
             Version = CurrentVersion,
             Completed = true,
             CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -81,17 +84,20 @@ public sealed class OnboardingStateService
                 : new Dictionary<string, string>(productInstallResults, StringComparer.OrdinalIgnoreCase)
         };
 
-        return SaveAsync(state, cancellationToken);
+        await SaveAsync(state, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task MarkSkippedAsync(
+    public async Task MarkSkippedAsync(
         SetupPresetKey preset,
         IReadOnlyList<string>? selectedProducts = null,
         IReadOnlyDictionary<string, string>? productInstallResults = null,
         CancellationToken cancellationToken = default)
     {
+        var previous = await LoadAsync(cancellationToken).ConfigureAwait(false);
         var state = new OnboardingState
         {
+            LocalAiChoice = previous.LocalAiChoice,
+            LocalAiCompletedChoice = previous.LocalAiCompletedChoice,
             Version = CurrentVersion,
             Skipped = true,
             SkippedAtUtc = DateTimeOffset.UtcNow,
@@ -102,12 +108,16 @@ public sealed class OnboardingStateService
                 : new Dictionary<string, string>(productInstallResults, StringComparer.OrdinalIgnoreCase)
         };
 
-        return SaveAsync(state, cancellationToken);
+        await SaveAsync(state, cancellationToken).ConfigureAwait(false);
     }
 }
 
 public sealed class OnboardingState
 {
+    public string? LocalAiChoice { get; set; }
+
+    public string? LocalAiCompletedChoice { get; set; }
+
     /// <summary>
     /// Defaults to 1 so a version 1 file that predates the field, and one that states it, both read
     /// back as version 1 rather than claiming to carry the product keys.

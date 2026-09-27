@@ -5986,6 +5986,12 @@ fi
                 rm -f /home/dwemer/audio.cpp/start.sh
                 """,
                 "[ -x /home/dwemer/pocket-tts/venv/bin/python ] && [ -e /home/dwemer/pocket-tts/start.sh ]"),
+            "lmstudio" => new(
+                "lmstudio",
+                "LM Studio",
+                "/usr/local/bin/install_lmstudio",
+                "[ -x /home/dwemer/.lmstudio/bin/lms ] && [ -f /etc/sudoers.d/dwemerdistro-lmstudio ]",
+                "root"),
             "higgs" => new(
                 "higgs",
                 "Higgs TTS 3",

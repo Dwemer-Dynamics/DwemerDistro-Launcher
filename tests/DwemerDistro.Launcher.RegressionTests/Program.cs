@@ -149,9 +149,12 @@ try
 
     var onboardingStatePath = Path.Combine(root, "onboarding.json");
     var onboarding = new OnboardingStateService(onboardingStatePath);
+    await onboarding.SaveAsync(new OnboardingState { LocalAiChoice = "orion-standard", LocalAiCompletedChoice = "orion-standard" });
     await onboarding.MarkSkippedAsync(SetupPresetKey.AmdCpu);
 
     var skipped = await onboarding.LoadAsync();
+    Assert(skipped.LocalAiChoice == "orion-standard" && skipped.LocalAiCompletedChoice == "orion-standard",
+        "Skipping Quickstart must preserve the local AI selection and completed download.");
     Assert(skipped.Skipped, "Skip Quick Setup must persist the skipped state.");
     Assert(!skipped.Completed, "Skipping Quick Setup must not claim setup was completed.");
     Assert(skipped.SkippedAtUtc is not null, "Skipping Quick Setup must record when it was skipped.");
@@ -162,6 +165,8 @@ try
 
     await onboarding.MarkCompletedAsync(SetupPresetKey.NvidiaGpu, "pockettts", false, true);
     var completed = await onboarding.LoadAsync();
+    Assert(completed.LocalAiChoice == "orion-standard" && completed.LocalAiCompletedChoice == "orion-standard",
+        "Completing Quickstart must preserve the local AI selection without forcing onboarding again.");
     Assert(completed.Completed, "Completed setup must persist the completed state.");
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
