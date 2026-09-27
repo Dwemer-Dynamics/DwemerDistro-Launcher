@@ -171,7 +171,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.3.32", "Launcher constants must report version 3.3.32.");
+    Assert(LauncherConstants.LauncherVersion == "3.3.33", "Launcher constants must report version 3.3.33.");
     Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
                == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --download-diagnostics \"%1\"",
         "The server-page browser protocol must send the diagnostic report through the browser download manager.");
@@ -897,7 +897,7 @@ try
            && systemUpdateCommand.Contains(sharedUpdateCommand + " && ", StringComparison.Ordinal)
            && systemUpdateCommand.EndsWith(systemReleaseMarkerWrite, StringComparison.Ordinal),
         "Update Distro must update the distro and shared components before recording the successful system release.");
-    Assert(systemReleaseMarkerWrite.Contains("sudo -S install -D -m 0644", StringComparison.Ordinal)
+    Assert(systemReleaseMarkerWrite.Contains("sudo -S -p '' install -D -m 0644", StringComparison.Ordinal)
            && systemReleaseMarkerWrite.Contains("/home/dwemer/dwemerdistro/system-release.json", StringComparison.Ordinal)
            && systemReleaseMarkerWrite.Contains("/var/lib/dwemerdistro/system-release.json", StringComparison.Ordinal),
         "The installed system marker must be copied from the fetched release manifest with root-owned system permissions.");

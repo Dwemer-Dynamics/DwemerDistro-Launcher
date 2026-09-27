@@ -163,6 +163,8 @@ echo "CHIM-MCP installed and enabled."
     private Process? _serverProcess;
     private string? _wslIp;
     private CancellationTokenSource? _connectionDetailsCts;
+    private readonly CancellationTokenSource _shutdownCts = new();
+    private Task<CommandResult>? _distroUpdateTask;
     private bool _connectionDetailsClosed;
     private string _thisPcAddressText = "Not checked";
     private string _wslAddressText = "Not checked";
@@ -973,6 +975,12 @@ echo "CHIM-MCP installed and enabled."
 
     public async Task ShutdownAsync()
     {
+        _shutdownCts.Cancel();
+        if (_distroUpdateTask is { } updateTask)
+        {
+            try { await updateTask.ConfigureAwait(false); }
+            catch (Exception ex) { LauncherLogService.Operation($"Distro update stopped during shutdown: {ex.GetType().Name}"); }
+        }
         _connectionDetailsClosed = true;
         _connectionDetailsCts?.Cancel();
         LauncherLogService.Startup("Launcher shutdown started.");
@@ -1610,7 +1618,7 @@ echo "CHIM-MCP installed and enabled."
 
     internal static string BuildSystemReleaseMarkerWriteCommand()
     {
-        return "printf '%s\\n' 'dwemer' | sudo -S install -D -m 0644 " +
+        return "printf '%s\\n' 'dwemer' | sudo -S -p '' install -D -m 0644 " +
                $"/home/dwemer/dwemerdistro/system-release.json {InstalledSystemReleaseManifestPath}";
     }
 
@@ -2501,13 +2509,15 @@ echo "CHIM-MCP installed and enabled."
     /// </summary>
     private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default)
     {
+        using var updateCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
+        updateCts.CancelAfter(LauncherVersionSyncTimeout);
         var bashCommand = BuildSystemUpdateCommand();
 
         var sharedComponentsStarted = false;
         LauncherLogService.Operation("START distro and shared components update");
         try
         {
-            var result = await _wsl.RunBashAsync(bashCommand, line =>
+            _distroUpdateTask = DistroUpdateRunner.RunAsync(_wsl, bashCommand, line =>
             {
                 LauncherLogService.Operation(line);
                 if (line.Contains(SharedComponentsMarker, StringComparison.OrdinalIgnoreCase))
@@ -2518,7 +2528,8 @@ echo "CHIM-MCP installed and enabled."
                 }
 
                 AppendLog(line);
-            }, loginShell: false, lineBuffered: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }, updateCts.Token);
+            var result = await _distroUpdateTask.ConfigureAwait(false);
 
             LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; shared components started={sharedComponentsStarted}");
             return result.Succeeded && sharedComponentsStarted;
@@ -2546,7 +2557,7 @@ echo "CHIM-MCP installed and enabled."
             $"if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin {DistroRepositoryUrl}; " +
             $"else git remote add origin {DistroRepositoryUrl}; fi && " +
             "git -c credential.helper= fetch origin && git reset --hard origin/main && " +
-            "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
+            "chmod +x update.sh && echo 'dwemer' | sudo -S -p '' ./update.sh && " +
             $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand() + " && " +
             BuildSystemReleaseMarkerWriteCommand();
     }
