@@ -6052,7 +6052,19 @@ fi
                     rm -rf parakeet-api-server
                     git clone --depth 1 https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
                 fi
-                /home/dwemer/parakeet-api-server/ddistro_install.sh
+                cd /home/dwemer/parakeet-api-server
+                # Older checkouts track the scripts ddistro_install.sh and start.sh execute directly as 100644.
+                # Mark them in the index too, so a later fast-forward to the executable upstream modes is not blocked.
+                for script in install.sh conf.sh start-cpu.sh start-gpu.sh start_native.sh; do
+                    [ -f "$script" ] || continue
+                    if [ ! -O . ] || [ ! -O "$script" ]; then
+                        echo "Cannot repair Parakeet script permissions: $PWD/$script must be owned by $(id -un)."
+                        exit 24
+                    fi
+                    chmod u+x "$script"
+                    git update-index --chmod=+x -- "$script"
+                done
+                bash ./ddistro_install.sh
                 """,
                 "[ -x /home/dwemer/parakeet-api-server/venv/bin/python ]"),
             "localwhisper" => new(
