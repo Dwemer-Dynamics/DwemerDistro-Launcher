@@ -570,15 +570,40 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             $"wsl.exe -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"{definition.ScriptPath}\"";
         await TrackOperationAsync(async () =>
         {
+            // A closed console or failed configuration exits non-zero; connectors stay as they were.
+            var configured = false;
             try
             {
-                await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true);
+                configured = await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true) == 0;
             }
             finally
             {
                 await RefreshInstalledStatesAsync().ConfigureAwait(true);
             }
+
+            if (configured)
+            {
+                await SyncPocketTtsConnectorsAsync(definition.Key).ConfigureAwait(true);
+            }
         }).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// After a Pocket-TTS install or configure, point managed game connectors at that backend.
+    /// The Core helper writes nothing unless that backend is the only one enabled and it is running.
+    /// </summary>
+    private async Task SyncPocketTtsConnectorsAsync(string componentKey)
+    {
+        var backend = PocketTtsConnectorService.BackendForComponent(componentKey);
+        var item = _allItems.FirstOrDefault(candidate => string.Equals(candidate.Key, componentKey, StringComparison.OrdinalIgnoreCase));
+        if (backend is null || item is null)
+        {
+            return;
+        }
+
+        item.SetConnectorStatus("Checking game voice connectors...");
+        var result = await _mainWindowViewModel.SyncPocketTtsConnectorsAsync(backend).ConfigureAwait(true);
+        item.SetConnectorStatus(result.State == "not_enabled" ? $"{result.Message} Connectors were not changed." : result.Summary);
     }
 
     internal static string BuildMeloTtsProbeEntry()
@@ -867,8 +892,12 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     {
         return new AsyncRelayCommand(() => TrackOperationAsync(async () =>
         {
-            await _mainWindowViewModel.InstallComponentAsync(componentKey).ConfigureAwait(true);
+            var installed = await _mainWindowViewModel.InstallComponentAsync(componentKey).ConfigureAwait(true);
             await RefreshInstalledStatesAsync().ConfigureAwait(true);
+            if (installed)
+            {
+                await SyncPocketTtsConnectorsAsync(componentKey).ConfigureAwait(true);
+            }
         }));
     }
 

@@ -1313,6 +1313,7 @@ echo "CHIM-MCP installed and enabled."
         }
 
         _wslIp = null;
+        ResetStartupPocketTtsState();
         IsServerStarting = true;
         StartButtonText = "Server is Starting";
         StartStartAnimation();
@@ -1324,6 +1325,11 @@ echo "CHIM-MCP installed and enabled."
                 new[] { "-d", LauncherConstants.DistroName, "--", "/etc/start_env" },
                 line =>
                 {
+                    if (TryCaptureStartupPocketTtsLine(line))
+                    {
+                        return;
+                    }
+
                     AppendLog(line);
                     if (line.Contains("AIAgent.ini Network Settings:", StringComparison.OrdinalIgnoreCase))
                     {
@@ -1336,6 +1342,7 @@ echo "CHIM-MCP installed and enabled."
                         });
                         AppendLog("Server is ready." + Environment.NewLine);
                         _ = Task.Run(() => GetWslIpAsync(forceRefresh: true));
+                        HandleServerReadyForPocketTts();
                     }
                 },
                 redirectInput: true);
@@ -5586,7 +5593,8 @@ fi
         }
     }
 
-    public async Task InstallComponentAsync(string componentKey)
+    /// <summary>Returns true only when the installer ran and exited successfully.</summary>
+    public async Task<bool> InstallComponentAsync(string componentKey)
     {
         var definition = GetComponentInstallDefinition(componentKey);
         if (!await _componentInstallGate.WaitAsync(0).ConfigureAwait(true))
@@ -5596,7 +5604,7 @@ fi
                 "Component Install In Progress",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
-            return;
+            return false;
         }
 
         try
@@ -5614,6 +5622,7 @@ fi
                 $"{definition.DisplayName} installer exited with code {exitCode}.{Environment.NewLine}",
                 exitCode == 0 ? "green" : "red");
             LauncherLogService.Operation($"END component installer: {definition.DisplayName}; exit code {exitCode}");
+            return exitCode == 0;
         }
         catch (Exception ex)
         {
@@ -5624,6 +5633,7 @@ fi
                 "Component Install Failed",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
+            return false;
         }
         finally
         {

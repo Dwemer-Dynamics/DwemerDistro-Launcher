@@ -1731,6 +1731,86 @@ try
 
     Console.WriteLine("Local game log buttons: diagnostics templates, candidate priority, VR separation, RE_Kenshi fallback, folder fallback and Explorer arguments: OK");
 
+    // --- PocketTTS connector contract -------------------------------------------------------
+
+    Assert(PocketTtsConnectorService.BackendForComponent("audiocpp") == "audiocpp"
+           && PocketTtsConnectorService.BackendForComponent("pockettts") == "python"
+           && PocketTtsConnectorService.BackendForComponent("chatterbox") is null,
+        "Only the two Pocket-TTS components may select a connector backend.");
+    var setupPresets = new DistroSetupService(new WslService(new ProcessRunner())).Presets;
+    Assert(PocketTtsConnectorService.BackendForPreset(setupPresets.Single(p => p.Key == SetupPresetKey.NvidiaGpu)) == "audiocpp"
+           && PocketTtsConnectorService.BackendForPreset(setupPresets.Single(p => p.Key == SetupPresetKey.AmdCpu)) == "python",
+        "Quickstart presets must pass their own Pocket-TTS backend, not whichever service answers.");
+    Assert(!PocketTtsConnectorService.TryParseStartupLine("PocketTTS connectors: ready", out _),
+        "Readable startup lines stay in the console.");
+    Assert(PocketTtsConnectorService.TryParseStartupLine(
+               PocketTtsConnectorService.StartupResultPrefix + "{\"contract\":1,\"state\":\"ok\",\"message\":\"Ready.\",\"products\":[{\"name\":\"CHIM\",\"status\":\"updated\"},{\"name\":\"STOBE\",\"status\":\"missing\"}]}",
+               out var pocketStartup)
+           && pocketStartup is { State: "ok", NeedsAttention: false }
+           && pocketStartup.Summary.Contains("CHIM connected") && pocketStartup.Summary.Contains("STOBE not installed"),
+        "The startup result line must parse into per-game statuses.");
+    Assert(PocketTtsConnectorService.TryParseStartupLine(
+               PocketTtsConnectorService.StartupResultPrefix + "{\"contract\":1,\"state\":\"ambiguous\",\"products\":[]}",
+               out var pocketAmbiguous) && pocketAmbiguous!.NeedsAttention,
+        "Both backends enabled must be reported, never shown as connected.");
+    Assert(PocketTtsConnectorService.TryParseStartupLine(PocketTtsConnectorService.StartupResultPrefix + "not json", out var pocketBroken)
+           && pocketBroken!.State == "failed" && pocketBroken.NeedsAttention,
+        "An unreadable result must surface as a failure.");
+    Assert(PocketTtsConnectorResult.CoreUpdateRequired().NeedsAttention,
+        "Older Core without the helper must ask for an update.");
+
+    Console.WriteLine("PocketTTS connector contract: backend selection, startup line parsing and attention states: OK");
+
+    // --- Quickstart voice setup deferred until the voice service runs ------------------------
+
+    VoiceEngineApplyTargetStatus VoiceTarget(string db, bool applied, bool skipped, string status, string? error = null) =>
+        new(db, db, applied, skipped, status, error);
+    var voiceUnavailable = new[] { VoiceTarget("dwemer", false, true, VoiceEngineService.ServiceUnavailableStatus, "not running") };
+    var voiceDone = new[]
+    {
+        VoiceTarget("dwemer", true, false, "Pocket-TTS applied"),
+        VoiceTarget("stobe", false, true, "Database unavailable", "FATAL:  database \"stobe\" does not exist")
+    };
+    Assert(VoiceEngineService.IsInitialApplyComplete(voiceDone)
+           && !VoiceEngineService.IsInitialApplyComplete(voiceUnavailable)
+           && !VoiceEngineService.IsInitialApplyComplete([VoiceTarget("dwemer", false, true, "Database unavailable", "Connection refused")])
+           && !VoiceEngineService.IsInitialApplyComplete([VoiceTarget("dwemer", false, false, "DwemerDistro update required")])
+           && !VoiceEngineService.IsInitialApplyComplete([]),
+        "Only applied or not-installed games finish a pending voice setup; stopped services and errors keep it.");
+
+    var pendingVoicePath = Path.Combine(root, "onboarding-pending-voice.json");
+    var pendingVoice = new OnboardingStateService(pendingVoicePath);
+    var pendingApplyCalls = new List<string>();
+    Func<string, string?, Task<IReadOnlyList<VoiceEngineApplyTargetStatus>>> PendingApply(VoiceEngineApplyTargetStatus[] result) =>
+        (engine, backend) =>
+        {
+            pendingApplyCalls.Add($"{engine}/{backend}");
+            return Task.FromResult<IReadOnlyList<VoiceEngineApplyTargetStatus>>(result);
+        };
+
+    await pendingVoice.MarkCompletedAsync(SetupPresetKey.NvidiaGpu, "pockettts", false, false);
+    Assert(await pendingVoice.RunPendingVoiceApplyAsync(PendingApply(voiceDone)) is null && pendingApplyCalls.Count == 0,
+        "A normal start without a saved Quickstart request must never run the full voice setup.");
+    await pendingVoice.SetPendingVoiceApplyAsync("pockettts", "audiocpp");
+    var reloadedPending = await new OnboardingStateService(pendingVoicePath).LoadAsync();
+    Assert(reloadedPending.Completed && reloadedPending.PendingVoiceApply is { EngineKey: "pockettts", PocketTtsBackend: "audiocpp" },
+        "The deferred voice setup must survive a launcher restart next to the completed flag.");
+    await pendingVoice.RunPendingVoiceApplyAsync(PendingApply(voiceUnavailable));
+    Assert(pendingApplyCalls.SequenceEqual(new[] { "pockettts/audiocpp" })
+           && (await pendingVoice.LoadAsync()).PendingVoiceApply is not null,
+        "A stopped voice service must keep the request, with the chosen backend passed through.");
+    await pendingVoice.RunPendingVoiceApplyAsync(PendingApply(voiceDone));
+    Assert((await pendingVoice.LoadAsync()) is { Completed: true, PendingVoiceApply: null }
+           && await pendingVoice.RunPendingVoiceApplyAsync(PendingApply(voiceDone)) is null
+           && pendingApplyCalls.Count == 2,
+        "A successful setup clears the request once and is not repeated on later starts.");
+    await pendingVoice.SetPendingVoiceApplyAsync("pockettts", null);
+    await pendingVoice.MarkCompletedAsync(SetupPresetKey.AmdCpu, "pockettts", false, false);
+    Assert((await pendingVoice.LoadAsync()).PendingVoiceApply is null,
+        "A new Quickstart completion replaces an older pending voice setup.");
+
+    Console.WriteLine("Quickstart deferred voice setup: persisted, retained until success, never run without a request: OK");
+
     // --- onboarding schema version 2 ---------------------------------------------------------
 
     var v2StatePath = Path.Combine(root, "onboarding-v2.json");

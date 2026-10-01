@@ -8,6 +8,7 @@ public sealed class InstallComponentItemViewModel : ObservableObject
     private bool _isInstalled;
     private string _statusText = "Checking...";
     private string _statusDetailText = string.Empty;
+    private string _connectorStatusText = string.Empty;
     private string _statusBackground = "#555555";
     private string _statusForeground = "White";
 
@@ -96,6 +97,26 @@ public sealed class InstallComponentItemViewModel : ObservableObject
     }
 
     public bool HasStatusDetail => !string.IsNullOrWhiteSpace(StatusDetailText);
+
+    /// <summary>Result of the last game connector sync; kept across install-state refreshes.</summary>
+    public string ConnectorStatusText
+    {
+        get => _connectorStatusText;
+        private set
+        {
+            if (SetProperty(ref _connectorStatusText, value))
+            {
+                OnPropertyChanged(nameof(HasConnectorStatus));
+            }
+        }
+    }
+
+    public bool HasConnectorStatus => !string.IsNullOrWhiteSpace(ConnectorStatusText);
+
+    public void SetConnectorStatus(string text)
+    {
+        ConnectorStatusText = text;
+    }
 
     public string StatusBackground
     {
