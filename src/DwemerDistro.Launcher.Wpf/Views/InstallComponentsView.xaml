@@ -511,6 +511,14 @@
                                                                FontFamily="Trebuchet MS"
                                                                TextWrapping="Wrap"
                                                                Margin="0,6,0,0" />
+                                                    <TextBlock Text="{Binding ConnectorStatusText}"
+                                                               Foreground="#FFD27A"
+                                                               FontFamily="Trebuchet MS"
+                                                               FontSize="12"
+                                                               TextWrapping="Wrap"
+                                                               Margin="0,6,0,0"
+                                                               AutomationProperties.Name="{Binding ConnectorStatusText}"
+                                                               Visibility="{Binding HasConnectorStatus, Converter={StaticResource BoolToVisibilityConverter}}" />
                                                 </StackPanel>
 
                                                 <Border Grid.Column="1"

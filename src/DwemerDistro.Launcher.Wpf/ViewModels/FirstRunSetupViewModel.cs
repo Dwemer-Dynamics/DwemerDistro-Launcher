@@ -59,6 +59,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private bool _isInstallingSetup;
     private bool _showPresetOptions;
     private bool _showTechnicalDetails;
+    private bool _voiceApplyDeferred;
     private bool _skipHuggingFaceStep = HuggingFaceTokenService.HasManagedToken;
     private bool _quickstartDistroUpdated;
     private bool _isInstallingProducts;
@@ -883,6 +884,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             await RefreshVoiceStatusCoreAsync().ConfigureAwait(true);
             VoiceApplyTargets.Clear();
+            _voiceApplyDeferred = false;
 
             if (_voiceEngineStatus?.HasUsableEngine != true)
             {
@@ -890,10 +892,35 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 return;
             }
 
-            var targets = await _voiceEngine.ApplyVoiceEngineAsync(_voiceEngineStatus.EngineKey).ConfigureAwait(true);
+            var targets = await _voiceEngine.ApplyVoiceEngineAsync(
+                    _voiceEngineStatus.EngineKey,
+                    PocketTtsConnectorService.BackendForPreset(_selectedPreset))
+                .ConfigureAwait(true);
             ApplyVoiceTargetStatuses(targets);
 
-            ReadySummary = "Ready to start DwemerDistro.";
+            // The voice service normally starts with DwemerDistro, so the first setup waits for it.
+            _voiceApplyDeferred = targets.Any(target => target.StatusText == VoiceEngineService.ServiceUnavailableStatus);
+            var failed = targets
+                .Where(target => !target.Applied && !target.Skipped)
+                .Select(target => target.TargetName)
+                .ToArray();
+            if (failed.Length > 0)
+            {
+                ReadySummary = $"Voice setup needs attention for {string.Join(", ", failed)}. See Details.";
+            }
+            else if (_voiceApplyDeferred)
+            {
+                ReadySummary = "Almost ready. Game voices will be connected after DwemerDistro starts.";
+            }
+            else
+            {
+                ReadySummary = "Ready to start DwemerDistro.";
+            }
+
+            if (failed.Length > 0 || _voiceApplyDeferred)
+            {
+                ShowTechnicalDetails = true;
+            }
         }).ConfigureAwait(true);
     }
 
@@ -908,6 +935,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             LauncherLogService.Startup("Quickstart could not mark onboarding complete before starting server.", ex);
         }
 
+        await PersistDeferredVoiceApplyAsync().ConfigureAwait(true);
         RequestClose?.Invoke();
         _mainWindowViewModel.StartServerCommand.Execute(null);
     }
@@ -917,9 +945,34 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         if (IsReadyStep && CanContinue())
         {
             await MarkReadyAsync().ConfigureAwait(true);
+            await PersistDeferredVoiceApplyAsync().ConfigureAwait(true);
         }
 
         RequestClose?.Invoke();
+    }
+
+    /// <summary>
+    /// Saves a voice setup that waits for the voice service, after onboarding is marked complete
+    /// (which resets the state file). The next server start runs it, even after a launcher restart.
+    /// </summary>
+    private async Task PersistDeferredVoiceApplyAsync()
+    {
+        if (!_voiceApplyDeferred || _voiceEngineStatus is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _onboardingState.SetPendingVoiceApplyAsync(
+                    _voiceEngineStatus.EngineKey,
+                    PocketTtsConnectorService.BackendForPreset(_selectedPreset))
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Quickstart could not save the pending voice setup.", ex);
+        }
     }
 
     private async Task RefreshSetupCoreAsync(CancellationToken cancellationToken = default)
@@ -1139,6 +1192,16 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         VoiceApplyTargets.Clear();
         foreach (var target in targets)
         {
+            if (target.StatusText == VoiceEngineService.ServiceUnavailableStatus)
+            {
+                VoiceApplyTargets.Add(new CredentialTargetViewModel(
+                    target.TargetName,
+                    "After start",
+                    StatusWarn,
+                    "Connects when you start DwemerDistro and the voice service is running."));
+                continue;
+            }
+
             VoiceApplyTargets.Add(new CredentialTargetViewModel(
                 target.TargetName,
                 target.StatusText,
