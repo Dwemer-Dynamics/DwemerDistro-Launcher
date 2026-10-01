@@ -218,6 +218,32 @@ try
             $"{installPath} Pocket-TTS CPU migration must uninstall a CUDA Torch build "
             + $"before installing the CPU wheel, so the CUDA-only sweep cannot break the venv.");
     }
+    var componentParakeet = typeof(MainWindowViewModel)
+        .GetMethod("GetComponentInstallDefinition", privateStatic)!
+        .Invoke(null, new object[] { "parakeet" })!;
+    var componentParakeetScript = (string)componentParakeet.GetType()
+        .GetProperty("InstallScript")!
+        .GetValue(componentParakeet)!;
+    var parakeetScriptLines = componentParakeetScript.Split('\n').Select(line => line.Trim()).ToArray();
+    var parakeetModeRepairLines = parakeetScriptLines
+        .Where(line => line.Contains("chmod", StringComparison.Ordinal))
+        .ToArray();
+    Assert(parakeetScriptLines.Contains("for script in install.sh conf.sh start-cpu.sh start-gpu.sh start_native.sh; do")
+           && parakeetModeRepairLines.SequenceEqual(new[] { "chmod u+x \"$script\"", "git update-index --chmod=+x -- \"$script\"" })
+           && parakeetScriptLines.Contains("if [ ! -O . ] || [ ! -O \"$script\" ]; then")
+           && parakeetScriptLines.Contains("exit 24"),
+        "Components Parakeet must repair only its owned install/start script modes, in both the worktree and index.");
+    Assert(parakeetScriptLines
+            .Where(line => line.StartsWith("bash ", StringComparison.Ordinal)
+                           || line.StartsWith("./", StringComparison.Ordinal)
+                           || line.StartsWith("/home/dwemer/parakeet-api-server/", StringComparison.Ordinal))
+            .SequenceEqual(new[] { "bash ./ddistro_install.sh" }),
+        "Components Parakeet must run the upstream ddistro_install.sh wrapper once instead of duplicating its steps.");
+    Assert(parakeetScriptLines.Contains("if [ ! -d parakeet-api-server/.git ]; then")
+           && !componentParakeetScript.Contains("pull", StringComparison.Ordinal)
+           && Array.IndexOf(parakeetScriptLines, "git update-index --chmod=+x -- \"$script\"")
+              < Array.IndexOf(parakeetScriptLines, "bash ./ddistro_install.sh"),
+        "Components Parakeet must reuse an existing checkout without pulling and repair modes before installing.");
     Assert(minimeInstallCommand.Contains("CUDA_PYTORCH_SUPPORTED=1", StringComparison.Ordinal)
            && parakeetInstallCommand.Contains("CUDA_PYTORCH_SUPPORTED=1", StringComparison.Ordinal),
         "Python GPU components must honor Core's capability result instead of assuming every nvcc GPU is supported.");
