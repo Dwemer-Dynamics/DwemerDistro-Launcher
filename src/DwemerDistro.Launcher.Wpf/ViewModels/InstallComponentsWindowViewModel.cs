@@ -923,7 +923,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             CreateItem(
                 key: "lmstudio",
                 title: "LLM Studio",
-                description: "Optional local AI inside WSL. Download models and control the engine in your browser.\nPort: 1234 (local only)",
+                description: "LM Studio built into the distro. Run local models directly in the distro\nPort: 1234",
                 installCheckExpression: "Path('/home/dwemer/.lmstudio/bin/lms').is_file()",
                 primaryCommand: CreateInstallCommand("lmstudio"),
                 supportsNvidiaCuda: true,
