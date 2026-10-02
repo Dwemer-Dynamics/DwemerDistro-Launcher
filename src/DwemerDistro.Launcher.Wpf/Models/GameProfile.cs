@@ -1,3 +1,5 @@
+using System.Windows;
+
 namespace DwemerDistro.Launcher.Wpf.Models;
 
 public sealed record GameProfile(
@@ -8,6 +10,21 @@ public sealed record GameProfile(
     string HeroImageSource,
     string RailImageSource)
 {
+    /// <summary>
+    /// Square region of <see cref="RailImageSource"/>, relative to the image, shown as the small
+    /// sidebar icon. Each crop centres the artwork's most recognisable mark so it still reads at
+    /// icon size.
+    /// </summary>
+    public Rect RailIconViewbox => Key switch
+    {
+        "CHIM" => new Rect(0.35, 0, 0.298, 1),
+        "LORKHAN" => new Rect(0.875, 0.72, 0.11, 0.1956),
+        "DIALECTIC" => new Rect(0.33, 0, 0.298, 1),
+        "STOBE" => new Rect(0.48, 0, 0.265, 0.887),
+        "REIGN" => new Rect(0.409, 0.162, 0.173, 0.308),
+        _ => new Rect(0, 0, 1, 1)
+    };
+
     public static IReadOnlyList<GameProfile> CreateCatalog()
     {
         return new[]

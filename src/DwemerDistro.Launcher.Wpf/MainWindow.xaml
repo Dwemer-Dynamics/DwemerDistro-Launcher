@@ -66,7 +66,6 @@
             <RowDefinition Height="62" />
             <RowDefinition Height="*" />
             <RowDefinition x:Name="ConsoleRow" Height="38" />
-            <RowDefinition Height="124" />
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="178" />
@@ -113,7 +112,7 @@
         </Border>
 
         <Border Grid.Row="1"
-                Grid.RowSpan="4"
+                Grid.RowSpan="3"
                 Grid.Column="0"
                 Background="#242424"
                 BorderBrush="{DynamicResource GameCenter.Border}"
@@ -126,28 +125,74 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <StackPanel>
-                    <Image Source="Assets/dd_title.png" Height="62" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,4,4,16" />
+                    <Image Source="Assets/dd_title.png" Height="50" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,2,4,14" />
                 </StackPanel>
-                <StackPanel x:Name="UtilityLandmark" Grid.Row="1" KeyboardNavigation.TabNavigation="Local">
-                    <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                            <AccessText Text="Server _Folder" />
+                <TextBlock Grid.Row="1" Text="GAMES" Foreground="{DynamicResource GameCenter.TextMuted}"
+                           FontSize="10" FontWeight="SemiBold" Margin="5,0,0,6" />
+                <!-- Games and utilities share one scroll region so the utilities stay directly under
+                     the list, and only this middle part scrolls if the window is ever too short.
+                     The launcher update block below stays pinned to the bottom. -->
+                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                              Focusable="False">
+                    <StackPanel>
+                        <ListBox x:Name="GameRail" ItemsSource="{Binding GameProfiles}" SelectedItem="{Binding SelectedGame}"
+                                 ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0" Padding="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                 KeyboardNavigation.DirectionalNavigation="Contained" SelectionChanged="GameRail_SelectionChanged"
+                                 AutomationProperties.Name="Dwemer game selection">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- A square crop of the existing rail art (see GameProfile.RailIconViewbox).
+                                             High contrast drops the art, as the hero does, and keeps the name. -->
+                                        <Border x:Name="GameIcon" Width="26" Height="26" Margin="0,0,10,0" CornerRadius="3"
+                                                BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1"
+                                                RenderOptions.BitmapScalingMode="HighQuality">
+                                            <Border.Background>
+                                                <ImageBrush ImageSource="{Binding RailImageSource}" Viewbox="{Binding RailIconViewbox}"
+                                                            ViewboxUnits="RelativeToBoundingBox" Stretch="UniformToFill" />
+                                            </Border.Background>
+                                        </Border>
+                                        <!-- Explicit, because the app-wide TextBlock style would otherwise
+                                             replace the item's hover, selected and high contrast colours. -->
+                                        <TextBlock Grid.Column="1" Text="{Binding Key}" FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                                            <Setter TargetName="GameIcon" Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <StackPanel x:Name="UtilityLandmark" Margin="0,14,0,0" KeyboardNavigation.TabNavigation="Local">
+                            <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                                    <AccessText Text="Server _Folder" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding OpenWikiCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Wiki">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                                    <AccessText Text="_Wiki" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding OpenDiscordCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Discord">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE8BD;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                                    <AccessText Text="_Discord" />
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
-                    </Button>
-                    <Button Command="{Binding OpenWikiCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Wiki">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                            <AccessText Text="_Wiki" />
-                        </StackPanel>
-                    </Button>
-                    <Button Command="{Binding OpenDiscordCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Discord">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8BD;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                            <AccessText Text="_Discord" />
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
                 <StackPanel Grid.Row="3" Margin="5,12,5,4">
                     <Button Command="{Binding UpdateLauncherCommand}" Style="{StaticResource GameCenter.LauncherUpdateButton}"
                             AutomationProperties.Name="{Binding LauncherUpdateButtonText}"
@@ -1208,81 +1253,6 @@
                      accessibility tree do not stay resident during normal launcher use. -->
                 <ContentControl x:Name="OutputConsoleHost" Grid.Row="1" Focusable="False" />
             </Grid>
-        </Border>
-
-        <Border Grid.Row="4" Grid.Column="1" Background="#1A1A1A" BorderBrush="{DynamicResource GameCenter.Border}"
-                BorderThickness="0,1,0,0" Padding="18,12">
-            <ListBox x:Name="GameRail" ItemsSource="{Binding GameProfiles}" SelectedItem="{Binding SelectedGame}"
-                     ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0"
-                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
-                     KeyboardNavigation.DirectionalNavigation="Contained" SelectionChanged="GameRail_SelectionChanged"
-                     AutomationProperties.Name="Dwemer game selection">
-                <ListBox.ItemsPanel>
-                    <ItemsPanelTemplate><UniformGrid Rows="1" /></ItemsPanelTemplate>
-                </ListBox.ItemsPanel>
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <Grid Height="96">
-                            <Grid ClipToBounds="True" Background="#151515">
-                                <Image Source="{Binding RailImageSource}">
-                                    <Image.Style>
-                                        <Style TargetType="Image">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                            <Setter Property="Stretch" Value="UniformToFill" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Key}" Value="REIGN">
-                                                    <Setter Property="Stretch" Value="Uniform" />
-                                                </DataTrigger>
-                                                <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Image.Style>
-                                </Image>
-                                <Border Background="#50000000" />
-                                <StackPanel Margin="12,10" VerticalAlignment="Bottom">
-                                    <TextBlock Text="{Binding Name}" Style="{StaticResource GameCenter.ModCardTitle}" />
-                                    <!-- Live branch | date version | semantic version for this product.
-                                         The rail item's DataContext is the GameProfile, so each card reaches
-                                         the matching MainWindowViewModel status through the window. -->
-                                    <TextBlock FontSize="9"
-                                               TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
-                                                <Setter Property="Foreground" Value="#E0E0E0" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Key}" Value="CHIM">
-                                                        <Setter Property="Text" Value="{Binding DataContext.HerikaStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                        <Setter Property="Foreground" Value="{Binding DataContext.HerikaStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Key}" Value="STOBE">
-                                                        <Setter Property="Text" Value="{Binding DataContext.StobeStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                        <Setter Property="Foreground" Value="{Binding DataContext.StobeStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Key}" Value="DIALECTIC">
-                                                        <Setter Property="Text" Value="{Binding DataContext.DialecticStatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                        <Setter Property="Foreground" Value="{Binding DataContext.DialecticStatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Key}" Value="LORKHAN">
-                                                        <Setter Property="Text" Value="{Binding DataContext.LorkhanManager.StatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                        <Setter Property="Foreground" Value="{Binding DataContext.LorkhanManager.StatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding Key}" Value="REIGN">
-                                                        <Setter Property="Text" Value="{Binding DataContext.ReignManager.StatusText, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                        <Setter Property="Foreground" Value="{Binding DataContext.ReignManager.StatusColor, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </StackPanel>
-                            </Grid>
-                        </Grid>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
         </Border>
     </Grid>
 </Window>
