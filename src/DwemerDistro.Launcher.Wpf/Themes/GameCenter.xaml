@@ -106,41 +106,6 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Same treatment on the bottom game cards, where the DataContext is the
-         GameProfile itself rather than the view model. -->
-    <Style x:Key="GameCenter.ModCardTitle" TargetType="TextBlock">
-        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
-        <Setter Property="FontSize" Value="16" />
-        <Setter Property="FontWeight" Value="Bold" />
-        <Style.Triggers>
-            <DataTrigger Binding="{Binding Key}" Value="REIGN">
-                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
-                <Setter Property="FontFamily" Value="Times New Roman" />
-                <Setter Property="FontWeight" Value="Normal" />
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Key}" Value="CHIM">
-                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
-                <Setter Property="FontWeight" Value="Normal" />
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Key}" Value="STOBE">
-                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
-                <Setter Property="FontWeight" Value="Normal" />
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Key}" Value="LORKHAN">
-                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
-                <Setter Property="FontWeight" Value="Normal" />
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Key}" Value="DIALECTIC">
-                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
-                <Setter Property="FontWeight" Value="Normal" />
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
-                <Setter Property="FontFamily" Value="Segoe UI" />
-                <Setter Property="FontWeight" Value="Bold" />
-            </DataTrigger>
-        </Style.Triggers>
-    </Style>
-
     <!-- Mod-name run inside a "Name / ServerName" details heading. Only the name
          is branded; the suffix stays in the surrounding UI font so the server it
          maps to keeps reading as plain text. Exactly one details panel is visible
@@ -1236,91 +1201,67 @@
         </Setter>
     </Style>
 
+    <!-- Left sidebar game rows: a flat icon-and-name row, not a card. Selection is a quiet dark
+         fill plus the gold accent bar; keyboard focus adds a separate outline in the row's text
+         colour, so focus and selection never look the same. The template only reads the item's
+         Background, Foreground and BorderBrush (the accent bar), so the high contrast triggers
+         below can swap all three for system colours without fighting template setters. -->
     <Style x:Key="GameCenter.RailItem" TargetType="ListBoxItem">
         <Setter Property="AutomationProperties.Name" Value="{Binding Name, StringFormat={}{0} game}" />
-        <Setter Property="Background" Value="{DynamicResource GameCenter.Panel}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="Margin" Value="0,0,10,0" />
-        <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="Height" Value="50" />
+        <Setter Property="Margin" Value="0,0,0,2" />
+        <Setter Property="Padding" Value="10,0,6,0" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
-                    <Border x:Name="Border"
-                            Background="{TemplateBinding Background}"
-                            BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="3"
-                            SnapsToDevicePixels="True">
-                        <ContentPresenter />
-                    </Border>
+                    <Grid SnapsToDevicePixels="True">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="3" />
+                        <Border Width="3" Margin="0,9" HorizontalAlignment="Left" CornerRadius="1.5"
+                                Background="{TemplateBinding BorderBrush}" />
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                        <Border x:Name="FocusRing" BorderBrush="{TemplateBinding Foreground}" BorderThickness="2"
+                                CornerRadius="3" Visibility="Collapsed" IsHitTestVisible="False" />
+                    </Grid>
                     <ControlTemplate.Triggers>
-                        <!-- Hover cue for items that are not the current selection. Scoped that way
-                             so hovering the selected card cannot repaint its brand frame gold. -->
-                        <MultiTrigger>
-                            <MultiTrigger.Conditions>
-                                <Condition Property="IsMouseOver" Value="True" />
-                                <Condition Property="IsSelected" Value="False" />
-                            </MultiTrigger.Conditions>
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
-                        </MultiTrigger>
-                        <!-- Selection thickens the frame here; its colour comes from the style's
-                             BorderBrush below, which the mod triggers set. This template no longer
-                             paints the selected frame itself, because a TargetName setter would
-                             outrank the templated value and flatten every mod back to one accent. -->
-                        <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Border" Property="BorderThickness" Value="2" />
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
                         </Trigger>
-                        <MultiTrigger>
-                            <MultiTrigger.Conditions>
-                                <Condition Property="IsKeyboardFocused" Value="True" />
-                                <Condition Property="IsSelected" Value="False" />
-                            </MultiTrigger.Conditions>
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
-                            <Setter TargetName="Border" Property="BorderThickness" Value="2" />
-                        </MultiTrigger>
-                        <MultiTrigger>
-                            <MultiTrigger.Conditions>
-                                <Condition Property="IsKeyboardFocused" Value="True" />
-                                <Condition Property="IsSelected" Value="True" />
-                            </MultiTrigger.Conditions>
-                            <Setter TargetName="Border" Property="BorderThickness" Value="3" />
-                        </MultiTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
-        <!-- The selected card is framed in its own mod's brand colour rather than one shared
-             accent, matching the branded controls on that mod's page. Unselected cards keep the
-             neutral border set above. Gold stays the fallback for a profile these triggers do not
-             name, so a new mod still reads as selected before it has a colour of its own. -->
+        <!-- Later triggers win: hover, then selection, then the high contrast overrides. -->
         <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
             <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="#161616" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
             </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+            </DataTrigger>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
                     <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
-                    <Condition Binding="{Binding Key}" Value="CHIM" />
                 </MultiDataTrigger.Conditions>
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
-            </MultiDataTrigger>
-            <MultiDataTrigger>
-                <MultiDataTrigger.Conditions>
-                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
-                    <Condition Binding="{Binding Key}" Value="STOBE" />
-                </MultiDataTrigger.Conditions>
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
-            </MultiDataTrigger>
-            <MultiDataTrigger>
-                <MultiDataTrigger.Conditions>
-                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
-                    <Condition Binding="{Binding Key}" Value="DIALECTIC" />
-                </MultiDataTrigger.Conditions>
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
             </MultiDataTrigger>
         </Style.Triggers>
     </Style>

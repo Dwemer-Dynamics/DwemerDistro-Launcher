@@ -465,12 +465,13 @@ public partial class MainWindow : Window
             3 => LogsLandmark,
             _ => LibraryLandmark
         };
+        // Visual order: the sidebar's game list and utilities, then the header, page and console.
         var landmarks = new FrameworkElement[]
         {
+            GameRail,
             UtilityLandmark,
             NavigationLandmark,
             activePage,
-            GameRail,
             _isConsoleExpanded && _outputRichTextBox is not null ? _outputRichTextBox : ToggleConsoleButton
         };
 
