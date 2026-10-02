@@ -147,16 +147,11 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <!-- A square crop of the existing rail art (see GameProfile.RailIconViewbox).
+                                        <!-- The mod's own transparent emblem, whole and uncropped.
                                              High contrast drops the art, as the hero does, and keeps the name. -->
-                                        <Border x:Name="GameIcon" Width="26" Height="26" Margin="0,0,10,0" CornerRadius="3"
-                                                BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1"
-                                                RenderOptions.BitmapScalingMode="HighQuality">
-                                            <Border.Background>
-                                                <ImageBrush ImageSource="{Binding RailImageSource}" Viewbox="{Binding RailIconViewbox}"
-                                                            ViewboxUnits="RelativeToBoundingBox" Stretch="UniformToFill" />
-                                            </Border.Background>
-                                        </Border>
+                                        <Image x:Name="GameIcon" Source="{Binding IconImageSource}" Width="26" Height="26" Margin="0,0,10,0"
+                                               Stretch="Uniform" VerticalAlignment="Center"
+                                               RenderOptions.BitmapScalingMode="HighQuality" />
                                         <!-- Explicit, because the app-wide TextBlock style would otherwise
                                              replace the item's hover, selected and high contrast colours. -->
                                         <TextBlock Grid.Column="1" Text="{Binding Key}" FontSize="13" FontWeight="SemiBold"
