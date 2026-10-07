@@ -236,6 +236,7 @@ echo "CHIM-MCP installed and enabled."
         _wsl = new WslService(_processRunner);
         // The three server items back command CanExecute below, so they exist before any command.
         InitializeServerManagement();
+        InitializeCustomMods();
         _launcherUpdateService = new LauncherUpdateService(_httpClient, _processRunner);
         _launcherReleaseNoticeService = new LauncherReleaseNoticeService();
         _updatePreferences = new UpdatePreferencesService();
@@ -660,7 +661,8 @@ echo "CHIM-MCP installed and enabled."
         !IsDistroUpdateInProgress &&
         !_isComponentsOperationInProgress &&
         !IsCriticalMaintenanceInProgress &&
-        !ServerManagers.Any(manager => manager.IsBusy);
+        !ServerManagers.Any(manager => manager.IsBusy) &&
+        !_isCustomModBusy;
 
     public bool IsCriticalMaintenanceInProgress => _isExclusiveDistroOperationInProgress;
 

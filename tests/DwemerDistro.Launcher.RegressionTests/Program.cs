@@ -495,6 +495,92 @@ try
            && ServerManagementService.ParseInstallState("gone") == ServerInstallState.Unknown,
         "Install states must parse case-insensitively and fall back to Unknown, never to NotInstalled.");
 
+    // --- custom mods: argument vectors, URL boundary, fixed routes ----------------------------
+
+    const string customRepo = "https://github.com/owner/example-server";
+    var customCommit = new string('a', 40);
+    Assert(CustomModService.BuildWslArguments("dwemer", CustomModService.BuildCheckArguments(customRepo))
+            .SequenceEqual(new[] { "-d", LauncherConstants.DistroName, "-u", "dwemer", "--exec",
+                "/usr/local/bin/ddistro_custom_mod", "check", customRepo, "--json" }),
+        "Custom repository checks must pass the URL as one argv element through wsl --exec, never through a shell.");
+    Assert(CustomModService.BuildInstallArguments(customRepo, customCommit)
+            .SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "install", customRepo, "--expect-commit", customCommit }),
+        "Custom installs must pin the commit the user previewed.");
+    var newlineCommitRejected = false;
+    try { CustomModService.BuildInstallArguments(customRepo, customCommit + "\n"); } catch (ArgumentException) { newlineCommitRejected = true; }
+    Assert(newlineCommitRejected, "A commit id with a trailing newline must not reach the manager.");
+    Assert(CustomModService.BuildIdArguments("update", "example-server")
+            .SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "update", "example-server" })
+           && !CustomModService.BuildIdArguments("update", "example-server").Contains("--force"),
+        "Custom updates have no force flag, so the official Force Updates setting cannot bypass custom protections.");
+    Assert(CustomModService.BuildStatusArguments(false).SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "status", "--json" }),
+        "Custom status reads the distro registry; the launcher keeps no private list.");
+    foreach (var badUrl in new[]
+             {
+                 "http://github.com/owner/repo", "https://user:pw@github.com/owner/repo", "https://github.com/owner/repo?x=1",
+                 "https://github.com/owner/repo#main", "https://github.com:8443/owner/repo", "https://github.com/owner/repo;rm -rf",
+                 "https://github.com/owner/$(id)", "https://github.com/owner/re po", "https://github.com/owner/../etc",
+                 "https://localhost/owner/repo", "https://127.0.0.1/owner/repo", "https://nas.local/owner/repo",
+                 "https://github.com", "ssh://github.com/owner/repo", "git@github.com:owner/repo.git", "file:///tmp/repo",
+                 "https://github.com/owner/repo\n", "https://github.com/owner/%2e%2e", "https://github.com/owner/repo\u0007"
+             })
+    {
+        Assert(CustomModService.ValidateRepositoryUrl(badUrl) is not null, $"Custom repository URL must be rejected: {badUrl}");
+        var threw = false;
+        try { CustomModService.BuildCheckArguments(badUrl); } catch (ArgumentException) { threw = true; }
+        Assert(threw, $"A rejected URL must never reach an argument vector: {badUrl}");
+    }
+    Assert(CustomModService.ValidateRepositoryUrl("https://gitlab.com/group/sub.group/repo.git") is null
+           && CustomModService.ValidateRepositoryUrl(customRepo + "/") is null,
+        "Plain public HTTPS repository URLs must be accepted.");
+    foreach (var badId in new[] { "", "ab", "Example", "-abc", "abc-", "a--b", "a_b", "../x", "abc def", "example-test\n", new string('a', 33) })
+    {
+        var threw = false;
+        try { CustomModService.BuildIdArguments("backup", badId); } catch (ArgumentException) { threw = true; }
+        Assert(threw, $"Invalid custom mod id must not reach the manager: '{badId}'");
+    }
+    var badVerbRejected = false;
+    try { CustomModService.BuildIdArguments("purge", "example-server"); } catch (ArgumentOutOfRangeException) { badVerbRejected = true; }
+    Assert(badVerbRejected, "Only update, backup, and unregister are allowlisted custom mod verbs.");
+    var customStatus = "[INFO] noise\n" + """
+        {"schema_version":1,"mods":[
+          {"id":"example-server","name":"Example","state":"ready","commit":"0123456789abcdef0123456789abcdef01234567",
+           "dashboard_url":"http://127.0.0.1:8081/custom-mods/example-server/ui/","health_url":"http://127.0.0.1:8081/custom-mods/example-server/health.php"},
+          {"id":"evil-mod","name":"Evil","state":"failed","message":"Update failed",
+           "dashboard_url":"https://attacker.example/","health_url":"http://127.0.0.1:8081/custom-mods/other-mod/health.php"},
+          {"id":"../bad","name":"Bad","state":"ready"}]}
+        """;
+    Assert(CustomModService.TryParseStatus(customStatus, out var customMods, out _) && customMods!.Count == 2
+           && customMods[0].DashboardUrl == "http://127.0.0.1:8081/custom-mods/example-server/ui/"
+           && customMods[0].ShortCommit == "0123456" && customMods[0].State == CustomModState.Ready
+           && customMods[1].DashboardUrl is null && customMods[1].HealthUrl is null && customMods[1].State == CustomModState.Failed,
+        "Custom mod links must stay on the fixed local route for their own id, and invalid ids are dropped.");
+    Assert(!CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/../HerikaServer/", "example-server")
+           && !CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/.git/config", "example-server")
+           && !CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/ui/\n", "example-server")
+           && CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/", "example-server"),
+        "Custom mod routes must reject traversal and hidden segments.");
+    Assert(!CustomModService.TryParseStatus("""{"schema_version":2,"mods":[]}""", out _, out _),
+        "An unknown custom status schema must fail instead of guessing.");
+    Assert(CustomModService.DescribeFailure(new CommandResult(1, "", "Traceback...\n[FAIL] Files tracked by the mod were changed locally. Nothing was updated.\n"))
+               == "Files tracked by the mod were changed locally. Nothing was updated.",
+        "Custom mod failures must show the manager's safe diagnostic line.");
+    Assert(MainWindowViewModel.DescribeCustomModState(customMods![1]).Contains("Update failed"),
+        "Failed custom mods must show their safe failure message.");
+    var restorePreview = $$"""
+        {"schema_version":1,"id":"example-server","name":"Example","repository":"{{customRepo}}","branch":"main",
+         "commit":"{{new string('b', 40)}}","folder":"/var/www/html/custom-mods/example-server","database":"custom_example_server",
+         "registered":false,"restorable":true,"installed_commit":"{{customCommit}}"}
+        """;
+    Assert(CustomModService.TryParsePreview(restorePreview, out var restorable, out _)
+           && restorable!.Restorable && restorable.InstalledCommit == customCommit
+           && DwemerDistro.Launcher.Wpf.Views.AddCustomModWindow.DescribeRestore(restorable).Contains("installed commit aaaaaaa")
+           && DwemerDistro.Launcher.Wpf.Views.AddCustomModWindow.DescribeRestore(restorable).Contains("Choose Update after restoring"),
+        "Re-adding a removed custom mod must preview a restore at the installed commit, with the newer commit left to Update.");
+    Assert(CustomModService.TryParsePreview(restorePreview.Replace(customCommit, "HEAD"), out var unsafeRestore, out _)
+           && !unsafeRestore!.Restorable,
+        "A restore preview without a valid installed commit must not be offered as a restore.");
+
     // --- command allowlist -----------------------------------------------------------------
 
     Assert(ServerManagementService.BuildStatusArguments()

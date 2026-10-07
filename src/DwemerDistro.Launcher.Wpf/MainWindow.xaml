@@ -127,8 +127,31 @@
                 <StackPanel>
                     <Image Source="Assets/dd_title.png" Height="50" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,2,4,14" />
                 </StackPanel>
-                <TextBlock Grid.Row="1" Text="GAMES" Foreground="{DynamicResource GameCenter.TextMuted}"
-                           FontSize="10" FontWeight="SemiBold" Margin="5,0,0,6" />
+                <StackPanel Grid.Row="1">
+                    <!-- Top-level Official/Custom switch. Official keeps the existing game rail and
+                         details exactly as before; Custom swaps in the distro-owned custom mod list. -->
+                    <UniformGrid Columns="2" Margin="0,0,0,10" KeyboardNavigation.TabNavigation="Local"
+                                 AutomationProperties.Name="Mods view">
+                        <RadioButton GroupName="ModsView" Content="Official mods" Padding="2,7" FontSize="11"
+                                     Style="{StaticResource GameCenter.NavButton}"
+                                     IsChecked="{Binding IsOfficialModsView, Mode=TwoWay}"
+                                     Click="ModsView_Click"
+                                     AutomationProperties.Name="Official mods"
+                                     AutomationProperties.HelpText="Show the official Dwemer Dynamics mods." />
+                        <RadioButton GroupName="ModsView" Content="Custom mods" Padding="2,7" FontSize="11"
+                                     Style="{StaticResource GameCenter.NavButton}"
+                                     IsChecked="{Binding IsCustomModsView, Mode=TwoWay}"
+                                     Click="ModsView_Click"
+                                     AutomationProperties.Name="Custom mods"
+                                     AutomationProperties.HelpText="Show mods you added from a repository." />
+                    </UniformGrid>
+                    <TextBlock Text="GAMES" Foreground="{DynamicResource GameCenter.TextMuted}"
+                               FontSize="10" FontWeight="SemiBold" Margin="5,0,0,6"
+                               Visibility="{Binding IsOfficialModsView, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock Text="CUSTOM MODS" Foreground="{DynamicResource GameCenter.TextMuted}"
+                               FontSize="10" FontWeight="SemiBold" Margin="5,0,0,6"
+                               Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
                 <!-- Games and utilities share one scroll region so the utilities stay directly under
                      the list, and only this middle part scrolls if the window is ever too short.
                      The launcher update block below stays pinned to the bottom. -->
@@ -139,6 +162,7 @@
                                  ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0" Padding="0"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
                                  KeyboardNavigation.DirectionalNavigation="Contained" SelectionChanged="GameRail_SelectionChanged"
+                                 Visibility="{Binding IsOfficialModsView, Converter={StaticResource BoolToVisibility}}"
                                  AutomationProperties.Name="Dwemer game selection">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
@@ -166,6 +190,27 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
+                        <StackPanel Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}">
+                            <ListBox x:Name="CustomModRail" ItemsSource="{Binding CustomMods}" SelectedItem="{Binding SelectedCustomMod}"
+                                     ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0" Padding="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                     KeyboardNavigation.DirectionalNavigation="Contained"
+                                     AutomationProperties.Name="Custom mod selection">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock Text="No custom mods yet." Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="11" Margin="5,2,0,6"
+                                       Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}" />
+                            <Button Content="Add custom mod" Command="{Binding AddCustomModCommand}" Style="{StaticResource GameCenter.Button}"
+                                    Margin="0,6,0,0" Height="32"
+                                    AutomationProperties.Name="Add custom mod"
+                                    AutomationProperties.HelpText="Check a public repository and install it as a custom mod after you confirm you trust it." />
+                        </StackPanel>
                         <StackPanel x:Name="UtilityLandmark" Margin="0,14,0,0" KeyboardNavigation.TabNavigation="Local">
                             <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
                                 <StackPanel Orientation="Horizontal">
@@ -312,7 +357,9 @@
             </TabControl.Resources>
 
             <TabItem Header="Mods">
-                <Grid x:Name="LibraryLandmark" Margin="18,16,18,12">
+                <Grid>
+                <Grid x:Name="LibraryLandmark" Margin="18,16,18,12"
+                      Visibility="{Binding IsOfficialModsView, Converter={StaticResource BoolToVisibility}}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2.15*" />
                         <ColumnDefinition Width="14" />
@@ -906,6 +953,75 @@
                             </ScrollViewer>
                         </Grid>
                     </Border>
+                </Grid>
+
+                <!-- Custom mods detail. Everything shown here comes from ddistro_custom_mod status. -->
+                <Grid x:Name="CustomModsLandmark" Margin="18,16,18,12"
+                      Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}">
+                    <Border Style="{StaticResource GameCenter.Card}" MaxWidth="640" HorizontalAlignment="Left" VerticalAlignment="Top" MinWidth="420">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <StackPanel Visibility="{Binding HasSelectedCustomMod, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="{Binding SelectedCustomMod.Name}" Style="{StaticResource GameCenter.ModTitle}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding SelectedCustomMod.Description}" TextWrapping="Wrap" Margin="0,4,0,0"
+                                           Foreground="{DynamicResource GameCenter.Text}" />
+                                <TextBlock Margin="0,8,0,0" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap">
+                                    <Run Text="{Binding SelectedCustomMod.Repository, Mode=OneWay}" /><LineBreak />
+                                    <Run Text="Branch" /> <Run Text="{Binding SelectedCustomMod.Branch, Mode=OneWay}" />
+                                    <Run Text=" · Version" /> <Run Text="{Binding SelectedCustomMod.ShortCommit, Mode=OneWay}" />
+                                </TextBlock>
+                                <!-- Fixed-height status block, like the official cards, so busy and failed states
+                                     never move the actions below. -->
+                                <Grid Height="52" Margin="0,10,0,10">
+                                    <Grid.RowDefinitions><RowDefinition Height="34" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                    <TextBlock Text="{Binding SelectedCustomModStateText}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                                               Foreground="{DynamicResource GameCenter.Text}"
+                                               ToolTip="{Binding SelectedCustomModStateText}"
+                                               AutomationProperties.Name="Custom mod status" AutomationProperties.LiveSetting="Polite" />
+                                    <ProgressBar Grid.Row="1" Height="6" VerticalAlignment="Top" IsIndeterminate="{Binding IsCustomModBusy}"
+                                                 Background="#151515" BorderThickness="0" Foreground="{DynamicResource GameCenter.Gold}"
+                                                 IsTabStop="False" Focusable="False" AutomationProperties.Name="Custom mod operation progress">
+                                        <ProgressBar.Style>
+                                            <Style TargetType="ProgressBar">
+                                                <Setter Property="Opacity" Value="0" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsCustomModBusy}" Value="True">
+                                                        <Setter Property="Opacity" Value="1" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ProgressBar.Style>
+                                    </ProgressBar>
+                                </Grid>
+                                <UniformGrid Columns="2">
+                                    <Button Content="Open dashboard" Command="{Binding OpenCustomModDashboardCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                            Height="36" Margin="0,0,6,6"
+                                            AutomationProperties.HelpText="Open this mod's local dashboard in your browser." />
+                                    <Button Content="Check status" Command="{Binding CheckCustomModHealthCommand}" Style="{StaticResource GameCenter.Button}"
+                                            Height="36" Margin="6,0,0,6"
+                                            AutomationProperties.HelpText="Ask the distro whether this mod's health page responds." />
+                                    <Button Content="Update" Command="{Binding UpdateCustomModCommand}" Style="{StaticResource GameCenter.Button}"
+                                            Height="36" Margin="0,0,6,6"
+                                            AutomationProperties.HelpText="Back up, then update from the repository. Refused if you changed the mod's files." />
+                                    <Button Content="Back up" Command="{Binding BackupCustomModCommand}" Style="{StaticResource GameCenter.Button}"
+                                            Height="36" Margin="6,0,0,6"
+                                            AutomationProperties.HelpText="Save a copy of this mod's settings and database inside the distro." />
+                                </UniformGrid>
+                                <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
+                                <Button Content="Unregister" Command="{Binding UnregisterCustomModCommand}" Style="{StaticResource GameCenter.Button}" Height="34"
+                                        AutomationProperties.HelpText="Remove this mod from the list. Its files and database are kept." />
+                            </StackPanel>
+                            <StackPanel Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="Custom mods" Style="{StaticResource GameCenter.ModTitle}" />
+                                <TextBlock TextWrapping="Wrap" Margin="0,6,0,0" Foreground="{DynamicResource GameCenter.Text}"
+                                           Text="Add a PHP/PostgreSQL mod server from a public repository. It runs inside the distro with its own folder and database." />
+                            </StackPanel>
+                            <TextBlock Grid.Row="1" Text="{Binding CustomModsStatusText}" Margin="0,8,0,0" MinHeight="16"
+                                       Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                                       AutomationProperties.Name="Custom mods message" AutomationProperties.LiveSetting="Polite" />
+                        </Grid>
+                    </Border>
+                </Grid>
                 </Grid>
             </TabItem>
 
