@@ -173,6 +173,14 @@
                                     <AccessText Text="Server _Folder" />
                                 </StackPanel>
                             </Button>
+                            <Button Command="{Binding OpenTerminalCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Terminal"
+                                    AutomationProperties.HelpText="Open a shell inside the DwemerAI4Skyrim3 distro as the dwemer user."
+                                    ToolTip="Open a shell inside the DwemerAI4Skyrim3 distro as the dwemer user.">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                                    <AccessText Text="_Terminal" />
+                                </StackPanel>
+                            </Button>
                             <Button Command="{Binding OpenWikiCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Wiki">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
