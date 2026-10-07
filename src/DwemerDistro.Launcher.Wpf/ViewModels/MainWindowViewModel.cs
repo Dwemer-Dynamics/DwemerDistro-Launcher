@@ -288,6 +288,7 @@ echo "CHIM-MCP installed and enabled."
         OpenStobeLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("STOBE"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
+        OpenPatreonCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.PatreonUrl));
 
         OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"), CanAccessDistro);
 
@@ -825,6 +826,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenStobeLogsCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
+    public RelayCommand OpenPatreonCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand ViewMemoryUsageCommand { get; }

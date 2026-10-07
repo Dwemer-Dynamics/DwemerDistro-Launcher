@@ -193,6 +193,12 @@
                                     <AccessText Text="_Discord" />
                                 </StackPanel>
                             </Button>
+                            <Button Command="{Binding OpenPatreonCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Patreon">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE006;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                                    <AccessText Text="_Patreon" />
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
