@@ -260,6 +260,15 @@ public sealed partial class CustomModService(WslService wsl)
         return rest.Length == 0 || RelativeRoutePattern().IsMatch(rest);
     }
 
+    /// <summary>An installed icon or banner: the fixed local route for this id, ending in a PNG/JPEG file.</summary>
+    public static bool IsSafeModAssetUrl(string? url, string modId)
+    {
+        return IsSafeModUrl(url, modId) &&
+               (url!.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase));
+    }
+
     [GeneratedRegex(@"^https://(?<host>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)(?<path>(?:/[A-Za-z0-9._~-]+)+)/?\z")]
     private static partial Regex RepositoryUrlPattern();
 
@@ -305,7 +314,9 @@ public sealed partial class CustomModService(WslService wsl)
                 IsSafeModUrl(entry.DashboardUrl, entry.Id!) ? entry.DashboardUrl : null,
                 IsSafeModUrl(entry.HealthUrl, entry.Id!) ? entry.HealthUrl : null,
                 Clean(entry.Health, 20),
-                Clean(entry.HealthMessage, 200)));
+                Clean(entry.HealthMessage, 200),
+                IsSafeModAssetUrl(entry.IconUrl, entry.Id!) ? entry.IconUrl : null,
+                IsSafeModAssetUrl(entry.BannerUrl, entry.Id!) ? entry.BannerUrl : null));
         }
 
         mods = list;
@@ -448,6 +459,8 @@ public sealed partial class CustomModService(WslService wsl)
         public string? HealthUrl { get; set; }
         public string? Health { get; set; }
         public string? HealthMessage { get; set; }
+        public string? IconUrl { get; set; }
+        public string? BannerUrl { get; set; }
     }
 
     private sealed class PreviewDocument : VersionedDocument
@@ -485,7 +498,13 @@ public sealed record CustomModInfo(
     string? DashboardUrl,
     string? HealthUrl,
     string? Health,
-    string? HealthMessage);
+    string? HealthMessage,
+    string? IconUrl,
+    string? BannerUrl)
+{
+    /// <summary>The installed icon, loaded by the view model; null shows the name alone.</summary>
+    public System.Windows.Media.ImageSource? IconImage { get; init; }
+}
 
 public sealed record CustomModPreview(
     string Id,

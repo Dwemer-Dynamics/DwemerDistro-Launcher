@@ -192,9 +192,27 @@
                                      AutomationProperties.Name="Custom mod selection">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding Name}" FontSize="13" FontWeight="SemiBold"
-                                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
-                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <!-- Installed icon, same size as the official emblems; without one the name stands alone. -->
+                                            <Image x:Name="CustomModIcon" Source="{Binding IconImage}" Width="26" Height="26" Margin="0,0,10,0"
+                                                   Stretch="Uniform" VerticalAlignment="Center"
+                                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                                            <TextBlock Grid.Column="1" Text="{Binding Name}" FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
+                                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IconImage}" Value="{x:Null}">
+                                                <Setter TargetName="CustomModIcon" Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                                                <Setter TargetName="CustomModIcon" Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
@@ -949,8 +967,8 @@
                     </Border>
                 </Grid>
 
-                <!-- Custom mods detail. Same two cards as the official view: artwork from the mod's public
-                     repository (generic placeholder otherwise) with name and description on the left,
+                <!-- Custom mods detail. Same two cards as the official view: the mod's installed banner, else
+                     artwork from its public repository (generic placeholder otherwise) with name and description on the left,
                      status and actions on the right. Everything else comes from ddistro_custom_mod status. -->
                 <Grid x:Name="CustomModsLandmark" Margin="18,16,18,12"
                       Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}">
@@ -968,7 +986,7 @@
                             <Grid Grid.Row="0" Background="#151515">
                                 <Image x:Name="CustomHeroArt" Source="{Binding SelectedCustomModHeroImage}" Stretch="Uniform"
                                        AutomationProperties.Name="{Binding SelectedCustomMod.Name, StringFormat={}{0} artwork}" />
-                                <!-- Generic placeholder for mods without public GitHub artwork, while it loads,
+                                <!-- Generic placeholder for mods without a banner or public GitHub artwork, while it loads,
                                      or when it cannot be fetched. -->
                                 <StackPanel x:Name="CustomHeroPlaceholder" HorizontalAlignment="Center" VerticalAlignment="Center">
                                     <StackPanel.Style>

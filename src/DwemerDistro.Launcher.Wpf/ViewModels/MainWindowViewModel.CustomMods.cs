@@ -25,9 +25,11 @@ public sealed partial class MainWindowViewModel
     private string _customModsStatusText = string.Empty;
     private ImageSource? _selectedCustomModHeroImage;
 
-    // Hero artwork per repository URL, fetched at most once per session. A null entry means the
-    // fetch is pending or failed, so the generic placeholder stays.
+    // Hero artwork and sidebar icons, keyed by installed commit plus source URLs, so an Update that
+    // changes an asset is fetched again. A null hero entry means the fetch is pending or failed, so the
+    // generic placeholder stays; a mod without a loaded icon shows its name alone.
     private readonly Dictionary<string, ImageSource?> _customModHeroImages = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ImageSource?> _customModIconImages = new(StringComparer.Ordinal);
 
     public ObservableCollection<CustomModInfo> CustomMods { get; } = [];
 
@@ -82,7 +84,7 @@ public sealed partial class MainWindowViewModel
 
     public bool HasSelectedCustomMod => _selectedCustomMod is not null;
 
-    /// <summary>Public repository artwork for the selected mod, or null for the generic placeholder.</summary>
+    /// <summary>Installed banner or public repository artwork for the selected mod, or null for the generic placeholder.</summary>
     public ImageSource? SelectedCustomModHeroImage
     {
         get => _selectedCustomModHeroImage;
@@ -224,7 +226,7 @@ public sealed partial class MainWindowViewModel
                 return;
             }
 
-            ApplyCustomMods(result.Mods);
+            ApplyCustomMods(await WithCustomModIconsAsync(result.Mods).ConfigureAwait(true));
             CustomModsStatusText = result.Mods.Count == 0 ? "No custom mods yet." : string.Empty;
         }
         catch (Exception ex)
@@ -277,73 +279,143 @@ public sealed partial class MainWindowViewModel
         _processRunner.OpenExternalUrl(repository!);
     }
 
+    /// <summary>
+    /// Hero sources in priority order: the installed banner on the fixed local route, then the
+    /// public GitHub social preview and owner avatar. Empty means the generic placeholder.
+    /// </summary>
+    internal static List<string> GetCustomModHeroUrls(CustomModInfo? mod)
+    {
+        var urls = new List<string>();
+        if (mod is null)
+        {
+            return urls;
+        }
+
+        if (CustomModService.IsSafeModAssetUrl(mod.BannerUrl, mod.Id))
+        {
+            urls.Add(mod.BannerUrl!);
+        }
+
+        if (CustomModService.TryGetGitHubArtworkUrls(mod.Repository, out var githubUrls))
+        {
+            urls.AddRange(githubUrls);
+        }
+
+        return urls;
+    }
+
     private void ShowSelectedCustomModHero()
     {
-        var repository = _selectedCustomMod?.Repository;
-        if (repository is null || !CustomModService.TryGetGitHubArtworkUrls(repository, out var artworkUrls))
+        var mod = _selectedCustomMod;
+        var artworkUrls = GetCustomModHeroUrls(mod);
+        if (artworkUrls.Count == 0)
         {
             SelectedCustomModHeroImage = null;
             return;
         }
 
-        if (_customModHeroImages.TryGetValue(repository, out var cached))
+        var key = GetCustomModHeroCacheKey(mod!, artworkUrls);
+        if (_customModHeroImages.TryGetValue(key, out var cached))
         {
             SelectedCustomModHeroImage = cached;
             return;
         }
 
-        _customModHeroImages[repository] = null;
+        _customModHeroImages[key] = null;
         SelectedCustomModHeroImage = null;
-        _ = LoadCustomModHeroAsync(repository, artworkUrls);
+        _ = LoadCustomModHeroAsync(mod!.Id, key, artworkUrls);
+    }
+
+    /// <summary>One hero image per installed revision and source list.</summary>
+    private static string GetCustomModHeroCacheKey(CustomModInfo mod, IReadOnlyList<string> artworkUrls) =>
+        mod.ShortCommit + "\n" + string.Join("\n", artworkUrls);
+
+    private async Task LoadCustomModHeroAsync(string modId, string key, IReadOnlyList<string> artworkUrls)
+    {
+        foreach (var url in artworkUrls)
+        {
+            var image = await TryLoadCustomModImageAsync(url).ConfigureAwait(true);
+            if (image is null)
+            {
+                continue;
+            }
+
+            _customModHeroImages[key] = image;
+            // A slow load for an older revision of the same mod must not replace the newer one.
+            var selected = _selectedCustomMod;
+            if (selected?.Id == modId && GetCustomModHeroCacheKey(selected, GetCustomModHeroUrls(selected)) == key)
+            {
+                SelectedCustomModHeroImage = image;
+            }
+
+            return;
+        }
+    }
+
+    /// <summary>Attaches each mod's installed icon, fetched once per installed revision; a failure keeps the name alone.</summary>
+    private async Task<IReadOnlyList<CustomModInfo>> WithCustomModIconsAsync(IReadOnlyList<CustomModInfo> mods)
+    {
+        var pending = mods
+            .Where(mod => CustomModService.IsSafeModAssetUrl(mod.IconUrl, mod.Id))
+            .Select(mod => mod.ShortCommit + "\n" + mod.IconUrl)
+            .Distinct(StringComparer.Ordinal)
+            .Where(key => !_customModIconImages.ContainsKey(key))
+            .ToList();
+        var loaded = await Task.WhenAll(pending.Select(key => TryLoadCustomModImageAsync(key[(key.IndexOf('\n') + 1)..])))
+            .ConfigureAwait(true);
+        for (var i = 0; i < pending.Count; i++)
+        {
+            // Only successes are kept, so an icon missed while the web server was starting loads on the next refresh.
+            if (loaded[i] is not null)
+            {
+                _customModIconImages[pending[i]] = loaded[i];
+            }
+        }
+
+        return mods
+            .Select(mod => _customModIconImages.TryGetValue(mod.ShortCommit + "\n" + mod.IconUrl, out var icon) && icon is not null
+                ? mod with { IconImage = icon }
+                : mod)
+            .ToList();
     }
 
     /// <summary>
-    /// Anonymous GET of public GitHub artwork (social preview, then owner avatar). No credentials
-    /// are attached; any failure leaves the generic placeholder.
+    /// Anonymous, bounded GET of one image (installed asset or public GitHub artwork). No
+    /// credentials are attached; offline, blocked, timed out, oversized, or non-image returns null.
     /// </summary>
-    private async Task LoadCustomModHeroAsync(string repository, IReadOnlyList<string> artworkUrls)
+    private async Task<ImageSource?> TryLoadCustomModImageAsync(string url)
     {
         const int maxBytes = 4 * 1024 * 1024;
-        foreach (var url in artworkUrls)
+        try
         {
-            try
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var response = await _httpClient
+                .GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                .ConfigureAwait(true);
+            var mediaType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+            if (!response.IsSuccessStatusCode || !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                response.Content.Headers.ContentLength > maxBytes)
             {
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                using var response = await _httpClient
-                    .GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, timeout.Token)
-                    .ConfigureAwait(true);
-                var mediaType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
-                if (!response.IsSuccessStatusCode || !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
-                    response.Content.Headers.ContentLength > maxBytes)
-                {
-                    continue;
-                }
-
-                var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token).ConfigureAwait(true);
-                if (bytes.Length == 0 || bytes.Length > maxBytes)
-                {
-                    continue;
-                }
-
-                var image = new BitmapImage();
-                image.BeginInit();
-                image.CacheOption = BitmapCacheOption.OnLoad;
-                image.StreamSource = new MemoryStream(bytes);
-                image.EndInit();
-                image.Freeze();
-
-                _customModHeroImages[repository] = image;
-                if (_selectedCustomMod?.Repository == repository)
-                {
-                    SelectedCustomModHeroImage = image;
-                }
-
-                return;
+                return null;
             }
-            catch (Exception)
+
+            var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token).ConfigureAwait(true);
+            if (bytes.Length == 0 || bytes.Length > maxBytes)
             {
-                // Offline, blocked, timed out, or not an image: try the next source.
+                return null;
             }
+
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.StreamSource = new MemoryStream(bytes);
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

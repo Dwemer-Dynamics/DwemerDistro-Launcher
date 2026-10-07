@@ -545,9 +545,12 @@ try
     var customStatus = "[INFO] noise\n" + """
         {"schema_version":1,"mods":[
           {"id":"example-server","name":"Example","state":"ready","commit":"0123456789abcdef0123456789abcdef01234567",
-           "dashboard_url":"http://127.0.0.1:8081/custom-mods/example-server/ui/","health_url":"http://127.0.0.1:8081/custom-mods/example-server/health.php"},
+           "dashboard_url":"http://127.0.0.1:8081/custom-mods/example-server/ui/","health_url":"http://127.0.0.1:8081/custom-mods/example-server/health.php",
+           "repository":"https://github.com/owner/example-server",
+           "icon_url":"http://127.0.0.1:8081/custom-mods/example-server/ui/images/icon.png","banner_url":"http://127.0.0.1:8081/custom-mods/example-server/ui/banner.JPG"},
           {"id":"evil-mod","name":"Evil","state":"failed","message":"Update failed",
-           "dashboard_url":"https://attacker.example/","health_url":"http://127.0.0.1:8081/custom-mods/other-mod/health.php"},
+           "dashboard_url":"https://attacker.example/","health_url":"http://127.0.0.1:8081/custom-mods/other-mod/health.php",
+           "icon_url":"https://attacker.example/icon.png","banner_url":"http://127.0.0.1:8081/custom-mods/other-mod/banner.png"},
           {"id":"../bad","name":"Bad","state":"ready"}]}
         """;
     Assert(CustomModService.TryParseStatus(customStatus, out var customMods, out _) && customMods!.Count == 2
@@ -560,6 +563,32 @@ try
            && !CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/ui/\n", "example-server")
            && CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/", "example-server"),
         "Custom mod routes must reject traversal and hidden segments.");
+    Assert(customMods![0].IconUrl == "http://127.0.0.1:8081/custom-mods/example-server/ui/images/icon.png"
+           && customMods[0].BannerUrl == "http://127.0.0.1:8081/custom-mods/example-server/ui/banner.JPG"
+           && customMods[1].IconUrl is null && customMods[1].BannerUrl is null
+           && customMods[0].IconImage is null,
+        "Custom mod icon and banner URLs must stay on the fixed local route for their own id.");
+    foreach (var badAsset in new[]
+             {
+                 "http://127.0.0.1:8081/custom-mods/example-server/ui/icon.svg",
+                 "http://127.0.0.1:8081/custom-mods/example-server/config/config.php",
+                 "http://127.0.0.1:8081/custom-mods/example-server/../HerikaServer/x.png",
+                 "http://127.0.0.1:8081/custom-mods/example-server/.git/x.png",
+                 "http://127.0.0.1:8081/custom-mods/example-server/.png",
+                 "http://127.0.0.1:8081/custom-mods/example-server/",
+                 "http://localhost:8081/custom-mods/example-server/icon.png",
+                 "https://raw.githubusercontent.com/owner/example-server/main/icon.png"
+             })
+    {
+        Assert(!CustomModService.IsSafeModAssetUrl(badAsset, "example-server"), $"Custom mod asset URL must be rejected: {badAsset}");
+    }
+
+    var heroUrls = MainWindowViewModel.GetCustomModHeroUrls(customMods[0]);
+    Assert(heroUrls.Count == 3 && heroUrls[0] == customMods[0].BannerUrl
+           && heroUrls[1].StartsWith("https://opengraph.githubassets.com/", StringComparison.Ordinal)
+           && MainWindowViewModel.GetCustomModHeroUrls(customMods[0] with { BannerUrl = null })[0] == heroUrls[1]
+           && MainWindowViewModel.GetCustomModHeroUrls(customMods[1]).Count == 0,
+        "The custom hero must prefer the installed banner, then GitHub artwork, then the generic placeholder.");
     Assert(!CustomModService.TryParseStatus("""{"schema_version":2,"mods":[]}""", out _, out _),
         "An unknown custom status schema must fail instead of guessing.");
     Assert(CustomModService.DescribeFailure(new CommandResult(1, "", "Traceback...\n[FAIL] Files tracked by the mod were changed locally. Nothing was updated.\n"))
