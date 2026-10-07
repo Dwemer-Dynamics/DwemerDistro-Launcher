@@ -92,7 +92,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private SetupInstallProgress? _pendingSetupInstallProgress;
     private string _localAiChoice = "skip";
     private string? _localAiCompletedChoice;
-    private string _localAiStatus = "Optional. Skip, install the engine, or download one model before other components.";
+    private string _localAiStatus = string.Empty;
+    private bool _localAiAvailable;
+    private bool _localAiManagerReady;
 
     public ObservableCollection<LocalAiOption> LocalAiOptions { get; } =
         [new("skip", "Skip local AI"), new("engine", "Install engine only")];
@@ -161,7 +163,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             InstallSelectedProductsAsync,
             () => !IsBusy && CanRunDistroWork && HasSelectedProducts);
         RefreshProductsCommand = new AsyncRelayCommand(RefreshProductsAsync, () => !IsBusy);
-        InstallLocalAiCommand = new AsyncRelayCommand(InstallLocalAiAsync, () => !IsBusy && CanRunDistroWork && LocalAiChoice != "skip");
+        InstallLocalAiCommand = new AsyncRelayCommand(InstallLocalAiAsync, () => !IsBusy && CanRunDistroWork && _localAiAvailable && LocalAiChoice != "skip");
         SkipLocalAiCommand = new AsyncRelayCommand(async () =>
         {
             LocalAiChoice = "skip";
@@ -172,7 +174,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             try { await new LmStudioService(_wsl).OpenManagerAsync(); }
             catch (Exception error) { LocalAiStatus = error.Message; }
-        }, () => !IsBusy);
+        }, () => !IsBusy && _localAiManagerReady);
 
         InstallRecommendedCommand = new AsyncRelayCommand(InstallRecommendedAsync, () => !IsBusy && CanRunDistroWork);
         ContinueCommand = new AsyncRelayCommand(ContinueAsync, CanContinue);
@@ -746,11 +748,18 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             await RunBusyAsync("Checking local AI options", async () =>
             {
                 var saved = await _onboardingState.LoadAsync();
+                _localAiAvailable = false;
+                _localAiManagerReady = false;
+                LocalAiStatus = string.Empty;
                 try
                 {
-                    var options = await new LmStudioService(_wsl).GetOptionsAsync();
+                    var service = new LmStudioService(_wsl);
+                    var options = await service.GetOptionsAsync();
+                    _localAiAvailable = true;
                     foreach (var option in options.Where(option => LocalAiOptions.All(existing => existing.Id != option.Id)))
                         LocalAiOptions.Add(option);
+                    var status = await service.ReadAsync("status");
+                    _localAiManagerReady = status.GetProperty("installed").GetBoolean();
                 }
                 catch (Exception error) { LocalAiStatus = error.Message; }
                 LocalAiChoice = LocalAiOptions.Any(option => option.Id == saved.LocalAiChoice) ? saved.LocalAiChoice! : "skip";
@@ -777,7 +786,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 await new LmStudioService(_wsl).InstallAsync(LocalAiChoice,
                     message => _dispatcher.Invoke(() => LocalAiStatus = message.Length > 2000 ? message[^2000..] : message));
                 _localAiCompletedChoice = LocalAiChoice;
-                LocalAiStatus = "Done. Open Manager to start the engine and load a model, or continue setup.";
+                _localAiManagerReady = true;
+                LocalAiStatus = "Installed. Open Manager to load a model, or continue setup.";
                 await SaveLocalAiChoiceAsync();
             }
             catch (Exception error) { LocalAiStatus = error.Message + " Retry, or choose Skip local AI to continue."; }
