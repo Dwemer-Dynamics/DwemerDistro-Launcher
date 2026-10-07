@@ -1,5 +1,8 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.Views;
 using Application = System.Windows.Application;
@@ -20,6 +23,11 @@ public sealed partial class MainWindowViewModel
     private bool _isCustomModMutationInProgress;
     private CustomModInfo? _selectedCustomMod;
     private string _customModsStatusText = string.Empty;
+    private ImageSource? _selectedCustomModHeroImage;
+
+    // Hero artwork per repository URL, fetched at most once per session. A null entry means the
+    // fetch is pending or failed, so the generic placeholder stays.
+    private readonly Dictionary<string, ImageSource?> _customModHeroImages = new(StringComparer.Ordinal);
 
     public ObservableCollection<CustomModInfo> CustomMods { get; } = [];
 
@@ -66,11 +74,31 @@ public sealed partial class MainWindowViewModel
 
             OnPropertyChanged(nameof(HasSelectedCustomMod));
             OnPropertyChanged(nameof(SelectedCustomModStateText));
+            OnPropertyChanged(nameof(SelectedCustomModRepositoryActionName));
+            ShowSelectedCustomModHero();
             RaiseCustomModCommandStates();
         }
     }
 
     public bool HasSelectedCustomMod => _selectedCustomMod is not null;
+
+    /// <summary>Public repository artwork for the selected mod, or null for the generic placeholder.</summary>
+    public ImageSource? SelectedCustomModHeroImage
+    {
+        get => _selectedCustomModHeroImage;
+        private set
+        {
+            if (SetProperty(ref _selectedCustomModHeroImage, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedCustomModHeroImage));
+            }
+        }
+    }
+
+    public bool HasSelectedCustomModHeroImage => _selectedCustomModHeroImage is not null;
+
+    public string SelectedCustomModRepositoryActionName =>
+        CustomModService.TryGetGitHubArtworkUrls(_selectedCustomMod?.Repository, out _) ? "GitHub Page" : "Repository Page";
 
     public bool HasNoCustomMods => CustomMods.Count == 0;
 
@@ -112,6 +140,8 @@ public sealed partial class MainWindowViewModel
 
     public RelayCommand OpenCustomModDashboardCommand { get; private set; } = null!;
 
+    public RelayCommand OpenCustomModRepositoryCommand { get; private set; } = null!;
+
     public AsyncRelayCommand UpdateCustomModCommand { get; private set; } = null!;
 
     public AsyncRelayCommand BackupCustomModCommand { get; private set; } = null!;
@@ -127,6 +157,8 @@ public sealed partial class MainWindowViewModel
             () => RunCustomModStatusCheckAsync(), () => CanStartCustomModOperation() && HasSelectedCustomMod);
         OpenCustomModDashboardCommand = new RelayCommand(
             OpenCustomModDashboard, () => _selectedCustomMod?.DashboardUrl is not null && _selectedCustomMod.State == CustomModState.Ready);
+        OpenCustomModRepositoryCommand = new RelayCommand(
+            OpenCustomModRepository, () => CustomModService.ValidateRepositoryUrl(_selectedCustomMod?.Repository) is null);
         UpdateCustomModCommand = new AsyncRelayCommand(
             () => RunSelectedCustomModOperationAsync("Update", _customModService.UpdateAsync),
             () => CanStartCustomModOperation() && HasSelectedCustomMod);
@@ -147,6 +179,7 @@ public sealed partial class MainWindowViewModel
         AddCustomModCommand?.RaiseCanExecuteChanged();
         CheckCustomModHealthCommand?.RaiseCanExecuteChanged();
         OpenCustomModDashboardCommand?.RaiseCanExecuteChanged();
+        OpenCustomModRepositoryCommand?.RaiseCanExecuteChanged();
         UpdateCustomModCommand?.RaiseCanExecuteChanged();
         BackupCustomModCommand?.RaiseCanExecuteChanged();
         UnregisterCustomModCommand?.RaiseCanExecuteChanged();
@@ -231,6 +264,87 @@ public sealed partial class MainWindowViewModel
         }
 
         _processRunner.OpenExternalUrl(mod.DashboardUrl);
+    }
+
+    private void OpenCustomModRepository()
+    {
+        var repository = _selectedCustomMod?.Repository;
+        if (CustomModService.ValidateRepositoryUrl(repository) is not null)
+        {
+            return;
+        }
+
+        _processRunner.OpenExternalUrl(repository!);
+    }
+
+    private void ShowSelectedCustomModHero()
+    {
+        var repository = _selectedCustomMod?.Repository;
+        if (repository is null || !CustomModService.TryGetGitHubArtworkUrls(repository, out var artworkUrls))
+        {
+            SelectedCustomModHeroImage = null;
+            return;
+        }
+
+        if (_customModHeroImages.TryGetValue(repository, out var cached))
+        {
+            SelectedCustomModHeroImage = cached;
+            return;
+        }
+
+        _customModHeroImages[repository] = null;
+        SelectedCustomModHeroImage = null;
+        _ = LoadCustomModHeroAsync(repository, artworkUrls);
+    }
+
+    /// <summary>
+    /// Anonymous GET of public GitHub artwork (social preview, then owner avatar). No credentials
+    /// are attached; any failure leaves the generic placeholder.
+    /// </summary>
+    private async Task LoadCustomModHeroAsync(string repository, IReadOnlyList<string> artworkUrls)
+    {
+        const int maxBytes = 4 * 1024 * 1024;
+        foreach (var url in artworkUrls)
+        {
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                using var response = await _httpClient
+                    .GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                    .ConfigureAwait(true);
+                var mediaType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+                if (!response.IsSuccessStatusCode || !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                    response.Content.Headers.ContentLength > maxBytes)
+                {
+                    continue;
+                }
+
+                var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token).ConfigureAwait(true);
+                if (bytes.Length == 0 || bytes.Length > maxBytes)
+                {
+                    continue;
+                }
+
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.StreamSource = new MemoryStream(bytes);
+                image.EndInit();
+                image.Freeze();
+
+                _customModHeroImages[repository] = image;
+                if (_selectedCustomMod?.Repository == repository)
+                {
+                    SelectedCustomModHeroImage = image;
+                }
+
+                return;
+            }
+            catch (Exception)
+            {
+                // Offline, blocked, timed out, or not an image: try the next source.
+            }
+        }
     }
 
     private async Task AddCustomModAsync()

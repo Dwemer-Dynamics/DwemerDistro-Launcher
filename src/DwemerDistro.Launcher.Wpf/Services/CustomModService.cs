@@ -199,6 +199,44 @@ public sealed partial class CustomModService(WslService wsl)
             : null;
     }
 
+    /// <summary>
+    /// Maps a validated https://github.com/owner/repo URL to public artwork addresses: the
+    /// repository's social preview card, then the owner's avatar. Any other host returns false.
+    /// </summary>
+    public static bool TryGetGitHubArtworkUrls(string? repositoryUrl, out string[] artworkUrls)
+    {
+        artworkUrls = [];
+        if (ValidateRepositoryUrl(repositoryUrl) is not null)
+        {
+            return false;
+        }
+
+        var match = GitHubRepositoryPattern().Match(repositoryUrl!);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var owner = match.Groups["owner"].Value;
+        var repository = match.Groups["repo"].Value;
+        if (repository.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            repository = repository[..^4];
+        }
+
+        if (repository.Length == 0 || repository.Trim('.').Length == 0)
+        {
+            return false;
+        }
+
+        artworkUrls =
+        [
+            $"https://opengraph.githubassets.com/1/{owner}/{repository}",
+            $"https://avatars.githubusercontent.com/{owner}?s=460"
+        ];
+        return true;
+    }
+
     public static bool IsValidModId(string? modId)
     {
         return !string.IsNullOrEmpty(modId) && ModIdPattern().IsMatch(modId) && !modId.Contains("--", StringComparison.Ordinal);
@@ -224,6 +262,9 @@ public sealed partial class CustomModService(WslService wsl)
 
     [GeneratedRegex(@"^https://(?<host>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)(?<path>(?:/[A-Za-z0-9._~-]+)+)/?\z")]
     private static partial Regex RepositoryUrlPattern();
+
+    [GeneratedRegex(@"^https://github\.com/(?<owner>[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/(?<repo>[A-Za-z0-9._-]{1,100})/?\z")]
+    private static partial Regex GitHubRepositoryPattern();
 
     [GeneratedRegex(@"^[a-z][a-z0-9-]{1,30}[a-z0-9]\z")]
     private static partial Regex ModIdPattern();
