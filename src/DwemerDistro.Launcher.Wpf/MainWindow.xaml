@@ -1056,12 +1056,29 @@
                                             </ProgressBar>
                                         </Grid>
 
-                                        <!-- Installed source, where the official cards show their branch picker. -->
+                                        <!-- Installed source and the author's offered branches, in the official picker style.
+                                             The list comes from the last explicit check stored by the distro; choosing
+                                             a branch changes nothing until Switch branch reviews and confirms it. -->
                                         <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" TextTrimming="CharacterEllipsis"
                                                    ToolTip="{Binding SelectedCustomMod.Repository}">
                                             <Run Text="Branch" /> <Run Text="{Binding SelectedCustomMod.Branch, Mode=OneWay}" />
                                             <Run Text=" · Version" /> <Run Text="{Binding SelectedCustomMod.ShortCommit, Mode=OneWay}" />
                                         </TextBlock>
+                                        <ComboBox ItemsSource="{Binding SelectedCustomModBranchOptions}" SelectedItem="{Binding SelectedCustomModBranch}"
+                                                  Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                  AutomationProperties.Name="Custom mod branch"
+                                                  IsEnabled="{Binding IsComponentInteractionEnabled}"
+                                                  AutomationProperties.HelpText="Branches offered by the mod's author, from the last branch check. Choose one, then Switch branch to review it." />
+                                        <TextBlock Text="{Binding SelectedCustomModBranchNotice}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                                                   Margin="0,5,0,0" AutomationProperties.Name="Custom mod branch notice"
+                                                   Visibility="{Binding HasSelectedCustomModBranchNotice, Converter={StaticResource BoolToVisibility}}" />
+                                        <Grid Margin="0,6,0,0">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <Button Content="Check branches" Command="{Binding CheckCustomModBranchesCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
+                                                    AutomationProperties.HelpText="Ask the repository which branches the author offers now. Nothing is installed." />
+                                            <Button Grid.Column="2" Content="Switch branch" Command="{Binding SwitchCustomModBranchCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
+                                                    AutomationProperties.HelpText="Review the chosen branch's exact version, then confirm to back up and switch." />
+                                        </Grid>
                                         <Button Content="Update" Command="{Binding UpdateCustomModCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
                                                 Margin="0,11,0,12" Height="40"
                                                 AutomationProperties.HelpText="Back up, then update from the repository. Refused if you changed the mod's files." />

@@ -22,6 +22,7 @@ public sealed partial class MainWindowViewModel
     private bool _isCustomModBusy;
     private bool _isCustomModMutationInProgress;
     private CustomModInfo? _selectedCustomMod;
+    private string? _selectedCustomModBranch;
     private string _customModsStatusText = string.Empty;
     private ImageSource? _selectedCustomModHeroImage;
 
@@ -77,12 +78,36 @@ public sealed partial class MainWindowViewModel
             OnPropertyChanged(nameof(HasSelectedCustomMod));
             OnPropertyChanged(nameof(SelectedCustomModStateText));
             OnPropertyChanged(nameof(SelectedCustomModRepositoryActionName));
+            OnPropertyChanged(nameof(SelectedCustomModBranchOptions));
+            OnPropertyChanged(nameof(SelectedCustomModBranchNotice));
+            OnPropertyChanged(nameof(HasSelectedCustomModBranchNotice));
+            // The picker always starts on the installed branch; a switch is only ever explicit.
+            SelectedCustomModBranch = value?.Branch;
             ShowSelectedCustomModHero();
             RaiseCustomModCommandStates();
         }
     }
 
     public bool HasSelectedCustomMod => _selectedCustomMod is not null;
+
+    /// <summary>Offered branches from the last check, plus the installed one if the author removed it.</summary>
+    public IReadOnlyList<string> SelectedCustomModBranchOptions => GetCustomModBranchOptions(_selectedCustomMod);
+
+    public string? SelectedCustomModBranch
+    {
+        get => _selectedCustomModBranch;
+        set
+        {
+            if (SetProperty(ref _selectedCustomModBranch, value))
+            {
+                SwitchCustomModBranchCommand?.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string SelectedCustomModBranchNotice => DescribeCustomModBranches(_selectedCustomMod);
+
+    public bool HasSelectedCustomModBranchNotice => SelectedCustomModBranchNotice.Length > 0;
 
     /// <summary>Installed banner or public repository artwork for the selected mod, or null for the generic placeholder.</summary>
     public ImageSource? SelectedCustomModHeroImage
@@ -148,6 +173,10 @@ public sealed partial class MainWindowViewModel
 
     public AsyncRelayCommand BackupCustomModCommand { get; private set; } = null!;
 
+    public AsyncRelayCommand CheckCustomModBranchesCommand { get; private set; } = null!;
+
+    public AsyncRelayCommand SwitchCustomModBranchCommand { get; private set; } = null!;
+
     public AsyncRelayCommand UnregisterCustomModCommand { get; private set; } = null!;
 
     private void InitializeCustomMods()
@@ -169,6 +198,11 @@ public sealed partial class MainWindowViewModel
             () => CanStartCustomModOperation() && HasSelectedCustomMod);
         UnregisterCustomModCommand = new AsyncRelayCommand(
             UnregisterSelectedCustomModAsync, () => CanStartCustomModOperation() && HasSelectedCustomMod);
+        CheckCustomModBranchesCommand = new AsyncRelayCommand(
+            CheckSelectedCustomModBranchesAsync, () => CanStartCustomModOperation() && HasSelectedCustomMod);
+        SwitchCustomModBranchCommand = new AsyncRelayCommand(
+            SwitchSelectedCustomModBranchAsync,
+            () => CanStartCustomModOperation() && CanSwitchCustomModBranch(_selectedCustomMod, _selectedCustomModBranch));
     }
 
     private bool CanStartCustomModOperation()
@@ -185,6 +219,49 @@ public sealed partial class MainWindowViewModel
         UpdateCustomModCommand?.RaiseCanExecuteChanged();
         BackupCustomModCommand?.RaiseCanExecuteChanged();
         UnregisterCustomModCommand?.RaiseCanExecuteChanged();
+        CheckCustomModBranchesCommand?.RaiseCanExecuteChanged();
+        SwitchCustomModBranchCommand?.RaiseCanExecuteChanged();
+    }
+
+    internal static IReadOnlyList<string> GetCustomModBranchOptions(CustomModInfo? mod)
+    {
+        if (mod is null)
+        {
+            return [];
+        }
+
+        var options = mod.OfferedBranches.ToList();
+        if (CustomModService.IsValidBranchName(mod.Branch) && !options.Contains(mod.Branch, StringComparer.Ordinal))
+        {
+            options.Insert(0, mod.Branch);
+        }
+
+        return options;
+    }
+
+    /// <summary>Only another branch the author offers right now; the installed branch is never "switched" to.</summary>
+    internal static bool CanSwitchCustomModBranch(CustomModInfo? mod, string? target)
+    {
+        return mod is not null && CustomModService.IsValidBranchName(target) &&
+               !string.Equals(target, mod.Branch, StringComparison.Ordinal) &&
+               mod.OfferedBranches.Contains(target!, StringComparer.Ordinal);
+    }
+
+    internal static string DescribeCustomModBranches(CustomModInfo? mod)
+    {
+        if (mod is null)
+        {
+            return string.Empty;
+        }
+
+        if (!mod.IsBranchOffered)
+        {
+            return $"Branch {mod.Branch} is no longer offered by the author. Update keeps it; choose an offered branch and Switch to move.";
+        }
+
+        return mod.DefaultBranch.Length > 0 && mod.DefaultBranch != mod.Branch
+            ? $"The author's default branch is {mod.DefaultBranch}."
+            : string.Empty;
     }
 
     internal static string DescribeCustomModState(CustomModInfo mod)
@@ -479,6 +556,81 @@ public sealed partial class MainWindowViewModel
         var message = CustomModsStatusText;
         await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
         CustomModsStatusText = message;
+    }
+
+    private Task CheckSelectedCustomModBranchesAsync()
+    {
+        return RunSelectedCustomModOperationAsync("Check branches", async (id, output, cancellationToken) =>
+        {
+            var result = await _customModService.CheckBranchesAsync(id, null, output, cancellationToken).ConfigureAwait(true);
+            return result.Check is not null
+                ? new Models.CommandResult(0, string.Empty, string.Empty)
+                : new Models.CommandResult(1, string.Empty, "[FAIL] " + result.Error);
+        });
+    }
+
+    /// <summary>
+    /// Reviews the exact commit of the chosen branch, asks for confirmation, then switches to that
+    /// commit only. The window's close guard stays on while the distro is working.
+    /// </summary>
+    private async Task SwitchSelectedCustomModBranchAsync()
+    {
+        var mod = _selectedCustomMod;
+        var target = _selectedCustomModBranch;
+        if (mod is null || !CanSwitchCustomModBranch(mod, target))
+        {
+            return;
+        }
+
+        IsCustomModBusy = true;
+        _isCustomModMutationInProgress = true;
+        CustomModsStatusText = $"Checking branch {target}…";
+        CustomModBranchCheckResult review;
+        try
+        {
+            review = await _customModService.CheckBranchesAsync(mod.Id, target, line => AppendLog(line + Environment.NewLine))
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            review = new CustomModBranchCheckResult(null, "Branch check failed: " + ex.Message);
+        }
+        finally
+        {
+            _isCustomModMutationInProgress = false;
+            IsCustomModBusy = false;
+        }
+
+        var check = review.Check;
+        if (check is null || check.Branch != target)
+        {
+            var error = review.Error ?? "The branch check returned an incomplete result.";
+            await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
+            CustomModsStatusText = error;
+            return;
+        }
+
+        var confirmed = MessageBox.Show(
+            $"Switch {mod.Name} from branch {mod.Branch} to {check.Branch}?\n\n" +
+            $"Commit: {check.Commit}\n\n" +
+            "The distro backs up the mod's settings and database first, keeps your private config, " +
+            "and runs the mod's migration. If the switch fails, the code returns to the current branch, " +
+            "but database changes made by the migration are not rolled back.",
+            "Switch custom mod branch",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+        if (confirmed != MessageBoxResult.Yes)
+        {
+            await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
+            CustomModsStatusText = "Branch switch cancelled.";
+            return;
+        }
+
+        await RunSelectedCustomModOperationAsync(
+            "Switch branch",
+            (id, output, cancellationToken) => _customModService.SwitchBranchAsync(id, check.Branch, check.Commit, output, cancellationToken))
+            .ConfigureAwait(true);
     }
 
     private async Task UnregisterSelectedCustomModAsync()

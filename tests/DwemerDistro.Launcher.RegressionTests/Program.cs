@@ -610,6 +610,66 @@ try
            && !unsafeRestore!.Restorable,
         "A restore preview without a valid installed commit must not be offered as a restore.");
 
+    // --- custom mod branches -----------------------------------------------------------------
+
+    Assert(CustomModService.BuildBranchesArguments("example-server", null)
+            .SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "branches", "example-server", "--json" })
+           && CustomModService.BuildBranchesArguments("example-server", "dev")
+            .SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "branches", "example-server", "--branch", "dev", "--json" })
+           && CustomModService.BuildSwitchArguments("example-server", "release/1.x", customCommit)
+            .SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "switch", "example-server", "--branch", "release/1.x", "--expect-commit", customCommit }),
+        "Branch checks and switches must be fixed argument vectors with the reviewed commit.");
+    foreach (var badBranch in new[] { "", "-x", "--force", "a..b", "a b", "a;id", "x.lock", "x/", "a//b", "$(id)", "main\n", new string('a', 101) })
+    {
+        var threw = false;
+        try { CustomModService.BuildSwitchArguments("example-server", badBranch, customCommit); } catch (ArgumentException) { threw = true; }
+        Assert(threw && !CustomModService.IsValidBranchName(badBranch), $"Custom mod branch must be rejected: {badBranch}");
+    }
+    var switchWithoutCommit = false;
+    try { CustomModService.BuildSwitchArguments("example-server", "dev", "HEAD"); } catch (ArgumentException) { switchWithoutCommit = true; }
+    Assert(switchWithoutCommit, "A branch switch must require the full reviewed commit id.");
+
+    var branchStatus = """
+        {"schema_version":1,"mods":[
+          {"id":"example-server","name":"Example","state":"ready","branch":"dev","commit":"0123456789abcdef0123456789abcdef01234567",
+           "branches":{"default":"main","allowed":["main","dev","unstable","../x"]},"branches_checked_at":"2026-10-07T00:00:00Z"},
+          {"id":"gone-mod","name":"Gone","state":"ready","branch":"old","branches":{"default":"main","allowed":["main"]}},
+          {"id":"old-mod","name":"Old","state":"ready","branch":"main"}]}
+        """;
+    Assert(CustomModService.TryParseStatus(branchStatus, out var branchMods, out _) && branchMods!.Count == 3
+           && branchMods[0].OfferedBranches.SequenceEqual(new[] { "main", "dev", "unstable" }) && branchMods[0].DefaultBranch == "main"
+           && branchMods[0].IsBranchOffered
+           && MainWindowViewModel.DescribeCustomModBranches(branchMods[0]).Contains("default branch is main")
+           && MainWindowViewModel.CanSwitchCustomModBranch(branchMods[0], "unstable")
+           && !MainWindowViewModel.CanSwitchCustomModBranch(branchMods[0], "dev")
+           && !MainWindowViewModel.CanSwitchCustomModBranch(branchMods[0], "../x")
+           && !MainWindowViewModel.CanSwitchCustomModBranch(branchMods[0], "other"),
+        "Offered branches come from the stored policy; only another offered branch can be switched to.");
+    Assert(!branchMods![1].IsBranchOffered
+           && MainWindowViewModel.GetCustomModBranchOptions(branchMods[1]).SequenceEqual(new[] { "old", "main" })
+           && MainWindowViewModel.DescribeCustomModBranches(branchMods[1]).Contains("no longer offered")
+           && !MainWindowViewModel.CanSwitchCustomModBranch(branchMods[1], "old")
+           && MainWindowViewModel.CanSwitchCustomModBranch(branchMods[1], "main"),
+        "A removed installed branch must stay visible as no longer offered, never silently migrated.");
+    Assert(branchMods[2].IsBranchOffered && branchMods[2].OfferedBranches.Count == 0
+           && MainWindowViewModel.GetCustomModBranchOptions(branchMods[2]).SequenceEqual(new[] { "main" })
+           && MainWindowViewModel.DescribeCustomModBranches(branchMods[2]).Length == 0,
+        "Status without a stored branch policy must keep the installed branch alone.");
+
+    var branchReview = $$"""
+        {"schema_version":1,"id":"example-server","name":"Example","current_branch":"main","current_commit":"{{customCommit}}",
+         "branches":{"default":"main","allowed":["main","dev"]},"branch":"dev","commit":"{{new string('d', 40)}}"}
+        """;
+    Assert(CustomModService.TryParseBranchCheck(branchReview, out var reviewed, out _)
+           && reviewed!.Branch == "dev" && reviewed.Commit == new string('d', 40) && reviewed.OfferedBranches.Count == 2,
+        "A branch review must carry the exact target commit.");
+    Assert(!CustomModService.TryParseBranchCheck(branchReview.Replace(new string('d', 40), "HEAD"), out _, out _)
+           && !CustomModService.TryParseBranchCheck(branchReview.Replace("\"branch\":\"dev\"", "\"branch\":\"-x\""), out _, out _),
+        "A branch review without a full commit or with an unsafe branch must be rejected.");
+    Assert(CustomModService.TryParseBranchCheck(branchReview.Replace("\"branch\":\"dev\"", "\"branch\":\"\"").Replace(new string('d', 40), ""), out var refreshOnly, out _)
+           && refreshOnly!.Branch.Length == 0,
+        "A refresh-only branch check carries the policy without a target.");
+
     // --- command allowlist -----------------------------------------------------------------
 
     Assert(ServerManagementService.BuildStatusArguments()
