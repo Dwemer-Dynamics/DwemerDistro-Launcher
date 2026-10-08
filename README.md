@@ -8,18 +8,17 @@ It keeps WSL distro management in the launcher, but separates launcher binary up
 
 ## Which Download Do I Need?
 
-> **First install? Do not use the GitHub release ZIP.** `DwemerDistro-win-x64.zip` contains only the launcher. It does not contain the DwemerDistro WSL distro, so extracting it on a PC without DwemerDistro ends in `WSL_E_DISTRO_NOT_FOUND`.
+> **First install? Download `DwemerDistroInstaller.exe`, not the ZIP.** `DwemerDistro-win-x64.zip` contains only the launcher. It does not contain the DwemerDistro WSL distro, so extracting it on a PC without DwemerDistro ends in `WSL_E_DISTRO_NOT_FOUND`.
 
 **First install (no DwemerDistro yet):**
 
-1. Download the **Dwemer Distro installer** from the [CHIM Nexus files page](https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files).
-2. Extract it if it is archived.
-3. Run `DwemerDistroInstaller.exe` with WSL setup/import enabled.
-4. Open the installed DwemerDistro launcher and choose **CHIM** in Quickstart.
+1. Open the [latest GitHub release](https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher/releases/latest) and download **`DwemerDistroInstaller.exe`** from its Assets. It is a single file containing the DwemerDistro WSL distro and that release's launcher. Optional: compare `Get-FileHash .\DwemerDistroInstaller.exe` with the release's `SHA256SUMS`.
+2. Run it (it asks for administrator rights) and keep WSL setup/import enabled.
+3. Open the installed DwemerDistro launcher and pick your mods (for example **CHIM**) in Quickstart.
 
-Full walkthrough: [official CHIM installation guide](https://dwemerdynamics.com/chim/installation.html).
+Alternatives: the **Dwemer Distro installer** on the [CHIM Nexus files page](https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files), and the full walkthrough in the [official CHIM installation guide](https://dwemerdynamics.com/chim/installation.html).
 
-Having Ubuntu (or any other WSL distro) installed does not supply DwemerDistro. If the launcher reports that the DwemerDistro distro is missing (`WSL_E_DISTRO_NOT_FOUND`), run the full Dwemer Distro installer above. **Update Distro** cannot create a missing distro, and installing Ubuntu does not fix it.
+Having Ubuntu (or any other WSL distro) installed does not supply DwemerDistro. If the launcher reports that the DwemerDistro distro is missing (`WSL_E_DISTRO_NOT_FOUND`), run `DwemerDistroInstaller.exe`. **Update Distro** cannot create a missing distro, and installing Ubuntu does not fix it.
 
 **Existing install (DwemerDistro already set up):** the launcher updates itself automatically. `DwemerDistro-win-x64.zip` from GitHub Releases is only a manual launcher replacement for an existing install.
 
@@ -121,13 +120,19 @@ Published output:
 
 ## Release Updates
 
-Push a git tag like `v2.5.3`.
+Push a git tag like `v2.5.3` (it must match the project and `LauncherConstants` version).
 
 The GitHub Actions workflow in `.github/workflows/release.yml` will:
 
-1. publish the launcher
-2. publish the updater helper
-3. zip both executables into `DwemerDistro-win-x64.zip`
-4. upload that zip to GitHub Releases
+1. run the launcher regression tests
+2. publish the launcher and the updater helper
+3. zip both executables into `DwemerDistro-win-x64.zip` (the launcher update payload, unchanged in format)
+4. build `DwemerDistroInstaller.exe` from that exact ZIP plus the pinned base distro payload (see `docs/UPDATES.md`)
+5. write `SHA256SUMS` for the installer and ZIP
+6. publish a GitHub release containing all three files
+
+Any failed check stops the run before anything is published.
 
 Installed launchers then detect updates from that repo in the bottom `Launcher` section of the app.
+
+To validate a release build from a branch without publishing, run the workflow manually (**Actions > Release Launcher > Run workflow**) with the source version. Manual runs never create a release; they upload `SHA256SUMS` and the ZIP (plus the installer if requested) as short-lived workflow artifacts.

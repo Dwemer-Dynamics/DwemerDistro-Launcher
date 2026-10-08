@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to validate (must match the source version). Manual runs build only and never publish a release."
+        required: true
+        default: "3.3.37"
+      include_installer:
+        description: "Also upload DwemerDistroInstaller.exe (large) as a validation artifact"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -11,6 +21,13 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+
+    env:
+      INSTALLER_SOURCE_REPOSITORY: Dwemer-Dynamics/DwemerDistro-Installer
+      INSTALLER_SOURCE_COMMIT: 145c8aec3dd9faf27f94ec3be25daa5c613d4b9b
+      BASE_PAYLOAD_URL: https://github.com/Dwemer-Dynamics/DwemerDistro-Installer/releases/download/v3.3.28/distro-payload.tar.gz
+      BASE_PAYLOAD_SHA256: 4d0cb18ba0d65dc0fdbd678b290bd4e605ab20db0f8de43d51562aab9fa6a949
+      DISTRO_TAR_SHA256: 63d237ad0871cc544007a3009abd70580956285ec849f25bf1c4acc839639619
 
     steps:
       - name: Checkout
@@ -24,9 +41,35 @@ jobs:
       - name: Resolve version
         id: version
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
+          if ($env:EVENT_NAME -eq 'push') {
+            $match = [regex]::Match([string]$env:REF_NAME, '^v(\d+\.\d+\.\d+)$')
+            if ($env:REF_TYPE -ne 'tag' -or -not $match.Success) {
+              throw "Release builds require a tag like v1.2.3; got $env:REF_TYPE '$env:REF_NAME'."
+            }
+            $version = $match.Groups[1].Value
+            $publish = 'true'
+          }
+          elseif ($env:EVENT_NAME -eq 'workflow_dispatch') {
+            $match = [regex]::Match([string]$env:INPUT_VERSION, '^(\d+\.\d+\.\d+)$')
+            if (-not $match.Success) {
+              throw "Version input must look like 1.2.3."
+            }
+            $version = $match.Groups[1].Value
+            $publish = 'false'
+          }
+          else {
+            throw "Unsupported trigger: $env:EVENT_NAME"
+          }
+
+          Write-Host "Version $version (publish=$publish)"
           "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "publish=$publish" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Verify source version
         shell: pwsh
@@ -107,26 +150,266 @@ jobs:
             $archive.Dispose()
           }
 
+      - name: Checkout installer source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.INSTALLER_SOURCE_REPOSITORY }}
+          ref: ${{ env.INSTALLER_SOURCE_COMMIT }}
+          path: artifacts/installer-source
+          persist-credentials: false
+
+      - name: Verify installer source and Inno Setup
+        shell: pwsh
+        run: |
+          $head = (& git -C .\artifacts\installer-source rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -ne $env:INSTALLER_SOURCE_COMMIT) {
+            throw "Installer source is at '$head', expected $env:INSTALLER_SOURCE_COMMIT."
+          }
+
+          $iscc = $null
+          $onPath = Get-Command iscc.exe -ErrorAction SilentlyContinue
+          if ($onPath) {
+            $iscc = $onPath.Source
+          }
+          else {
+            foreach ($candidate in @(
+                "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+                "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+                (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"))) {
+              if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $iscc = $candidate
+                break
+              }
+            }
+          }
+          if (-not $iscc) {
+            throw "Inno Setup 6 compiler (ISCC.exe) was not found on PATH or in its known install locations."
+          }
+          if (-not $onPath) {
+            Split-Path -Parent $iscc | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          Write-Host "Using Inno Setup compiler: $iscc"
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{ n = 'FreeGB'; e = { [math]::Round($_.Free / 1GB, 1) } } -AutoSize
+
+      - name: Download and verify base distro payload
+        id: payload
+        shell: pwsh
+        run: |
+          $expected = ([string]$env:BASE_PAYLOAD_SHA256).ToLowerInvariant()
+          if ($expected -notmatch '^[0-9a-f]{64}$') {
+            throw "BASE_PAYLOAD_SHA256 is not pinned ('$env:BASE_PAYLOAD_SHA256'). Refusing to build an installer from an unverified payload."
+          }
+
+          $archive = Join-Path $env:RUNNER_TEMP 'distro-payload.tar.gz'
+          & curl.exe --fail --location --silent --show-error --retry 3 --output $archive $env:BASE_PAYLOAD_URL
+          if ($LASTEXITCODE -ne 0) {
+            throw "Base payload download failed: $env:BASE_PAYLOAD_URL"
+          }
+
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Base payload SHA-256 mismatch: expected $expected, got $actual."
+          }
+
+          $required = @(
+            'DwemerAI4Skyrim3.tar',
+            'DwemerAI4Skyrim3.tar.manifest.json',
+            'Misc/ddistro.ico',
+            'README.txt',
+            'Manual Start Server.bat',
+            'Manual Update Server.bat'
+          )
+          $listing = @(& tar.exe -tzf $archive)
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not list the base payload archive."
+          }
+          $entries = @($listing | ForEach-Object { ($_ -replace '^\./', '').TrimEnd('/') } | Where-Object { $_ -and $_ -ne '.' })
+          $unexpected = @($entries | Where-Object { $_ -notin $required -and $_ -ne 'Misc' })
+          $missing = @($required | Where-Object { $_ -notin $entries })
+          if ($unexpected.Count -gt 0 -or $missing.Count -gt 0) {
+            throw "Base payload layout mismatch. Unexpected: [$($unexpected -join ', ')] Missing: [$($missing -join ', ')]"
+          }
+
+          $payloadDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\distro-payload'
+          if (Test-Path -LiteralPath $payloadDir) {
+            throw "Base payload output $payloadDir already exists; refusing to reuse or delete it on a fresh runner."
+          }
+          New-Item -ItemType Directory -Path $payloadDir | Out-Null
+          & tar.exe -xzf $archive -C $payloadDir
+          if ($LASTEXITCODE -ne 0) {
+            throw "Base payload extraction failed."
+          }
+          Remove-Item -LiteralPath $archive -Force
+
+          foreach ($name in $required) {
+            if (-not (Test-Path -LiteralPath (Join-Path $payloadDir $name) -PathType Leaf)) {
+              throw "Extracted base payload is missing $name."
+            }
+          }
+
+          $tarPath = Join-Path $payloadDir 'DwemerAI4Skyrim3.tar'
+          $tarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tarPath).Hash.ToLowerInvariant()
+          if ($tarHash -ne $env:DISTRO_TAR_SHA256) {
+            throw "Distro tar SHA-256 mismatch: expected $env:DISTRO_TAR_SHA256, got $tarHash."
+          }
+          # Build-Installer.ps1 switches Inno Setup to disk spanning above this size; a release needs one exe.
+          if ((Get-Item -LiteralPath $tarPath).Length -gt 4200000000) {
+            throw "Distro tar is too large for a single-file installer."
+          }
+
+          "dir=$payloadDir" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tar=$tarPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{ n = 'FreeGB'; e = { [math]::Round($_.Free / 1GB, 1) } } -AutoSize
+
+      - name: Build installer
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          DISTRO_TAR: ${{ steps.payload.outputs.tar }}
+          DISTRO_RESOURCES: ${{ steps.payload.outputs.dir }}
+        run: |
+          $zip = (Resolve-Path .\artifacts\release\DwemerDistro-win-x64.zip).Path
+          & .\artifacts\installer-source\scripts\Build-Installer.ps1 `
+            -Version $env:RELEASE_VERSION `
+            -LauncherReleaseZip $zip `
+            -DistroTarPath $env:DISTRO_TAR `
+            -DistroResourcePath $env:DISTRO_RESOURCES
+          if ($LASTEXITCODE -ne 0) {
+            throw "Build-Installer.ps1 failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Verify installer and write checksums
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          $installerSource = Join-Path $env:GITHUB_WORKSPACE 'artifacts\installer-source'
+          $stagedLauncher = Join-Path $installerSource 'staging\Launcher'
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\release'
+          $zipPath = Join-Path $releaseDir 'DwemerDistro-win-x64.zip'
+
+          # Every staged launcher file must be byte-identical to the release ZIP that updaters download.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          try {
+            $zipFiles = @($archive.Entries | Where-Object { $_.Name })
+            foreach ($entry in $zipFiles) {
+              $stagedPath = Join-Path $stagedLauncher $entry.FullName
+              if (-not (Test-Path -LiteralPath $stagedPath -PathType Leaf)) {
+                throw "Staged launcher is missing $($entry.FullName)."
+              }
+              $stream = $entry.Open()
+              try {
+                $zipHash = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($stream))
+              }
+              finally {
+                $stream.Dispose()
+              }
+              $stagedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedPath).Hash
+              if ($zipHash -ne $stagedHash) {
+                throw "Staged $($entry.FullName) does not match the release ZIP."
+              }
+            }
+          }
+          finally {
+            $archive.Dispose()
+          }
+          $stagedCount = @(Get-ChildItem -LiteralPath $stagedLauncher -Recurse -File).Count
+          if ($stagedCount -ne $zipFiles.Count) {
+            throw "Staged launcher has $stagedCount files; the release ZIP has $($zipFiles.Count)."
+          }
+          foreach ($name in @('DwemerDistro.exe', 'DwemerDistroUpdater.exe')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $stagedLauncher $name) -PathType Leaf)) {
+              throw "Staged launcher is missing $name."
+            }
+          }
+          $launcherFileVersion = (Get-Item -LiteralPath (Join-Path $stagedLauncher 'DwemerDistro.exe')).VersionInfo.FileVersion
+          if ($launcherFileVersion -ne "$version.0") {
+            throw "Staged DwemerDistro.exe FileVersion is '$launcherFileVersion', expected '$version.0'."
+          }
+
+          # Release assets must be one self-contained exe: no disk-spanning slices.
+          $distFiles = @(Get-ChildItem -LiteralPath (Join-Path $installerSource 'dist') -File | Where-Object Name -ne '.gitkeep')
+          $slices = @($distFiles | Where-Object Extension -eq '.bin')
+          if ($slices.Count -gt 0) {
+            throw "Installer was built with disk-spanning slices ($($slices.Name -join ', ')); refusing an incomplete single-file release."
+          }
+          if ($distFiles.Count -ne 1 -or $distFiles[0].Name -ne 'DwemerDistroInstaller.exe') {
+            throw "Expected only DwemerDistroInstaller.exe in installer output; found: $($distFiles.Name -join ', ')"
+          }
+          $installer = $distFiles[0]
+          if ($installer.Length -ge 2GB) {
+            throw "DwemerDistroInstaller.exe is $($installer.Length) bytes; GitHub release assets must be under 2 GiB."
+          }
+          $installerInfo = $installer.VersionInfo
+          Write-Host "Installer FileVersion='$($installerInfo.FileVersion)' ProductVersion='$($installerInfo.ProductVersion)' Size=$($installer.Length)"
+          $versionPattern = '(^|[^0-9.])' + [regex]::Escape($version) + '($|[^0-9])'
+          if ([string]$installerInfo.ProductVersion -notmatch $versionPattern) {
+            throw "DwemerDistroInstaller.exe ProductVersion '$($installerInfo.ProductVersion)' does not contain $version."
+          }
+
+          Move-Item -LiteralPath $installer.FullName -Destination (Join-Path $releaseDir 'DwemerDistroInstaller.exe')
+          $sums = foreach ($name in @('DwemerDistroInstaller.exe', 'DwemerDistro-win-x64.zip')) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $releaseDir $name)).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          [IO.File]::WriteAllText((Join-Path $releaseDir 'SHA256SUMS'), (($sums -join "`n") + "`n"))
+          Get-Content -LiteralPath (Join-Path $releaseDir 'SHA256SUMS')
+
+          # Free runner disk: the staged and extracted distro tars are no longer needed.
+          $artifactsRoot = (Resolve-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'artifacts')).ProviderPath.TrimEnd('\') + '\'
+          foreach ($target in @((Join-Path $installerSource 'staging'), (Join-Path $env:GITHUB_WORKSPACE 'artifacts\distro-payload'))) {
+            $fullTarget = (Resolve-Path -LiteralPath $target).ProviderPath.TrimEnd('\')
+            if (-not ($fullTarget + '\').StartsWith($artifactsRoot, [StringComparison]::OrdinalIgnoreCase) -or ($fullTarget + '\') -eq $artifactsRoot) {
+              throw "Refusing to delete $fullTarget; it is not inside $artifactsRoot."
+            }
+            Remove-Item -LiteralPath $fullTarget -Recurse -Force
+          }
+
+      - name: Upload validation build (checksums and launcher ZIP)
+        if: steps.version.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-${{ steps.version.outputs.value }}-${{ github.run_id }}
+          path: |
+            artifacts/release/SHA256SUMS
+            artifacts/release/DwemerDistro-win-x64.zip
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload validation build (installer)
+        if: steps.version.outputs.publish != 'true' && inputs.include_installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-installer-${{ steps.version.outputs.value }}-${{ github.run_id }}
+          path: artifacts/release/DwemerDistroInstaller.exe
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
       - name: Publish GitHub release
+        if: github.event_name == 'push' && github.ref_type == 'tag' && steps.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: DwemerDistro ${{ steps.version.outputs.value }}
+          fail_on_unmatched_files: true
           body: |
             ## Which download do I need?
 
-            **First install? Do not use `DwemerDistro-win-x64.zip`.** It contains only the launcher, not the DwemerDistro WSL distro, so a first install from it ends in `WSL_E_DISTRO_NOT_FOUND`.
+            **First install (no DwemerDistro yet): download `DwemerDistroInstaller.exe` from the Assets below.** It is one file and contains the DwemerDistro WSL distro plus this launcher version.
 
-            **First install:**
-            1. Download the **Dwemer Distro installer** from the [CHIM Nexus files page](https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files).
-            2. Extract it if it is archived.
-            3. Run `DwemerDistroInstaller.exe` with WSL setup/import enabled.
-            4. Open the installed DwemerDistro launcher and choose **CHIM** in Quickstart.
+            1. Download **`DwemerDistroInstaller.exe`** from this release's Assets. Optional: compare `Get-FileHash .\DwemerDistroInstaller.exe` with `SHA256SUMS`.
+            2. Run it (it asks for administrator rights) and keep WSL setup/import enabled.
+            3. Open the installed DwemerDistro launcher and pick your mods (for example **CHIM**) in Quickstart.
 
-            Full walkthrough: [official CHIM installation guide](https://dwemerdynamics.com/chim/installation.html).
+            Alternatives: the Dwemer Distro installer on the [CHIM Nexus files page](https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files), and the full walkthrough in the [official CHIM installation guide](https://dwemerdynamics.com/chim/installation.html).
 
-            Having Ubuntu installed does not supply DwemerDistro. If the launcher reports `WSL_E_DISTRO_NOT_FOUND`, run the full Dwemer Distro installer, not **Update Distro** and not an Ubuntu install.
+            Having Ubuntu installed does not supply DwemerDistro. If the launcher reports `WSL_E_DISTRO_NOT_FOUND`, run `DwemerDistroInstaller.exe`, not **Update Distro** and not an Ubuntu install.
 
-            **Existing install:** the launcher updates itself automatically. `DwemerDistro-win-x64.zip` is only a manual launcher replacement for an existing DwemerDistro install.
+            **Existing install:** the launcher updates itself automatically. `DwemerDistro-win-x64.zip` contains only the launcher (no distro) and is only a manual launcher replacement for an existing DwemerDistro install. Do not use it for a first install.
           files: |
+            artifacts/release/DwemerDistroInstaller.exe
             artifacts/release/DwemerDistro-win-x64.zip
+            artifacts/release/SHA256SUMS
