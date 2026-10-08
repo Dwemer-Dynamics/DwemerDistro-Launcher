@@ -112,5 +112,21 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: DwemerDistro ${{ steps.version.outputs.value }}
+          body: |
+            ## Which download do I need?
+
+            **First install? Do not use `DwemerDistro-win-x64.zip`.** It contains only the launcher, not the DwemerDistro WSL distro, so a first install from it ends in `WSL_E_DISTRO_NOT_FOUND`.
+
+            **First install:**
+            1. Download the **Dwemer Distro installer** from the [CHIM Nexus files page](https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files).
+            2. Extract it if it is archived.
+            3. Run `DwemerDistroInstaller.exe` with WSL setup/import enabled.
+            4. Open the installed DwemerDistro launcher and choose **CHIM** in Quickstart.
+
+            Full walkthrough: [official CHIM installation guide](https://dwemerdynamics.com/chim/installation.html).
+
+            Having Ubuntu installed does not supply DwemerDistro. If the launcher reports `WSL_E_DISTRO_NOT_FOUND`, run the full Dwemer Distro installer, not **Update Distro** and not an Ubuntu install.
+
+            **Existing install:** the launcher updates itself automatically. `DwemerDistro-win-x64.zip` is only a manual launcher replacement for an existing DwemerDistro install.
           files: |
             artifacts/release/DwemerDistro-win-x64.zip

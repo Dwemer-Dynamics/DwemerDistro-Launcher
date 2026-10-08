@@ -6,6 +6,23 @@ It keeps WSL distro management in the launcher, but separates launcher binary up
 
 - `https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher`
 
+## Which Download Do I Need?
+
+> **First install? Do not use the GitHub release ZIP.** `DwemerDistro-win-x64.zip` contains only the launcher. It does not contain the DwemerDistro WSL distro, so extracting it on a PC without DwemerDistro ends in `WSL_E_DISTRO_NOT_FOUND`.
+
+**First install (no DwemerDistro yet):**
+
+1. Download the **Dwemer Distro installer** from the [CHIM Nexus files page](https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files).
+2. Extract it if it is archived.
+3. Run `DwemerDistroInstaller.exe` with WSL setup/import enabled.
+4. Open the installed DwemerDistro launcher and choose **CHIM** in Quickstart.
+
+Full walkthrough: [official CHIM installation guide](https://dwemerdynamics.com/chim/installation.html).
+
+Having Ubuntu (or any other WSL distro) installed does not supply DwemerDistro. If the launcher reports that the DwemerDistro distro is missing (`WSL_E_DISTRO_NOT_FOUND`), run the full Dwemer Distro installer above. **Update Distro** cannot create a missing distro, and installing Ubuntu does not fix it.
+
+**Existing install (DwemerDistro already set up):** the launcher updates itself automatically. `DwemerDistro-win-x64.zip` from GitHub Releases is only a manual launcher replacement for an existing install.
+
 ## Scope
 
 - Native Windows launcher built with WPF on .NET 8
