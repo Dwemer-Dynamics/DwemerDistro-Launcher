@@ -25,8 +25,8 @@ jobs:
     env:
       INSTALLER_SOURCE_REPOSITORY: Dwemer-Dynamics/DwemerDistro-Installer
       INSTALLER_SOURCE_COMMIT: 145c8aec3dd9faf27f94ec3be25daa5c613d4b9b
-      BASE_PAYLOAD_URL: https://github.com/Dwemer-Dynamics/DwemerDistro-Installer/releases/download/v3.3.28/distro-payload.tar.gz
-      BASE_PAYLOAD_SHA256: 4d0cb18ba0d65dc0fdbd678b290bd4e605ab20db0f8de43d51562aab9fa6a949
+      BASE_PAYLOAD_URL: https://github.com/Dwemer-Dynamics/DwemerDistro-Installer/releases/download/v3.3.28/distro-payload-full.tar.gz
+      BASE_PAYLOAD_SHA256: 403b77c8e4a46aba7bdb305be17f6beddb4a3303b1baf5b800145fd43047ca97
       DISTRO_TAR_SHA256: 63d237ad0871cc544007a3009abd70580956285ec849f25bf1c4acc839639619
 
     steps:
@@ -217,15 +217,60 @@ jobs:
             'Misc/ddistro.ico',
             'README.txt',
             'Manual Start Server.bat',
-            'Manual Update Server.bat'
+            'Manual Update Server.bat',
+            # Convenience scripts shipped alongside the distro, same as the local full installer.
+            'Tools/CHIM Plugins Folder.bat',
+            'Tools/CHIM Server Folder.bat',
+            'Tools/CleanLogs.bat',
+            'Tools/Compact Distro.bat',
+            'Tools/Components/AMD GPU Components/Install MeloTTS (CPU ONLY FOR AMD - Recommended TTS).bat',
+            'Tools/Components/AMD GPU Components/Install Mimic3 (Small TTS Service).bat',
+            'Tools/Components/AMD GPU Components/Install Minime-T5 (CPU ONLY FOR AMD - Tiny helper LLM).bat',
+            'Tools/Components/Compact Installed Components.bat',
+            'Tools/Components/Configure Installed Components.bat',
+            'Tools/Components/Install MeloTTS.bat',
+            'Tools/Components/NVIDIA GPU Components/1) REQUIRED CUDA INSTALL ME!.bat',
+            'Tools/Components/NVIDIA GPU Components/Advanced Components/Install Llama Lava (ITT Server).bat',
+            'Tools/Components/NVIDIA GPU Components/Advanced Components/Install Local Whisper (STT Server).bat',
+            'Tools/Components/NVIDIA GPU Components/Advanced Components/Install Text2Vec (Embeddings).bat',
+            'Tools/Components/NVIDIA GPU Components/Install MeloTTS (Small Recommended TTS).bat',
+            'Tools/Components/NVIDIA GPU Components/Install Mimic3 (Small Alternative TTS).bat',
+            'Tools/Components/NVIDIA GPU Components/Install Minime-T5 (Tiny helper LLM).bat',
+            'Tools/Components/NVIDIA GPU Components/Install XTTS (Powerful TTS but High System Requirements!).bat',
+            'Tools/Export Distro.bat',
+            'Tools/Force Stop Distro.bat',
+            'Tools/Logs/zlog_text2vec.bat',
+            'Tools/Logs/zlog_whisper.bat',
+            'Tools/Logs/zlog_xttsv2.bat',
+            'Tools/Plugins Folder.bat',
+            'Tools/Server Folder.bat',
+            'Tools/Uninstall Distro.bat',
+            'Tools/Utils/NetPortRedirection.ps1',
+            'Tools/Utils/SwitchToDev.bat',
+            'Tools/Utils/SwitchToProd.bat',
+            'Tools/Utils/zCleaner.bat',
+            'Tools/Utils/zLogApache.bat',
+            'Tools/Utils/zMonitor.bat',
+            'Tools/Utils/zTerminal.bat',
+            'Tools/XTTS Server Folder.bat'
+          )
+          $directories = @(
+            'Misc',
+            'Tools',
+            'Tools/Components',
+            'Tools/Components/AMD GPU Components',
+            'Tools/Components/NVIDIA GPU Components',
+            'Tools/Components/NVIDIA GPU Components/Advanced Components',
+            'Tools/Logs',
+            'Tools/Utils'
           )
           $listing = @(& tar.exe -tzf $archive)
           if ($LASTEXITCODE -ne 0) {
             throw "Could not list the base payload archive."
           }
           $entries = @($listing | ForEach-Object { ($_ -replace '^\./', '').TrimEnd('/') } | Where-Object { $_ -and $_ -ne '.' })
-          $unexpected = @($entries | Where-Object { $_ -notin $required -and $_ -ne 'Misc' })
-          $missing = @($required | Where-Object { $_ -notin $entries })
+          $unexpected = @($entries | Where-Object { $_ -cnotin $required -and $_ -cnotin $directories })
+          $missing = @($required | Where-Object { $_ -cnotin $entries })
           if ($unexpected.Count -gt 0 -or $missing.Count -gt 0) {
             throw "Base payload layout mismatch. Unexpected: [$($unexpected -join ', ')] Missing: [$($missing -join ', ')]"
           }

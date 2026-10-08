@@ -58,8 +58,8 @@ The installer is built by `scripts/Build-Installer.ps1` from `Dwemer-Dynamics/Dw
 
 The distro itself comes from the public base payload archive in `BASE_PAYLOAD_URL`:
 
-- `distro-payload.tar.gz`, verified against `BASE_PAYLOAD_SHA256`
-- it must contain exactly `DwemerAI4Skyrim3.tar`, `DwemerAI4Skyrim3.tar.manifest.json`, `Misc/ddistro.ico`, `README.txt`, `Manual Start Server.bat`, and `Manual Update Server.bat`
+- `distro-payload-full.tar.gz`, verified against `BASE_PAYLOAD_SHA256` before it is listed or extracted
+- it must contain exactly the same resources as the local full installer payload: `DwemerAI4Skyrim3.tar`, `DwemerAI4Skyrim3.tar.manifest.json`, `Misc/ddistro.ico`, `README.txt`, `Manual Start Server.bat`, `Manual Update Server.bat`, and the 34 convenience scripts under `Tools/` (including `Tools/Components`, `Tools/Logs`, and `Tools/Utils`); the workflow pins every allowed path, so any missing, extra, or traversal entry fails the build
 - the extracted `DwemerAI4Skyrim3.tar` is verified against `DISTRO_TAR_SHA256`
 
 To ship a new base distro, upload a new sanitized archive and update `BASE_PAYLOAD_URL`, `BASE_PAYLOAD_SHA256`, and `DISTRO_TAR_SHA256` together. Update `INSTALLER_SOURCE_COMMIT` only to a reviewed installer commit. The distro tar must stay at or below 4,200,000,000 bytes and the finished installer below 2 GiB; the workflow fails instead of publishing a multi-file (disk-spanning) or oversized installer.
