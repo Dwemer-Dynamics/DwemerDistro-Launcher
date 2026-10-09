@@ -222,6 +222,15 @@
                                     Margin="0,6,0,0" Height="32"
                                     AutomationProperties.Name="Add custom mod"
                                     AutomationProperties.HelpText="Check a public repository and install it as a custom mod after you confirm you trust it." />
+                            <Button Command="{Binding OpenCustomModCreationGuideCommand}" Style="{StaticResource GameCenter.UtilityButton}"
+                                    Margin="0,6,0,0" AutomationProperties.Name="Creation guide"
+                                    AutomationProperties.HelpText="Open the custom mod creation guide in your browser."
+                                    ToolTip="Open the custom mod creation guide in your browser.">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
+                                    <AccessText Text="Creation _guide" />
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
                         <StackPanel x:Name="UtilityLandmark" Margin="0,14,0,0" KeyboardNavigation.TabNavigation="Local">
                             <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">

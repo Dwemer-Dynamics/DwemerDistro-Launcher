@@ -288,6 +288,7 @@ echo "CHIM-MCP installed and enabled."
         OpenLorkhanLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("LORKHAN"));
         OpenStobeLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("STOBE"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
+        OpenCustomModCreationGuideCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.CustomModCreationGuideUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
         OpenPatreonCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.PatreonUrl));
 
@@ -827,6 +828,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenLorkhanLogsCommand { get; }
     public RelayCommand OpenStobeLogsCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
+    public RelayCommand OpenCustomModCreationGuideCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
     public RelayCommand OpenPatreonCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }

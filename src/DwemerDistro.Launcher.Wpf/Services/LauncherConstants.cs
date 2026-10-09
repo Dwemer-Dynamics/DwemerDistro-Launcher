@@ -21,6 +21,7 @@ public static class LauncherConstants
     public const int LorkhanServerPort = 8090;
 
     public const string WikiUrl = "https://dwemerdynamics.com/index.html";
+    public const string CustomModCreationGuideUrl = "https://dwemerdynamics.com/custom-mods/index.html";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";
     public const string PatreonUrl = "https://www.patreon.com/DwemerDynamics";
     public const string ChimServerUiUrl = "http://127.0.0.1:8081/HerikaServer/ui/";

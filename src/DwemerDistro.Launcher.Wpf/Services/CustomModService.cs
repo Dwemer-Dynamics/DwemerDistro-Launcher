@@ -16,8 +16,12 @@ public sealed partial class CustomModService(WslService wsl)
 
     internal const string ManagerCommand = "/usr/local/bin/ddistro_custom_mod";
 
-    /// <summary>Every dashboard and health link must stay under this fixed local route.</summary>
-    internal const string RouteBase = "http://127.0.0.1:8081/custom-mods/";
+    /// <summary>
+    /// Every dashboard and health link must stay under the local custom mod route: the shared
+    /// CUSTOM_MODS_PORT (19000-19999), or 8081 as reported by older distros.
+    /// </summary>
+    [GeneratedRegex(@"^http://127\.0\.0\.1:(?:8081|19[0-9]{3})/custom-mods/")]
+    private static partial Regex RouteBasePattern();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -318,8 +322,9 @@ public sealed partial class CustomModService(WslService wsl)
             return false;
         }
 
-        var prefix = RouteBase + modId + "/";
-        if (!url.StartsWith(prefix, StringComparison.Ordinal))
+        var routeBase = RouteBasePattern().Match(url);
+        var prefix = routeBase.Value + modId + "/";
+        if (!routeBase.Success || !url.StartsWith(prefix, StringComparison.Ordinal))
         {
             return false;
         }
