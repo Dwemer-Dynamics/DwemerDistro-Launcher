@@ -150,7 +150,18 @@ jobs:
             $archive.Dispose()
           }
 
+      # Launcher-only checksums; the installer path rewrites SHA256SUMS with both assets.
+      - name: Write launcher checksum
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE 'artifacts\release'
+          $name = 'DwemerDistro-win-x64.zip'
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $releaseDir $name)).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $releaseDir 'SHA256SUMS'), "$hash  $name`n")
+          Get-Content -LiteralPath (Join-Path $releaseDir 'SHA256SUMS')
+
       - name: Checkout installer source
+        if: github.event_name == 'push' || inputs.include_installer
         uses: actions/checkout@v4
         with:
           repository: ${{ env.INSTALLER_SOURCE_REPOSITORY }}
@@ -159,6 +170,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify installer source and Inno Setup
+        if: github.event_name == 'push' || inputs.include_installer
         shell: pwsh
         run: |
           $head = (& git -C .\artifacts\installer-source rev-parse HEAD).Trim()
@@ -193,6 +205,7 @@ jobs:
 
       - name: Download and verify base distro payload
         id: payload
+        if: github.event_name == 'push' || inputs.include_installer
         shell: pwsh
         run: |
           $expected = ([string]$env:BASE_PAYLOAD_SHA256).ToLowerInvariant()
@@ -307,6 +320,7 @@ jobs:
           Get-PSDrive -PSProvider FileSystem | Format-Table Name, @{ n = 'FreeGB'; e = { [math]::Round($_.Free / 1GB, 1) } } -AutoSize
 
       - name: Build installer
+        if: github.event_name == 'push' || inputs.include_installer
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
@@ -324,6 +338,7 @@ jobs:
           }
 
       - name: Verify installer and write checksums
+        if: github.event_name == 'push' || inputs.include_installer
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
