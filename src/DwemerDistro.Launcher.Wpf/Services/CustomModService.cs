@@ -16,8 +16,12 @@ public sealed partial class CustomModService(WslService wsl)
 
     internal const string ManagerCommand = "/usr/local/bin/ddistro_custom_mod";
 
-    /// <summary>Every dashboard and health link must stay under this fixed local route.</summary>
-    internal const string RouteBase = "http://127.0.0.1:8081/custom-mods/";
+    /// <summary>
+    /// Every dashboard and health link must stay under the local custom mod route: the shared
+    /// CUSTOM_MODS_PORT (19000-19999), or 8081 as reported by older distros.
+    /// </summary>
+    [GeneratedRegex(@"^http://127\.0\.0\.1:(?:8081|19[0-9]{3})/custom-mods/")]
+    private static partial Regex RouteBasePattern();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -62,6 +66,29 @@ public sealed partial class CustomModService(WslService wsl)
     public Task<Models.CommandResult> UpdateAsync(string modId, Action<string>? output, CancellationToken cancellationToken = default)
     {
         return RunAsync("root", BuildIdArguments("update", modId), output, cancellationToken);
+    }
+
+    /// <summary>
+    /// Explicit refresh of the author's offered branches (stored in the distro registry); with a
+    /// branch, also previews that branch's exact commit for review before a switch.
+    /// </summary>
+    public async Task<CustomModBranchCheckResult> CheckBranchesAsync(string modId, string? branch, Action<string>? output, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync("root", BuildBranchesArguments(modId, branch), output, cancellationToken)
+            .ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            return new CustomModBranchCheckResult(null, DescribeFailure(result));
+        }
+
+        return TryParseBranchCheck(result.StandardOutput, out var check, out var error)
+            ? new CustomModBranchCheckResult(check, null)
+            : new CustomModBranchCheckResult(null, error);
+    }
+
+    public Task<Models.CommandResult> SwitchBranchAsync(string modId, string branch, string expectedCommit, Action<string>? output, CancellationToken cancellationToken = default)
+    {
+        return RunAsync("root", BuildSwitchArguments(modId, branch, expectedCommit), output, cancellationToken);
     }
 
     public Task<Models.CommandResult> BackupAsync(string modId, Action<string>? output, CancellationToken cancellationToken = default)
@@ -140,6 +167,43 @@ public sealed partial class CustomModService(WslService wsl)
         return [ManagerCommand, verb, modId];
     }
 
+    internal static string[] BuildBranchesArguments(string modId, string? branch)
+    {
+        if (!IsValidModId(modId))
+        {
+            throw new ArgumentException("Invalid custom mod id.", nameof(modId));
+        }
+
+        if (branch is null)
+        {
+            return [ManagerCommand, "branches", modId, "--json"];
+        }
+
+        return IsValidBranchName(branch)
+            ? [ManagerCommand, "branches", modId, "--branch", branch, "--json"]
+            : throw new ArgumentException("Invalid branch name.", nameof(branch));
+    }
+
+    internal static string[] BuildSwitchArguments(string modId, string branch, string expectedCommit)
+    {
+        if (!IsValidModId(modId))
+        {
+            throw new ArgumentException("Invalid custom mod id.", nameof(modId));
+        }
+
+        if (!IsValidBranchName(branch))
+        {
+            throw new ArgumentException("Invalid branch name.", nameof(branch));
+        }
+
+        if (!CommitPattern().IsMatch(expectedCommit ?? string.Empty))
+        {
+            throw new ArgumentException("A reviewed commit id is required.", nameof(expectedCommit));
+        }
+
+        return [ManagerCommand, "switch", modId, "--branch", branch, "--expect-commit", expectedCommit!];
+    }
+
     private static string RequireValidRepositoryUrl(string repositoryUrl)
     {
         var error = ValidateRepositoryUrl(repositoryUrl);
@@ -199,9 +263,55 @@ public sealed partial class CustomModService(WslService wsl)
             : null;
     }
 
+    /// <summary>
+    /// Maps a validated https://github.com/owner/repo URL to public artwork addresses: the
+    /// repository's social preview card, then the owner's avatar. Any other host returns false.
+    /// </summary>
+    public static bool TryGetGitHubArtworkUrls(string? repositoryUrl, out string[] artworkUrls)
+    {
+        artworkUrls = [];
+        if (ValidateRepositoryUrl(repositoryUrl) is not null)
+        {
+            return false;
+        }
+
+        var match = GitHubRepositoryPattern().Match(repositoryUrl!);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var owner = match.Groups["owner"].Value;
+        var repository = match.Groups["repo"].Value;
+        if (repository.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+        {
+            repository = repository[..^4];
+        }
+
+        if (repository.Length == 0 || repository.Trim('.').Length == 0)
+        {
+            return false;
+        }
+
+        artworkUrls =
+        [
+            $"https://opengraph.githubassets.com/1/{owner}/{repository}",
+            $"https://avatars.githubusercontent.com/{owner}?s=460"
+        ];
+        return true;
+    }
+
     public static bool IsValidModId(string? modId)
     {
         return !string.IsNullOrEmpty(modId) && ModIdPattern().IsMatch(modId) && !modId.Contains("--", StringComparison.Ordinal);
+    }
+
+    /// <summary>Mirrors the distro's branch name rule; anything else is never passed on or shown as offered.</summary>
+    public static bool IsValidBranchName(string? branch)
+    {
+        return !string.IsNullOrEmpty(branch) && BranchPattern().IsMatch(branch) &&
+               !branch.Contains("..", StringComparison.Ordinal) && !branch.Contains("//", StringComparison.Ordinal) &&
+               !branch.EndsWith(".lock", StringComparison.Ordinal) && !branch.EndsWith('/') && !branch.EndsWith('.');
     }
 
     /// <summary>Accepts only the fixed local route for this mod id, never a manifest-supplied host.</summary>
@@ -212,8 +322,9 @@ public sealed partial class CustomModService(WslService wsl)
             return false;
         }
 
-        var prefix = RouteBase + modId + "/";
-        if (!url.StartsWith(prefix, StringComparison.Ordinal))
+        var routeBase = RouteBasePattern().Match(url);
+        var prefix = routeBase.Value + modId + "/";
+        if (!routeBase.Success || !url.StartsWith(prefix, StringComparison.Ordinal))
         {
             return false;
         }
@@ -222,11 +333,26 @@ public sealed partial class CustomModService(WslService wsl)
         return rest.Length == 0 || RelativeRoutePattern().IsMatch(rest);
     }
 
+    /// <summary>An installed icon or banner: the fixed local route for this id, ending in a PNG/JPEG file.</summary>
+    public static bool IsSafeModAssetUrl(string? url, string modId)
+    {
+        return IsSafeModUrl(url, modId) &&
+               (url!.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                url.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase));
+    }
+
     [GeneratedRegex(@"^https://(?<host>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)(?<path>(?:/[A-Za-z0-9._~-]+)+)/?\z")]
     private static partial Regex RepositoryUrlPattern();
 
+    [GeneratedRegex(@"^https://github\.com/(?<owner>[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/(?<repo>[A-Za-z0-9._-]{1,100})/?\z")]
+    private static partial Regex GitHubRepositoryPattern();
+
     [GeneratedRegex(@"^[a-z][a-z0-9-]{1,30}[a-z0-9]\z")]
     private static partial Regex ModIdPattern();
+
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}\z")]
+    private static partial Regex BranchPattern();
 
     [GeneratedRegex(@"^[0-9a-f]{40}\z")]
     private static partial Regex CommitPattern();
@@ -264,7 +390,14 @@ public sealed partial class CustomModService(WslService wsl)
                 IsSafeModUrl(entry.DashboardUrl, entry.Id!) ? entry.DashboardUrl : null,
                 IsSafeModUrl(entry.HealthUrl, entry.Id!) ? entry.HealthUrl : null,
                 Clean(entry.Health, 20),
-                Clean(entry.HealthMessage, 200)));
+                Clean(entry.HealthMessage, 200),
+                IsSafeModAssetUrl(entry.IconUrl, entry.Id!) ? entry.IconUrl : null,
+                IsSafeModAssetUrl(entry.BannerUrl, entry.Id!) ? entry.BannerUrl : null)
+            {
+                DefaultBranch = IsValidBranchName(entry.Branches?.Default) ? entry.Branches!.Default! : string.Empty,
+                OfferedBranches = CleanBranches(entry.Branches?.Allowed),
+                BranchesCheckedAt = Clean(entry.BranchesCheckedAt, 40) ?? string.Empty
+            });
         }
 
         mods = list;
@@ -301,6 +434,38 @@ public sealed partial class CustomModService(WslService wsl)
                 ? document.InstalledCommit!
                 : string.Empty);
         return true;
+    }
+
+    internal static bool TryParseBranchCheck(string? output, out CustomModBranchCheck? check, out string? error)
+    {
+        check = null;
+        if (!TryDeserialize<BranchCheckDocument>(output, out var document, out error))
+        {
+            return false;
+        }
+
+        var hasTarget = !string.IsNullOrEmpty(document!.Branch);
+        if (!IsValidModId(document.Id) ||
+            (hasTarget && (!IsValidBranchName(document.Branch) || !CommitPattern().IsMatch(document.Commit ?? string.Empty))))
+        {
+            error = "The branch check returned an incomplete result.";
+            return false;
+        }
+
+        check = new CustomModBranchCheck(
+            document.Id!,
+            IsValidBranchName(document.CurrentBranch) ? document.CurrentBranch! : string.Empty,
+            CommitPattern().IsMatch(document.CurrentCommit ?? string.Empty) ? document.CurrentCommit! : string.Empty,
+            IsValidBranchName(document.Branches?.Default) ? document.Branches!.Default! : string.Empty,
+            CleanBranches(document.Branches?.Allowed),
+            hasTarget ? document.Branch! : string.Empty,
+            hasTarget ? document.Commit! : string.Empty);
+        return true;
+    }
+
+    private static IReadOnlyList<string> CleanBranches(List<string>? branches)
+    {
+        return (branches ?? []).Where(IsValidBranchName).Distinct(StringComparer.Ordinal).Take(10).ToList();
     }
 
     private static bool TryDeserialize<T>(string? output, out T? document, out string? error)
@@ -407,6 +572,26 @@ public sealed partial class CustomModService(WslService wsl)
         public string? HealthUrl { get; set; }
         public string? Health { get; set; }
         public string? HealthMessage { get; set; }
+        public string? IconUrl { get; set; }
+        public string? BannerUrl { get; set; }
+        public BranchPolicyDocument? Branches { get; set; }
+        public string? BranchesCheckedAt { get; set; }
+    }
+
+    private sealed class BranchPolicyDocument
+    {
+        public string? Default { get; set; }
+        public List<string>? Allowed { get; set; }
+    }
+
+    private sealed class BranchCheckDocument : VersionedDocument
+    {
+        public string? Id { get; set; }
+        public string? CurrentBranch { get; set; }
+        public string? CurrentCommit { get; set; }
+        public BranchPolicyDocument? Branches { get; set; }
+        public string? Branch { get; set; }
+        public string? Commit { get; set; }
     }
 
     private sealed class PreviewDocument : VersionedDocument
@@ -444,7 +629,23 @@ public sealed record CustomModInfo(
     string? DashboardUrl,
     string? HealthUrl,
     string? Health,
-    string? HealthMessage);
+    string? HealthMessage,
+    string? IconUrl,
+    string? BannerUrl)
+{
+    /// <summary>The installed icon, loaded by the view model; null shows the name alone.</summary>
+    public System.Windows.Media.ImageSource? IconImage { get; init; }
+
+    /// <summary>The author's last checked policy from the distro registry; never fetched on paint.</summary>
+    public string DefaultBranch { get; init; } = string.Empty;
+
+    public IReadOnlyList<string> OfferedBranches { get; init; } = [];
+
+    public string BranchesCheckedAt { get; init; } = string.Empty;
+
+    /// <summary>False when the author stopped offering the installed branch; Update still keeps it.</summary>
+    public bool IsBranchOffered => OfferedBranches.Count == 0 || OfferedBranches.Contains(Branch, StringComparer.Ordinal);
+}
 
 public sealed record CustomModPreview(
     string Id,
@@ -458,6 +659,18 @@ public sealed record CustomModPreview(
     bool Registered,
     bool Restorable,
     string InstalledCommit);
+
+/// <summary>A refreshed branch policy and, when a target was given, its exact commit to review.</summary>
+public sealed record CustomModBranchCheck(
+    string Id,
+    string CurrentBranch,
+    string CurrentCommit,
+    string DefaultBranch,
+    IReadOnlyList<string> OfferedBranches,
+    string Branch,
+    string Commit);
+
+public sealed record CustomModBranchCheckResult(CustomModBranchCheck? Check, string? Error);
 
 public sealed record CustomModStatusResult(IReadOnlyList<CustomModInfo>? Mods, string? Error);
 

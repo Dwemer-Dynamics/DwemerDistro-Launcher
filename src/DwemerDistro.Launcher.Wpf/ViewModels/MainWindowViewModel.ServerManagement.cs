@@ -139,17 +139,23 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        var result = await service.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        ServerStatusResult result;
+        try
+        {
+            result = await service.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // A timed-out or cancelled probe must not leave the items stuck on "Checking".
+            RunOnUi(MarkServerStatusUnavailable);
+            throw;
+        }
+
         RunOnUi(() =>
         {
             if (!result.IsSuccess)
             {
-                foreach (var manager in ServerManagers)
-                {
-                    manager.ApplyStatusError("Server status unavailable");
-                }
-
-                RaiseServerManagerDependentStates();
+                MarkServerStatusUnavailable();
                 return;
             }
 
@@ -164,6 +170,16 @@ public sealed partial class MainWindowViewModel
             QueueBackgroundTask("Reign version check", CheckReignServerUpdatesAsync, StartupVersionCheckTimeout);
         if (result.IsSuccess && LorkhanManager.IsInstalled)
             QueueBackgroundTask("Lorkhan version details", RefreshLorkhanVersionDetailsAsync, StartupVersionCheckTimeout);
+    }
+
+    private void MarkServerStatusUnavailable()
+    {
+        foreach (var manager in ServerManagers)
+        {
+            manager.ApplyStatusError("Server status unavailable");
+        }
+
+        RaiseServerManagerDependentStates();
     }
 
     // Lorkhan keeps a semantic version file; its installed Git revision supplies the build date.

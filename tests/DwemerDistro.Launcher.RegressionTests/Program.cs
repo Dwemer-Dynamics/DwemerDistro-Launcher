@@ -545,21 +545,63 @@ try
     var customStatus = "[INFO] noise\n" + """
         {"schema_version":1,"mods":[
           {"id":"example-server","name":"Example","state":"ready","commit":"0123456789abcdef0123456789abcdef01234567",
-           "dashboard_url":"http://127.0.0.1:8081/custom-mods/example-server/ui/","health_url":"http://127.0.0.1:8081/custom-mods/example-server/health.php"},
+           "dashboard_url":"http://127.0.0.1:19000/custom-mods/example-server/ui/","health_url":"http://127.0.0.1:19000/custom-mods/example-server/health.php",
+           "repository":"https://github.com/owner/example-server",
+           "icon_url":"http://127.0.0.1:19000/custom-mods/example-server/ui/images/icon.png","banner_url":"http://127.0.0.1:19000/custom-mods/example-server/ui/banner.JPG"},
           {"id":"evil-mod","name":"Evil","state":"failed","message":"Update failed",
-           "dashboard_url":"https://attacker.example/","health_url":"http://127.0.0.1:8081/custom-mods/other-mod/health.php"},
+           "dashboard_url":"https://attacker.example/","health_url":"http://127.0.0.1:19000/custom-mods/other-mod/health.php",
+           "icon_url":"https://attacker.example/icon.png","banner_url":"http://127.0.0.1:19000/custom-mods/other-mod/banner.png"},
           {"id":"../bad","name":"Bad","state":"ready"}]}
         """;
     Assert(CustomModService.TryParseStatus(customStatus, out var customMods, out _) && customMods!.Count == 2
-           && customMods[0].DashboardUrl == "http://127.0.0.1:8081/custom-mods/example-server/ui/"
+           && customMods[0].DashboardUrl == "http://127.0.0.1:19000/custom-mods/example-server/ui/"
            && customMods[0].ShortCommit == "0123456" && customMods[0].State == CustomModState.Ready
            && customMods[1].DashboardUrl is null && customMods[1].HealthUrl is null && customMods[1].State == CustomModState.Failed,
         "Custom mod links must stay on the fixed local route for their own id, and invalid ids are dropped.");
-    Assert(!CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/../HerikaServer/", "example-server")
-           && !CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/.git/config", "example-server")
-           && !CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/ui/\n", "example-server")
-           && CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/", "example-server"),
+    Assert(!CustomModService.IsSafeModUrl("http://127.0.0.1:19000/custom-mods/example-server/../HerikaServer/", "example-server")
+           && !CustomModService.IsSafeModUrl("http://127.0.0.1:19000/custom-mods/example-server/.git/config", "example-server")
+           && !CustomModService.IsSafeModUrl("http://127.0.0.1:19000/custom-mods/example-server/ui/\n", "example-server")
+           && CustomModService.IsSafeModUrl("http://127.0.0.1:19000/custom-mods/example-server/", "example-server"),
         "Custom mod routes must reject traversal and hidden segments.");
+    Assert(CustomModService.IsSafeModUrl("http://127.0.0.1:19999/custom-mods/example-server/ui/", "example-server")
+           && CustomModService.IsSafeModUrl("http://127.0.0.1:8081/custom-mods/example-server/ui/", "example-server")
+           && new[]
+              {
+                  "http://127.0.0.1:18999/custom-mods/example-server/", "http://127.0.0.1:20000/custom-mods/example-server/",
+                  "http://127.0.0.1:8083/custom-mods/example-server/", "http://127.0.0.1:190000/custom-mods/example-server/",
+                  "http://127.0.0.1/custom-mods/example-server/", "https://127.0.0.1:19000/custom-mods/example-server/",
+                  "http://localhost:19000/custom-mods/example-server/", "http://user@127.0.0.1:19000/custom-mods/example-server/",
+                  "http://127.0.0.1:19000@evil.example/custom-mods/example-server/",
+                  "http://127.0.0.1:19000/custom-mods/example-server/ui/?x=1", "http://127.0.0.1:19000/custom-mods/example-server/ui/#x",
+                  "http://127.0.0.1:19000/custom-mods/other-mod/ui/", "http://127.0.0.1:19000/ExampleServer/"
+              }.All(url => !CustomModService.IsSafeModUrl(url, "example-server")),
+        "Custom mod routes must stay on loopback port 19000-19999 (or legacy 8081) without credentials, query, or fragment.");
+    Assert(customMods![0].IconUrl == "http://127.0.0.1:19000/custom-mods/example-server/ui/images/icon.png"
+           && customMods[0].BannerUrl == "http://127.0.0.1:19000/custom-mods/example-server/ui/banner.JPG"
+           && customMods[1].IconUrl is null && customMods[1].BannerUrl is null
+           && customMods[0].IconImage is null,
+        "Custom mod icon and banner URLs must stay on the fixed local route for their own id.");
+    foreach (var badAsset in new[]
+             {
+                 "http://127.0.0.1:19000/custom-mods/example-server/ui/icon.svg",
+                 "http://127.0.0.1:19000/custom-mods/example-server/config/config.php",
+                 "http://127.0.0.1:19000/custom-mods/example-server/../HerikaServer/x.png",
+                 "http://127.0.0.1:19000/custom-mods/example-server/.git/x.png",
+                 "http://127.0.0.1:19000/custom-mods/example-server/.png",
+                 "http://127.0.0.1:19000/custom-mods/example-server/",
+                 "http://localhost:8081/custom-mods/example-server/icon.png",
+                 "https://raw.githubusercontent.com/owner/example-server/main/icon.png"
+             })
+    {
+        Assert(!CustomModService.IsSafeModAssetUrl(badAsset, "example-server"), $"Custom mod asset URL must be rejected: {badAsset}");
+    }
+
+    var heroUrls = MainWindowViewModel.GetCustomModHeroUrls(customMods[0]);
+    Assert(heroUrls.Count == 3 && heroUrls[0] == customMods[0].BannerUrl
+           && heroUrls[1].StartsWith("https://opengraph.githubassets.com/", StringComparison.Ordinal)
+           && MainWindowViewModel.GetCustomModHeroUrls(customMods[0] with { BannerUrl = null })[0] == heroUrls[1]
+           && MainWindowViewModel.GetCustomModHeroUrls(customMods[1]).Count == 0,
+        "The custom hero must prefer the installed banner, then GitHub artwork, then the generic placeholder.");
     Assert(!CustomModService.TryParseStatus("""{"schema_version":2,"mods":[]}""", out _, out _),
         "An unknown custom status schema must fail instead of guessing.");
     Assert(CustomModService.DescribeFailure(new CommandResult(1, "", "Traceback...\n[FAIL] Files tracked by the mod were changed locally. Nothing was updated.\n"))
@@ -584,6 +626,66 @@ try
     Assert(CustomModService.TryParsePreview(restorePreview.Replace(customCommit, "HEAD"), out var unsafeRestore, out _)
            && !unsafeRestore!.Restorable,
         "A restore preview without a valid installed commit must not be offered as a restore.");
+
+    // --- custom mod branches -----------------------------------------------------------------
+
+    Assert(CustomModService.BuildBranchesArguments("example-server", null)
+            .SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "branches", "example-server", "--json" })
+           && CustomModService.BuildBranchesArguments("example-server", "dev")
+            .SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "branches", "example-server", "--branch", "dev", "--json" })
+           && CustomModService.BuildSwitchArguments("example-server", "release/1.x", customCommit)
+            .SequenceEqual(new[] { "/usr/local/bin/ddistro_custom_mod", "switch", "example-server", "--branch", "release/1.x", "--expect-commit", customCommit }),
+        "Branch checks and switches must be fixed argument vectors with the reviewed commit.");
+    foreach (var badBranch in new[] { "", "-x", "--force", "a..b", "a b", "a;id", "x.lock", "x/", "a//b", "$(id)", "main\n", new string('a', 101) })
+    {
+        var threw = false;
+        try { CustomModService.BuildSwitchArguments("example-server", badBranch, customCommit); } catch (ArgumentException) { threw = true; }
+        Assert(threw && !CustomModService.IsValidBranchName(badBranch), $"Custom mod branch must be rejected: {badBranch}");
+    }
+    var switchWithoutCommit = false;
+    try { CustomModService.BuildSwitchArguments("example-server", "dev", "HEAD"); } catch (ArgumentException) { switchWithoutCommit = true; }
+    Assert(switchWithoutCommit, "A branch switch must require the full reviewed commit id.");
+
+    var branchStatus = """
+        {"schema_version":1,"mods":[
+          {"id":"example-server","name":"Example","state":"ready","branch":"dev","commit":"0123456789abcdef0123456789abcdef01234567",
+           "branches":{"default":"main","allowed":["main","dev","unstable","../x"]},"branches_checked_at":"2026-10-07T00:00:00Z"},
+          {"id":"gone-mod","name":"Gone","state":"ready","branch":"old","branches":{"default":"main","allowed":["main"]}},
+          {"id":"old-mod","name":"Old","state":"ready","branch":"main"}]}
+        """;
+    Assert(CustomModService.TryParseStatus(branchStatus, out var branchMods, out _) && branchMods!.Count == 3
+           && branchMods[0].OfferedBranches.SequenceEqual(new[] { "main", "dev", "unstable" }) && branchMods[0].DefaultBranch == "main"
+           && branchMods[0].IsBranchOffered
+           && MainWindowViewModel.DescribeCustomModBranches(branchMods[0]).Contains("default branch is main")
+           && MainWindowViewModel.CanSwitchCustomModBranch(branchMods[0], "unstable")
+           && !MainWindowViewModel.CanSwitchCustomModBranch(branchMods[0], "dev")
+           && !MainWindowViewModel.CanSwitchCustomModBranch(branchMods[0], "../x")
+           && !MainWindowViewModel.CanSwitchCustomModBranch(branchMods[0], "other"),
+        "Offered branches come from the stored policy; only another offered branch can be switched to.");
+    Assert(!branchMods![1].IsBranchOffered
+           && MainWindowViewModel.GetCustomModBranchOptions(branchMods[1]).SequenceEqual(new[] { "old", "main" })
+           && MainWindowViewModel.DescribeCustomModBranches(branchMods[1]).Contains("no longer offered")
+           && !MainWindowViewModel.CanSwitchCustomModBranch(branchMods[1], "old")
+           && MainWindowViewModel.CanSwitchCustomModBranch(branchMods[1], "main"),
+        "A removed installed branch must stay visible as no longer offered, never silently migrated.");
+    Assert(branchMods[2].IsBranchOffered && branchMods[2].OfferedBranches.Count == 0
+           && MainWindowViewModel.GetCustomModBranchOptions(branchMods[2]).SequenceEqual(new[] { "main" })
+           && MainWindowViewModel.DescribeCustomModBranches(branchMods[2]).Length == 0,
+        "Status without a stored branch policy must keep the installed branch alone.");
+
+    var branchReview = $$"""
+        {"schema_version":1,"id":"example-server","name":"Example","current_branch":"main","current_commit":"{{customCommit}}",
+         "branches":{"default":"main","allowed":["main","dev"]},"branch":"dev","commit":"{{new string('d', 40)}}"}
+        """;
+    Assert(CustomModService.TryParseBranchCheck(branchReview, out var reviewed, out _)
+           && reviewed!.Branch == "dev" && reviewed.Commit == new string('d', 40) && reviewed.OfferedBranches.Count == 2,
+        "A branch review must carry the exact target commit.");
+    Assert(!CustomModService.TryParseBranchCheck(branchReview.Replace(new string('d', 40), "HEAD"), out _, out _)
+           && !CustomModService.TryParseBranchCheck(branchReview.Replace("\"branch\":\"dev\"", "\"branch\":\"-x\""), out _, out _),
+        "A branch review without a full commit or with an unsafe branch must be rejected.");
+    Assert(CustomModService.TryParseBranchCheck(branchReview.Replace("\"branch\":\"dev\"", "\"branch\":\"\"").Replace(new string('d', 40), ""), out var refreshOnly, out _)
+           && refreshOnly!.Branch.Length == 0,
+        "A refresh-only branch check carries the policy without a target.");
 
     // --- command allowlist -----------------------------------------------------------------
 

@@ -1,5 +1,8 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.Views;
 using Application = System.Windows.Application;
@@ -20,7 +23,15 @@ public sealed partial class MainWindowViewModel
     private bool _isCustomModMutationInProgress;
     private bool _isCustomModListLoaded;
     private CustomModInfo? _selectedCustomMod;
+    private string? _selectedCustomModBranch;
     private string _customModsStatusText = string.Empty;
+    private ImageSource? _selectedCustomModHeroImage;
+
+    // Hero artwork and sidebar icons, keyed by installed commit plus source URLs, so an Update that
+    // changes an asset is fetched again. A null hero entry means the fetch is pending or failed, so the
+    // generic placeholder stays; a mod without a loaded icon shows its name alone.
+    private readonly Dictionary<string, ImageSource?> _customModHeroImages = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ImageSource?> _customModIconImages = new(StringComparer.Ordinal);
 
     public ObservableCollection<CustomModInfo> CustomMods { get; } = [];
 
@@ -67,11 +78,55 @@ public sealed partial class MainWindowViewModel
 
             OnPropertyChanged(nameof(HasSelectedCustomMod));
             OnPropertyChanged(nameof(SelectedCustomModStateText));
+            OnPropertyChanged(nameof(SelectedCustomModRepositoryActionName));
+            OnPropertyChanged(nameof(SelectedCustomModBranchOptions));
+            OnPropertyChanged(nameof(SelectedCustomModBranchNotice));
+            OnPropertyChanged(nameof(HasSelectedCustomModBranchNotice));
+            // The picker always starts on the installed branch; a switch is only ever explicit.
+            SelectedCustomModBranch = value?.Branch;
+            ShowSelectedCustomModHero();
             RaiseCustomModCommandStates();
         }
     }
 
     public bool HasSelectedCustomMod => _selectedCustomMod is not null;
+
+    /// <summary>Offered branches from the last check, plus the installed one if the author removed it.</summary>
+    public IReadOnlyList<string> SelectedCustomModBranchOptions => GetCustomModBranchOptions(_selectedCustomMod);
+
+    public string? SelectedCustomModBranch
+    {
+        get => _selectedCustomModBranch;
+        set
+        {
+            if (SetProperty(ref _selectedCustomModBranch, value))
+            {
+                SwitchCustomModBranchCommand?.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public string SelectedCustomModBranchNotice => DescribeCustomModBranches(_selectedCustomMod);
+
+    public bool HasSelectedCustomModBranchNotice => SelectedCustomModBranchNotice.Length > 0;
+
+    /// <summary>Installed banner or public repository artwork for the selected mod, or null for the generic placeholder.</summary>
+    public ImageSource? SelectedCustomModHeroImage
+    {
+        get => _selectedCustomModHeroImage;
+        private set
+        {
+            if (SetProperty(ref _selectedCustomModHeroImage, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedCustomModHeroImage));
+            }
+        }
+    }
+
+    public bool HasSelectedCustomModHeroImage => _selectedCustomModHeroImage is not null;
+
+    public string SelectedCustomModRepositoryActionName =>
+        CustomModService.TryGetGitHubArtworkUrls(_selectedCustomMod?.Repository, out _) ? "GitHub Page" : "Repository Page";
 
     /// <summary>True only for a list the distro reported as empty, never for an unread or failed one.</summary>
     public bool HasNoCustomMods => IsConfirmedEmptyCustomModList(_isCustomModListLoaded, CustomMods.Count);
@@ -98,7 +153,7 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// True while a custom install, restore, update, backup, or unregister may be running in the
+    /// True while a custom install, restore, update, backup, branch check or switch, or unregister may be running in the
     /// distro, so the window does not close under it and the distro update, stop, and maintenance
     /// gates stay shut. A status refresh alone does not set this.
     /// </summary>
@@ -120,9 +175,15 @@ public sealed partial class MainWindowViewModel
 
     public RelayCommand OpenCustomModDashboardCommand { get; private set; } = null!;
 
+    public RelayCommand OpenCustomModRepositoryCommand { get; private set; } = null!;
+
     public AsyncRelayCommand UpdateCustomModCommand { get; private set; } = null!;
 
     public AsyncRelayCommand BackupCustomModCommand { get; private set; } = null!;
+
+    public AsyncRelayCommand CheckCustomModBranchesCommand { get; private set; } = null!;
+
+    public AsyncRelayCommand SwitchCustomModBranchCommand { get; private set; } = null!;
 
     public AsyncRelayCommand UnregisterCustomModCommand { get; private set; } = null!;
 
@@ -135,6 +196,8 @@ public sealed partial class MainWindowViewModel
             () => RunCustomModStatusCheckAsync(), () => CanStartCustomModOperation() && HasSelectedCustomMod);
         OpenCustomModDashboardCommand = new RelayCommand(
             OpenCustomModDashboard, () => _selectedCustomMod?.DashboardUrl is not null && _selectedCustomMod.State == CustomModState.Ready);
+        OpenCustomModRepositoryCommand = new RelayCommand(
+            OpenCustomModRepository, () => CustomModService.ValidateRepositoryUrl(_selectedCustomMod?.Repository) is null);
         UpdateCustomModCommand = new AsyncRelayCommand(
             () => RunSelectedCustomModOperationAsync("Update", _customModService.UpdateAsync),
             () => CanStartCustomModOperation() && HasSelectedCustomMod);
@@ -143,6 +206,11 @@ public sealed partial class MainWindowViewModel
             () => CanStartCustomModOperation() && HasSelectedCustomMod);
         UnregisterCustomModCommand = new AsyncRelayCommand(
             UnregisterSelectedCustomModAsync, () => CanStartCustomModOperation() && HasSelectedCustomMod);
+        CheckCustomModBranchesCommand = new AsyncRelayCommand(
+            CheckSelectedCustomModBranchesAsync, () => CanStartCustomModOperation() && HasSelectedCustomMod);
+        SwitchCustomModBranchCommand = new AsyncRelayCommand(
+            SwitchSelectedCustomModBranchAsync,
+            () => CanStartCustomModOperation() && CanSwitchCustomModBranch(_selectedCustomMod, _selectedCustomModBranch));
     }
 
     private bool CanStartCustomModOperation()
@@ -155,9 +223,53 @@ public sealed partial class MainWindowViewModel
         AddCustomModCommand?.RaiseCanExecuteChanged();
         CheckCustomModHealthCommand?.RaiseCanExecuteChanged();
         OpenCustomModDashboardCommand?.RaiseCanExecuteChanged();
+        OpenCustomModRepositoryCommand?.RaiseCanExecuteChanged();
         UpdateCustomModCommand?.RaiseCanExecuteChanged();
         BackupCustomModCommand?.RaiseCanExecuteChanged();
         UnregisterCustomModCommand?.RaiseCanExecuteChanged();
+        CheckCustomModBranchesCommand?.RaiseCanExecuteChanged();
+        SwitchCustomModBranchCommand?.RaiseCanExecuteChanged();
+    }
+
+    internal static IReadOnlyList<string> GetCustomModBranchOptions(CustomModInfo? mod)
+    {
+        if (mod is null)
+        {
+            return [];
+        }
+
+        var options = mod.OfferedBranches.ToList();
+        if (CustomModService.IsValidBranchName(mod.Branch) && !options.Contains(mod.Branch, StringComparer.Ordinal))
+        {
+            options.Insert(0, mod.Branch);
+        }
+
+        return options;
+    }
+
+    /// <summary>Only another branch the author offers right now; the installed branch is never "switched" to.</summary>
+    internal static bool CanSwitchCustomModBranch(CustomModInfo? mod, string? target)
+    {
+        return mod is not null && CustomModService.IsValidBranchName(target) &&
+               !string.Equals(target, mod.Branch, StringComparison.Ordinal) &&
+               mod.OfferedBranches.Contains(target!, StringComparer.Ordinal);
+    }
+
+    internal static string DescribeCustomModBranches(CustomModInfo? mod)
+    {
+        if (mod is null)
+        {
+            return string.Empty;
+        }
+
+        if (!mod.IsBranchOffered)
+        {
+            return $"Branch {mod.Branch} is no longer offered by the author. Update keeps it; choose an offered branch and Switch to move.";
+        }
+
+        return mod.DefaultBranch.Length > 0 && mod.DefaultBranch != mod.Branch
+            ? $"The author's default branch is {mod.DefaultBranch}."
+            : string.Empty;
     }
 
     /// <summary>
@@ -233,7 +345,7 @@ public sealed partial class MainWindowViewModel
                 return;
             }
 
-            ApplyCustomMods(result.Mods);
+            ApplyCustomMods(await WithCustomModIconsAsync(result.Mods).ConfigureAwait(true));
             SetCustomModListLoaded(true);
             CustomModsStatusText = result.Mods.Count == 0 ? "No custom mods yet." : string.Empty;
         }
@@ -271,6 +383,8 @@ public sealed partial class MainWindowViewModel
 
         SelectedCustomMod = CustomMods.FirstOrDefault(mod => mod.Id == selectedId) ?? CustomMods.FirstOrDefault();
         OnPropertyChanged(nameof(SelectedCustomModStateText));
+        // An unchanged selection skips the setter, so a banner missed earlier is retried here too.
+        ShowSelectedCustomModHero();
     }
 
     private Task RunCustomModStatusCheckAsync()
@@ -287,6 +401,186 @@ public sealed partial class MainWindowViewModel
         }
 
         _processRunner.OpenExternalUrl(mod.DashboardUrl);
+    }
+
+    private void OpenCustomModRepository()
+    {
+        var repository = _selectedCustomMod?.Repository;
+        if (CustomModService.ValidateRepositoryUrl(repository) is not null)
+        {
+            return;
+        }
+
+        _processRunner.OpenExternalUrl(repository!);
+    }
+
+    /// <summary>
+    /// Hero sources in priority order: the installed banner on the fixed local route, then the
+    /// public GitHub social preview and owner avatar. Empty means the generic placeholder.
+    /// </summary>
+    internal static List<string> GetCustomModHeroUrls(CustomModInfo? mod)
+    {
+        var urls = new List<string>();
+        if (mod is null)
+        {
+            return urls;
+        }
+
+        if (CustomModService.IsSafeModAssetUrl(mod.BannerUrl, mod.Id))
+        {
+            urls.Add(mod.BannerUrl!);
+        }
+
+        if (CustomModService.TryGetGitHubArtworkUrls(mod.Repository, out var githubUrls))
+        {
+            urls.AddRange(githubUrls);
+        }
+
+        return urls;
+    }
+
+    private void ShowSelectedCustomModHero()
+    {
+        var mod = _selectedCustomMod;
+        var artworkUrls = GetCustomModHeroUrls(mod);
+        if (artworkUrls.Count == 0)
+        {
+            SelectedCustomModHeroImage = null;
+            return;
+        }
+
+        var key = GetCustomModHeroCacheKey(mod!, artworkUrls);
+        if (_customModHeroImages.TryGetValue(key, out var cached))
+        {
+            SelectedCustomModHeroImage = cached;
+            return;
+        }
+
+        _customModHeroImages[key] = null;
+        SelectedCustomModHeroImage = null;
+        var hasInstalledBanner = CustomModService.IsSafeModAssetUrl(mod!.BannerUrl, mod.Id);
+        _ = LoadCustomModHeroAsync(mod.Id, key, artworkUrls, hasInstalledBanner);
+    }
+
+    /// <summary>One hero image per installed revision and source list.</summary>
+    private static string GetCustomModHeroCacheKey(CustomModInfo mod, IReadOnlyList<string> artworkUrls) =>
+        mod.ShortCommit + "\n" + string.Join("\n", artworkUrls);
+
+    /// <summary>
+    /// Caches the hero only when the highest-priority source loaded. A missed installed banner (for
+    /// example, before the web server is up) still shows any fallback, but is retried on the next
+    /// selection or refresh instead of leaving the fallback or placeholder for the whole session.
+    /// </summary>
+    private async Task LoadCustomModHeroAsync(string modId, string key, IReadOnlyList<string> artworkUrls, bool hasInstalledBanner)
+    {
+        ImageSource? image = null;
+        var bannerMissed = false;
+        for (var i = 0; i < artworkUrls.Count && image is null; i++)
+        {
+            image = await TryLoadCustomModImageAsync(artworkUrls[i]).ConfigureAwait(true);
+            if (image is null && i == 0 && hasInstalledBanner)
+            {
+                bannerMissed = true;
+            }
+        }
+
+        if (image is null || bannerMissed)
+        {
+            _customModHeroImages.Remove(key);
+        }
+        else
+        {
+            _customModHeroImages[key] = image;
+        }
+
+        // A slow load for an older revision of the same mod must not replace the newer one.
+        var selected = _selectedCustomMod;
+        if (image is not null && selected?.Id == modId && GetCustomModHeroCacheKey(selected, GetCustomModHeroUrls(selected)) == key)
+        {
+            SelectedCustomModHeroImage = image;
+        }
+    }
+
+    /// <summary>Attaches each mod's installed icon, fetched once per installed revision; a failure keeps the name alone.</summary>
+    private async Task<IReadOnlyList<CustomModInfo>> WithCustomModIconsAsync(IReadOnlyList<CustomModInfo> mods)
+    {
+        var pending = mods
+            .Where(mod => CustomModService.IsSafeModAssetUrl(mod.IconUrl, mod.Id))
+            .Select(mod => mod.ShortCommit + "\n" + mod.IconUrl)
+            .Distinct(StringComparer.Ordinal)
+            .Where(key => !_customModIconImages.ContainsKey(key))
+            .ToList();
+        var loaded = await Task.WhenAll(pending.Select(key => TryLoadCustomModImageAsync(key[(key.IndexOf('\n') + 1)..])))
+            .ConfigureAwait(true);
+        for (var i = 0; i < pending.Count; i++)
+        {
+            // Only successes are kept, so an icon missed while the web server was starting loads on the next refresh.
+            if (loaded[i] is not null)
+            {
+                _customModIconImages[pending[i]] = loaded[i];
+            }
+        }
+
+        return mods
+            .Select(mod => _customModIconImages.TryGetValue(mod.ShortCommit + "\n" + mod.IconUrl, out var icon) && icon is not null
+                ? mod with { IconImage = icon }
+                : mod)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Anonymous, bounded GET of one image (installed asset or public GitHub artwork). No
+    /// credentials are attached; offline, blocked, timed out, oversized, or non-image returns null.
+    /// </summary>
+    private async Task<ImageSource?> TryLoadCustomModImageAsync(string url)
+    {
+        const int maxBytes = 4 * 1024 * 1024;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var response = await _httpClient
+                .GetAsync(url, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                .ConfigureAwait(true);
+            var mediaType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+            if (!response.IsSuccessStatusCode || !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+                response.Content.Headers.ContentLength > maxBytes)
+            {
+                return null;
+            }
+
+            // Content-Length is optional, so the cap is enforced while reading, never after buffering it all.
+            await using var body = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(true);
+            using var bytes = new MemoryStream();
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await body.ReadAsync(chunk, timeout.Token).ConfigureAwait(true)) > 0)
+            {
+                if (bytes.Length + read > maxBytes)
+                {
+                    return null;
+                }
+
+                bytes.Write(chunk, 0, read);
+            }
+
+            if (bytes.Length == 0)
+            {
+                return null;
+            }
+
+            bytes.Position = 0;
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.StreamSource = bytes;
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private async Task AddCustomModAsync()
@@ -334,6 +628,25 @@ public sealed partial class MainWindowViewModel
         }
 
         IsCustomModBusy = true;
+        try
+        {
+            await RunCustomModOperationAsync(mod, label, operation).ConfigureAwait(true);
+        }
+        finally
+        {
+            IsCustomModBusy = false;
+            EndCustomModMutation();
+        }
+
+        await RefreshCustomModsKeepingStatusAsync(CustomModsStatusText).ConfigureAwait(true);
+    }
+
+    /// <summary>Runs one distro operation; the caller already holds the custom mod mutation guard.</summary>
+    private async Task RunCustomModOperationAsync(
+        CustomModInfo mod,
+        string label,
+        Func<string, Action<string>?, CancellationToken, Task<Models.CommandResult>> operation)
+    {
         CustomModsStatusText = $"{label} {mod.Name}…";
         AppendLog($"{label} custom mod {mod.Name}.{Environment.NewLine}");
         try
@@ -348,15 +661,105 @@ public sealed partial class MainWindowViewModel
         {
             CustomModsStatusText = $"{label} failed: {ex.Message}";
         }
+    }
+
+    private async Task RefreshCustomModsKeepingStatusAsync(string message)
+    {
+        await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
+        CustomModsStatusText = message;
+    }
+
+    private Task CheckSelectedCustomModBranchesAsync()
+    {
+        return RunSelectedCustomModOperationAsync("Check branches", async (id, output, cancellationToken) =>
+        {
+            var result = await _customModService.CheckBranchesAsync(id, null, output, cancellationToken).ConfigureAwait(true);
+            return result.Check is not null
+                ? new Models.CommandResult(0, string.Empty, string.Empty)
+                : new Models.CommandResult(1, string.Empty, "[FAIL] " + result.Error);
+        });
+    }
+
+    /// <summary>
+    /// Reviews the exact commit of the chosen branch, asks for confirmation, then switches to that
+    /// commit only. One mutation guard covers the review, the confirmation, and the switch, so
+    /// maintenance, stop, or a distro update cannot start between the reviewed commit and the switch.
+    /// </summary>
+    private async Task SwitchSelectedCustomModBranchAsync()
+    {
+        var mod = _selectedCustomMod;
+        var target = _selectedCustomModBranch;
+        if (mod is null || !CanSwitchCustomModBranch(mod, target))
+        {
+            return;
+        }
+
+        if (!TryBeginCustomModMutation())
+        {
+            return;
+        }
+
+        IsCustomModBusy = true;
+        string message;
+        try
+        {
+            message = await ReviewAndSwitchCustomModBranchAsync(mod, target!).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            message = "Branch switch failed: " + ex.Message;
+        }
         finally
         {
             IsCustomModBusy = false;
             EndCustomModMutation();
         }
 
-        var message = CustomModsStatusText;
-        await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
-        CustomModsStatusText = message;
+        await RefreshCustomModsKeepingStatusAsync(message).ConfigureAwait(true);
+    }
+
+    /// <summary>Returns the status to show afterwards; the caller holds the mutation guard throughout.</summary>
+    private async Task<string> ReviewAndSwitchCustomModBranchAsync(CustomModInfo mod, string target)
+    {
+        CustomModsStatusText = $"Checking branch {target}…";
+        CustomModBranchCheckResult review;
+        try
+        {
+            review = await _customModService.CheckBranchesAsync(mod.Id, target, line => AppendLog(line + Environment.NewLine))
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            review = new CustomModBranchCheckResult(null, "Branch check failed: " + ex.Message);
+        }
+
+        var check = review.Check;
+        if (check is null || check.Branch != target)
+        {
+            return review.Error ?? "The branch check returned an incomplete result.";
+        }
+
+        var confirmed = MessageBox.Show(
+            $"Switch {mod.Name} from branch {mod.Branch} to {check.Branch}?\n\n" +
+            $"Commit: {check.Commit}\n\n" +
+            "The distro backs up the mod's settings and database first, keeps your private config, " +
+            "and runs the mod's migration. If the switch fails, the code returns to the current branch, " +
+            "but database changes made by the migration are not rolled back.",
+            "Switch custom mod branch",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+        if (confirmed != MessageBoxResult.Yes)
+        {
+            return "Branch switch cancelled.";
+        }
+
+        await RunCustomModOperationAsync(
+            mod,
+            "Switch branch",
+            (id, output, cancellationToken) => _customModService.SwitchBranchAsync(id, check.Branch, check.Commit, output, cancellationToken))
+            .ConfigureAwait(true);
+        return CustomModsStatusText;
     }
 
     private async Task UnregisterSelectedCustomModAsync()
