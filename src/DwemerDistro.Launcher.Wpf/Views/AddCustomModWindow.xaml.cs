@@ -15,6 +15,8 @@ public partial class AddCustomModWindow : Window
     private readonly Action<string> _consoleOutput;
     private CustomModPreview? _preview;
     private bool _isBusy;
+    private bool _isInstalling;
+    private CancellationTokenSource? _checkCancellation;
 
     public AddCustomModWindow(CustomModService service, Action<string> consoleOutput)
     {
@@ -55,15 +57,31 @@ public partial class AddCustomModWindow : Window
             return;
         }
 
+        // The check only reads the repository as the dwemer user, so Cancel or closing may stop it.
+        using var cancellation = new CancellationTokenSource();
+        _checkCancellation = cancellation;
         SetBusy(true, "Checking repository…");
         CustomModPreviewResult result;
         try
         {
-            result = await _service.CheckAsync(url, null).ConfigureAwait(true);
+            result = await _service.CheckAsync(url, null, cancellation.Token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            return;
         }
         catch (Exception ex)
         {
             result = new CustomModPreviewResult(null, ex.Message);
+        }
+        finally
+        {
+            _checkCancellation = null;
+        }
+
+        if (cancellation.IsCancellationRequested)
+        {
+            return;
         }
 
         SetBusy(false, string.Empty);
@@ -121,6 +139,7 @@ public partial class AddCustomModWindow : Window
 
         InstallAttempted = true;
         var verb = preview.Restorable ? "Restoring" : "Installing";
+        _isInstalling = true;
         SetBusy(true, $"{verb} {preview.Name}…");
         _consoleOutput($"{verb} custom mod {preview.Name} from {preview.Repository}.");
         Models.CommandResult? result = null;
@@ -144,6 +163,7 @@ public partial class AddCustomModWindow : Window
             error = ex.Message;
         }
 
+        _isInstalling = false;
         SetBusy(false, string.Empty);
         if (result is { Succeeded: true })
         {
@@ -180,12 +200,12 @@ public partial class AddCustomModWindow : Window
         CheckButton.IsEnabled = !_isBusy && urlValid;
         TrustCheckBox.IsEnabled = !_isBusy;
         InstallButton.IsEnabled = !_isBusy && _preview is not null && TrustCheckBox.IsChecked == true;
-        CancelButton.IsEnabled = !_isBusy;
+        CancelButton.IsEnabled = !_isInstalling;
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!_isBusy)
+        if (!_isInstalling)
         {
             Close();
         }
@@ -193,10 +213,18 @@ public partial class AddCustomModWindow : Window
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
-        // A running distro operation keeps going even if the window closes, so stay open until it ends.
-        if (_isBusy)
+        // An install or restore runs as root in the distro and keeps going if the window closes,
+        // so stay open until it ends. A repository check is read-only and is simply cancelled.
+        if (_isInstalling)
         {
             e.Cancel = true;
+            StatusText.Text = InstallStillRunningMessage;
+            return;
         }
+
+        _checkCancellation?.Cancel();
     }
+
+    internal const string InstallStillRunningMessage =
+        "The install is still running in the distro. This window closes when it finishes.";
 }

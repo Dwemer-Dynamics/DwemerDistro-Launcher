@@ -18,6 +18,7 @@ public sealed partial class MainWindowViewModel
     private bool _isCustomModsView;
     private bool _isCustomModBusy;
     private bool _isCustomModMutationInProgress;
+    private bool _isCustomModListLoaded;
     private CustomModInfo? _selectedCustomMod;
     private string _customModsStatusText = string.Empty;
 
@@ -72,7 +73,13 @@ public sealed partial class MainWindowViewModel
 
     public bool HasSelectedCustomMod => _selectedCustomMod is not null;
 
-    public bool HasNoCustomMods => CustomMods.Count == 0;
+    /// <summary>True only for a list the distro reported as empty, never for an unread or failed one.</summary>
+    public bool HasNoCustomMods => IsConfirmedEmptyCustomModList(_isCustomModListLoaded, CustomMods.Count);
+
+    internal static bool IsConfirmedEmptyCustomModList(bool listLoaded, int count)
+    {
+        return listLoaded && count == 0;
+    }
 
     public bool IsCustomModBusy
     {
@@ -92,7 +99,8 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>
     /// True while a custom install, restore, update, backup, or unregister may be running in the
-    /// distro, so the window does not close under it. A status refresh alone does not set this.
+    /// distro, so the window does not close under it and the distro update, stop, and maintenance
+    /// gates stay shut. A status refresh alone does not set this.
     /// </summary>
     public bool IsCustomModMutationInProgress => _isCustomModMutationInProgress;
 
@@ -152,6 +160,32 @@ public sealed partial class MainWindowViewModel
         UnregisterCustomModCommand?.RaiseCanExecuteChanged();
     }
 
+    /// <summary>
+    /// Registers a root mutation as distro activity so Compact, Export, Import, and Fix WSL DNS
+    /// refuse to start, and sets the flag the update, stop, and launcher-update gates read.
+    /// </summary>
+    private bool TryBeginCustomModMutation()
+    {
+        _isCustomModMutationInProgress = true;
+        if (TryBeginPassiveDistroActivity())
+        {
+            return true;
+        }
+
+        _isCustomModMutationInProgress = false;
+        CustomModsStatusText = CustomModsMaintenanceMessage;
+        return false;
+    }
+
+    private void EndCustomModMutation()
+    {
+        _isCustomModMutationInProgress = false;
+        EndPassiveDistroActivity();
+    }
+
+    internal const string CustomModsMaintenanceMessage =
+        "Custom mods are unavailable while distro maintenance is running. Try again when it finishes.";
+
     internal static string DescribeCustomModState(CustomModInfo mod)
     {
         var state = mod.State switch
@@ -179,6 +213,13 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        // A status read starts the distro, so it must not run under Compact, Export, or Import.
+        if (!TryBeginPassiveDistroActivity())
+        {
+            CustomModsStatusText = CustomModsMaintenanceMessage;
+            return;
+        }
+
         IsCustomModBusy = true;
         CustomModsStatusText = checkHealth ? "Checking status…" : "Loading custom mods…";
         try
@@ -187,21 +228,36 @@ public sealed partial class MainWindowViewModel
             if (result.Mods is null)
             {
                 // Keep the previous list rather than clearing it on a failed probe.
+                SetCustomModListLoaded(false);
                 CustomModsStatusText = result.Error ?? "Could not read custom mods.";
                 return;
             }
 
             ApplyCustomMods(result.Mods);
+            SetCustomModListLoaded(true);
             CustomModsStatusText = result.Mods.Count == 0 ? "No custom mods yet." : string.Empty;
         }
         catch (Exception ex)
         {
+            SetCustomModListLoaded(false);
             CustomModsStatusText = "Could not read custom mods: " + ex.Message;
         }
         finally
         {
             IsCustomModBusy = false;
+            EndPassiveDistroActivity();
         }
+    }
+
+    private void SetCustomModListLoaded(bool loaded)
+    {
+        if (_isCustomModListLoaded == loaded)
+        {
+            return;
+        }
+
+        _isCustomModListLoaded = loaded;
+        OnPropertyChanged(nameof(HasNoCustomMods));
     }
 
     private void ApplyCustomMods(IReadOnlyList<CustomModInfo> mods)
@@ -235,8 +291,12 @@ public sealed partial class MainWindowViewModel
 
     private async Task AddCustomModAsync()
     {
+        if (!TryBeginCustomModMutation())
+        {
+            return;
+        }
+
         IsCustomModBusy = true;
-        _isCustomModMutationInProgress = true;
         bool installed;
         try
         {
@@ -248,8 +308,8 @@ public sealed partial class MainWindowViewModel
         }
         finally
         {
-            _isCustomModMutationInProgress = false;
             IsCustomModBusy = false;
+            EndCustomModMutation();
         }
 
         if (installed)
@@ -268,8 +328,12 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        if (!TryBeginCustomModMutation())
+        {
+            return;
+        }
+
         IsCustomModBusy = true;
-        _isCustomModMutationInProgress = true;
         CustomModsStatusText = $"{label} {mod.Name}…";
         AppendLog($"{label} custom mod {mod.Name}.{Environment.NewLine}");
         try
@@ -286,8 +350,8 @@ public sealed partial class MainWindowViewModel
         }
         finally
         {
-            _isCustomModMutationInProgress = false;
             IsCustomModBusy = false;
+            EndCustomModMutation();
         }
 
         var message = CustomModsStatusText;
