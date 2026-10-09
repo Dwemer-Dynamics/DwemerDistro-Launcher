@@ -596,6 +596,10 @@ try
         "Custom mod failures must show the manager's safe diagnostic line.");
     Assert(MainWindowViewModel.DescribeCustomModState(customMods![1]).Contains("Update failed"),
         "Failed custom mods must show their safe failure message.");
+    Assert(MainWindowViewModel.IsConfirmedEmptyCustomModList(true, 0)
+           && !MainWindowViewModel.IsConfirmedEmptyCustomModList(false, 0)
+           && !MainWindowViewModel.IsConfirmedEmptyCustomModList(true, 1),
+        "The custom mods empty state must show only for a list the distro reported empty, never for an unread or failed one.");
     var restorePreview = $$"""
         {"schema_version":1,"id":"example-server","name":"Example","repository":"{{customRepo}}","branch":"main",
          "commit":"{{new string('b', 40)}}","folder":"/var/www/html/custom-mods/example-server","database":"custom_example_server",
@@ -1238,6 +1242,9 @@ try
         "A Quickstart install or update must block Compact Distro, Export, Import, and Fix WSL DNS.");
     Assert(!MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, true, false, [false, false, false]),
         "A passive WSL status task must block Compact Distro, Export, Import, and Fix WSL DNS.");
+    Assert(!MainWindowViewModel.CanRunUpdateOperation(false, false, false, [false, false, false], isCustomModMutationRunning: true)
+           && !MainWindowViewModel.CanRunExclusiveDistroOperation(false, false, false, false, false, false, [false, false, false], isCustomModMutationRunning: true),
+        "A running custom mod install, update, backup, or unregister must block Update Distro, Compact Distro, Export, Import, and Fix WSL DNS.");
     Assert(MainWindowViewModel.CompactDistroPreparingStatus.Length > 0
            && MainWindowViewModel.ExclusiveDistroOperationBusyMessage.Contains("already running", StringComparison.Ordinal),
         "Compact Distro must have busy text to show on acquiring the lock, and one shared refusal line.");

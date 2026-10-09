@@ -259,8 +259,8 @@ echo "CHIM-MCP installed and enabled."
         _selectedGame = GameProfiles[0];
 
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsCriticalMaintenanceInProgress && !IsServerRunning && !IsServerStarting);
-        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && (IsServerRunning || IsServerStarting));
-        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress);
+        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress && (IsServerRunning || IsServerStarting));
+        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress);
         // Update Distro is also the recovery action, so it stays available whether the distro
         // reports itself as current, out of date, or not at all.
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
@@ -313,7 +313,7 @@ echo "CHIM-MCP installed and enabled."
         DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
         CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanRunExclusiveDistroOperation);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
-        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress);
+        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress);
         CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
         GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
         RefreshConnectionDetailsCommand = new AsyncRelayCommand(RefreshConnectionDetailsAsync);
@@ -2009,6 +2009,8 @@ echo "CHIM-MCP installed and enabled."
         ImportDistroCommand?.RaiseCanExecuteChanged();
         FixWslDnsCommand?.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(UpdateSystemHelpText));
+        // Custom mod actions share these gates through IsComponentInteractionEnabled.
+        RaiseCustomModCommandStates();
     }
 
     private void RaiseDistroAccessCommandStates()
@@ -2270,18 +2272,21 @@ echo "CHIM-MCP installed and enabled."
             IsDistroUpdateInProgress,
             _isComponentsOperationInProgress,
             _isExclusiveDistroOperationInProgress,
-            ServerManagers.Select(manager => manager.IsBusy));
+            ServerManagers.Select(manager => manager.IsBusy),
+            _isCustomModMutationInProgress);
     }
 
     internal static bool CanRunUpdateOperation(
         bool isGlobalUpdateRunning,
         bool isComponentsOperationRunning,
         bool isExclusiveDistroOperationRunning,
-        IEnumerable<bool> serverBusyStates)
+        IEnumerable<bool> serverBusyStates,
+        bool isCustomModMutationRunning = false)
     {
         return !isGlobalUpdateRunning &&
                !isComponentsOperationRunning &&
                !isExclusiveDistroOperationRunning &&
+               !isCustomModMutationRunning &&
                !serverBusyStates.Any(isBusy => isBusy);
     }
 
@@ -2296,7 +2301,8 @@ echo "CHIM-MCP installed and enabled."
                 _quickstartDistroActivityCount > 0,
                 _passiveDistroActivityCount > 0,
                 IsServerStarting,
-                ServerManagers.Select(manager => manager.IsBusy));
+                ServerManagers.Select(manager => manager.IsBusy),
+                _isCustomModMutationInProgress);
         }
     }
 
@@ -2307,7 +2313,8 @@ echo "CHIM-MCP installed and enabled."
         bool isQuickstartDistroActivityRunning,
         bool isPassiveDistroActivityRunning,
         bool isServerStarting,
-        IEnumerable<bool> serverBusyStates)
+        IEnumerable<bool> serverBusyStates,
+        bool isCustomModMutationRunning = false)
     {
         return !isServerStarting &&
                !isQuickstartDistroActivityRunning &&
@@ -2316,7 +2323,8 @@ echo "CHIM-MCP installed and enabled."
                    isGlobalUpdateRunning,
                    isComponentsOperationRunning,
                    isExclusiveDistroOperationRunning,
-                   serverBusyStates);
+                   serverBusyStates,
+                   isCustomModMutationRunning);
     }
 
     /// <summary>

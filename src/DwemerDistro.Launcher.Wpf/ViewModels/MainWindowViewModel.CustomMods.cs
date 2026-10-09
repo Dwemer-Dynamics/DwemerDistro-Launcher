@@ -21,6 +21,7 @@ public sealed partial class MainWindowViewModel
     private bool _isCustomModsView;
     private bool _isCustomModBusy;
     private bool _isCustomModMutationInProgress;
+    private bool _isCustomModListLoaded;
     private CustomModInfo? _selectedCustomMod;
     private string? _selectedCustomModBranch;
     private string _customModsStatusText = string.Empty;
@@ -127,7 +128,13 @@ public sealed partial class MainWindowViewModel
     public string SelectedCustomModRepositoryActionName =>
         CustomModService.TryGetGitHubArtworkUrls(_selectedCustomMod?.Repository, out _) ? "GitHub Page" : "Repository Page";
 
-    public bool HasNoCustomMods => CustomMods.Count == 0;
+    /// <summary>True only for a list the distro reported as empty, never for an unread or failed one.</summary>
+    public bool HasNoCustomMods => IsConfirmedEmptyCustomModList(_isCustomModListLoaded, CustomMods.Count);
+
+    internal static bool IsConfirmedEmptyCustomModList(bool listLoaded, int count)
+    {
+        return listLoaded && count == 0;
+    }
 
     public bool IsCustomModBusy
     {
@@ -146,8 +153,9 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// True while a custom install, restore, update, backup, or unregister may be running in the
-    /// distro, so the window does not close under it. A status refresh alone does not set this.
+    /// True while a custom install, restore, update, backup, branch check or switch, or unregister may be running in the
+    /// distro, so the window does not close under it and the distro update, stop, and maintenance
+    /// gates stay shut. A status refresh alone does not set this.
     /// </summary>
     public bool IsCustomModMutationInProgress => _isCustomModMutationInProgress;
 
@@ -264,6 +272,32 @@ public sealed partial class MainWindowViewModel
             : string.Empty;
     }
 
+    /// <summary>
+    /// Registers a root mutation as distro activity so Compact, Export, Import, and Fix WSL DNS
+    /// refuse to start, and sets the flag the update, stop, and launcher-update gates read.
+    /// </summary>
+    private bool TryBeginCustomModMutation()
+    {
+        _isCustomModMutationInProgress = true;
+        if (TryBeginPassiveDistroActivity())
+        {
+            return true;
+        }
+
+        _isCustomModMutationInProgress = false;
+        CustomModsStatusText = CustomModsMaintenanceMessage;
+        return false;
+    }
+
+    private void EndCustomModMutation()
+    {
+        _isCustomModMutationInProgress = false;
+        EndPassiveDistroActivity();
+    }
+
+    internal const string CustomModsMaintenanceMessage =
+        "Custom mods are unavailable while distro maintenance is running. Try again when it finishes.";
+
     internal static string DescribeCustomModState(CustomModInfo mod)
     {
         var state = mod.State switch
@@ -291,6 +325,13 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        // A status read starts the distro, so it must not run under Compact, Export, or Import.
+        if (!TryBeginPassiveDistroActivity())
+        {
+            CustomModsStatusText = CustomModsMaintenanceMessage;
+            return;
+        }
+
         IsCustomModBusy = true;
         CustomModsStatusText = checkHealth ? "Checking status…" : "Loading custom mods…";
         try
@@ -299,21 +340,36 @@ public sealed partial class MainWindowViewModel
             if (result.Mods is null)
             {
                 // Keep the previous list rather than clearing it on a failed probe.
+                SetCustomModListLoaded(false);
                 CustomModsStatusText = result.Error ?? "Could not read custom mods.";
                 return;
             }
 
             ApplyCustomMods(await WithCustomModIconsAsync(result.Mods).ConfigureAwait(true));
+            SetCustomModListLoaded(true);
             CustomModsStatusText = result.Mods.Count == 0 ? "No custom mods yet." : string.Empty;
         }
         catch (Exception ex)
         {
+            SetCustomModListLoaded(false);
             CustomModsStatusText = "Could not read custom mods: " + ex.Message;
         }
         finally
         {
             IsCustomModBusy = false;
+            EndPassiveDistroActivity();
         }
+    }
+
+    private void SetCustomModListLoaded(bool loaded)
+    {
+        if (_isCustomModListLoaded == loaded)
+        {
+            return;
+        }
+
+        _isCustomModListLoaded = loaded;
+        OnPropertyChanged(nameof(HasNoCustomMods));
     }
 
     private void ApplyCustomMods(IReadOnlyList<CustomModInfo> mods)
@@ -327,6 +383,8 @@ public sealed partial class MainWindowViewModel
 
         SelectedCustomMod = CustomMods.FirstOrDefault(mod => mod.Id == selectedId) ?? CustomMods.FirstOrDefault();
         OnPropertyChanged(nameof(SelectedCustomModStateText));
+        // An unchanged selection skips the setter, so a banner missed earlier is retried here too.
+        ShowSelectedCustomModHero();
     }
 
     private Task RunCustomModStatusCheckAsync()
@@ -400,32 +458,46 @@ public sealed partial class MainWindowViewModel
 
         _customModHeroImages[key] = null;
         SelectedCustomModHeroImage = null;
-        _ = LoadCustomModHeroAsync(mod!.Id, key, artworkUrls);
+        var hasInstalledBanner = CustomModService.IsSafeModAssetUrl(mod!.BannerUrl, mod.Id);
+        _ = LoadCustomModHeroAsync(mod.Id, key, artworkUrls, hasInstalledBanner);
     }
 
     /// <summary>One hero image per installed revision and source list.</summary>
     private static string GetCustomModHeroCacheKey(CustomModInfo mod, IReadOnlyList<string> artworkUrls) =>
         mod.ShortCommit + "\n" + string.Join("\n", artworkUrls);
 
-    private async Task LoadCustomModHeroAsync(string modId, string key, IReadOnlyList<string> artworkUrls)
+    /// <summary>
+    /// Caches the hero only when the highest-priority source loaded. A missed installed banner (for
+    /// example, before the web server is up) still shows any fallback, but is retried on the next
+    /// selection or refresh instead of leaving the fallback or placeholder for the whole session.
+    /// </summary>
+    private async Task LoadCustomModHeroAsync(string modId, string key, IReadOnlyList<string> artworkUrls, bool hasInstalledBanner)
     {
-        foreach (var url in artworkUrls)
+        ImageSource? image = null;
+        var bannerMissed = false;
+        for (var i = 0; i < artworkUrls.Count && image is null; i++)
         {
-            var image = await TryLoadCustomModImageAsync(url).ConfigureAwait(true);
-            if (image is null)
+            image = await TryLoadCustomModImageAsync(artworkUrls[i]).ConfigureAwait(true);
+            if (image is null && i == 0 && hasInstalledBanner)
             {
-                continue;
+                bannerMissed = true;
             }
+        }
 
+        if (image is null || bannerMissed)
+        {
+            _customModHeroImages.Remove(key);
+        }
+        else
+        {
             _customModHeroImages[key] = image;
-            // A slow load for an older revision of the same mod must not replace the newer one.
-            var selected = _selectedCustomMod;
-            if (selected?.Id == modId && GetCustomModHeroCacheKey(selected, GetCustomModHeroUrls(selected)) == key)
-            {
-                SelectedCustomModHeroImage = image;
-            }
+        }
 
-            return;
+        // A slow load for an older revision of the same mod must not replace the newer one.
+        var selected = _selectedCustomMod;
+        if (image is not null && selected?.Id == modId && GetCustomModHeroCacheKey(selected, GetCustomModHeroUrls(selected)) == key)
+        {
+            SelectedCustomModHeroImage = image;
         }
     }
 
@@ -476,16 +548,31 @@ public sealed partial class MainWindowViewModel
                 return null;
             }
 
-            var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token).ConfigureAwait(true);
-            if (bytes.Length == 0 || bytes.Length > maxBytes)
+            // Content-Length is optional, so the cap is enforced while reading, never after buffering it all.
+            await using var body = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(true);
+            using var bytes = new MemoryStream();
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await body.ReadAsync(chunk, timeout.Token).ConfigureAwait(true)) > 0)
+            {
+                if (bytes.Length + read > maxBytes)
+                {
+                    return null;
+                }
+
+                bytes.Write(chunk, 0, read);
+            }
+
+            if (bytes.Length == 0)
             {
                 return null;
             }
 
+            bytes.Position = 0;
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
-            image.StreamSource = new MemoryStream(bytes);
+            image.StreamSource = bytes;
             image.EndInit();
             image.Freeze();
             return image;
@@ -498,8 +585,12 @@ public sealed partial class MainWindowViewModel
 
     private async Task AddCustomModAsync()
     {
+        if (!TryBeginCustomModMutation())
+        {
+            return;
+        }
+
         IsCustomModBusy = true;
-        _isCustomModMutationInProgress = true;
         bool installed;
         try
         {
@@ -511,8 +602,8 @@ public sealed partial class MainWindowViewModel
         }
         finally
         {
-            _isCustomModMutationInProgress = false;
             IsCustomModBusy = false;
+            EndCustomModMutation();
         }
 
         if (installed)
@@ -531,8 +622,31 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        if (!TryBeginCustomModMutation())
+        {
+            return;
+        }
+
         IsCustomModBusy = true;
-        _isCustomModMutationInProgress = true;
+        try
+        {
+            await RunCustomModOperationAsync(mod, label, operation).ConfigureAwait(true);
+        }
+        finally
+        {
+            IsCustomModBusy = false;
+            EndCustomModMutation();
+        }
+
+        await RefreshCustomModsKeepingStatusAsync(CustomModsStatusText).ConfigureAwait(true);
+    }
+
+    /// <summary>Runs one distro operation; the caller already holds the custom mod mutation guard.</summary>
+    private async Task RunCustomModOperationAsync(
+        CustomModInfo mod,
+        string label,
+        Func<string, Action<string>?, CancellationToken, Task<Models.CommandResult>> operation)
+    {
         CustomModsStatusText = $"{label} {mod.Name}…";
         AppendLog($"{label} custom mod {mod.Name}.{Environment.NewLine}");
         try
@@ -547,13 +661,10 @@ public sealed partial class MainWindowViewModel
         {
             CustomModsStatusText = $"{label} failed: {ex.Message}";
         }
-        finally
-        {
-            _isCustomModMutationInProgress = false;
-            IsCustomModBusy = false;
-        }
+    }
 
-        var message = CustomModsStatusText;
+    private async Task RefreshCustomModsKeepingStatusAsync(string message)
+    {
         await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
         CustomModsStatusText = message;
     }
@@ -571,7 +682,8 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>
     /// Reviews the exact commit of the chosen branch, asks for confirmation, then switches to that
-    /// commit only. The window's close guard stays on while the distro is working.
+    /// commit only. One mutation guard covers the review, the confirmation, and the switch, so
+    /// maintenance, stop, or a distro update cannot start between the reviewed commit and the switch.
     /// </summary>
     private async Task SwitchSelectedCustomModBranchAsync()
     {
@@ -582,8 +694,33 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
+        if (!TryBeginCustomModMutation())
+        {
+            return;
+        }
+
         IsCustomModBusy = true;
-        _isCustomModMutationInProgress = true;
+        string message;
+        try
+        {
+            message = await ReviewAndSwitchCustomModBranchAsync(mod, target!).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            message = "Branch switch failed: " + ex.Message;
+        }
+        finally
+        {
+            IsCustomModBusy = false;
+            EndCustomModMutation();
+        }
+
+        await RefreshCustomModsKeepingStatusAsync(message).ConfigureAwait(true);
+    }
+
+    /// <summary>Returns the status to show afterwards; the caller holds the mutation guard throughout.</summary>
+    private async Task<string> ReviewAndSwitchCustomModBranchAsync(CustomModInfo mod, string target)
+    {
         CustomModsStatusText = $"Checking branch {target}…";
         CustomModBranchCheckResult review;
         try
@@ -595,19 +732,11 @@ public sealed partial class MainWindowViewModel
         {
             review = new CustomModBranchCheckResult(null, "Branch check failed: " + ex.Message);
         }
-        finally
-        {
-            _isCustomModMutationInProgress = false;
-            IsCustomModBusy = false;
-        }
 
         var check = review.Check;
         if (check is null || check.Branch != target)
         {
-            var error = review.Error ?? "The branch check returned an incomplete result.";
-            await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
-            CustomModsStatusText = error;
-            return;
+            return review.Error ?? "The branch check returned an incomplete result.";
         }
 
         var confirmed = MessageBox.Show(
@@ -622,15 +751,15 @@ public sealed partial class MainWindowViewModel
             MessageBoxResult.No);
         if (confirmed != MessageBoxResult.Yes)
         {
-            await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
-            CustomModsStatusText = "Branch switch cancelled.";
-            return;
+            return "Branch switch cancelled.";
         }
 
-        await RunSelectedCustomModOperationAsync(
+        await RunCustomModOperationAsync(
+            mod,
             "Switch branch",
             (id, output, cancellationToken) => _customModService.SwitchBranchAsync(id, check.Branch, check.Commit, output, cancellationToken))
             .ConfigureAwait(true);
+        return CustomModsStatusText;
     }
 
     private async Task UnregisterSelectedCustomModAsync()
