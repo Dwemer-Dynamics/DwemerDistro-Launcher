@@ -79,6 +79,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_viewModel.IsCustomModMutationInProgress)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                "A custom mod operation is still running in the distro. Wait for it to finish before closing the launcher.",
+                "Dwemer Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
         await _viewModel.ShutdownAsync();
     }
@@ -258,6 +269,15 @@ public partial class MainWindow : Window
         }
 
         MainTabs.SelectedIndex = index;
+    }
+
+    /// <summary>
+    /// The Official/Custom switch belongs to the Mods page, so a user's click (mouse, Space, or
+    /// access key) on either view shows it. Click is not raised by binding updates.
+    /// </summary>
+    private void ModsView_Click(object sender, RoutedEventArgs e)
+    {
+        LibraryNavButton.IsChecked = true;
     }
 
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
