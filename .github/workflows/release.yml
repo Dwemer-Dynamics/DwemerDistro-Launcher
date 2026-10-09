@@ -9,7 +9,7 @@ on:
       version:
         description: "Version to validate (must match the source version). Manual runs build only and never publish a release."
         required: true
-        default: "3.3.37"
+        default: "3.3.38"
       include_installer:
         description: "Also upload DwemerDistroInstaller.exe (large) as a validation artifact"
         type: boolean
