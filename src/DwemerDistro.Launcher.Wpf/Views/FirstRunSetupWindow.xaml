@@ -1,7 +1,7 @@
 <Window x:Class="DwemerDistro.Launcher.Wpf.Views.FirstRunSetupWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="DwemerDistro Quickstart (Beta)"
+        Title="DwemerDistro Quickstart"
         Icon="/Assets/DwemerDistro.ico"
         Width="820"
         Height="680"
@@ -209,14 +209,9 @@
 
                 <StackPanel Grid.Column="1"
                             VerticalAlignment="Center">
-                    <TextBlock Text="DwemerDistro Quickstart (Beta)"
+                    <TextBlock Text="DwemerDistro Quickstart"
                                FontSize="18"
                                FontWeight="Bold" />
-                    <TextBlock Text="Work in progress — setup options may change."
-                               Margin="0,4,0,0"
-                               FontSize="12"
-                               Foreground="#F4D8A6"
-                               TextWrapping="Wrap" />
                 </StackPanel>
 
                 <StackPanel Grid.Column="2"
