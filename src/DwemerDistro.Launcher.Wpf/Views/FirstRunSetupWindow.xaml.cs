@@ -91,13 +91,13 @@ public partial class FirstRunSetupWindow : Window
             HuggingFacePasswordBox.Clear();
         }
 
-        // Install LLM Studio collapses with its panel; once the work settles, move focus to Continue setup
+        // The model choice collapses once setup finishes; once the work settles, move focus to Continue setup
         // unless focus already sits on another visible control.
-        if (e.PropertyName is nameof(FirstRunSetupViewModel.IsBusy) or nameof(FirstRunSetupViewModel.IsLocalAiInstalled))
+        if (e.PropertyName is nameof(FirstRunSetupViewModel.IsBusy) or nameof(FirstRunSetupViewModel.IsLocalAiReady))
         {
             _ = Dispatcher.InvokeAsync(() =>
             {
-                if (_viewModel.IsLocalAiStep && _viewModel.IsLocalAiInstalled && !_viewModel.IsBusy &&
+                if (_viewModel.IsLocalAiStep && _viewModel.IsLocalAiReady && !_viewModel.IsBusy &&
                     LocalAiContinueButton.IsVisible && LocalAiContinueButton.IsEnabled &&
                     (Keyboard.FocusedElement is not UIElement { IsVisible: true } || Keyboard.FocusedElement == this))
                 {
