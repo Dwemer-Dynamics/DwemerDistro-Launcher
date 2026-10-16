@@ -326,17 +326,17 @@
                     <Border Style="{StaticResource Panel}">
                         <StackPanel>
                             <TextBlock Text="Local AI (Optional)" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,8" />
-                            <TextBlock Text="Run local models with LLM Studio." TextWrapping="Wrap" HorizontalAlignment="Center" Margin="0,0,0,14" />
-                            <ComboBox ItemsSource="{Binding LocalAiOptions}" DisplayMemberPath="Name" SelectedValuePath="Id" Style="{StaticResource GameCenter.ComboBox}"
-                                      SelectedValue="{Binding LocalAiChoice}" IsEnabled="{Binding IsLocalAiSelectionEnabled}"
-                                      AutomationProperties.Name="Local AI download option" Margin="0,0,0,12" MinHeight="36" />
-                            <TextBlock Text="Community models need substantial memory and 17–19 GB of disk space. For smaller PCs, choose Install engine only." TextWrapping="Wrap" Foreground="#D6D6D6" Margin="0,0,0,14" />
-                            <WrapPanel>
-                                <Button Content="Install" Command="{Binding InstallLocalAiCommand}" Style="{StaticResource PrimaryButton}" />
-                                <Button Content="Open Manager" Command="{Binding OpenLocalAiManagerCommand}" Style="{StaticResource SecondaryButton}" />
-                                <Button Content="Skip local AI" Command="{Binding SkipLocalAiCommand}" Style="{StaticResource SecondaryButton}" />
+                            <TextBlock Text="Run AI models on this PC with LLM Studio. You choose a model after it installs." TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,0,0,8" />
+                            <TextBlock Text="Local models share your PC's memory and graphics memory with the game." TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center" Foreground="#D6D6D6" Margin="0,0,0,14" />
+                            <WrapPanel HorizontalAlignment="Center" Visibility="{Binding IsLocalAiNotInstalled, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <Button Content="Install LLM Studio" Command="{Binding InstallLocalAiCommand}" Style="{StaticResource PrimaryButton}" />
+                                <Button Content="Skip" Command="{Binding SkipLocalAiCommand}" Style="{StaticResource SecondaryButton}" AutomationProperties.Name="Skip local AI" />
                             </WrapPanel>
-                            <TextBlock Text="{Binding LocalAiStatus}" TextWrapping="Wrap" Margin="0,14,0,0" />
+                            <WrapPanel HorizontalAlignment="Center" Visibility="{Binding IsLocalAiInstalled, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <Button x:Name="LocalAiContinueButton" Content="Continue setup" Command="{Binding ContinueCommand}" Style="{StaticResource PrimaryButton}" />
+                                <Button Content="Open LLM Studio" Command="{Binding OpenLocalAiManagerCommand}" Style="{StaticResource SecondaryButton}" />
+                            </WrapPanel>
+                            <TextBlock Text="{Binding LocalAiStatus}" TextWrapping="Wrap" TextAlignment="Center" Margin="0,14,0,0" AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
