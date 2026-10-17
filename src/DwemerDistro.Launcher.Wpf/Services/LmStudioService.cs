@@ -4,21 +4,30 @@ using System.Text.Json.Nodes;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
 
-/// <summary>A starter model from the distro catalog's recommended list. VramGb is null when the catalog has no estimate.</summary>
-public sealed record LocalAiModel(string Id, string Tier, string Name, string Purpose, long Bytes, (double Low, double High)? VramGb, bool Installed)
+/// <summary>
+/// A starter model from one of the distro catalog's recommended lists. Size is the catalog's Small/Medium/Large label
+/// (the tier on older catalogs). VramGb is null when the catalog has no estimate.
+/// </summary>
+public sealed record LocalAiModel(string Id, string Size, string Name, string Purpose, string Quant, long Bytes, (double Low, double High)? VramGb, bool Installed)
 {
     public string Facts
     {
         get
         {
-            var download = Bytes > 0 ? (Bytes / 1e9).ToString(Bytes < 1e10 ? "0.00" : "0.0", CultureInfo.InvariantCulture) + " GB download" : "Download size unknown";
+            var download = Bytes > 0 ? Gigabytes(Bytes) + " download" : "Download size unknown";
             var vram = VramGb is { } range
-                ? string.Create(CultureInfo.InvariantCulture, $"about {range.Low}–{range.High} GB graphics memory (estimate)")
-                : "graphics memory not estimated";
-            return $"{download} · {vram}" + (Installed ? " · Already downloaded" : string.Empty);
+                ? string.Create(CultureInfo.InvariantCulture, $"about {range.Low}–{range.High} GB VRAM (estimate)")
+                : "VRAM not estimated";
+            return (Quant.Length > 0 ? Quant + " · " : string.Empty) + $"{download} · {vram}" + (Installed ? " · Already downloaded" : string.Empty);
         }
     }
+
+    public static string Gigabytes(long bytes) =>
+        (bytes / 1e9).ToString(bytes < 1e10 ? "0.00" : "0.0", CultureInfo.InvariantCulture) + " GB";
 }
+
+/// <summary>The catalog's dialogue models and optional decision models; a list is empty when the catalog lacks it.</summary>
+public sealed record LocalAiCatalog(IReadOnlyList<LocalAiModel> Dialogue, IReadOnlyList<LocalAiModel> Decision);
 
 public sealed class LmStudioService(WslService wsl)
 {
@@ -33,14 +42,20 @@ public sealed class LmStudioService(WslService wsl)
         return document.RootElement.Clone();
     }
 
-    // The catalog's own recommended list, in catalog order. Entries without an id or name are left out.
-    public async Task<IReadOnlyList<LocalAiModel>> GetRecommendedAsync()
+    // The catalog's dialogue (recommended) and decision lists, in catalog order.
+    public async Task<LocalAiCatalog> GetCatalogAsync()
     {
         var catalog = await ReadAsync("catalog").ConfigureAwait(false);
-        if (!catalog.TryGetProperty("recommended", out var recommended) || recommended.ValueKind != JsonValueKind.Array)
-            return [];
+        return new LocalAiCatalog(Models(catalog, "recommended"), Models(catalog, "decisionRecommended"));
+    }
+
+    // Entries without an id or name are left out.
+    private static List<LocalAiModel> Models(JsonElement catalog, string list)
+    {
         var models = new List<LocalAiModel>();
-        foreach (var model in recommended.EnumerateArray())
+        if (!catalog.TryGetProperty(list, out var entries) || entries.ValueKind != JsonValueKind.Array)
+            return models;
+        foreach (var model in entries.EnumerateArray())
         {
             if (Text(model, "id") is not { Length: > 0 } id || Text(model, "name") is not { Length: > 0 } name) continue;
             (double, double)? vram = null;
@@ -49,7 +64,8 @@ public sealed class LmStudioService(WslService wsl)
                 vram = (range[0].GetDouble(), range[1].GetDouble());
             var bytes = model.TryGetProperty("bytes", out var size) && size.ValueKind == JsonValueKind.Number && size.TryGetInt64(out var value) ? value : 0;
             var installed = model.TryGetProperty("installed", out var flag) && flag.ValueKind == JsonValueKind.True;
-            models.Add(new LocalAiModel(id, Text(model, "tier") ?? string.Empty, name, Text(model, "purpose") ?? string.Empty, bytes, vram, installed));
+            models.Add(new LocalAiModel(id, Text(model, "size") ?? Text(model, "tier") ?? string.Empty, name, Text(model, "purpose") ?? string.Empty,
+                Text(model, "quant") ?? string.Empty, bytes, vram, installed));
         }
         return models;
     }
@@ -62,51 +78,72 @@ public sealed class LmStudioService(WslService wsl)
     }
 
     /// <summary>
-    /// Installs the engine if needed, downloads (or finds) the recommended model, starts the engine, loads the model and
-    /// saves it as the startup model. Each step is confirmed from the helper's status before the next one, and the model
-    /// is addressed only by the exact key the download job reports. Returns that key.
+    /// Installs the engine if needed, downloads (or finds) the dialogue model and the optional decision model, starts the
+    /// engine, loads them one after the other and only then saves them as the startup pair; no decision model clears the
+    /// saved one. Each step is confirmed from the helper's status before the next one, and models are addressed only by
+    /// the exact keys their download jobs report. Returns those keys.
     /// </summary>
-    public async Task<string> SetUpModelAsync(string presetId, Action<string> progress)
+    public async Task<(string Dialogue, string? Decision)> SetUpModelsAsync(string dialogueId, string? decisionId, Action<string> progress)
     {
         var status = await ReadAsync("status").ConfigureAwait(false);
         if (!status.GetProperty("installed").GetBoolean())
             await InstallEngineAsync(progress).ConfigureAwait(false);
 
-        // An already downloaded preset finishes at once with its key; the helper never downloads it again.
-        var download = await RunJobAsync(new JsonObject { ["action"] = "download", ["preset"] = presetId }, progress, TimeSpan.FromHours(6)).ConfigureAwait(false);
-        if (Text(download, "modelKey") is not { Length: > 0 } key)
-            throw new InvalidOperationException("The model is downloaded, but LLM Studio has not reported its exact name yet. " +
-                                                "Retry in a moment, or load it from LLM Studio.");
+        var dialogue = await DownloadAsync(dialogueId, progress).ConfigureAwait(false);
+        var decision = decisionId is null ? null : await DownloadAsync(decisionId, progress).ConfigureAwait(false);
 
         status = await ReadAsync("status").ConfigureAwait(false);
         if (!status.GetProperty("running").GetBoolean())
             await RunJobAsync(new JsonObject { ["action"] = "start" }, progress, TimeSpan.FromMinutes(10)).ConfigureAwait(false);
 
+        // The second load is checked against the memory the first one leaves.
+        await LoadAsync(dialogue, progress).ConfigureAwait(false);
+        if (decision is not null)
+            await LoadAsync(decision, progress).ConfigureAwait(false);
+        // The first model can be evicted or unloaded while the second loads; the saved pair is kept unless both are up.
         status = await ReadAsync("status").ConfigureAwait(false);
-        if (!IsLoaded(status, key))
-        {
-            // Load with the same saved per-model defaults that startup uses.
-            var load = new JsonObject();
-            if (status.TryGetProperty("modelDefaults", out var defaults) && defaults.ValueKind == JsonValueKind.Object &&
-                defaults.TryGetProperty(key, out var saved) && saved.ValueKind == JsonValueKind.Object)
-                load = JsonNode.Parse(saved.GetRawText())!.AsObject();
-            load["action"] = "load";
-            load["model"] = key;
-            await RunJobAsync(load, progress, TimeSpan.FromMinutes(15)).ConfigureAwait(false);
-            if (!IsLoaded(await ReadAsync("status").ConfigureAwait(false), key))
-                throw new InvalidOperationException("LLM Studio finished, but the model is not loaded. Check memory use, then retry.");
-        }
+        if (!IsLoaded(status, dialogue) || (decision is not null && !IsLoaded(status, decision)))
+            throw new InvalidOperationException("LLM Studio did not keep both models loaded, so the startup models were not changed. " +
+                                                "Free some memory or pick a smaller pair, then retry.");
 
-        await RunJobAsync(new JsonObject { ["action"] = "settings", ["autostart"] = true, ["startupModel"] = key }, progress, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
-        if (!IsStartupModel(await ReadAsync("status").ConfigureAwait(false), key))
-            throw new InvalidOperationException("The model is loaded, but its startup setting was not saved. Retry.");
-        return key;
+        await RunJobAsync(new JsonObject { ["action"] = "settings", ["autostart"] = true, ["startupModel"] = dialogue, ["startupDecisionModel"] = decision ?? string.Empty },
+            progress, TimeSpan.FromMinutes(2)).ConfigureAwait(false);
+        if (!IsStartupPair(await ReadAsync("status").ConfigureAwait(false), dialogue, decision))
+            throw new InvalidOperationException("The models are loaded, but their startup setting was not saved. Retry.");
+        return (dialogue, decision);
     }
 
-    public static bool IsStartupModel(JsonElement status, string key) =>
+    // An already downloaded preset finishes at once with its key; the helper never downloads it again.
+    private async Task<string> DownloadAsync(string presetId, Action<string> progress)
+    {
+        var download = await RunJobAsync(new JsonObject { ["action"] = "download", ["preset"] = presetId }, progress, TimeSpan.FromHours(6)).ConfigureAwait(false);
+        return Text(download, "modelKey") is { Length: > 0 } key
+            ? key
+            : throw new InvalidOperationException("The model is downloaded, but LLM Studio has not reported its exact name yet. " +
+                                                  "Retry in a moment, or load it from LLM Studio.");
+    }
+
+    private async Task LoadAsync(string key, Action<string> progress)
+    {
+        var status = await ReadAsync("status").ConfigureAwait(false);
+        if (IsLoaded(status, key)) return;
+        // Load with the same saved per-model defaults that startup uses.
+        var load = new JsonObject();
+        if (status.TryGetProperty("modelDefaults", out var defaults) && defaults.ValueKind == JsonValueKind.Object &&
+            defaults.TryGetProperty(key, out var saved) && saved.ValueKind == JsonValueKind.Object)
+            load = JsonNode.Parse(saved.GetRawText())!.AsObject();
+        load["action"] = "load";
+        load["model"] = key;
+        await RunJobAsync(load, progress, TimeSpan.FromMinutes(15)).ConfigureAwait(false);
+        if (!IsLoaded(await ReadAsync("status").ConfigureAwait(false), key))
+            throw new InvalidOperationException("LLM Studio finished, but the model is not loaded. Check memory use, then retry.");
+    }
+
+    // A missing startupDecisionModel, as saved by older helpers, means no decision model.
+    public static bool IsStartupPair(JsonElement status, string dialogueKey, string? decisionKey) =>
         status.TryGetProperty("settings", out var settings) && settings.ValueKind == JsonValueKind.Object &&
         settings.TryGetProperty("autostart", out var autostart) && autostart.ValueKind == JsonValueKind.True &&
-        Text(settings, "startupModel") == key;
+        Text(settings, "startupModel") == dialogueKey && (Text(settings, "startupDecisionModel") ?? string.Empty) == (decisionKey ?? string.Empty);
 
     private static bool IsLoaded(JsonElement status, string key) =>
         status.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Array &&

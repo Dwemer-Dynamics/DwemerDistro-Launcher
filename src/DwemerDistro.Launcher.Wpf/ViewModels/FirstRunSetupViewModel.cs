@@ -91,10 +91,15 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private string _readySummary = "Finish setup to start DwemerDistro.";
     private SetupInstallProgress? _pendingSetupInstallProgress;
     // Older launchers saved "engine" or other preset ids; they stay as saved. This step completes only when the
-    // model saved below is still the startup model, or when Skip is chosen in this visit.
+    // models saved below are still the startup pair, or when Skip is chosen in this visit. The decision fields are
+    // null on files saved before decision models, which reads as no decision model.
+    private const string NoLocalAiDecision = "none";
     private string _localAiChoice = "skip";
     private string? _localAiCompletedChoice;
     private string? _localAiModelKey;
+    private string? _localAiDecisionChoice;
+    private string? _localAiDecisionCompletedChoice;
+    private string? _localAiDecisionModelKey;
     private string _localAiStatus = string.Empty;
     private bool _localAiAvailable;
     private bool _localAiInstalled;
@@ -102,6 +107,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private bool _localAiSkipped;
 
     public ObservableCollection<LocalAiModelOption> LocalAiModels { get; } = [];
+    public ObservableCollection<LocalAiModelOption> LocalAiDecisionModels { get; } = [];
     public AsyncRelayCommand InstallLocalAiCommand { get; }
     public AsyncRelayCommand SkipLocalAiCommand { get; }
     public AsyncRelayCommand OpenLocalAiManagerCommand { get; }
@@ -132,10 +138,33 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
     }
     public bool IsLocalAiChoosing => !_localAiReady;
-    private LocalAiModelOption? SelectedLocalAiModel => LocalAiModels.FirstOrDefault(model => model.IsSelected);
-    public string LocalAiSetupText => SelectedLocalAiModel is { } model ? $"Set up {model.Model.Name}" : "Set up model";
+    private LocalAiModel? SelectedLocalAiModel => LocalAiModels.FirstOrDefault(option => option.IsSelected)?.Model;
+    // Null when None is selected.
+    private LocalAiModel? SelectedLocalAiDecision => LocalAiDecisionModels.FirstOrDefault(option => option.IsSelected)?.Model;
+    public string LocalAiSetupText
+    {
+        get
+        {
+            if (SelectedLocalAiModel is not { } model) return "Set up model";
+            return SelectedLocalAiDecision is { } decision ? $"Set up {model.Name} + {decision.Name}" : $"Set up {model.Name}";
+        }
+    }
     public string LocalAiSetupNote => (_localAiInstalled ? "Downloads" : "Installs LLM Studio, then downloads") +
-                                      " the model once, loads it now, and loads it again whenever DwemerDistro starts.";
+                                      (SelectedLocalAiDecision is null
+                                          ? " the model once, loads it now, and loads it again whenever DwemerDistro starts."
+                                          : " both models once, loads them now, and loads them again whenever DwemerDistro starts.");
+    public string LocalAiDownloadSummary
+    {
+        get
+        {
+            var selected = new[] { SelectedLocalAiModel, SelectedLocalAiDecision }.OfType<LocalAiModel>().ToList();
+            var total = selected.Sum(model => model.Bytes);
+            var remaining = selected.Where(model => !model.Installed).Sum(model => model.Bytes);
+            if (remaining == 0) return $"Selected files: {LocalAiModel.Gigabytes(total)}, already downloaded.";
+            if (remaining == total) return $"Selected files: {LocalAiModel.Gigabytes(total)} to download.";
+            return $"Selected files: {LocalAiModel.Gigabytes(total)}, {LocalAiModel.Gigabytes(remaining)} still to download.";
+        }
+    }
     public string LocalAiStatus
     {
         get => _localAiStatus;
@@ -780,45 +809,71 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
     }
 
-    // Shows what is actually set up: ready only while the model this step saved is still LLM Studio's startup model.
+    // Shows what is actually set up: ready only while the models this step saved are still LLM Studio's startup pair
+    // and their files are still present.
     private async Task LoadLocalAiAsync()
     {
         var saved = await _onboardingState.LoadAsync();
         _localAiChoice = saved.LocalAiChoice ?? "skip";
         _localAiCompletedChoice = saved.LocalAiCompletedChoice;
         _localAiModelKey = saved.LocalAiModelKey;
+        _localAiDecisionChoice = saved.LocalAiDecisionChoice;
+        _localAiDecisionCompletedChoice = saved.LocalAiDecisionCompletedChoice;
+        _localAiDecisionModelKey = saved.LocalAiDecisionModelKey;
         _localAiAvailable = false;
         _localAiSkipped = false;
         IsLocalAiInstalled = false;
         IsLocalAiReady = false;
         LocalAiModels.Clear();
+        LocalAiDecisionModels.Clear();
         LocalAiStatus = string.Empty;
         try
         {
             var service = new LmStudioService(_wsl);
             var status = await service.ReadAsync("status");
-            var models = await service.GetRecommendedAsync();
+            var catalog = await service.GetCatalogAsync();
             _localAiAvailable = true;
             IsLocalAiInstalled = status.GetProperty("installed").GetBoolean();
-            // The catalog's first entry (Light) is the default; an earlier choice in this setup is kept.
-            var selected = models.FirstOrDefault(model => model.Id == _localAiChoice) ?? models.FirstOrDefault();
-            foreach (var model in models)
-            {
-                var option = new LocalAiModelOption(model) { IsSelected = model == selected };
-                option.PropertyChanged += (_, _) => { OnPropertyChanged(nameof(LocalAiSetupText)); RaiseCommandStates(); };
-                LocalAiModels.Add(option);
-            }
-            OnPropertyChanged(nameof(LocalAiSetupText));
-            var completed = models.FirstOrDefault(model => model.Id == _localAiCompletedChoice);
-            IsLocalAiReady = completed is { Installed: true } && _localAiModelKey is { Length: > 0 } key && LmStudioService.IsStartupModel(status, key);
-            if (IsLocalAiReady) LocalAiStatus = ReadyText(completed!.Name);
-            else if (models.Count == 0) LocalAiStatus = "This DwemerDistro version has no recommended models. Update Distro, or choose Skip.";
+            // The catalog's first dialogue model and no decision model are the defaults; earlier choices are kept.
+            var selected = catalog.Dialogue.FirstOrDefault(model => model.Id == _localAiChoice) ?? catalog.Dialogue.FirstOrDefault();
+            foreach (var model in catalog.Dialogue)
+                AddLocalAiOption(LocalAiModels, model, model == selected);
+            var decision = catalog.Decision.FirstOrDefault(model => model.Id == _localAiDecisionChoice);
+            AddLocalAiOption(LocalAiDecisionModels, null, decision is null);
+            foreach (var model in catalog.Decision)
+                AddLocalAiOption(LocalAiDecisionModels, model, model == decision);
+            OnLocalAiSelectionChanged();
+
+            var completed = catalog.Dialogue.FirstOrDefault(model => model.Id == _localAiCompletedChoice);
+            var completedDecision = catalog.Decision.FirstOrDefault(model => model.Id == _localAiDecisionCompletedChoice);
+            IsLocalAiReady = completed is { Installed: true } && _localAiModelKey is { Length: > 0 } key &&
+                             (_localAiDecisionModelKey is null || completedDecision is { Installed: true }) &&
+                             LmStudioService.IsStartupPair(status, key, _localAiDecisionModelKey);
+            if (IsLocalAiReady) LocalAiStatus = ReadyText(completed!.Name, _localAiDecisionModelKey is null ? null : completedDecision!.Name);
+            else if (catalog.Dialogue.Count == 0) LocalAiStatus = "This DwemerDistro version has no recommended models. Update Distro, or choose Skip.";
         }
         catch (Exception error) { LocalAiStatus = error.Message; }
         RaiseCommandStates();
     }
 
-    private static string ReadyText(string name) => $"{name} is ready. LLM Studio loads it whenever DwemerDistro starts.";
+    private void AddLocalAiOption(ObservableCollection<LocalAiModelOption> options, LocalAiModel? model, bool selected)
+    {
+        var option = new LocalAiModelOption(model) { IsSelected = selected };
+        option.PropertyChanged += (_, _) => OnLocalAiSelectionChanged();
+        options.Add(option);
+    }
+
+    private void OnLocalAiSelectionChanged()
+    {
+        OnPropertyChanged(nameof(LocalAiSetupText));
+        OnPropertyChanged(nameof(LocalAiSetupNote));
+        OnPropertyChanged(nameof(LocalAiDownloadSummary));
+        RaiseCommandStates();
+    }
+
+    private static string ReadyText(string name, string? decisionName) => decisionName is null
+        ? $"{name} is ready. LLM Studio loads it whenever DwemerDistro starts."
+        : $"{name} and {decisionName} are ready. LLM Studio loads both whenever DwemerDistro starts.";
 
     private async Task SaveLocalAiChoiceAsync()
     {
@@ -826,27 +881,34 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         state.LocalAiChoice = _localAiChoice;
         state.LocalAiCompletedChoice = _localAiCompletedChoice;
         state.LocalAiModelKey = _localAiModelKey;
+        state.LocalAiDecisionChoice = _localAiDecisionChoice;
+        state.LocalAiDecisionCompletedChoice = _localAiDecisionCompletedChoice;
+        state.LocalAiDecisionModelKey = _localAiDecisionModelKey;
         await _onboardingState.SaveAsync(state);
     }
 
     private async Task InstallLocalAiAsync()
     {
-        if (SelectedLocalAiModel?.Model is not { } model) return;
+        if (SelectedLocalAiModel is not { } model) return;
+        var decision = SelectedLocalAiDecision;
         await RunDistroBusyAsync("Setting up local AI", async () =>
         {
             _localAiChoice = model.Id;
+            _localAiDecisionChoice = decision?.Id ?? NoLocalAiDecision;
             try
             {
                 await SaveLocalAiChoiceAsync();
-                var key = await new LmStudioService(_wsl).SetUpModelAsync(model.Id,
+                var keys = await new LmStudioService(_wsl).SetUpModelsAsync(model.Id, decision?.Id,
                     message => _dispatcher.Invoke(() => LocalAiStatus = message.Length > 2000 ? message[^2000..] : message));
                 IsLocalAiInstalled = true;
-                // Completion is recorded only after download, load and the startup setting are all confirmed.
+                // Completion is recorded only after downloads, both loads and the startup pair are all confirmed.
                 _localAiCompletedChoice = model.Id;
-                _localAiModelKey = key;
+                _localAiModelKey = keys.Dialogue;
+                _localAiDecisionCompletedChoice = decision?.Id ?? NoLocalAiDecision;
+                _localAiDecisionModelKey = keys.Decision;
                 await SaveLocalAiChoiceAsync();
                 IsLocalAiReady = true;
-                LocalAiStatus = ReadyText(model.Name);
+                LocalAiStatus = ReadyText(model.Name, decision?.Name);
             }
             catch (Exception error)
             {
@@ -2373,14 +2435,21 @@ public sealed class HuggingFaceQuickstartModelViewModel : ObservableObject
     }
 }
 
-/// <summary>One recommended starter model on the Local AI step; exactly one is selected.</summary>
-public sealed class LocalAiModelOption(LocalAiModel model) : ObservableObject
+/// <summary>One choice in a Local AI model list; exactly one per list is selected. A null model is the None choice.</summary>
+public sealed class LocalAiModelOption(LocalAiModel? model) : ObservableObject
 {
     private bool _isSelected;
 
-    public LocalAiModel Model { get; } = model;
+    public LocalAiModel? Model { get; } = model;
 
-    public string Title => string.IsNullOrEmpty(Model.Tier) ? Model.Name : $"{Model.Tier} \u00B7 {Model.Name}";
+    public string Title => Model switch
+    {
+        null => "None",
+        { Size.Length: > 0 } => $"{Model.Size} \u00B7 {Model.Name}",
+        _ => Model.Name,
+    };
+
+    public string Facts => Model?.Facts ?? "Dialogue model only. Nothing to download.";
 
     public bool IsSelected
     {
