@@ -29,13 +29,89 @@ public sealed record LocalAiModel(string Id, string Size, string Name, string Pu
 /// <summary>The catalog's dialogue models and optional decision models; a list is empty when the catalog lacks it.</summary>
 public sealed record LocalAiCatalog(IReadOnlyList<LocalAiModel> Dialogue, IReadOnlyList<LocalAiModel> Decision);
 
+/// <summary>A loaded language model instance from status.models[].loaded_instances. Role is Dialogue, Decision or empty.</summary>
+public sealed record LmStudioLoadedModel(string Name, string Details, string Role)
+{
+    public bool HasRole => Role.Length > 0;
+    public bool HasDetails => Details.Length > 0;
+}
+
+/// <summary>What the Mods page shows for LLM Studio, projected from one helper status read.</summary>
+public sealed record LmStudioOverview(bool Installed, bool Running, IReadOnlyList<LmStudioLoadedModel> Models)
+{
+    // Only language models that LM Studio reports as loaded; embeddings, the inventory, the saved startup choice
+    // and the last job are ignored. Startup keys only label the instance whose key matches exactly.
+    public static LmStudioOverview FromStatus(JsonElement status)
+    {
+        // installed and running are required; anything else is an unreadable reply, not "Not installed".
+        var installed = Flag(status, "installed");
+        var running = Flag(status, "running");
+        var settings = status.TryGetProperty("settings", out var s) ? s : default;
+        var dialogueKey = Text(settings, "startupModel");
+        var decisionKey = Text(settings, "startupDecisionModel");
+        var loaded = new List<LmStudioLoadedModel>();
+        if (running && status.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var model in models.EnumerateArray())
+            {
+                if (Text(model, "type") != "llm" || !model.TryGetProperty("loaded_instances", out var instances) ||
+                    instances.ValueKind != JsonValueKind.Array) continue;
+                var key = Text(model, "key");
+                var name = Text(model, "display_name") is { Length: > 0 } display ? display : key;
+                var quant = model.TryGetProperty("quantization", out var q) ? Text(q, "name") : null;
+                var isDialogue = key is { Length: > 0 } && key == dialogueKey;
+                var isDecision = key is { Length: > 0 } && key == decisionKey;
+                string role;
+                if (isDialogue && isDecision)
+                {
+                    role = "Dialogue / Decision";
+                }
+                else if (isDialogue)
+                {
+                    role = "Dialogue";
+                }
+                else if (isDecision)
+                {
+                    role = "Decision";
+                }
+                else
+                {
+                    role = string.Empty;
+                }
+                foreach (var instance in instances.EnumerateArray())
+                {
+                    // Only an instance with an id is loaded; the parent's name alone does not count.
+                    if (Text(instance, "id") is not { Length: > 0 } id) continue;
+                    var instanceName = name is { Length: > 0 } ? name : id;
+                    var details = new List<string>();
+                    if (quant is { Length: > 0 }) details.Add(quant);
+                    if (instance.TryGetProperty("config", out var config) && config.ValueKind == JsonValueKind.Object &&
+                        config.TryGetProperty("context_length", out var context) && context.ValueKind == JsonValueKind.Number &&
+                        context.TryGetInt64(out var tokens) && tokens > 0)
+                        details.Add(tokens.ToString("N0", CultureInfo.InvariantCulture) + " context");
+                    loaded.Add(new LmStudioLoadedModel(instanceName, string.Join(" · ", details), role));
+                }
+            }
+        }
+        return new LmStudioOverview(installed, running, loaded);
+    }
+
+    private static bool Flag(JsonElement status, string name) =>
+        status.ValueKind == JsonValueKind.Object && status.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : throw new InvalidOperationException("LLM Studio returned an unreadable status.");
+
+    private static string? Text(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+}
+
 public sealed class LmStudioService(WslService wsl)
 {
     private const string Helper = "/usr/local/bin/ddistro_lmstudio";
 
-    public async Task<JsonElement> ReadAsync(string command)
+    public async Task<JsonElement> ReadAsync(string command, CancellationToken cancellationToken = default)
     {
-        var result = await wsl.RunDistroAsUserAsync("dwemer", [Helper, command]).ConfigureAwait(false);
+        var result = await wsl.RunDistroAsUserAsync("dwemer", [Helper, command], cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!result.Succeeded)
             throw new InvalidOperationException("Update Distro first, then retry LLM Studio. " + result.StandardOutput.Trim());
         using var document = JsonDocument.Parse(result.StandardOutput);

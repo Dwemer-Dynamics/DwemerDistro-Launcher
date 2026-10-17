@@ -266,6 +266,7 @@ echo "CHIM-MCP installed and enabled."
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder, CanAccessDistro);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow, CanAccessDistro);
+        InitializeLmStudioCommands();
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady && CanAccessDistro());
         ConfirmForceGitUpdatesCommand = new RelayCommand(ConfirmForceGitUpdates);
         // Webpage and rollback are meaningless for a product that is not installed.
@@ -987,6 +988,7 @@ echo "CHIM-MCP installed and enabled."
         }
         _connectionDetailsClosed = true;
         _connectionDetailsCts?.Cancel();
+        StopLmStudioRefresh();
         LauncherLogService.Startup("Launcher shutdown started.");
         _startAnimationTimer.Stop();
         _serverStatusRetryTimer.Stop();
@@ -2019,6 +2021,7 @@ echo "CHIM-MCP installed and enabled."
     {
         OpenServerFolderCommand?.RaiseCanExecuteChanged();
         OpenFirstRunSetupCommand?.RaiseCanExecuteChanged();
+        OpenLmStudioCommand?.RaiseCanExecuteChanged();
         SaveDashboardAutoOpenCommand?.RaiseCanExecuteChanged();
         OpenChimCommand?.RaiseCanExecuteChanged();
         OpenStobeCommand?.RaiseCanExecuteChanged();
