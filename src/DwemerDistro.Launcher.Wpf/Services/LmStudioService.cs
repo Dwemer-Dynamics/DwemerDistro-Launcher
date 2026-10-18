@@ -36,11 +36,26 @@ public sealed record LmStudioLoadedModel(string Name, string Details, string Rol
     public bool HasDetails => Details.Length > 0;
 }
 
-/// <summary>What the Mods page shows for LLM Studio, projected from one helper status read.</summary>
-public sealed record LmStudioOverview(bool Installed, bool Running, IReadOnlyList<LmStudioLoadedModel> Models)
+/// <summary>A downloaded language model offered as a startup choice. An empty key is None.</summary>
+public sealed record LmStudioModelChoice(string Key, string Name)
 {
-    // Only language models that LM Studio reports as loaded; embeddings, the inventory, the saved startup choice
-    // and the last job are ignored. Startup keys only label the instance whose key matches exactly.
+    // The themed ComboBox shows the selected item's text, not DisplayMemberPath.
+    public override string ToString() => Name;
+}
+
+/// <summary>The saved startup settings: autostart and the dialogue and optional decision model keys (empty is None).</summary>
+public sealed record LmStudioStartup(bool Autostart, string Dialogue, string Decision);
+
+/// <summary>
+/// What the Mods page shows for LLM Studio, projected from one helper status read. Models are the instances loaded now;
+/// Inventory is every downloaded language model (the helper's cached list while the engine is stopped) and Startup is
+/// the saved startup choice, which may differ from what is loaded.
+/// </summary>
+public sealed record LmStudioOverview(bool Installed, bool Running, IReadOnlyList<LmStudioLoadedModel> Models,
+    IReadOnlyList<LmStudioModelChoice> Inventory, bool InventoryCached, LmStudioStartup Startup, IReadOnlySet<string> LoadedKeys, bool JobRunning)
+{
+    // Loaded models are only language models that LM Studio reports as loaded. Startup keys only label the instance
+    // whose key matches exactly.
     public static LmStudioOverview FromStatus(JsonElement status)
     {
         // installed and running are required; anything else is an unreadable reply, not "Not installed".
@@ -50,6 +65,7 @@ public sealed record LmStudioOverview(bool Installed, bool Running, IReadOnlyLis
         var dialogueKey = Text(settings, "startupModel");
         var decisionKey = Text(settings, "startupDecisionModel");
         var loaded = new List<LmStudioLoadedModel>();
+        var loadedKeys = new HashSet<string>(StringComparer.Ordinal);
         if (running && status.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Array)
         {
             foreach (var model in models.EnumerateArray())
@@ -90,10 +106,29 @@ public sealed record LmStudioOverview(bool Installed, bool Running, IReadOnlyLis
                         context.TryGetInt64(out var tokens) && tokens > 0)
                         details.Add(tokens.ToString("N0", CultureInfo.InvariantCulture) + " context");
                     loaded.Add(new LmStudioLoadedModel(instanceName, string.Join(" · ", details), role));
+                    if (key is { Length: > 0 }) loadedKeys.Add(key);
                 }
             }
         }
-        return new LmStudioOverview(installed, running, loaded);
+        // The helper lists downloaded language models live, or from its last check while the engine is stopped.
+        var listedModels = new List<(string Key, string Name, string Variant)>();
+        if (status.TryGetProperty("inventory", out var listed) && listed.ValueKind == JsonValueKind.Array)
+            foreach (var model in listed.EnumerateArray())
+                if (Text(model, "type") == "llm" && Text(model, "key") is { Length: > 0 } key && listedModels.All(m => m.Key != key))
+                    listedModels.Add((key, Text(model, "display_name") is { Length: > 0 } display ? display : key, string.Join(" · ",
+                        new[] { Text(model, "publisher"), model.TryGetProperty("quantization", out var quant) ? Text(quant, "name") : null }
+                            .Where(part => part is { Length: > 0 }))));
+        // Only models that share a name get their publisher and quantization, then the exact key if that still matches.
+        var named = listedModels.Select(m => (m.Key, Name: listedModels.Count(o => o.Name == m.Name) > 1 && m.Variant.Length > 0
+            ? $"{m.Name} ({m.Variant})" : m.Name)).ToList();
+        var inventory = named.Select(m => new LmStudioModelChoice(m.Key,
+            named.Count(o => o.Name == m.Name) > 1 ? $"{m.Name} [{m.Key}]" : m.Name)).ToList();
+        var startup = new LmStudioStartup(settings.ValueKind == JsonValueKind.Object && settings.TryGetProperty("autostart", out var auto) &&
+                                          auto.ValueKind == JsonValueKind.True, dialogueKey ?? string.Empty, decisionKey ?? string.Empty);
+        var job = status.TryGetProperty("job", out var j) ? j : default;
+        return new LmStudioOverview(installed, running, loaded, inventory,
+            status.TryGetProperty("inventoryCached", out var cached) && cached.ValueKind == JsonValueKind.True, startup, loadedKeys,
+            Text(job, "state") == "running");
     }
 
     private static bool Flag(JsonElement status, string name) =>
@@ -230,7 +265,7 @@ public sealed class LmStudioService(WslService wsl)
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     // Submits one helper job and follows it to the end. Returns the finished job; a failed or replaced job throws.
-    private async Task<JsonElement> RunJobAsync(JsonObject request, Action<string> progress, TimeSpan timeout)
+    private async Task<JsonElement> RunJobAsync(JsonObject request, Action<string> progress, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         var result = await wsl.RunDistroAsUserWithInputAsync("dwemer", [Helper, "submit"], request.ToJsonString()).ConfigureAwait(false);
         JsonElement submitted;
@@ -249,8 +284,8 @@ public sealed class LmStudioService(WslService wsl)
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            await Task.Delay(2000).ConfigureAwait(false);
-            var job = (await ReadAsync("status").ConfigureAwait(false)).GetProperty("job");
+            await Task.Delay(2000, cancellationToken).ConfigureAwait(false);
+            var job = (await ReadAsync("status", cancellationToken).ConfigureAwait(false)).GetProperty("job");
             if (Text(job, "id") != jobId)
                 throw new InvalidOperationException("The operation changed. Check LLM Studio before retrying.");
             var message = Text(job, "message") ?? "Working...";
@@ -265,6 +300,69 @@ public sealed class LmStudioService(WslService wsl)
             progress(message);
         }
         throw new InvalidOperationException("LLM Studio is still working. Check LLM Studio before retrying.");
+    }
+
+    /// <summary>Starts the engine and loads the saved startup models, whether or not autostart is on.</summary>
+    public async Task StartSavedAsync(CancellationToken cancellationToken)
+    {
+        await RequireDistroRunningAsync("starting LLM Studio", cancellationToken).ConfigureAwait(false);
+        await CommandAsync("start-saved", cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The graceful stop: a helper job that waits behind any running job, then stops the engine.
+    /// Returns false, without booting it, when Dwemer Distro is not running (so neither is the engine).
+    /// </summary>
+    public async Task<bool> StopAsync(CancellationToken cancellationToken)
+    {
+        if (!await wsl.DistroRunningAsync(cancellationToken).ConfigureAwait(false)) return false;
+        await RunJobAsync(new JsonObject { ["action"] = "stop" }, _ => { }, TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <summary>
+    /// Emergency recovery. The helper ends only its own verified job worker, startup helpers and LM Studio engine
+    /// processes, without waiting for a running job. Returns false, without booting it, when Dwemer Distro is not
+    /// running; otherwise true and the interrupted action, if any.
+    /// </summary>
+    public async Task<(bool DistroRunning, string? Interrupted)> ForceStopAsync(CancellationToken cancellationToken)
+    {
+        if (!await wsl.DistroRunningAsync(cancellationToken).ConfigureAwait(false)) return (false, null);
+        return (true, Text(await CommandAsync("force-stop", cancellationToken).ConfigureAwait(false), "interrupted"));
+    }
+
+    /// <summary>Saves autostart and the startup pair (empty is None). The helper validates it and never loads or unloads a model.</summary>
+    public async Task SaveStartupAsync(LmStudioStartup startup, CancellationToken cancellationToken)
+    {
+        await RequireDistroRunningAsync("saving startup models", cancellationToken).ConfigureAwait(false);
+        await RunJobAsync(new JsonObject { ["action"] = "settings", ["autostart"] = startup.Autostart, ["startupModel"] = startup.Dialogue,
+            ["startupDecisionModel"] = startup.Decision }, _ => { }, TimeSpan.FromMinutes(2), cancellationToken).ConfigureAwait(false);
+    }
+
+    // The engine controls never boot a stopped distro as a side effect.
+    private async Task RequireDistroRunningAsync(string action, CancellationToken cancellationToken)
+    {
+        if (!await wsl.DistroRunningAsync(cancellationToken).ConfigureAwait(false))
+            throw new InvalidOperationException($"Dwemer Distro is not running. Start Dwemer Distro before {action}.");
+    }
+
+    // A helper command whose own error message is shown on failure.
+    private async Task<JsonElement> CommandAsync(string command, CancellationToken cancellationToken)
+    {
+        var result = await wsl.RunDistroAsUserAsync("dwemer", [Helper, command], cancellationToken: cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        JsonElement reply = default;
+        try
+        {
+            using var document = JsonDocument.Parse(result.StandardOutput);
+            reply = document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+        }
+        if (!result.Succeeded || reply.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException(Text(reply, "error") ?? "LLM Studio did not answer. Update Distro if this keeps failing.");
+        return reply;
     }
 
     public async Task OpenManagerAsync()
