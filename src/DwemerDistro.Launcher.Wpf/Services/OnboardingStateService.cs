@@ -70,6 +70,10 @@ public sealed class OnboardingStateService
         {
             LocalAiChoice = previous.LocalAiChoice,
             LocalAiCompletedChoice = previous.LocalAiCompletedChoice,
+            LocalAiModelKey = previous.LocalAiModelKey,
+            LocalAiDecisionChoice = previous.LocalAiDecisionChoice,
+            LocalAiDecisionCompletedChoice = previous.LocalAiDecisionCompletedChoice,
+            LocalAiDecisionModelKey = previous.LocalAiDecisionModelKey,
             Version = CurrentVersion,
             Completed = true,
             CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -98,6 +102,10 @@ public sealed class OnboardingStateService
         {
             LocalAiChoice = previous.LocalAiChoice,
             LocalAiCompletedChoice = previous.LocalAiCompletedChoice,
+            LocalAiModelKey = previous.LocalAiModelKey,
+            LocalAiDecisionChoice = previous.LocalAiDecisionChoice,
+            LocalAiDecisionCompletedChoice = previous.LocalAiDecisionCompletedChoice,
+            LocalAiDecisionModelKey = previous.LocalAiDecisionModelKey,
             Version = CurrentVersion,
             Skipped = true,
             SkippedAtUtc = DateTimeOffset.UtcNow,
@@ -182,6 +190,17 @@ public sealed class OnboardingState
     public string? LocalAiChoice { get; set; }
 
     public string? LocalAiCompletedChoice { get; set; }
+
+    /// <summary>Exact LLM Studio key of the model Quickstart saved as the startup model.</summary>
+    public string? LocalAiModelKey { get; set; }
+
+    /// <summary>Decision model id chosen beside the dialogue model above; null on older files, "none" when none is chosen.</summary>
+    public string? LocalAiDecisionChoice { get; set; }
+
+    public string? LocalAiDecisionCompletedChoice { get; set; }
+
+    /// <summary>Exact LLM Studio key of the decision model Quickstart saved for startup; null when there is none.</summary>
+    public string? LocalAiDecisionModelKey { get; set; }
 
     /// <summary>
     /// Defaults to 1 so a version 1 file that predates the field, and one that states it, both read

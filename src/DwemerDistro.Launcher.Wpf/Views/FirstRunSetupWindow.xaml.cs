@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Input;
+using System.Windows.Threading;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using MessageBox = System.Windows.MessageBox;
@@ -87,6 +89,21 @@ public partial class FirstRunSetupWindow : Window
             !string.IsNullOrEmpty(HuggingFacePasswordBox.Password))
         {
             HuggingFacePasswordBox.Clear();
+        }
+
+        // The model choice collapses once setup finishes; once the work settles, move focus to Continue setup
+        // unless focus already sits on another visible control.
+        if (e.PropertyName is nameof(FirstRunSetupViewModel.IsBusy) or nameof(FirstRunSetupViewModel.IsLocalAiReady))
+        {
+            _ = Dispatcher.InvokeAsync(() =>
+            {
+                if (_viewModel.IsLocalAiStep && _viewModel.IsLocalAiReady && !_viewModel.IsBusy &&
+                    LocalAiContinueButton.IsVisible && LocalAiContinueButton.IsEnabled &&
+                    (Keyboard.FocusedElement is not UIElement { IsVisible: true } || Keyboard.FocusedElement == this))
+                {
+                    LocalAiContinueButton.Focus();
+                }
+            }, DispatcherPriority.Input);
         }
     }
 }

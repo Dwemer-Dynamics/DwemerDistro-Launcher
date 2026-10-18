@@ -46,6 +46,7 @@ public sealed partial class MainWindowViewModel
             }
 
             OnPropertyChanged(nameof(IsOfficialModsView));
+            RaiseLmStudioViewChanged();
             if (value)
             {
                 _ = RefreshCustomModsAsync(checkHealth: false);
