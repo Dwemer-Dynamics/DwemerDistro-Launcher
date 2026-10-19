@@ -73,9 +73,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     /// <summary>Restated on every mod update while the option is on.</summary>
     internal const string ForceGitUpdatesUpdateWarning =
-        "Force Updates is ON: manual edits to Git-tracked files in these servers will be " +
-        "permanently discarded. Databases, uploads, profiles, memories, voices, and other untracked " +
-        "data are not deleted.";
+        "Force Updates is ON: manual edits to Git-tracked files in managed servers will be " +
+        "permanently discarded, and Git may also replace untracked or ignored files that conflict " +
+        "with the update. Back up custom files first.";
 
     /// <summary>The Settings label, reused as the title of every Compact Distro message.</summary>
     internal const string CompactDistroSettingName = "Compact Distro";
@@ -1846,6 +1846,8 @@ echo "CHIM-MCP installed and enabled."
         SetSystemUpdateState(SystemUpdateAvailability.Updating);
         var systemSucceeded = false;
         var modsAttempted = false;
+        var skippedMods = new List<string>();
+        var modsFailed = false;
 
         try
         {
@@ -1864,16 +1866,38 @@ echo "CHIM-MCP installed and enabled."
                     systemSucceeded = await RunSharedDistroUpdateAsync().ConfigureAwait(true);
                     return systemSucceeded;
                 },
-                (product, branch) =>
+                async (product, branch) =>
                 {
                     modsAttempted = true;
                     SetSystemUpdateRunningButtonText(null);
-                    return RunServerOperationAsync(product, ServerOperation.Update, branch, forceGitUpdates);
+                    var outcome = await RunServerOperationAsync(product, ServerOperation.Update, branch, forceGitUpdates)
+                        .ConfigureAwait(true);
+                    if (outcome == ServerOperationOutcome.Skipped)
+                    {
+                        skippedMods.Add(product.DisplayName);
+                    }
+                    else if (outcome == ServerOperationOutcome.Failed)
+                    {
+                        modsFailed = true;
+                    }
+
+                    return outcome == ServerOperationOutcome.Succeeded;
                 }).ConfigureAwait(true);
             var completionMessage = "System and mod updates completed successfully.";
+            var skippedNote = skippedMods.Count > 0
+                ? $" Skipped to keep local edits: {string.Join(", ", skippedMods)}."
+                : string.Empty;
             if (!systemSucceeded)
             {
                 completionMessage = "System update failed. No mods were updated. Check the log above.";
+            }
+            else if (modsFailed)
+            {
+                completionMessage = "At least one mod update failed. Check the log above." + skippedNote;
+            }
+            else if (skippedMods.Count > 0)
+            {
+                completionMessage = "System and shared components updated." + skippedNote;
             }
             else if (!succeeded)
             {
@@ -1885,7 +1909,13 @@ echo "CHIM-MCP installed and enabled."
                     "System and shared components updated successfully. The selected mod was no longer eligible, so no mod was changed.";
             }
 
-            AppendLog(completionMessage + Environment.NewLine, succeeded ? "green" : "red");
+            var completionColor = succeeded ? "green" : "red";
+            if (systemSucceeded && !modsFailed && skippedMods.Count > 0)
+            {
+                completionColor = "yellow";
+            }
+
+            AppendLog(completionMessage + Environment.NewLine, completionColor);
             ReportSystemUpdateOutcome(systemSucceeded);
         }
         catch (Exception ex)
@@ -2485,18 +2515,17 @@ echo "CHIM-MCP installed and enabled."
     }
 
     /// <summary>
-    /// The enable confirmation. It has to be exact about scope: forcing an update rewrites the files
-    /// Git tracks, and leaves everything Git does not track - databases, uploads, profiles, memories
-    /// and voices - untouched.
+    /// The enable confirmation. It has to be exact about scope: forcing an update discards edits to
+    /// files Git tracks, and Git may also replace untracked or ignored files that conflict with the
+    /// update, so it must not promise that anything outside Git is safe.
     /// </summary>
     internal static string BuildForceGitUpdatesConfirmation()
     {
         return $"{ForceGitUpdatesSettingName} is destructive.\n\n" +
-               "While it is on, updating HerikaServer, StobeServer, or DialecticServer overwrites the files " +
-               "those servers track in Git. Any edit you made to a tracked file by hand is permanently " +
-               "discarded, with no undo.\n\n" +
-               "Nothing untracked is removed: databases, uploads, profiles, memories, voices, and other " +
-               "runtime data are left in place.\n\n" +
+               "While it is on, updating a managed server overwrites the files that server tracks in Git. " +
+               "Any edit you made to a tracked file by hand is permanently discarded, with no undo.\n\n" +
+               "Git may also replace untracked or ignored files that conflict with the update. " +
+               "Back up custom files first.\n\n" +
                "Leave this off unless an update keeps failing because an installed server has manual edits.\n\n" +
                $"Turn {ForceGitUpdatesSettingName} on?";
     }

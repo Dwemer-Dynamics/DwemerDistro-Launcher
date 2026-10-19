@@ -1287,8 +1287,8 @@
                                 <CheckBox Content="Force Updates" IsChecked="{Binding ForceGitUpdatesEnabled}"
                                           Command="{Binding ConfirmForceGitUpdatesCommand}" Style="{StaticResource GameCenter.SettingCheckBox}"
                                           AutomationProperties.Name="Force Updates, overwrite manually edited server files"
-                                          AutomationProperties.HelpText="Destructive. When checked, launcher updates for HerikaServer, StobeServer, and DialecticServer permanently discard your manual edits to files those servers track in Git, with no undo. Databases, uploads, profiles, memories, voices, and other untracked runtime data are not deleted. Turning this on asks for confirmation first; turning it off does not. Off by default." />
-                                <TextBlock Text="Allow launcher server updates to overwrite tracked files changed manually. This does not delete databases, uploads, profiles, memories, voices, or other runtime data."
+                                          AutomationProperties.HelpText="Destructive. When checked, launcher updates for managed servers permanently discard your manual edits to files those servers track in Git, with no undo. Git may also replace untracked or ignored files that conflict with the update, so back up custom files first. Turning this on asks for confirmation first; turning it off does not. Off by default." />
+                                <TextBlock Text="Allow launcher server updates to overwrite tracked files changed manually. Git may also replace conflicting untracked or ignored files, so back up custom files first."
                                            Style="{StaticResource GameCenter.SettingRowDescription}"
                                            Margin="32,4,0,0" />
                                 <TextBlock Text="Warning: while this is on, updating a mod server permanently discards your manual edits to its tracked files. There is no undo."
