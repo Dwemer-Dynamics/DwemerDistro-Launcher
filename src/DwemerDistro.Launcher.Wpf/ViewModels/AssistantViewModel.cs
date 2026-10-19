@@ -227,6 +227,10 @@ public sealed class AssistantViewModel : ObservableObject
         RaiseCommands();
     }
 
+    /// <summary>Explains a blocked launcher close without changing the state or the running operation.</summary>
+    internal void ShowCloseBlocked() =>
+        StatusDetail = "Wait for the assistant to finish applying or rolling back reviewed changes before closing the launcher.";
+
     // --- Connection ---------------------------------------------------------------------------
 
     internal async Task ConnectAsync()

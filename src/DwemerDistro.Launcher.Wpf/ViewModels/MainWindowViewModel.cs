@@ -259,8 +259,8 @@ echo "CHIM-MCP installed and enabled."
         _selectedGame = GameProfiles[0];
 
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsCriticalMaintenanceInProgress && !IsServerRunning && !IsServerStarting);
-        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress && (IsServerRunning || IsServerStarting));
-        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress);
+        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress && (IsServerRunning || IsServerStarting));
+        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
         // Update Distro is also the recovery action, so it stays available whether the distro
         // reports itself as current, out of date, or not at all.
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
@@ -314,7 +314,7 @@ echo "CHIM-MCP installed and enabled."
         DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
         CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanRunExclusiveDistroOperation);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
-        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress);
+        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
         CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
         GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
         RefreshConnectionDetailsCommand = new AsyncRelayCommand(RefreshConnectionDetailsAsync);
@@ -979,6 +979,8 @@ echo "CHIM-MCP installed and enabled."
 
     public async Task ShutdownAsync()
     {
+        // Stops only the assistant's own Linux process group; nothing else in the distro.
+        if (_assistant is { } assistant) await assistant.ShutdownAsync().ConfigureAwait(true);
         _shutdownCts.Cancel();
         if (_distroUpdateTask is { } updateTask)
         {
@@ -2305,7 +2307,7 @@ echo "CHIM-MCP installed and enabled."
             _isComponentsOperationInProgress,
             _isExclusiveDistroOperationInProgress,
             ServerManagers.Select(manager => manager.IsBusy),
-            _isCustomModMutationInProgress);
+            IsLiveFileMutationInProgress);
     }
 
     internal static bool CanRunUpdateOperation(
@@ -2334,7 +2336,7 @@ echo "CHIM-MCP installed and enabled."
                 _passiveDistroActivityCount > 0,
                 IsServerStarting,
                 ServerManagers.Select(manager => manager.IsBusy),
-                _isCustomModMutationInProgress);
+                IsLiveFileMutationInProgress);
         }
     }
 
