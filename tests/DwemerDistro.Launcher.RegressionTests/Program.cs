@@ -2232,6 +2232,113 @@ try
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, v1SkippedOnboarding),
         "An existing version 1 skipped setup must never reopen QuickStart after the schema bump.");
 
+    // Assistant: allowlisted argument vectors, the ddistro envelope, and the App Server client.
+    Assert(AssistantCliCommands.Prepare("herika", ["ext/plugin.php"]).SequenceEqual(["changes", "prepare", "--product", "herika", "--path", "ext/plugin.php"])
+           && AssistantCliCommands.Prepare("herika", []).Length == 4,
+        "Assistant tasks must accept plain relative paths and an empty diagnostic workspace.");
+    foreach (var unsafePath in new[] { "../etc/passwd", "/etc/passwd", "-rf", "a b.php", "a/./b", "C:/x", "a;b", "" })
+    {
+        Assert(!AssistantCliCommands.IsSafeRelativePath(unsafePath), $"Assistant must refuse the path '{unsafePath}'.");
+    }
+    Assert(ThrowsArgumentException(() => AssistantCliCommands.Prepare("stobe", []))
+           && ThrowsArgumentException(() => AssistantCliCommands.Stage("bad task"))
+           && ThrowsArgumentException(() => AssistantCliCommands.Apply("task1", "ABC")),
+        "Assistant commands must refuse unknown products, task ids, and malformed manifest hashes.");
+    var execArguments = AssistantCliService.BuildExecArguments("root",
+        AssistantCliService.BuildSupervisor("/run/x.pid", [AssistantCliCommands.CliPath, "agent", "serve", "--task", "task1"]));
+    Assert(execArguments[4] == "--exec" && execArguments.TakeLast(5).SequenceEqual([AssistantCliCommands.CliPath, "agent", "serve", "--task", "task1"]),
+        "Assistant commands must reach Linux as an argument vector under a supervised process group.");
+    var assistantWsl = new WslService(new ProcessRunner());
+    var productionCli = new AssistantCliService(assistantWsl, new ProcessRunner());
+    var isolatedCli = new AssistantCliService(assistantWsl, new ProcessRunner(), "DwemerDistro-Assistant-Test-20261019");
+    Assert(productionCli.DistroName == LauncherConstants.DistroName && execArguments[1] == LauncherConstants.DistroName
+           && isolatedCli.ExecArguments("root", ["true"]).SequenceEqual(["-d", "DwemerDistro-Assistant-Test-20261019", "-u", "root", "--exec", "true"])
+           && ((IAssistantCli)isolatedCli).DistroName == "DwemerDistro-Assistant-Test-20261019",
+        "The assistant must reach the production distro by default and only the named distro through the test seam.");
+    foreach (var unsafeDistro in new[] { "", "-d", "a b", "x;y", "../x", "x/y", new string('a', 65) })
+    {
+        Assert(ThrowsArgumentException(() => _ = new AssistantCliService(assistantWsl, new ProcessRunner(), unsafeDistro)),
+            $"The assistant must refuse the distro name '{unsafeDistro}'.");
+    }
+    Assert(AssistantCliCommands.UserFor(AssistantCliCommands.Capabilities()) == LauncherConstants.DistroUser
+           && AssistantCliCommands.UserFor(AssistantCliCommands.Apply("task1", new string('a', 64))) == "root",
+        "Only the read-only capability query runs as the application user.");
+    var envelope = AssistantCliService.Parse(new CommandResult(0,
+        "{\"schema_version\":1,\"command\":\"changes stage\",\"request_id\":\"r\",\"ok\":true,\"data\":{\"task_id\":\"t\"},\"error\":null,\"warnings\":[\"w\"]}", ""));
+    Assert(envelope.Ok && envelope.HasDocument && AssistantCliService.GetString(envelope.Data, "task_id") == "t" && envelope.Warnings.Single() == "w",
+        "The ddistro schema 1 envelope must parse.");
+    Assert(AssistantCliService.Parse(new CommandResult(11, "{\"schema_version\":1,\"ok\":false,\"data\":null,\"error\":{\"code\":\"conflict\",\"message\":\"m\"}}", "")).ErrorCode == "conflict"
+           && AssistantCliService.Parse(new CommandResult(0, "{\"schema_version\":2,\"ok\":true}", "")).ErrorCode == AssistantCliResult.Protocol
+           && AssistantCliService.Parse(new CommandResult(1, "", "execvpe(/usr/local/bin/ddistro) failed: No such file or directory")).ErrorCode == AssistantCliResult.CliMissing,
+        "Assistant CLI failures must keep Core codes and distinguish a missing CLI from an unsupported response.");
+    var transport = new FakeAssistantTransport();
+    var client = new CodexAppServerClient(transport);
+    var notifications = new List<string>();
+    client.NotificationReceived += (method, _) => { lock (notifications) notifications.Add(method); };
+    client.Start();
+    var pendingRequest = client.RequestAsync("model/list", null, TimeSpan.FromSeconds(10));
+    transport.Incoming.Writer.TryWrite("{\"method\":\"item/commandExecution/requestApproval\",\"id\":7,\"params\":{}}");
+    transport.Incoming.Writer.TryWrite("{\"method\":\"item/permissions/requestApproval\",\"id\":8,\"params\":{\"permissions\":{\"network\":{\"enabled\":true}}}}");
+    transport.Incoming.Writer.TryWrite("{\"method\":\"item/tool/requestUserInput\",\"id\":\"s1\",\"params\":{}}");
+    transport.Incoming.Writer.TryWrite("{\"method\":\"item/agentMessage/delta\",\"params\":{\"itemId\":\"i\",\"delta\":\"hi\"}}");
+    var replies = new[] { await transport.NextOutgoingAsync(), await transport.NextOutgoingAsync(), await transport.NextOutgoingAsync(), await transport.NextOutgoingAsync() };
+    Assert(replies[0].Contains("\"model/list\"") && replies[1].Contains("\"decision\":\"decline\"") && replies[1].Contains("\"id\":7")
+           && replies[3].Contains("-32601") && replies[3].Contains("\"id\":\"s1\""),
+        "Approval requests must be declined and unsupported server requests refused, never granted.");
+    // rust-v0.163.0 PermissionsRequestApprovalResponse: only the granted subset, so denial is an empty profile.
+    var permissionReply = System.Text.Json.Nodes.JsonNode.Parse(replies[2])!.AsObject();
+    Assert(permissionReply["id"]!.GetValue<int>() == 8 && permissionReply["result"] is System.Text.Json.Nodes.JsonObject permissionResult
+           && permissionResult.Count == 1 && permissionResult["permissions"] is System.Text.Json.Nodes.JsonObject { Count: 0 },
+        "A permissions request must be answered with an empty grant, not a command-style decision.");
+    transport.Incoming.Writer.TryComplete();
+    var disconnectFailed = false;
+    try { await pendingRequest; } catch (AppServerException) { disconnectFailed = true; }
+    Assert(disconnectFailed && !client.IsConnected, "Pending assistant requests must fail when the session disconnects.");
+    lock (notifications) Assert(notifications.SequenceEqual(["item/agentMessage/delta"]), "Notifications must reach the assistant view model.");
+    await client.DisposeAsync();
+    Assert(AssistantCliService.Parse(new CommandResult(0, "{\"schema_version\":1.5,\"ok\":true}", "")).ErrorCode == AssistantCliResult.Protocol
+           && AssistantCliService.Parse(new CommandResult(0, "{\"schema_version\":99999999999,\"ok\":true}", "")).ErrorCode == AssistantCliResult.Protocol,
+        "A fractional or oversized schema version must read as an unsupported response, not throw.");
+    var failedProcessSuccess = AssistantCliService.Parse(new CommandResult(1, "{\"schema_version\":1,\"ok\":true,\"data\":{\"state\":\"applied\",\"receipt\":\"rc1\"}}", ""));
+    Assert(failedProcessSuccess.ErrorCode == AssistantCliResult.Protocol
+           && AssistantCliService.Parse(new CommandResult(0, "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"conflict\",\"message\":\"m\"}}", "")).ErrorCode == AssistantCliResult.Protocol,
+        "A failed ddistro process must never read as a success, nor a clean exit as a Core failure.");
+
+    // Stop before turn/start answers: interrupt exactly that turn once its id is known, never a later one.
+    var turnTransport = new FakeAssistantTransport();
+    var turnClient = new CodexAppServerClient(turnTransport);
+    var turnRunner = new AssistantTurnRunner(turnClient, TimeSpan.FromSeconds(10));
+    turnClient.Start();
+    System.Text.Json.Nodes.JsonObject TurnParameters() => new() { ["threadId"] = "thr", ["input"] = new System.Text.Json.Nodes.JsonArray() };
+    var firstTurn = turnRunner.StartAsync("thr", TurnParameters());
+    var firstStartId = System.Text.Json.Nodes.JsonNode.Parse(await turnTransport.NextOutgoingAsync())!["id"]!.GetValue<long>();
+    Assert(await turnRunner.StopAsync() && !firstTurn.IsCompleted, "A stop before the turn id arrives must be held, not dropped.");
+    turnTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thr\",\"turn\":{\"id\":\"turn-1\",\"items\":[],\"status\":\"inProgress\"}}}");
+    var heldInterrupt = System.Text.Json.Nodes.JsonNode.Parse(await turnTransport.NextOutgoingAsync())!;
+    Assert(heldInterrupt["method"]!.GetValue<string>() == "turn/interrupt" && heldInterrupt["params"]!["turnId"]!.GetValue<string>() == "turn-1"
+           && heldInterrupt["params"]!["threadId"]!.GetValue<string>() == "thr" && !firstTurn.IsCompleted,
+        "The held stop must interrupt the started turn as soon as its id is known.");
+    turnTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thr\",\"turn\":{\"id\":\"turn-1\",\"items\":[],\"status\":\"interrupted\"}}}");
+    turnTransport.Incoming.Writer.TryWrite($"{{\"id\":{heldInterrupt["id"]},\"result\":{{}}}}");
+    turnTransport.Incoming.Writer.TryWrite($"{{\"id\":{firstStartId},\"result\":{{\"turn\":{{\"id\":\"turn-1\",\"items\":[],\"status\":\"inProgress\"}}}}}}");
+    await firstTurn;
+    var secondTurn = turnRunner.StartAsync("thr", TurnParameters());
+    var secondStartId = System.Text.Json.Nodes.JsonNode.Parse(await turnTransport.NextOutgoingAsync())!["id"]!.GetValue<long>();
+    turnTransport.Incoming.Writer.TryWrite($"{{\"id\":{secondStartId},\"result\":{{\"turn\":{{\"id\":\"turn-2\",\"items\":[],\"status\":\"inProgress\"}}}}}}");
+    await secondTurn;
+    await turnClient.NotifyAsync("probe/marker", null);
+    Assert((await turnTransport.NextOutgoingAsync()).Contains("probe/marker"),
+        "A stop for one turn must not be sent twice or carried over to the next turn.");
+    await turnClient.DisposeAsync();
+
+    using (var longLine = new StringReader(new string('x', 40) + "\nok\n"))
+    {
+        var reader = new BoundedLineReader(longLine, maxLineChars: 16);
+        var oversized = false;
+        try { await reader.ReadLineAsync(CancellationToken.None); } catch (InvalidDataException) { oversized = true; }
+        Assert(oversized, "One unterminated assistant line must not grow without bound.");
+    }
+
     Console.WriteLine("Launcher regression tests: OK");
     return 0;
 }
@@ -2296,4 +2403,50 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+sealed class FakeAssistantTransport : IAssistantTransport
+{
+    public System.Threading.Channels.Channel<string> Incoming { get; } = System.Threading.Channels.Channel.CreateUnbounded<string>();
+    private readonly System.Threading.Channels.Channel<string> _outgoing = System.Threading.Channels.Channel.CreateUnbounded<string>();
+
+    /// <summary>Optional scripted App Server: a result answers the request at once; null leaves it to the test.</summary>
+    public Func<string, System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>? Respond { get; init; }
+
+    public List<string> Requests { get; } = [];
+
+    /// <summary>Each request as "method params-json", guarded by the <see cref="Requests"/> lock.</summary>
+    public List<string> Bodies { get; } = [];
+
+    public string DiagnosticTail => string.Empty;
+
+    public async Task<string?> ReadLineAsync(CancellationToken cancellationToken) =>
+        await Incoming.Reader.WaitToReadAsync(cancellationToken) && Incoming.Reader.TryRead(out var line) ? line : null;
+
+    public Task WriteLineAsync(string line, CancellationToken cancellationToken)
+    {
+        if (Respond is not null && System.Text.Json.Nodes.JsonNode.Parse(line) is System.Text.Json.Nodes.JsonObject { } message
+            && message["method"]?.GetValue<string>() is { } method && message["id"] is { } id)
+        {
+            var parameters = message["params"] as System.Text.Json.Nodes.JsonObject ?? new System.Text.Json.Nodes.JsonObject();
+            lock (Requests)
+            {
+                Requests.Add(method + (parameters["threadId"] is { } thread ? ":" + thread.GetValue<string>() : string.Empty));
+                Bodies.Add(method + " " + parameters.ToJsonString());
+            }
+            if (Respond(method, parameters) is { } result)
+            {
+                Incoming.Writer.TryWrite(new System.Text.Json.Nodes.JsonObject { ["id"] = id.DeepClone(), ["result"] = result }.ToJsonString());
+            }
+        }
+        return _outgoing.Writer.WriteAsync(line, cancellationToken).AsTask();
+    }
+
+    public async Task<string> NextOutgoingAsync()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        return await _outgoing.Reader.ReadAsync(timeout.Token);
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
