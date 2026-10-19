@@ -328,7 +328,7 @@ public sealed partial class MainWindowViewModel
     /// Runs install, update or repair for one product, streaming manager output to the console and always
     /// refreshing status afterwards so a partial failure cannot leave a stale "Installed" label.
     /// </summary>
-    private async Task<bool> RunServerOperationAsync(
+    private async Task<ServerOperationOutcome> RunServerOperationAsync(
         ServerManagerItemViewModel item,
         ServerOperation operation,
         ServerBranchChannel branch,
@@ -338,7 +338,7 @@ public sealed partial class MainWindowViewModel
         var service = _serverManagement;
         if (service is null)
         {
-            return false;
+            return ServerOperationOutcome.Failed;
         }
 
         var (progressVerb, pastVerb, failureVerb) = DescribeOperation(operation);
@@ -349,30 +349,63 @@ public sealed partial class MainWindowViewModel
             $"{Environment.NewLine}{progressVerb} {item.DisplayName} on the {branchChoice} branch...{Environment.NewLine}",
             "green");
 
-        var succeeded = false;
+        var outcome = ServerOperationOutcome.Failed;
         try
         {
-            var result = operation switch
+            if (operation == ServerOperation.Update)
             {
-                ServerOperation.Install => await service
-                    .InstallAsync(item.Product, branch, line => AppendLog(line), cancellationToken)
-                    .ConfigureAwait(false),
-                ServerOperation.Repair => await service
-                    .RepairAsync(item.Product, branch, line => AppendLog(line), cancellationToken)
-                    .ConfigureAwait(false),
                 // Only update can force: the setting exists so a dirty worktree stops blocking an
                 // update, and install and repair have no confirmed edits to discard.
-                _ => await service
-                    .UpdateAsync(item.Product, branch, forceGitUpdates, line => AppendLog(line), cancellationToken)
-                    .ConfigureAwait(false)
-            };
+                outcome = await UpdateWithOneTimeConsentAsync(
+                        forceGitUpdates,
+                        force =>
+                        {
+                            if (force && !forceGitUpdates)
+                            {
+                                AppendLog($"Discarding local edits and retrying the {item.DisplayName} update once...{Environment.NewLine}", "yellow");
+                            }
 
-            succeeded = result.Succeeded;
-            AppendLog(
-                succeeded
-                    ? $"{item.DisplayName} {pastVerb} successfully.{Environment.NewLine}"
-                    : $"{item.DisplayName} {failureVerb} failed: {GetCommandError(result)}{Environment.NewLine}",
-                succeeded ? "green" : "red");
+                            return service.UpdateAsync(item.Product, branch, force, line => AppendLog(line), cancellationToken);
+                        },
+                        blocker => ConfirmDiscardTrackedEdits(item.DisplayName, blocker),
+                        blocker =>
+                        {
+                            AppendLog($"{item.DisplayName} update failed: untracked files are in the way.{Environment.NewLine}", "red");
+                            ShowUntrackedUpdateBlocker(item.DisplayName, blocker);
+                        },
+                        failed =>
+                        {
+                            var error = GetCommandError(failed);
+                            AppendLog($"{item.DisplayName} update failed: {error}{Environment.NewLine}", "red");
+                            ShowServerUpdateFailure(item.DisplayName, error);
+                        })
+                    .ConfigureAwait(false);
+                if (outcome == ServerOperationOutcome.Succeeded)
+                {
+                    AppendLog($"{item.DisplayName} {pastVerb} successfully.{Environment.NewLine}", "green");
+                }
+                else if (outcome == ServerOperationOutcome.Skipped)
+                {
+                    AppendLog($"{item.DisplayName} update skipped. Local edits were kept.{Environment.NewLine}", "yellow");
+                }
+            }
+            else
+            {
+                var result = operation == ServerOperation.Install
+                    ? await service
+                        .InstallAsync(item.Product, branch, line => AppendLog(line), cancellationToken)
+                        .ConfigureAwait(false)
+                    : await service
+                        .RepairAsync(item.Product, branch, line => AppendLog(line), cancellationToken)
+                        .ConfigureAwait(false);
+
+                outcome = result.Succeeded ? ServerOperationOutcome.Succeeded : ServerOperationOutcome.Failed;
+                AppendLog(
+                    result.Succeeded
+                        ? $"{item.DisplayName} {pastVerb} successfully.{Environment.NewLine}"
+                        : $"{item.DisplayName} {failureVerb} failed: {GetCommandError(result)}{Environment.NewLine}",
+                    result.Succeeded ? "green" : "red");
+            }
         }
         catch (OperationCanceledException)
         {
@@ -381,15 +414,212 @@ public sealed partial class MainWindowViewModel
         catch (Exception ex)
         {
             AppendLog($"{item.DisplayName} {failureVerb} failed: {ex.Message}{Environment.NewLine}", "red");
+            if (operation == ServerOperation.Update)
+            {
+                ShowServerUpdateFailure(item.DisplayName, ex.Message);
+            }
         }
         finally
         {
-            RunOnUi(() => item.EndOperation(succeeded ? null : $"Last {failureVerb} failed"));
+            var status = outcome switch
+            {
+                ServerOperationOutcome.Succeeded => null,
+                ServerOperationOutcome.Skipped => "Update skipped: local edits kept",
+                _ => $"Last {failureVerb} failed"
+            };
+            RunOnUi(() => item.EndOperation(status));
             await RefreshServerManagementSafeAsync().ConfigureAwait(false);
             QueueServerVersionRefresh(item.Product);
         }
 
-        return succeeded;
+        return outcome;
+    }
+
+    /// <summary>
+    /// Runs one mod update. Only when the manager reports tracked edits as the blocker and Force
+    /// Updates was off does it ask, once, whether to discard them, and then retries this mod once
+    /// with --force. Consent comes only from that answer; cancellation propagates with no retry.
+    /// </summary>
+    internal static async Task<ServerOperationOutcome> UpdateWithOneTimeConsentAsync(
+        bool forceGitUpdates,
+        Func<bool, Task<CommandResult>> runUpdate,
+        Func<ServerUpdateBlocker, bool> confirmDiscard,
+        Action<ServerUpdateBlocker> reportUntrackedBlocker,
+        Action<CommandResult> reportFailure)
+    {
+        var result = await runUpdate(forceGitUpdates).ConfigureAwait(false);
+        if (result.Succeeded)
+        {
+            return ServerOperationOutcome.Succeeded;
+        }
+
+        var blocker = ServerManagementService.TryParseUpdateBlocker(result);
+        // Consent needs named files: a tracked blocker without any is reported as a plain failure.
+        if (blocker is null || forceGitUpdates || !blocker.IsTrackedEdits || blocker.Files.Count == 0)
+        {
+            return ReportUpdateFailure(result, blocker);
+        }
+
+        if (!confirmDiscard(blocker))
+        {
+            return ServerOperationOutcome.Skipped;
+        }
+
+        // A failed retry is final: it is reported, never followed by another discard prompt.
+        var retry = await runUpdate(true).ConfigureAwait(false);
+        return retry.Succeeded
+            ? ServerOperationOutcome.Succeeded
+            : ReportUpdateFailure(retry, ServerManagementService.TryParseUpdateBlocker(retry));
+
+        ServerOperationOutcome ReportUpdateFailure(CommandResult failed, ServerUpdateBlocker? failedBlocker)
+        {
+            if (failedBlocker is { IsTrackedEdits: false })
+            {
+                reportUntrackedBlocker(failedBlocker);
+            }
+            else
+            {
+                reportFailure(failed);
+            }
+
+            return ServerOperationOutcome.Failed;
+        }
+    }
+
+    internal static ServerUpdateDialogContent BuildTrackedEditsBlockedContent(string displayName, ServerUpdateBlocker blocker)
+    {
+        return new ServerUpdateDialogContent(
+            Title: $"{displayName} update blocked",
+            Heading: $"Local edits are blocking the {displayName} update.",
+            Intro: null,
+            DetailsLabel: "Edited files",
+            Details: FormatBlockedFiles(blocker),
+            YesChoice: $"discard your local edits to tracked {displayName} files and retry this update once. " +
+                       "Git may also replace conflicting untracked or ignored files. This cannot be undone, " +
+                       "so back up custom files first.",
+            NoChoice: "keep your edits and skip this mod update.",
+            Footnote: "DwemerDistro and shared components were already updated.",
+            IsWarning: false);
+    }
+
+    internal static ServerUpdateDialogContent BuildUntrackedFilesBlockedContent(string displayName, ServerUpdateBlocker blocker)
+    {
+        return new ServerUpdateDialogContent(
+            Title: $"{displayName} update blocked",
+            Heading: $"{displayName} was not updated.",
+            Intro: "These files are not part of the server, but new server files need their place.",
+            DetailsLabel: "Files in the way",
+            Details: FormatBlockedFiles(blocker),
+            YesChoice: null,
+            NoChoice: null,
+            Footnote: "Move or rename them, then update again.",
+            IsWarning: true);
+    }
+
+    internal static ServerUpdateDialogContent BuildServerUpdateFailureContent(string displayName, string details)
+    {
+        // The console keeps the full output; the dialog only needs the tail that explains it.
+        const int maxLines = 12;
+        const int maxCharacters = 1200;
+        var lines = details.Trim().Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        var tail = string.Join("\n", lines.Skip(Math.Max(0, lines.Length - maxLines)));
+        if (tail.Length > maxCharacters)
+        {
+            tail = "..." + tail[^maxCharacters..];
+        }
+
+        return new ServerUpdateDialogContent(
+            Title: $"{displayName} update failed",
+            Heading: $"{displayName} update failed.",
+            Intro: null,
+            DetailsLabel: "Last output",
+            Details: tail.Length > 0 ? tail : "(no error output)",
+            YesChoice: null,
+            NoChoice: null,
+            Footnote: "The console has the full output.",
+            IsWarning: false);
+    }
+
+    internal static string BuildTrackedEditsBlockedMessage(string displayName, ServerUpdateBlocker blocker) =>
+        BuildTrackedEditsBlockedContent(displayName, blocker).ToPlainText();
+
+    internal static string BuildUntrackedFilesBlockedMessage(string displayName, ServerUpdateBlocker blocker) =>
+        BuildUntrackedFilesBlockedContent(displayName, blocker).ToPlainText();
+
+    internal static string BuildServerUpdateFailureMessage(string displayName, string details) =>
+        BuildServerUpdateFailureContent(displayName, details).ToPlainText();
+
+    // The list is capped in both directions so the warning and buttons stay in view without
+    // scrolling on a small laptop. The console has Git's complete list.
+    internal const int BlockedFilesShownLimit = 6;
+    internal const int BlockedFileShownLength = 100;
+
+    private static string FormatBlockedFiles(ServerUpdateBlocker blocker)
+    {
+        var lines = blocker.Files
+            .Take(BlockedFilesShownLimit)
+            .Select(file => "  " + (file.Length <= BlockedFileShownLength
+                ? file
+                : "..." + file[^(BlockedFileShownLength - 3)..]))
+            .ToList();
+        if (lines.Count == 0)
+        {
+            return "  (see the console for the file list)";
+        }
+
+        var hidden = Math.Max(blocker.TotalFiles, blocker.Files.Count) - lines.Count;
+        if (hidden > 0)
+        {
+            lines.Add($"  ...and {hidden} more");
+        }
+
+        return string.Join("\n", lines);
+    }
+
+    internal static bool ConfirmDiscardTrackedEdits(string displayName, ServerUpdateBlocker blocker)
+    {
+        return ShowOwnedServerDialog(BuildTrackedEditsBlockedContent(displayName, blocker));
+    }
+
+    internal static void ShowUntrackedUpdateBlocker(string displayName, ServerUpdateBlocker blocker)
+    {
+        ShowOwnedServerDialog(BuildUntrackedFilesBlockedContent(displayName, blocker));
+    }
+
+    internal static void ShowServerUpdateFailure(string displayName, string details)
+    {
+        ShowOwnedServerDialog(BuildServerUpdateFailureContent(displayName, details));
+    }
+
+    /// <summary>
+    /// Shows the themed dialog modal to the main window on the UI thread and returns true only for
+    /// Yes. Without a running application it shows nothing and returns false, so no answer is ever
+    /// invented as consent.
+    /// </summary>
+    private static bool ShowOwnedServerDialog(ServerUpdateDialogContent content)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null)
+        {
+            return false;
+        }
+
+        return dispatcher.Invoke(() =>
+        {
+            var dialog = new ServerUpdateDialog(content);
+            var owner = Application.Current?.MainWindow;
+            if (owner is { IsVisible: true })
+            {
+                dialog.Owner = owner;
+            }
+            else
+            {
+                dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                dialog.ShowInTaskbar = true;
+            }
+
+            return dialog.ShowDialog() == true;
+        });
     }
 
     /// <summary>
@@ -631,5 +861,13 @@ public sealed partial class MainWindowViewModel
         Install,
         Update,
         Repair
+    }
+
+    /// <summary>Skipped means the user chose to keep local edits, which is not a failure.</summary>
+    internal enum ServerOperationOutcome
+    {
+        Succeeded,
+        Skipped,
+        Failed
     }
 }

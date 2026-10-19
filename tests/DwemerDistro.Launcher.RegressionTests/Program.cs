@@ -1163,23 +1163,27 @@ try
     Assert(MainWindowViewModel.ForceGitUpdatesUpdateWarning.Contains("permanently discarded", StringComparison.Ordinal)
            && MainWindowViewModel.ForceGitUpdatesUpdateWarning.Contains("Git-tracked", StringComparison.Ordinal)
            && MainWindowViewModel.ForceGitUpdatesUpdateWarning.Contains(
-               "Databases, uploads, profiles, memories, voices, and other untracked data are not deleted",
-               StringComparison.Ordinal),
-        "The repeated warning must separate discarded tracked edits from untracked data that survives.");
+               "Git may also replace untracked or ignored files that conflict", StringComparison.Ordinal)
+           && MainWindowViewModel.ForceGitUpdatesUpdateWarning.Contains("Back up custom files first", StringComparison.Ordinal)
+           && !MainWindowViewModel.ForceGitUpdatesUpdateWarning.Contains("not deleted", StringComparison.Ordinal),
+        "The repeated warning must say conflicting untracked or ignored files may be replaced, not promise they survive.");
 
     var forceGitUpdatesConfirmation = MainWindowViewModel.BuildForceGitUpdatesConfirmation();
     Assert(forceGitUpdatesConfirmation.Contains("destructive", StringComparison.Ordinal)
            && forceGitUpdatesConfirmation.Contains("permanently", StringComparison.Ordinal)
            && forceGitUpdatesConfirmation.Contains("no undo", StringComparison.Ordinal),
         "Enabling Force Updates must state that manual edits are permanently discarded.");
-    Assert(forceGitUpdatesConfirmation.Contains("HerikaServer, StobeServer, or DialecticServer", StringComparison.Ordinal)
-           && forceGitUpdatesConfirmation.Contains("track in Git", StringComparison.Ordinal),
-        "The confirmation must name the servers it rewrites and limit the damage to Git-tracked files.");
+    Assert(forceGitUpdatesConfirmation.Contains("updating a managed server", StringComparison.Ordinal)
+           && forceGitUpdatesConfirmation.Contains("tracks in Git", StringComparison.Ordinal)
+           && !forceGitUpdatesConfirmation.Contains("HerikaServer, StobeServer, or DialecticServer", StringComparison.Ordinal),
+        "The confirmation must cover every managed server, not a fixed list, and name Git-tracked files.");
     Assert(forceGitUpdatesConfirmation.Contains(
-               "Nothing untracked is removed: databases, uploads, profiles, memories, voices",
+               "Git may also replace untracked or ignored files that conflict with the update",
                StringComparison.Ordinal)
+           && forceGitUpdatesConfirmation.Contains("Back up custom files first", StringComparison.Ordinal)
+           && !forceGitUpdatesConfirmation.Contains("Nothing untracked is removed", StringComparison.Ordinal)
            && !forceGitUpdatesConfirmation.Contains("git clean", StringComparison.OrdinalIgnoreCase),
-        "The confirmation must never claim that untracked or runtime data is deleted.");
+        "The confirmation must not promise untracked data survives: conflicting untracked or ignored files may be replaced.");
 
     var defaultUpdateArguments = ServerManagementService.BuildUpdateArguments(
         ServerProduct.Herika, ServerBranchChannel.Main);
@@ -1195,6 +1199,158 @@ try
            && !ServerManagementService.BuildRepairArguments(ServerProduct.Herika, ServerBranchChannel.Main).Contains("--force")
            && !ServerManagementService.BuildUninstallArguments(ServerProduct.Herika).Contains("--force"),
         "Only update may force; install, repair, and uninstall must never carry the flag.");
+
+    // --- Blocked mod update: one-time consent retry -----------------------------------------
+
+    static CommandResult BlockedResult(int exitCode, string reason, int total, params string[] files) =>
+        new(exitCode,
+            "progress\n" + ServerManagementService.UpdateBlockedMarker +
+            System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["schema_version"] = 1, ["reason"] = reason, ["product"] = "herika", ["branch"] = "aiagent",
+                ["total"] = total, ["files"] = files
+            }) + "\n",
+            "[FAIL] blocked\n");
+
+    var trackedBlocked = BlockedResult(79, "tracked-changes", 2, "conf dir/a file.php", "line\nbreak.php");
+    var parsedTracked = ServerManagementService.TryParseUpdateBlocker(trackedBlocked);
+    Assert(parsedTracked is { IsTrackedEdits: true, TotalFiles: 2 }
+           && parsedTracked.Files.SequenceEqual(["conf dir/a file.php", "line?break.php"]),
+        "Exit 79 with its blocker line must yield the tracked file list, with control characters made visible.");
+    Assert(ServerManagementService.TryParseUpdateBlocker(BlockedResult(80, "untracked-files", 1, "new.php"))
+               is { IsTrackedEdits: false },
+        "Exit 80 must be read as an untracked-file blocker.");
+    Assert(ServerManagementService.TryParseUpdateBlocker(trackedBlocked with { ExitCode = 1 }) is null
+           && ServerManagementService.TryParseUpdateBlocker(new CommandResult(79, "", "[FAIL] x")) is null
+           && ServerManagementService.TryParseUpdateBlocker(BlockedResult(79, "untracked-files", 1, "a")) is null
+           && ServerManagementService.TryParseUpdateBlocker(
+               new CommandResult(79, ServerManagementService.UpdateBlockedMarker + "{not json", "")) is null,
+        "Only the dedicated exit code with a matching, readable blocker line counts as a blocker.");
+    var manyBlocked = ServerManagementService.TryParseUpdateBlocker(BlockedResult(79, "tracked-changes", 40,
+        Enumerable.Range(0, 30).Select(index => new string('x', 500) + index).ToArray()))!;
+    Assert(manyBlocked.Files.Count == ServerManagementService.UpdateBlockedFileLimit
+           && manyBlocked.TotalFiles == 40
+           && manyBlocked.Files.All(file => file.Length <= 200 && file.StartsWith("...", StringComparison.Ordinal)),
+        "The blocker file list and each path must stay bounded.");
+
+    var trackedMessage = MainWindowViewModel.BuildTrackedEditsBlockedMessage("HerikaServer", manyBlocked);
+    Assert(trackedMessage.Contains("Local edits are blocking the HerikaServer update", StringComparison.Ordinal)
+           && trackedMessage.Contains("Yes: discard your local edits to tracked HerikaServer files", StringComparison.Ordinal)
+           && trackedMessage.Contains("No: keep your edits and skip this mod update", StringComparison.Ordinal)
+           && trackedMessage.Contains("already updated", StringComparison.Ordinal)
+           && trackedMessage.Contains("Git may also replace conflicting untracked or ignored files", StringComparison.Ordinal)
+           && trackedMessage.Contains("back up custom files first", StringComparison.Ordinal)
+           && !trackedMessage.Contains("not deleted", StringComparison.Ordinal),
+        "The discard prompt must name the mod, both choices, and warn that conflicting untracked or ignored files may be replaced.");
+    // Worst case from the parser (20 names of 200 characters, 40 in total) must still make a compact popup.
+    var shownFileLines = trackedMessage.Split('\n').Where(line => line.StartsWith("  ", StringComparison.Ordinal)).ToArray();
+    Assert(shownFileLines.Length == MainWindowViewModel.BlockedFilesShownLimit + 1
+           && shownFileLines[..^1].All(line => line.Length == 2 + MainWindowViewModel.BlockedFileShownLength
+                                               && line.StartsWith("  ...", StringComparison.Ordinal))
+           && shownFileLines[^1] == $"  ...and {40 - MainWindowViewModel.BlockedFilesShownLimit} more"
+           && trackedMessage.Length < 1400,
+        "The discard prompt must show at most six shortened names and count every name it leaves out.");
+    var sevenBlocked = ServerManagementService.TryParseUpdateBlocker(BlockedResult(79, "tracked-changes", 7,
+        Enumerable.Range(0, 7).Select(index => $"f{index}.php").ToArray()))!;
+    var sevenMessage = MainWindowViewModel.BuildTrackedEditsBlockedMessage("HerikaServer", sevenBlocked);
+    Assert(sevenMessage.Contains("  f5.php\n  ...and 1 more", StringComparison.Ordinal)
+           && !sevenMessage.Contains("f6.php", StringComparison.Ordinal),
+        "One name past the limit must be counted, not shown.");
+    var blankBlocked = ServerManagementService.TryParseUpdateBlocker(BlockedResult(79, "tracked-changes", 3, "", " ", "\t"));
+    Assert(blankBlocked is { IsTrackedEdits: true, Files.Count: 0 },
+        "Blank names must not be kept as blocking files.");
+    Assert(MainWindowViewModel.BuildUntrackedFilesBlockedMessage("StobeServer",
+               ServerManagementService.TryParseUpdateBlocker(BlockedResult(80, "untracked-files", 0))!)
+               .Contains("(see the console for the file list)", StringComparison.Ordinal),
+        "An untracked warning without names must point to the console.");
+    Assert(MainWindowViewModel.BuildUntrackedFilesBlockedMessage("StobeServer",
+               ServerManagementService.TryParseUpdateBlocker(BlockedResult(80, "untracked-files", 1, "new.php"))!)
+               .Contains("new.php", StringComparison.Ordinal),
+        "The untracked warning must list the files in the way.");
+    var failureMessage = MainWindowViewModel.BuildServerUpdateFailureMessage("StobeServer",
+        string.Join("\n", Enumerable.Range(0, 100).Select(index => $"line {index}")));
+    Assert(failureMessage.Contains("line 99", StringComparison.Ordinal)
+           && !failureMessage.Contains("line 50", StringComparison.Ordinal),
+        "The failure popup must keep only the bounded tail of the error.");
+    Assert(MainWindowViewModel.BuildTrackedEditsBlockedContent("HerikaServer", parsedTracked!).IsConfirmation
+           && !MainWindowViewModel.BuildUntrackedFilesBlockedContent("StobeServer", parsedTracked!).IsConfirmation
+           && !MainWindowViewModel.BuildServerUpdateFailureContent("StobeServer", "x").IsConfirmation
+           && MainWindowViewModel.BuildServerUpdateFailureMessage("StobeServer", " ").Contains("(no error output)", StringComparison.Ordinal),
+        "Only the tracked-edits dialog may offer Yes; warnings and errors are OK only, and an empty error still says so.");
+    Assert(!MainWindowViewModel.ConfirmDiscardTrackedEdits("HerikaServer", parsedTracked!),
+        "Without a visible answer the discard prompt must default to No.");
+
+    async Task<(MainWindowViewModel.ServerOperationOutcome Outcome, List<bool> Runs, int Prompts, int Untracked, int Failures)>
+        RunConsentScenario(bool force, bool answer, params CommandResult[] results)
+    {
+        var runs = new List<bool>();
+        var prompts = 0;
+        var untracked = 0;
+        var failures = 0;
+        var outcome = await MainWindowViewModel.UpdateWithOneTimeConsentAsync(
+            force,
+            forced => { runs.Add(forced); return Task.FromResult(results[runs.Count - 1]); },
+            _ => { prompts++; return answer; },
+            _ => untracked++,
+            _ => failures++);
+        return (outcome, runs, prompts, untracked, failures);
+    }
+
+    var ok = new CommandResult(0, "", "");
+    var oldCoreFailure = new CommandResult(1, "", "[FAIL] Could not select herika branch aiagent.");
+    var consent = await RunConsentScenario(false, true, ok);
+    Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Succeeded, Prompts: 0, Failures: 0 }
+           && consent.Runs.SequenceEqual([false]),
+        "A clean update must not prompt.");
+    consent = await RunConsentScenario(false, false, trackedBlocked);
+    Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Skipped, Prompts: 1, Failures: 0 }
+           && consent.Runs.SequenceEqual([false]),
+        "No must skip the mod without retrying or reporting a failure.");
+    consent = await RunConsentScenario(false, true, trackedBlocked, ok);
+    Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Succeeded, Prompts: 1 }
+           && consent.Runs.SequenceEqual([false, true]),
+        "Yes must retry this mod exactly once with force.");
+    consent = await RunConsentScenario(false, true, trackedBlocked, trackedBlocked);
+    Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Failed, Prompts: 1, Failures: 1 }
+           && consent.Runs.SequenceEqual([false, true]),
+        "A failed retry must be reported once and never prompt again.");
+    consent = await RunConsentScenario(true, true, trackedBlocked);
+    Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Failed, Prompts: 0, Failures: 1 }
+           && consent.Runs.SequenceEqual([true]),
+        "An update already forced by the setting must report failure without prompting.");
+    consent = await RunConsentScenario(false, true, BlockedResult(80, "untracked-files", 1, "new.php"));
+    Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Failed, Prompts: 0, Untracked: 1, Failures: 0 }
+           && consent.Runs.Count == 1,
+        "Untracked files in the way must warn without offering to discard anything.");
+    consent = await RunConsentScenario(false, true, oldCoreFailure);
+    Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Failed, Prompts: 0, Failures: 1 }
+           && consent.Runs.Count == 1,
+        "An older manager's generic failure must be reported without a destructive retry.");
+    foreach (var unnamed in new[]
+             {
+                 BlockedResult(79, "tracked-changes", 0),
+                 BlockedResult(79, "tracked-changes", 2, "", "  \r\n")
+             })
+    {
+        consent = await RunConsentScenario(false, true, unnamed);
+        Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Failed, Prompts: 0, Untracked: 0, Failures: 1 }
+               && consent.Runs.SequenceEqual([false]),
+            "A tracked blocker with no usable file names must show the generic error, never the discard prompt.");
+    }
+    consent = await RunConsentScenario(false, true, BlockedResult(80, "untracked-files", 0));
+    Assert(consent is { Outcome: MainWindowViewModel.ServerOperationOutcome.Failed, Prompts: 0, Untracked: 1, Failures: 0 },
+        "An untracked blocker with no names still shows the untracked warning.");
+    var canceledRuns = 0;
+    var canceledPrompts = 0;
+    try
+    {
+        await MainWindowViewModel.UpdateWithOneTimeConsentAsync(false,
+            _ => { canceledRuns++; return Task.FromCanceled<CommandResult>(new CancellationToken(true)); },
+            _ => { canceledPrompts++; return true; }, _ => { }, _ => { });
+        Assert(false, "Cancellation must propagate.");
+    }
+    catch (OperationCanceledException) { }
+    Assert(canceledRuns == 1 && canceledPrompts == 0, "A canceled update must not prompt or retry.");
 
     var enablePrompts = 0;
     Assert(!MainWindowViewModel.ResolveForceGitUpdatesToggle(true, () => { enablePrompts++; return false; })
