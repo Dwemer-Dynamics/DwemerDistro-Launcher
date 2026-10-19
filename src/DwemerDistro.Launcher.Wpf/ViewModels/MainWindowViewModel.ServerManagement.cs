@@ -486,25 +486,37 @@ public sealed partial class MainWindowViewModel
         }
     }
 
-    internal static string BuildTrackedEditsBlockedMessage(string displayName, ServerUpdateBlocker blocker)
+    internal static ServerUpdateDialogContent BuildTrackedEditsBlockedContent(string displayName, ServerUpdateBlocker blocker)
     {
-        return $"Local edits are blocking the {displayName} update.\n\n" +
-               $"Edited files:\n{FormatBlockedFiles(blocker)}\n\n" +
-               $"Yes: discard your local edits to tracked {displayName} files and retry this update once. " +
-               "Git may also replace conflicting untracked or ignored files. This cannot be undone, " +
-               "so back up custom files first.\n\n" +
-               "No: keep your edits and skip this mod update.\n\n" +
-               "DwemerDistro and shared components were already updated.";
+        return new ServerUpdateDialogContent(
+            Title: $"{displayName} update blocked",
+            Heading: $"Local edits are blocking the {displayName} update.",
+            Intro: null,
+            DetailsLabel: "Edited files",
+            Details: FormatBlockedFiles(blocker),
+            YesChoice: $"discard your local edits to tracked {displayName} files and retry this update once. " +
+                       "Git may also replace conflicting untracked or ignored files. This cannot be undone, " +
+                       "so back up custom files first.",
+            NoChoice: "keep your edits and skip this mod update.",
+            Footnote: "DwemerDistro and shared components were already updated.",
+            IsWarning: false);
     }
 
-    internal static string BuildUntrackedFilesBlockedMessage(string displayName, ServerUpdateBlocker blocker)
+    internal static ServerUpdateDialogContent BuildUntrackedFilesBlockedContent(string displayName, ServerUpdateBlocker blocker)
     {
-        return $"{displayName} was not updated. These files are not part of the server, but new server files need their place:\n\n" +
-               $"{FormatBlockedFiles(blocker)}\n\n" +
-               "Move or rename them, then update again.";
+        return new ServerUpdateDialogContent(
+            Title: $"{displayName} update blocked",
+            Heading: $"{displayName} was not updated.",
+            Intro: "These files are not part of the server, but new server files need their place.",
+            DetailsLabel: "Files in the way",
+            Details: FormatBlockedFiles(blocker),
+            YesChoice: null,
+            NoChoice: null,
+            Footnote: "Move or rename them, then update again.",
+            IsWarning: true);
     }
 
-    internal static string BuildServerUpdateFailureMessage(string displayName, string details)
+    internal static ServerUpdateDialogContent BuildServerUpdateFailureContent(string displayName, string details)
     {
         // The console keeps the full output; the dialog only needs the tail that explains it.
         const int maxLines = 12;
@@ -516,11 +528,29 @@ public sealed partial class MainWindowViewModel
             tail = "..." + tail[^maxCharacters..];
         }
 
-        return $"{displayName} update failed.\n\n{tail}\n\nThe console has the full output.";
+        return new ServerUpdateDialogContent(
+            Title: $"{displayName} update failed",
+            Heading: $"{displayName} update failed.",
+            Intro: null,
+            DetailsLabel: "Last output",
+            Details: tail.Length > 0 ? tail : "(no error output)",
+            YesChoice: null,
+            NoChoice: null,
+            Footnote: "The console has the full output.",
+            IsWarning: false);
     }
 
-    // A native message box grows with its text, so the list is capped in both directions to keep
-    // the buttons on screen. The console has Git's complete list.
+    internal static string BuildTrackedEditsBlockedMessage(string displayName, ServerUpdateBlocker blocker) =>
+        BuildTrackedEditsBlockedContent(displayName, blocker).ToPlainText();
+
+    internal static string BuildUntrackedFilesBlockedMessage(string displayName, ServerUpdateBlocker blocker) =>
+        BuildUntrackedFilesBlockedContent(displayName, blocker).ToPlainText();
+
+    internal static string BuildServerUpdateFailureMessage(string displayName, string details) =>
+        BuildServerUpdateFailureContent(displayName, details).ToPlainText();
+
+    // The list is capped in both directions so the warning and buttons stay in view without
+    // scrolling on a small laptop. The console has Git's complete list.
     internal const int BlockedFilesShownLimit = 6;
     internal const int BlockedFileShownLength = 100;
 
@@ -548,57 +578,47 @@ public sealed partial class MainWindowViewModel
 
     internal static bool ConfirmDiscardTrackedEdits(string displayName, ServerUpdateBlocker blocker)
     {
-        return ShowOwnedServerMessage(
-                   BuildTrackedEditsBlockedMessage(displayName, blocker),
-                   $"{displayName} update blocked",
-                   MessageBoxButton.YesNo,
-                   MessageBoxImage.Warning,
-                   MessageBoxResult.No) == MessageBoxResult.Yes;
+        return ShowOwnedServerDialog(BuildTrackedEditsBlockedContent(displayName, blocker));
     }
 
     internal static void ShowUntrackedUpdateBlocker(string displayName, ServerUpdateBlocker blocker)
     {
-        ShowOwnedServerMessage(
-            BuildUntrackedFilesBlockedMessage(displayName, blocker),
-            $"{displayName} update blocked",
-            MessageBoxButton.OK,
-            MessageBoxImage.Warning,
-            MessageBoxResult.OK);
+        ShowOwnedServerDialog(BuildUntrackedFilesBlockedContent(displayName, blocker));
     }
 
     internal static void ShowServerUpdateFailure(string displayName, string details)
     {
-        ShowOwnedServerMessage(
-            BuildServerUpdateFailureMessage(displayName, details),
-            $"{displayName} update failed",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error,
-            MessageBoxResult.OK);
+        ShowOwnedServerDialog(BuildServerUpdateFailureContent(displayName, details));
     }
 
     /// <summary>
-    /// Shows a message box owned by the main window on the UI thread. Without a running application
-    /// it shows nothing and returns the default, so no answer is ever invented as consent.
+    /// Shows the themed dialog modal to the main window on the UI thread and returns true only for
+    /// Yes. Without a running application it shows nothing and returns false, so no answer is ever
+    /// invented as consent.
     /// </summary>
-    private static MessageBoxResult ShowOwnedServerMessage(
-        string text,
-        string caption,
-        MessageBoxButton buttons,
-        MessageBoxImage image,
-        MessageBoxResult defaultResult)
+    private static bool ShowOwnedServerDialog(ServerUpdateDialogContent content)
     {
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher is null)
         {
-            return defaultResult;
+            return false;
         }
 
         return dispatcher.Invoke(() =>
         {
+            var dialog = new ServerUpdateDialog(content);
             var owner = Application.Current?.MainWindow;
-            return owner is { IsVisible: true }
-                ? MessageBox.Show(owner, text, caption, buttons, image, defaultResult)
-                : MessageBox.Show(text, caption, buttons, image, defaultResult);
+            if (owner is { IsVisible: true })
+            {
+                dialog.Owner = owner;
+            }
+            else
+            {
+                dialog.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                dialog.ShowInTaskbar = true;
+            }
+
+            return dialog.ShowDialog() == true;
         });
     }
 

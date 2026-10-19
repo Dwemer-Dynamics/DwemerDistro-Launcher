@@ -1272,6 +1272,11 @@ try
     Assert(failureMessage.Contains("line 99", StringComparison.Ordinal)
            && !failureMessage.Contains("line 50", StringComparison.Ordinal),
         "The failure popup must keep only the bounded tail of the error.");
+    Assert(MainWindowViewModel.BuildTrackedEditsBlockedContent("HerikaServer", parsedTracked!).IsConfirmation
+           && !MainWindowViewModel.BuildUntrackedFilesBlockedContent("StobeServer", parsedTracked!).IsConfirmation
+           && !MainWindowViewModel.BuildServerUpdateFailureContent("StobeServer", "x").IsConfirmation
+           && MainWindowViewModel.BuildServerUpdateFailureMessage("StobeServer", " ").Contains("(no error output)", StringComparison.Ordinal),
+        "Only the tracked-edits dialog may offer Yes; warnings and errors are OK only, and an empty error still says so.");
     Assert(!MainWindowViewModel.ConfirmDiscardTrackedEdits("HerikaServer", parsedTracked!),
         "Without a visible answer the discard prompt must default to No.");
 
