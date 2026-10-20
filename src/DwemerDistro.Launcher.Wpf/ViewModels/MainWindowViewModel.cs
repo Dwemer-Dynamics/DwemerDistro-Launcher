@@ -1079,13 +1079,24 @@ echo "CHIM-MCP installed and enabled."
 
     /// <summary>
     /// Runs the automatic launcher-version system sync on the shared background-task path, so a slow
-    /// or failing update is logged rather than blocking startup.
+    /// or failing update is logged rather than blocking startup. The assistant connects only after it
+    /// settles, so the session never starts while the sync is updating DwemerDistro.
     /// </summary>
     private void QueueLauncherVersionSync()
     {
         QueueBackgroundTask(
             "Launcher version sync",
-            cancellationToken => SyncLauncherVersionAsync(cancellationToken),
+            async cancellationToken =>
+            {
+                try
+                {
+                    await SyncLauncherVersionAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    QueueAssistantStartupConnect();
+                }
+            },
             LauncherVersionSyncTimeout,
             accessesDistro: true);
     }

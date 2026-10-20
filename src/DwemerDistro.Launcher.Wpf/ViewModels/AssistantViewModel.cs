@@ -141,9 +141,13 @@ public sealed class AssistantViewModel : ObservableObject
     private AssistantTurnRunner? _turns;
     private int _sessionGeneration;
     private bool _ownsDistroActivity;
+    private bool _startupConnectRequested;
+    private bool _isShutDown;
+    // Cancels Connect's own readiness reads and session start when the launcher closes.
+    private readonly CancellationTokenSource _lifetime = new();
     private AssistantState _state = AssistantState.NotChecked;
     private string _statusText = string.Empty;
-    private string _statusDetail = "Connect starts the assistant. Nothing runs until you ask.";
+    private string _statusDetail = "The assistant connects after the launcher's startup checks, or press Connect. Nothing is sent until you ask.";
     private string _providerText = "Codex";
     private string _accountText = "Not connected";
     private AssistantModelOption? _selectedModel;
@@ -151,6 +155,8 @@ public sealed class AssistantViewModel : ObservableObject
     private string _taskText = "No task yet";
     private string? _taskId;
     private string? _threadId;
+    // The thread whose conversation the transcript already shows, so a reconnect never restores it twice.
+    private string? _shownThreadId;
     private string? _installationId;
     private string _provider = string.Empty;
     private string _inputText = string.Empty;
@@ -171,7 +177,10 @@ public sealed class AssistantViewModel : ObservableObject
     private string? _pendingContinuation;
     private CancellationTokenSource? _contextLookup;
 
-    /// <summary>Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect.</summary>
+    /// <summary>
+    /// Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect, either the
+    /// user's or the launcher's one <see cref="ConnectOnStartupAsync"/>.
+    /// </summary>
     public AssistantViewModel(IAssistantCli cli, IAssistantHost host, IAssistantStateStore store)
     {
         _cli = cli;
@@ -341,8 +350,31 @@ public sealed class AssistantViewModel : ObservableObject
 
     // --- Connection ---------------------------------------------------------------------------
 
+    /// <summary>
+    /// The launcher's one automatic Connect, after its startup checks. It does nothing once requested before, once the
+    /// user has used Connect or the launcher is closing. Like Connect it only reads readiness: it never runs the isolation
+    /// check, signs in, opens a page or sends a message, and any failure stays inline with Connect available.
+    /// </summary>
+    internal async Task ConnectOnStartupAsync()
+    {
+        if (_startupConnectRequested || _isShutDown) return;
+        _startupConnectRequested = true;
+        if (State != AssistantState.NotChecked || !ConnectCommand.CanExecute(null)) return;
+        try
+        {
+            await ConnectAsync();
+        }
+        catch (Exception ex)
+        {
+            // Connect pressed by the user reports this in a dialog; the automatic one must not interrupt startup.
+            LauncherLogService.Operation($"Assistant startup connection failed: {ex.GetType().Name}");
+            if (!_isShutDown) await EndSessionAsync(AssistantState.Error, "The assistant could not connect: " + Shorten(ex.Message, 200));
+        }
+    }
+
     internal async Task ConnectAsync()
     {
+        if (_isShutDown) return;
         if (!_ownsDistroActivity)
         {
             if (!_host.TryBeginDistroActivity())
@@ -356,7 +388,7 @@ public sealed class AssistantViewModel : ObservableObject
         try
         {
             SetState(AssistantState.Checking, "Reading DwemerDistro capabilities…");
-            var capabilities = await _cli.RunAsync(AssistantCliCommands.Capabilities(), QueryTimeout, CancellationToken.None);
+            var capabilities = await _cli.RunAsync(AssistantCliCommands.Capabilities(), QueryTimeout, _lifetime.Token);
             if (!capabilities.Ok)
             {
                 FailCli(capabilities);
@@ -368,7 +400,7 @@ public sealed class AssistantViewModel : ObservableObject
                 return;
             }
 
-            var agent = await _cli.RunAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, CancellationToken.None);
+            var agent = await _cli.RunAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, _lifetime.Token);
             if (!agent.Ok)
             {
                 FailCli(agent);
@@ -392,7 +424,12 @@ public sealed class AssistantViewModel : ObservableObject
             }
 
             if (_taskId is null && !await OpenTaskAsync()) return;
+            if (_isShutDown) return;
             await StartSessionAsync();
+        }
+        catch (OperationCanceledException) when (_isShutDown)
+        {
+            // The launcher is closing; nothing more is started and the state no longer matters.
         }
         finally
         {
@@ -433,7 +470,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
 
         SetState(AssistantState.Checking, $"Checking saved task {saved.TaskId}…");
-        var status = await _cli.RunAsync(AssistantCliCommands.ChangeStatus(saved.TaskId), QueryTimeout, CancellationToken.None);
+        var status = await _cli.RunAsync(AssistantCliCommands.ChangeStatus(saved.TaskId), QueryTimeout, _lifetime.Token);
         if (!status.Ok && (!status.HasDocument || status.ErrorCode == "busy"))
         {
             // Unknown rather than gone: keep the reference so Connect can try again.
@@ -467,8 +504,11 @@ public sealed class AssistantViewModel : ObservableObject
             return false;
         }
 
+        if (_isShutDown) return false;
         SetState(AssistantState.Checking, "Preparing an isolated working copy…");
+        // Core's prepare is not cut short, but a task it finishes after the launcher began closing is neither used nor saved.
         var prepared = await _cli.RunAsync(AssistantCliCommands.Prepare("herika", paths), PrepareTimeout, CancellationToken.None);
+        if (_isShutDown) return false;
         if (!prepared.Ok)
         {
             FailCli(prepared);
@@ -504,7 +544,7 @@ public sealed class AssistantViewModel : ObservableObject
         IAssistantTransport transport;
         try
         {
-            transport = await _cli.StartServeAsync(_taskId!, CancellationToken.None);
+            transport = await _cli.StartServeAsync(_taskId!, _lifetime.Token);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException)
         {
@@ -644,12 +684,86 @@ public sealed class AssistantViewModel : ObservableObject
         if (resumed && threadId != _threadId) throw new AppServerException(0, "The assistant resumed a different conversation than this task's.");
         _threadId = threadId;
         SaveReference();
+        if (resumed && _shownThreadId != threadId) RestoreConversation(Prop(result, "thread"));
+        _shownThreadId = threadId;
     }
 
-    /// <summary>Identifiers only; the transcript and the account stay out of launcher storage.</summary>
+    /// <summary>
+    /// Shows a resumed thread's earlier conversation in order: the user's own text and the assistant's messages only.
+    /// rust-v0.163.0 returns it as thread.turns[].items[]; a userMessage keeps each text input the launcher sent as its own
+    /// content entry, so the labeled per-message context is dropped as a whole entry, never cut out of the user's text.
+    /// Reasoning, commands, tool calls and file changes stay hidden; nothing is sent, offered or applied here.
+    /// </summary>
+    private void RestoreConversation(JsonElement thread)
+    {
+        var restored = ReadConversation(thread, out var omitted);
+        foreach (var (item, index) in restored.TakeLast(MaxTranscriptItems).Select((item, index) => (item, index)))
+            Transcript.Insert(index, item);
+        while (Transcript.Count > MaxTranscriptItems) Transcript.RemoveAt(0);
+        if (omitted > 0) AddSystem($"{omitted} earlier message(s) in this conversation could not be shown here.");
+    }
+
+    internal static List<AssistantTranscriptItem> ReadConversation(JsonElement thread, out int omitted)
+    {
+        var restored = new List<AssistantTranscriptItem>();
+        omitted = 0;
+        if (Prop(thread, "turns") is not { ValueKind: JsonValueKind.Array } turns) return restored;
+        foreach (var turn in turns.EnumerateArray())
+        {
+            if (Prop(turn, "items") is not { ValueKind: JsonValueKind.Array } items) continue;
+            foreach (var item in items.EnumerateArray())
+            {
+                var id = AssistantCliService.GetString(item, "id");
+                switch (AssistantCliService.GetString(item, "type"))
+                {
+                    case "userMessage":
+                        var text = ReadUserText(Prop(item, "content"));
+                        if (text is null) omitted++;
+                        // The first message of a workspace the user allowed files for is the launcher's, not the user's.
+                        else if (text.StartsWith(ContinuationPrefix, StringComparison.Ordinal))
+                            restored.Add(new AssistantTranscriptItem("DwemerDistro", "Continued your request with the files you allowed.", id));
+                        else if (text.Length > 0) restored.Add(new AssistantTranscriptItem("You", text, id));
+                        break;
+                    case "agentMessage":
+                        var message = AssistantCliService.GetString(item, "text");
+                        // Shown as it was after its turn; an old file request is never offered again.
+                        if (ParseFileRequest(message, out _, out var visible, out _) == FileRequestParse.Valid) message = visible;
+                        if (message.Length > 0) restored.Add(new AssistantTranscriptItem("Codex", message, id));
+                        break;
+                }
+            }
+        }
+        return restored;
+    }
+
+    /// <summary>
+    /// The user's own text from one userMessage's content entries, exactly as sent, or null when it cannot be shown
+    /// safely: the launcher's context label anywhere but the start of its own entry hides the whole message.
+    /// </summary>
+    private static string? ReadUserText(JsonElement content)
+    {
+        if (content.ValueKind != JsonValueKind.Array) return null;
+        var parts = new List<string>();
+        var other = false;
+        foreach (var entry in content.EnumerateArray())
+        {
+            if (AssistantCliService.GetString(entry, "type") != "text" || Prop(entry, "text").ValueKind != JsonValueKind.String)
+            {
+                other = true;
+                continue;
+            }
+            var text = Prop(entry, "text").GetString()!;
+            if (text.StartsWith(ContextLabel, StringComparison.Ordinal)) continue;
+            if (text.Contains(ContextLabel, StringComparison.Ordinal)) return null;
+            parts.Add(text);
+        }
+        return parts.Count == 0 && other ? null : string.Join("\n\n", parts);
+    }
+
+    /// <summary>Identifiers only; the transcript and the account stay out of launcher storage. Never rewritten once closing.</summary>
     private void SaveReference()
     {
-        if (_taskId is null || _installationId is null) return;
+        if (_isShutDown || _taskId is null || _installationId is null) return;
         _store.Save(new AssistantTaskReference(AssistantTaskReference.CurrentVersion, _installationId, _cli.DistroName,
             _provider, "herika", _taskId, _threadId));
     }
@@ -873,6 +987,7 @@ public sealed class AssistantViewModel : ObservableObject
         _store.Clear();
         _taskId = null;
         _threadId = null;
+        _shownThreadId = null;
         _canRollback = false;
         _canCheckOutcome = false;
         _pendingContinuation = null;
@@ -1005,7 +1120,13 @@ public sealed class AssistantViewModel : ObservableObject
         RaiseCommands();
     }
 
-    public Task ShutdownAsync() => DisposeClientAsync();
+    /// <summary>Ends the session and stops a Connect still in progress, so nothing starts after the launcher closes.</summary>
+    public Task ShutdownAsync()
+    {
+        _isShutDown = true;
+        _lifetime.Cancel();
+        return DisposeClientAsync();
+    }
 
     // --- File access requests -----------------------------------------------------------------
 
@@ -1134,9 +1255,11 @@ public sealed class AssistantViewModel : ObservableObject
         await ConnectAsync();
     }
 
+    private const string ContinuationPrefix = "The user allowed access to these CHIM files.";
+
     /// <summary>The first message in the new workspace: the user's own request, the assistant's reason, and the allowed files.</summary>
     internal static string BuildContinuation(AssistantFileRequest request) =>
-        "The user allowed access to these CHIM files. They are now in /work at the same relative paths (a file that does not exist yet is absent):\n"
+        ContinuationPrefix + " They are now in /work at the same relative paths (a file that does not exist yet is absent):\n"
         + string.Join("\n", request.Paths)
         + "\n\nThe user's request was:\n" + Shorten(request.OriginalRequest, MaxInputChars)
         + "\n\nYour earlier reply, before the files were available:\n" + Shorten(request.Context, MaxContinuationContextChars)

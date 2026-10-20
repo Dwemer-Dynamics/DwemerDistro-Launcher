@@ -2401,11 +2401,55 @@ try
         Assert(stale.vm.State == AssistantState.Error && stale.vm.StatusDetail.Contains("no longer available") && stale.cli.ServedTask is null
                && !stale.cli.Calls.Any(call => call.StartsWith("changes prepare")),
             "A task Core no longer knows must show the new-task path without preparing or serving anything.");
-        var reopened = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        // rust-v0.163.0 thread/resume history: turns[].items[] as ThreadItems; a userMessage keeps each text input as its own
+        // UserInput entry, so the launcher's labeled context is a separate entry ahead of the user's text.
+        System.Text.Json.Nodes.JsonObject UserItem(string id, params string[] texts) => new()
+        {
+            ["type"] = "userMessage", ["id"] = id, ["clientId"] = null,
+            ["content"] = new System.Text.Json.Nodes.JsonArray(texts.Select(text => (System.Text.Json.Nodes.JsonNode)new System.Text.Json.Nodes.JsonObject
+                { ["type"] = "text", ["text"] = text, ["text_elements"] = new System.Text.Json.Nodes.JsonArray() }).ToArray())
+        };
+        System.Text.Json.Nodes.JsonObject AgentItem(string id, string text) => new() { ["type"] = "agentMessage", ["id"] = id, ["text"] = text, ["phase"] = "final_answer" };
+        System.Text.Json.Nodes.JsonObject TurnOf(string id, params System.Text.Json.Nodes.JsonNode[] items) => new()
+            { ["id"] = id, ["status"] = "completed", ["itemsView"] = "full", ["items"] = new System.Text.Json.Nodes.JsonArray(items) };
+        var hiddenContext = AssistantViewModel.BuildTurnContext(
+            AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(ValidInventoryData), "")),
+            AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(ValidModelsData), "")));
+        var history = new System.Text.Json.Nodes.JsonArray(
+            TurnOf("turn-old-1",
+                UserItem("item-u1", hiddenContext, "Which extensions\r\nare installed?\n\n  Thanks."),
+                new System.Text.Json.Nodes.JsonObject { ["type"] = "reasoning", ["id"] = "item-r1", ["summary"] = new System.Text.Json.Nodes.JsonArray("HIDDEN-REASONING"), ["content"] = new System.Text.Json.Nodes.JsonArray() },
+                new System.Text.Json.Nodes.JsonObject { ["type"] = "commandExecution", ["id"] = "item-c1", ["command"] = "cat HIDDEN-COMMAND", ["commandActions"] = new System.Text.Json.Nodes.JsonArray(),
+                    ["cwd"] = "/work", ["status"] = "completed", ["aggregatedOutput"] = "HIDDEN-OUTPUT" },
+                AgentItem("item-a1", "You have relationship_system.\n\nCaptured 17:00 UTC.")),
+            // A thread from an older launcher: no context entry, and a file request the user never answered.
+            TurnOf("turn-old-2",
+                UserItem("item-u2", "  fix it  "),
+                AgentItem("item-a2", "I need the plugin file.\n```" + AssistantViewModel.FileRequestTag + "\next/a.php\n```"),
+                new System.Text.Json.Nodes.JsonObject { ["type"] = "hookPrompt", ["id"] = "item-h2", ["fragments"] = new System.Text.Json.Nodes.JsonArray() }),
+            // The label inside an entry cannot be separated safely, so the whole message stays hidden.
+            TurnOf("turn-old-3",
+                UserItem("item-u3", "pasted " + hiddenContext),
+                AgentItem("item-a3", "Done.")));
+        string[] expectedHistory = ["You|Which extensions\r\nare installed?\n\n  Thanks.", "Codex|You have relationship_system.\n\nCaptured 17:00 UTC.",
+            "You|  fix it  ", "Codex|I need the plugin file.", "Codex|Done.", "DwemerDistro|1 earlier message(s) in this conversation could not be shown here."];
+        bool ShowsHistory(AssistantViewModel model, int extra = 0) =>
+            model.Transcript.Count == expectedHistory.Length + extra
+            && model.Transcript.Take(expectedHistory.Length).Select(item => item.Role + "|" + item.Text).SequenceEqual(expectedHistory)
+            && !model.Transcript.Any(item => item.Text.Contains(AssistantViewModel.ContextLabel) || item.Text.Contains(AssistantViewModel.ScopeReminder)
+                || item.Text.Contains("inventory") || item.Text.Contains("gpt-test-model") || item.Text.Contains("HIDDEN") || item.Text.Contains("SECRET")
+                || item.Text.Contains(AssistantViewModel.FileRequestTag))
+            && !model.HasFileRequest;
+
+        var reopened = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, resumedTurns: history);
         Assert(reopened.vm.State == AssistantState.Ready && reopened.cli.ServedTask == savedReference.TaskId
                && reopened.transport.Requests.Contains("thread/resume:thr-saved") && !reopened.transport.Requests.Any(r => r.StartsWith("thread/start"))
                && stateStore.Load() == savedReference,
             "A live saved task must reopen and resume its own conversation thread.");
+        Assert(ShowsHistory(reopened.vm) && !reopened.transport.Requests.Any(r => r.StartsWith("turn/")) && !reopened.vm.AllowFileAccessCommand.CanExecute(null)
+               && !reopened.cli.Calls.Any(call => call.StartsWith("changes prepare") || call.StartsWith("changes apply") || call.StartsWith("changes stage")),
+            "A resumed thread must show its earlier user and assistant messages exactly and in order, without the launcher's context, " +
+            "reasoning, tools or an old file request, and without sending, offering or applying anything.");
 
         // Core's broker and the rust-v0.163.0 schema: threads and turns state never and /work, and never override the sandbox.
         Assert(!reopened.cli.Calls.Contains("models herika") && !reopened.cli.Calls.Contains("inventory"),
@@ -2429,7 +2473,7 @@ try
                && sentInput.Length == 2 && sentInput[0].StartsWith(AssistantViewModel.ContextLabel)
                && sentInput[0].Contains("\"model\":\"gpt-test-model\"") && sentInput[0].Contains("\"name\":\"relationship_system\"")
                && !sentInput[0].Contains("SECRET") && !sentInput[0].Contains("/var/www") && !sentInput[0].Contains("/home/dwemer") && sentInput[1] == "hello"
-               && reopened.vm.Transcript.Count == 1 && reopened.vm.Transcript[0].Text == "hello"
+               && ShowsHistory(reopened.vm, extra: 1) && reopened.vm.Transcript[^1].Text == "hello"
                && confinedBodies.Single(body => body.StartsWith("thread/resume")).Contains(AssistantViewModel.ContextLabel),
             "Each message must carry a fresh, projected inventory and model snapshot as a separate labeled input, with the visible transcript unchanged.");
         Assert(sentInput[0].Contains(AssistantViewModel.ScopeReminder) && sentInput[0].IndexOf(AssistantViewModel.ScopeReminder, StringComparison.Ordinal)
@@ -2437,6 +2481,129 @@ try
                && confinedBodies.Single(body => body.StartsWith("thread/resume")).Contains("not limited to CHIM"),
             "A resumed thread must get the distro-wide instructions on resume and the scope restated in every turn's context.");
         await reopened.vm.ShutdownAsync();
+
+        // Startup's automatic Connect: once per launch, readiness reads only, and never a turn, sign-in, probe or prepare.
+        bool StartupQuiet(FakeAssistantCli cli, FakeAssistantTransport transport)
+        {
+            lock (transport.Requests)
+                return !cli.Calls.Any(call => call.StartsWith("agent probe") || call.StartsWith("agent install") || call.StartsWith("changes prepare")
+                           || call.StartsWith("changes stage") || call.StartsWith("changes apply") || call == "models herika" || call == "inventory")
+                       && !transport.Requests.Any(request => request.StartsWith("turn/") || request.StartsWith("account/login"));
+        }
+        var startup = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connect: vm => vm.ConnectOnStartupAsync(), resumedTurns: history);
+        var startupCalls = startup.cli.Calls.Count;
+        int StartupRequests() { lock (startup.transport.Requests) return startup.transport.Requests.Count; }
+        var startupRequests = StartupRequests();
+        await startup.vm.ConnectOnStartupAsync();
+        Assert(startup.vm.State == AssistantState.Ready && startup.cli.ServedTask == savedReference.TaskId
+               && startup.transport.Requests.Contains("thread/resume:thr-saved") && !startup.transport.Requests.Any(r => r.StartsWith("thread/start"))
+               && ShowsHistory(startup.vm) && StartupQuiet(startup.cli, startup.transport) && stateStore.Load() == savedReference
+               && startup.cli.Calls.Count == startupCalls && StartupRequests() == startupRequests,
+            "Startup must reopen the saved task and resume its thread once, without a turn, sign-in, probe or prepare, and never connect again.");
+        startup.vm.StopCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Disconnected);
+        await startup.vm.ConnectOnStartupAsync();
+        Assert(startup.vm.State == AssistantState.Disconnected && startup.cli.Calls.Count == startupCalls,
+            "After the user disconnects, a repeated startup call must not reconnect.");
+        startup.vm.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Ready);
+        Assert(startup.vm.State == AssistantState.Ready && startup.transport.Requests.Count(r => r == "thread/resume:thr-saved") == 2
+               && ShowsHistory(startup.vm) && StartupQuiet(startup.cli, startup.transport),
+            "Connecting again to the same conversation must not show its earlier messages twice.");
+        startup.vm.NewTaskCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Error);
+        Assert(startup.vm.Transcript.Count == 0 && startup.vm.TaskText == "No task yet",
+            "A new task must not keep the earlier task's restored conversation.");
+        await startup.vm.ShutdownAsync();
+
+        // A resumed thread longer than the transcript keeps only its newest messages, still in order.
+        var longHistory = new System.Text.Json.Nodes.JsonArray(Enumerable.Range(1, 150).Select(turn => (System.Text.Json.Nodes.JsonNode)TurnOf($"turn-long-{turn}",
+            UserItem($"item-lu{turn}", hiddenContext, $"question {turn}"), AgentItem($"item-la{turn}", $"answer {turn}"))).ToArray());
+        var longResume = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, resumedTurns: longHistory);
+        Assert(longResume.vm.Transcript.Count == AssistantViewModel.MaxTranscriptItems && longResume.vm.Transcript[0].Text == "question 51"
+               && longResume.vm.Transcript[^1].Text == "answer 150" && longResume.vm.Transcript[^1].Role == "Codex"
+               && !longResume.vm.Transcript.Any(item => item.Text.Contains(AssistantViewModel.ContextLabel)),
+            "Restored history must respect the transcript cap and keep the newest messages in order.");
+        await longResume.vm.ShutdownAsync();
+        var emptyResume = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            resumedTurns: new System.Text.Json.Nodes.JsonArray());
+        Assert(emptyResume.vm.State == AssistantState.Ready && emptyResume.vm.Transcript.Count == 0,
+            "A resumed thread with no turns is valid and shows nothing.");
+        await emptyResume.vm.ShutdownAsync();
+
+        var signedOut = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            signedOut: true, connect: vm => vm.ConnectOnStartupAsync());
+        Assert(signedOut.vm.State == AssistantState.SignedOut && signedOut.vm.IsSignInVisible && signedOut.vm.SignInCommand.CanExecute(null)
+               && signedOut.vm.SignInUrl.Length == 0 && StartupQuiet(signedOut.cli, signedOut.transport),
+            "A signed-out startup must show the inline sign-in with Sign in available, without starting a login or opening a page.");
+        await signedOut.vm.ShutdownAsync();
+
+        foreach (var (name, script, expected) in new (string, Func<string, string?>, AssistantState)[]
+                 {
+                     ("missing runtime", command => command == "agent status"
+                         ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"installed\":false,\"probe_passed\":false,\"provider\":\"codex\",\"reason\":\"not_installed\"}}" : null,
+                         AssistantState.RuntimeAbsent),
+                     ("isolation check required", command => command == "agent status"
+                         ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"installed\":true,\"probe_passed\":false,\"provider\":\"codex\",\"reason\":\"probe_required\"}}" : null,
+                         AssistantState.IsolationFailed),
+                     ("busy Core", command => command == "capabilities"
+                         ? "{\"schema_version\":1,\"ok\":false,\"data\":null,\"error\":{\"code\":\"busy\",\"message\":\"Another operation is running.\"}}" : null,
+                         AssistantState.Error)
+                 })
+        {
+            var blocked = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+                script: script, connect: vm => vm.ConnectOnStartupAsync());
+            Assert(blocked.vm.State == expected && blocked.cli.ServedTask is null && StartupQuiet(blocked.cli, blocked.transport)
+                   && blocked.vm.ConnectCommand.CanExecute(null) && stateStore.Load() == savedReference,
+                $"A startup that finds {name} must stay inline with Connect available and run nothing else.");
+            blocked.cli.Script = null;
+            blocked.vm.ConnectCommand.Execute(null);
+            await WaitUntilAsync(() => blocked.vm.State == AssistantState.Ready);
+            Assert(blocked.vm.State == AssistantState.Ready && blocked.cli.ServedTask == savedReference.TaskId,
+                $"Connect must still work after a startup that found {name}.");
+            await blocked.vm.ShutdownAsync();
+        }
+
+        var maintenance = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            distroBusy: true, connect: vm => vm.ConnectOnStartupAsync());
+        Assert(maintenance.vm.State == AssistantState.Error && maintenance.cli.Calls.Count == 0 && maintenance.vm.ConnectCommand.CanExecute(null),
+            "A startup during distro maintenance must say so inline and run nothing.");
+        await maintenance.vm.ShutdownAsync();
+
+        var manualFirst = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connect: vm => Task.WhenAll(vm.ConnectAsync(), vm.ConnectOnStartupAsync()));
+        Assert(manualFirst.vm.State == AssistantState.Ready && manualFirst.cli.Calls.Count(call => call == "capabilities") == 1
+               && manualFirst.transport.Requests.Count(r => r.StartsWith("initialize")) == 1,
+            "A startup call while the user's Connect runs must not start a second connection.");
+        await manualFirst.vm.ShutdownAsync();
+
+        var capabilitiesGate = new TaskCompletionSource();
+        Task? closingStartup = null;
+        var closing = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            capabilitiesGate: capabilitiesGate, connect: vm => { closingStartup = vm.ConnectOnStartupAsync(); return Task.CompletedTask; });
+        await WaitUntilAsync(() => closing.cli.Calls.Contains("capabilities"));
+        await closing.vm.ShutdownAsync();
+        await closingStartup!.WaitAsync(TimeSpan.FromSeconds(10));
+        capabilitiesGate.TrySetResult();
+        Assert(closing.cli.Calls.SequenceEqual(["capabilities"]) && closing.cli.ServedTask is null && closing.transport.Requests.Count == 0,
+            "Closing the launcher during startup's Connect must stop it before anything else runs or starts.");
+        var afterClose = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connect: async vm => { await vm.ShutdownAsync(); await vm.ConnectOnStartupAsync(); });
+        Assert(afterClose.cli.Calls.Count == 0 && afterClose.cli.ServedTask is null,
+            "A startup call after the launcher began closing must run nothing.");
+        var prepareGate = new TaskCompletionSource();
+        Task? preparingStartup = null;
+        var preparing = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, prepareGate: prepareGate,
+            connect: vm => { stateStore.Clear(); preparingStartup = vm.ConnectOnStartupAsync(); return Task.CompletedTask; });
+        await WaitUntilAsync(() => preparing.cli.Calls.Any(call => call.StartsWith("changes prepare")));
+        var closingPrepare = preparing.vm.ShutdownAsync();
+        prepareGate.TrySetResult();
+        await closingPrepare;
+        await preparingStartup!.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert(preparing.cli.Calls.Count(call => call.StartsWith("changes prepare")) == 1 && preparing.cli.ServedTask is null
+               && preparing.transport.Requests.Count == 0 && stateStore.Load() is null,
+            "A task prepared after the launcher began closing must not be saved, served or connected.");
 
         var stopping = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
         int StoppingTurns() { lock (stopping.transport.Requests) return stopping.transport.Bodies.Count(body => body.StartsWith("turn/start")); }
@@ -2842,13 +3009,16 @@ static ServerStatusResult StatusFor(ServerProduct product, ServerInstallState st
 
 static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTransport transport)> ConnectAssistantAsync(
     AssistantStateStore store, AssistantTaskReference saved, string installationId, string? statusTask, bool confined = true,
-    string distroName = LauncherConstants.DistroName)
+    string distroName = LauncherConstants.DistroName, bool signedOut = false, bool distroBusy = false, Func<string, string?>? script = null,
+    TaskCompletionSource? capabilitiesGate = null, Func<AssistantViewModel, Task>? connect = null,
+    System.Text.Json.Nodes.JsonArray? resumedTurns = null, TaskCompletionSource? prepareGate = null)
 {
     store.Save(saved);
-    // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work.
-    System.Text.Json.Nodes.JsonObject Thread(string id) => new()
+    // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work. Only thread/resume
+    // (and fork and read) populate thread.turns.
+    System.Text.Json.Nodes.JsonObject Thread(string id, System.Text.Json.Nodes.JsonArray? turns = null) => new()
     {
-        ["thread"] = new System.Text.Json.Nodes.JsonObject { ["id"] = id },
+        ["thread"] = new System.Text.Json.Nodes.JsonObject { ["id"] = id, ["turns"] = turns?.DeepClone() ?? new System.Text.Json.Nodes.JsonArray() },
         ["approvalPolicy"] = confined ? "never" : "on-request",
         ["cwd"] = "/work"
     };
@@ -2857,17 +3027,18 @@ static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTra
         Respond = (method, parameters) => method switch
         {
             "initialize" => new System.Text.Json.Nodes.JsonObject(),
-            "account/read" => System.Text.Json.Nodes.JsonNode.Parse("{\"account\":{\"type\":\"apiKey\"},\"requiresOpenaiAuth\":false}"),
+            "account/read" => System.Text.Json.Nodes.JsonNode.Parse(signedOut ? "{\"account\":null,\"requiresOpenaiAuth\":true}"
+                : "{\"account\":{\"type\":\"apiKey\"},\"requiresOpenaiAuth\":false}"),
             "model/list" => System.Text.Json.Nodes.JsonNode.Parse("{\"data\":[{\"id\":\"m\",\"displayName\":\"M\",\"isDefault\":true}],\"nextCursor\":null}"),
-            "thread/resume" => Thread(parameters["threadId"]!.GetValue<string>()),
+            "thread/resume" => Thread(parameters["threadId"]!.GetValue<string>(), resumedTurns),
             "thread/start" => Thread("thr-new"),
             "turn/start" => System.Text.Json.Nodes.JsonNode.Parse("{\"turn\":{\"id\":\"turn-1\",\"items\":[],\"status\":\"inProgress\"}}"),
             _ => null
         }
     };
-    var cli = new FakeAssistantCli(transport, statusTask) { DistroName = distroName };
-    var vm = new AssistantViewModel(cli, new FakeAssistantHost(installationId), store);
-    await vm.ConnectAsync();
+    var cli = new FakeAssistantCli(transport, statusTask) { DistroName = distroName, Script = script, CapabilitiesGate = capabilitiesGate, PrepareGate = prepareGate };
+    var vm = new AssistantViewModel(cli, new FakeAssistantHost(installationId) { DistroBusy = distroBusy }, store);
+    await (connect ?? (model => model.ConnectAsync()))(vm);
     return (vm, cli, transport);
 }
 
@@ -2963,7 +3134,9 @@ sealed class FakeAssistantTransport : IAssistantTransport
 
 sealed class FakeAssistantHost(string installationId) : IAssistantHost
 {
-    public bool TryBeginDistroActivity() => true;
+    /// <summary>Distro maintenance holds the shared gate.</summary>
+    public bool DistroBusy { get; init; }
+    public bool TryBeginDistroActivity() => !DistroBusy;
     public void EndDistroActivity() { }
     public bool TryBeginLiveChange() => true;
     public void EndLiveChange() { }
@@ -2987,12 +3160,25 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
     /// <summary>The same for inventory.</summary>
     public TaskCompletionSource? InventoryGate { get; set; }
 
+    /// <summary>The same for capabilities, Connect's first read.</summary>
+    public TaskCompletionSource? CapabilitiesGate { get; set; }
+
+    /// <summary>The same for changes prepare, which then answers with a fresh task.</summary>
+    public TaskCompletionSource? PrepareGate { get; set; }
+
     public async Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var command = string.Join(" ", arguments);
         Calls.Add(command);
+        if (command.StartsWith("changes prepare") && PrepareGate is { } prepareGate)
+        {
+            await prepareGate.Task.WaitAsync(cancellationToken);
+            return AssistantCliService.Parse(new CommandResult(0,
+                "{\"schema_version\":1,\"ok\":true,\"data\":{\"task_id\":\"99999999-8888-7777-6666-555555555555\",\"diagnostic_only\":true}}", ""));
+        }
         if (command == "models herika" && ModelsGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
         if (command == "inventory" && InventoryGate is { } inventoryGate) await inventoryGate.Task.WaitAsync(cancellationToken);
+        if (command == "capabilities" && CapabilitiesGate is { } capabilitiesGate) await capabilitiesGate.Task.WaitAsync(cancellationToken);
         var document = Script?.Invoke(command) ?? command switch
         {
             "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true}}}",
