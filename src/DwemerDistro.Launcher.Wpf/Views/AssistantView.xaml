@@ -33,9 +33,9 @@
             </Grid.RowDefinitions>
 
             <StackPanel Margin="0,0,0,10">
-                <TextBlock Text="ASSISTANT · CHIM" Style="{StaticResource GameCenter.Heading}" />
+                <TextBlock Text="ASSISTANT" Style="{StaticResource GameCenter.Heading}" />
                 <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
-                           Text="Describe what you want to fix or change in your CHIM server. The assistant works on an isolated copy and asks before it sees any file; live files change only after you review and approve." />
+                           Text="Ask about your DwemerDistro setup: installed servers, mods and components. Get help with setup steps and problems." />
             </StackPanel>
 
             <!-- Header: what is connected, as whom, and the session actions. -->
@@ -117,14 +117,14 @@
                     <!-- Advanced: collapsed by default; task details and hand-picked files for the next New task. -->
                     <CheckBox x:Name="AdvancedToggle" Content="Advanced" Style="{StaticResource GameCenter.CheckBox}" Margin="0,8,0,0"
                               HorizontalAlignment="Left" IsChecked="False"
-                              AutomationProperties.HelpText="Show the task details and choose files by path for the next new task." />
+                              AutomationProperties.HelpText="Show the task details and choose CHIM files by path for the next new task. File editing supports CHIM only." />
                     <Border x:Name="AdvancedPanel" Visibility="{Binding IsChecked, ElementName=AdvancedToggle, Converter={StaticResource BoolToVisibility}}"
                             BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,6,0,0">
                         <StackPanel>
                             <TextBlock x:Name="TaskLabel" Text="Current task" Style="{StaticResource GameCenter.Caption}" />
                             <TextBox Text="{Binding TaskText, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}" FontFamily="Consolas"
                                      FontSize="12" Margin="0,3,0,8" AutomationProperties.LabeledBy="{Binding ElementName=TaskLabel}" />
-                            <TextBlock x:Name="PathsLabel" Text="Files for the next New task (optional, one path relative to the CHIM folder per line)"
+                            <TextBlock x:Name="PathsLabel" Text="CHIM files for the next New task (optional, one path relative to the HerikaServer folder per line). File editing supports only CHIM (HerikaServer) today; other servers, components and mods cannot be edited here yet."
                                        Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,3" />
                             <TextBox Text="{Binding RelativePathsText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}"
                                      AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="12"
@@ -185,7 +185,7 @@
                                     </ItemsControl>
                                 </ScrollViewer>
                                 <TextBlock Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
-                                           Text="Allow access copies only these files into a fresh isolated working copy and continues your request there. Live files change only after you review and approve." />
+                                           Text="Allow access copies only these files into a fresh isolated working copy and continues your request there. Only CHIM (HerikaServer) files can be shared and edited today. Live files change only after you review and approve." />
                                 <WrapPanel>
                                     <Button Content="Allow access" Command="{Binding AllowFileAccessCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
                                             Margin="0,0,6,0" MinWidth="110"

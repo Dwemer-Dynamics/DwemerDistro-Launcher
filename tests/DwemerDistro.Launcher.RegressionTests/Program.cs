@@ -2408,8 +2408,14 @@ try
             "A live saved task must reopen and resume its own conversation thread.");
 
         // Core's broker and the rust-v0.163.0 schema: threads and turns state never and /work, and never override the sandbox.
-        Assert(!reopened.cli.Calls.Contains("models herika"), "Connect must not read CHIM's model settings; only an outgoing message does.");
-        reopened.cli.Script = command => command == "models herika" ? ModelsDocumentText(ValidModelsData) : null;
+        Assert(!reopened.cli.Calls.Contains("models herika") && !reopened.cli.Calls.Contains("inventory"),
+            "Connect must not read the inventory or CHIM's model settings; only an outgoing message does.");
+        reopened.cli.Script = command => command switch
+        {
+            "models herika" => ModelsDocumentText(ValidModelsData),
+            "inventory" => ModelsDocumentText(ValidInventoryData),
+            _ => null
+        };
         reopened.vm.InputText = "hello";
         reopened.vm.SendCommand.Execute(null);
         await WaitUntilAsync(() => { lock (reopened.transport.Requests) return reopened.transport.Bodies.Any(body => body.StartsWith("turn/start")); });
@@ -2419,12 +2425,17 @@ try
                && !body.Contains("sandbox") && !body.Contains("permissions")),
             "Thread and turn requests must pin approval policy never and cwd /work, and never send a sandbox or permissions override.");
         var sentInput = TurnInput(confinedBodies.Single(body => body.StartsWith("turn/start")));
-        Assert(reopened.cli.Calls.Count(call => call == "models herika") == 1 && sentInput.Length == 2
-               && sentInput[0].StartsWith(AssistantViewModel.ModelsContextLabel) && sentInput[0].Contains("\"model\":\"gpt-test-model\"")
-               && !sentInput[0].Contains("SECRET") && sentInput[1] == "hello"
+        Assert(reopened.cli.Calls.Count(call => call == "models herika") == 1 && reopened.cli.Calls.Count(call => call == "inventory") == 1
+               && sentInput.Length == 2 && sentInput[0].StartsWith(AssistantViewModel.ContextLabel)
+               && sentInput[0].Contains("\"model\":\"gpt-test-model\"") && sentInput[0].Contains("\"name\":\"relationship_system\"")
+               && !sentInput[0].Contains("SECRET") && !sentInput[0].Contains("/var/www") && !sentInput[0].Contains("/home/dwemer") && sentInput[1] == "hello"
                && reopened.vm.Transcript.Count == 1 && reopened.vm.Transcript[0].Text == "hello"
-               && confinedBodies.Single(body => body.StartsWith("thread/resume")).Contains(AssistantViewModel.ModelsContextLabel),
-            "Each message must carry a fresh, projected model snapshot as a separate labeled input, with the visible transcript unchanged.");
+               && confinedBodies.Single(body => body.StartsWith("thread/resume")).Contains(AssistantViewModel.ContextLabel),
+            "Each message must carry a fresh, projected inventory and model snapshot as a separate labeled input, with the visible transcript unchanged.");
+        Assert(sentInput[0].Contains(AssistantViewModel.ScopeReminder) && sentInput[0].IndexOf(AssistantViewModel.ScopeReminder, StringComparison.Ordinal)
+                   < sentInput[0].IndexOf("DwemerDistro inventory", StringComparison.Ordinal)
+               && confinedBodies.Single(body => body.StartsWith("thread/resume")).Contains("not limited to CHIM"),
+            "A resumed thread must get the distro-wide instructions on resume and the scope restated in every turn's context.");
         await reopened.vm.ShutdownAsync();
 
         var stopping = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
@@ -2439,15 +2450,26 @@ try
                && stopping.vm.Transcript[0].Text == "which models?",
             "Stop during the model lookup must cancel it and send no turn.");
         stopping.cli.ModelsGate = null;
+        stopping.cli.InventoryGate = new TaskCompletionSource();
+        var inventoryCalls = stopping.cli.Calls.Count(call => call == "inventory");
+        stopping.vm.InputText = "what is installed?";
+        stopping.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => stopping.cli.Calls.Count(call => call == "inventory") > inventoryCalls);
+        await stopping.vm.InterruptAsync();
+        await WaitUntilAsync(() => stopping.vm.State == AssistantState.Ready);
+        Assert(stopping.vm.State == AssistantState.Ready && StoppingTurns() == 0 && stopping.vm.Transcript[^1].Text.StartsWith("Stopped before"),
+            "Stop during the inventory lookup must cancel it and send no turn.");
+        stopping.cli.InventoryGate = null;
         stopping.vm.InputText = "which models?";
         stopping.vm.SendCommand.Execute(null);
         await WaitUntilAsync(() => StoppingTurns() == 1);
         string unavailableBody;
         lock (stopping.transport.Requests) unavailableBody = stopping.transport.Bodies.Single(body => body.StartsWith("turn/start"));
         var unavailableInput = TurnInput(unavailableBody);
-        Assert(unavailableInput.Length == 2 && unavailableInput[0].Contains("unavailable") && unavailableInput[0].Contains("Update Distro")
-               && unavailableInput[1] == "which models?",
-            "An older Core without the lookup must still send the message, with an explicit unavailable statement.");
+        Assert(unavailableInput.Length == 2 && unavailableInput[0].Contains("CHIM selected models are unavailable")
+               && unavailableInput[0].Contains("DwemerDistro inventory is unavailable") && unavailableInput[0].Contains("Update Distro")
+               && unavailableInput[0].Contains(AssistantViewModel.ScopeReminder) && unavailableInput[1] == "which models?",
+            "An older Core without the lookups must still send the message, with the scope and explicit unavailable statements.");
         await stopping.vm.ShutdownAsync();
 
         var unconfined = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, confined: false);
@@ -2514,7 +2536,7 @@ try
             "A truncated snapshot must say so.");
         var notAvailable = AssistantViewModel.BuildModelsContext(ModelsDocument(
             "{\"product\":\"herika\",\"available\":false,\"scope\":\"configured_profiles\",\"captured_at\":\"2026-10-19T17:00:00+00:00\",\"assignments\":[],\"truncated\":false,\"reason\":\"database_unavailable\"}"));
-        Assert(notAvailable.StartsWith(AssistantViewModel.ModelsContextLabel) && notAvailable.Contains("unavailable") && notAvailable.Contains("database_unavailable")
+        Assert(notAvailable.StartsWith("CHIM selected models are unavailable") && notAvailable.Contains("unavailable") && notAvailable.Contains("database_unavailable")
                && !notAvailable.Contains("assignments"),
             "Core's own unavailable answer must reach the model as a plain statement with its reason.");
         foreach (var malformed in new[]
@@ -2551,8 +2573,99 @@ try
                && AssistantViewModel.BuildModelsContext(AssistantCliService.Parse(new CommandResult(127, "", "execvpe failed"))).Contains("not available")
                && AssistantViewModel.BuildModelsContext(AssistantCliResult.Failure(AssistantCliResult.Timeout, "")).Contains("in time"),
             "An old CLI, a busy Core, a missing command or a timeout must each give an explicit unavailable statement that forbids guessing or reading credentials.");
-        Assert(AssistantViewModel.DeveloperInstructions.Contains(AssistantViewModel.ModelsContextLabel) && AssistantViewModel.DeveloperInstructions.Contains("exact IDs"),
+        Assert(AssistantViewModel.DeveloperInstructions.Contains(AssistantViewModel.ContextLabel) && AssistantViewModel.DeveloperInstructions.Contains("exact IDs"),
             "The developer instructions must tell the model to answer model questions from the per-message context.");
+        Assert(AssistantViewModel.DeveloperInstructions.StartsWith("You are the DwemerDistro Assistant") && AssistantViewModel.DeveloperInstructions.Contains("not limited to CHIM")
+               && AssistantViewModel.DeveloperInstructions.Contains("Dwemer Dashboard") && AssistantViewModel.DeveloperInstructions.Contains("custom mods")
+               && AssistantViewModel.DeveloperInstructions.Contains("only CHIM (HerikaServer) files")
+               && AssistantViewModel.DeveloperInstructions.Contains("never ask the user to paste a list")
+               && AssistantViewModel.DeveloperInstructions.Contains("present does not mean enabled")
+               && AssistantViewModel.DeveloperInstructions.Contains("cannot run commands on the live distro")
+               && !AssistantViewModel.DeveloperInstructions.Contains("with their CHIM (HerikaServer) server"),
+            "The developer instructions must cover the whole distro, the CHIM-only file editing limit, and inventory-first answers without overclaiming.");
+
+        // ddistro inventory: an exact allowlist projection, refused whole when anything is off.
+        AssistantCliResult InventoryDocument(string data) => AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(data), ""));
+        var projectedInventory = AssistantCliService.ProjectInventory(InventoryDocument(ValidInventoryData), out _)!;
+        var projectedText = projectedInventory.ToJsonString();
+        Assert(projectedInventory.Select(pair => pair.Key).SequenceEqual(["captured_at", "scope", "read_as", "complete", "servers", "extensions", "components", "custom_mods"])
+               && projectedInventory["servers"]!["items"]!.AsArray()[0]!.AsObject().Select(pair => pair.Key)
+                   .SequenceEqual(["product", "state", "repository_state", "database_present", "branch", "version"])
+               && projectedInventory["servers"]!["items"]!.AsArray()[1]!["database_present"] is null
+               && projectedInventory["extensions"]!["items"]!.AsArray()[0]!["entries"]!.AsArray()[0]!.AsObject().Select(pair => pair.Key).SequenceEqual(["name", "kind"])
+               && projectedInventory["custom_mods"]!["items"]!.AsArray()[0]!.AsObject().Select(pair => pair.Key).SequenceEqual(["id", "name", "state", "branch", "commit"])
+               && !projectedText.Contains("SECRET") && !projectedText.Contains("/var/www") && !projectedText.Contains("/home/dwemer")
+               && !projectedText.Contains("mtime") && !projectedText.Contains("port") && !projectedText.Contains("repository\""),
+            "The inventory must be re-projected onto its exact allowlist, dropping roots, ports, URLs, paths and every unknown Core field.");
+        var inventoryContext = AssistantViewModel.BuildInventoryContext(InventoryDocument(ValidInventoryData));
+        Assert(inventoryContext.Contains("2026-10-19T17:00:00Z") && inventoryContext.Contains("presence_only") && inventoryContext.Contains("not that it is running")
+               && inventoryContext.Contains("enabled, loaded") && inventoryContext.Contains("instead of asking the user") && inventoryContext.Contains("read in full")
+               && inventoryContext.Contains("\"name\":\"generic_installer.php\"") && !inventoryContext.Contains("INCOMPLETE"),
+            "The inventory context must state its capture time and scope, that presence is not enabled or running state, and that it is complete.");
+        var partialInventory = AssistantViewModel.BuildInventoryContext(InventoryDocument(ValidInventoryData
+            .Replace("\"complete\":true", "\"complete\":false")
+            .Replace("\"available\":true,\"reason\":\"\",\"items\":[{\"product\":\"herika\"", "\"available\":false,\"reason\":\"timeout\",\"items\":[],\"x\":[{\"product\":\"herika\"")));
+        Assert(partialInventory.Contains("INCOMPLETE") && partialInventory.Contains("\"reason\":\"timeout\"") && partialInventory.Contains("relationship_system"),
+            "An unavailable section must be kept as available false with its reason, and the context must say the inventory is incomplete.");
+        foreach (var contradictory in new[]
+                 {
+                     ValidInventoryData.Replace("\"total\":2,\"truncated\":false,\"skipped\":0", "\"total\":3,\"truncated\":false,\"skipped\":1"),
+                     ValidInventoryData.Replace("\"state\":\"product_absent\"", "\"state\":\"redirected\""),
+                     ValidInventoryData.Replace("\"state\":\"absent\"}]}", "\"state\":\"unreadable\"}]}"),
+                     ValidInventoryData.Replace("\"available\":true,\"reason\":\"\",\"truncated\":false", "\"available\":true,\"reason\":\"\",\"truncated\":true")
+                 })
+        {
+            var projected = AssistantCliService.ProjectInventory(InventoryDocument(contradictory), out _);
+            Assert(projected is not null && projected["complete"]!.GetValue<bool>() == false
+                   && AssistantViewModel.BuildInventoryContext(InventoryDocument(contradictory)).Contains("INCOMPLETE"),
+                "Core's complete:true must not survive a skipped, truncated, redirected or unreadable section.");
+        }
+        foreach (var malformed in new[]
+                 {
+                     ValidInventoryData.Replace("\"scope\":\"presence_only\"", "\"scope\":\"health\""),
+                     ValidInventoryData.Replace("2026-10-19T17:00:00Z", "2026-10-19T17:00:00"),
+                     ValidInventoryData.Replace(",\"complete\":true", string.Empty),
+                     ValidInventoryData.Replace("\"product\":\"stobe\"", "\"product\":\"kenshi\""),
+                     ValidInventoryData.Replace("\"database_present\":true", "\"database_present\":\"yes\""),
+                     ValidInventoryData.Replace("\"state\":\"installed\"", "\"state\":\"Installed!\""),
+                     ValidInventoryData.Replace("\"branch\":\"aiagent\"", "\"branch\":\"" + new string('b', 129) + "\""),
+                     ValidInventoryData.Replace("\"name\":\"generic_installer.php\"", "\"name\":\"../conf/conf.php\""),
+                     ValidInventoryData.Replace("\"name\":\"generic_installer.php\"", "\"name\":\".env\""),
+                     ValidInventoryData.Replace("\"name\":\"generic_installer.php\"", "\"name\":\"x\\u0007y\""),
+                     ValidInventoryData.Replace("\"kind\":\"file\"", "\"kind\":\"socket\""),
+                     ValidInventoryData.Replace("\"root\":\"ext\"", "\"root\":\"/var/www/html/HerikaServer/ext\""),
+                     ValidInventoryData.Replace("\"total\":2", "\"total\":-1"),
+                     ValidInventoryData.Replace("\"total\":2", "\"total\":2.5"),
+                     ValidInventoryData.Replace("\"truncated\":false,\"skipped\"", "\"truncated\":\"no\",\"skipped\""),
+                     ValidInventoryData.Replace("\"no_known_root\":[\"lorkhan\"", "\"no_known_root\":[\"skyrim\""),
+                     ValidInventoryData.Replace("\"basis\":\"startup_markers\"", "\"basis\":\"running\""),
+                     ValidInventoryData.Replace("\"id\":\"example-server\"", "\"id\":\"Example_Server\""),
+                     ValidInventoryData.Replace(new string('c', 40), "abc"),
+                     ValidInventoryData.Replace("\"available\":true,\"reason\":\"\",\"truncated\":false", "\"available\":true,\"reason\":\"x\",\"truncated\":false"),
+                     ValidInventoryData.Replace("\"available\":true,\"reason\":\"\",\"truncated\":false", "\"available\":false,\"reason\":\"timeout\",\"truncated\":false"),
+                     ValidInventoryData.Replace("\"available\":true,\"reason\":\"\",\"items\":[{\"product\":\"herika\"", "\"available\":true,\"reason\":\"\",\"items\":[\"x\",{\"product\":\"herika\""),
+                     ValidInventoryData.Replace("\"entries\":[{", "\"entries\":[" + string.Join(",", Enumerable.Repeat("{\"name\":\"a\",\"kind\":\"dir\"}", 201)) + ",{"),
+                     ValidInventoryData.Replace("\"components\":{", "\"components\":[{").Replace("}]},\"custom_mods\"", "}]}],\"custom_mods\""),
+                     "[]"
+                 })
+        {
+            var rejected = AssistantViewModel.BuildInventoryContext(InventoryDocument(malformed));
+            Assert(AssistantCliService.ProjectInventory(InventoryDocument(malformed), out var why) is null && why.Length > 0
+                   && rejected.StartsWith("DwemerDistro inventory is unavailable") && !rejected.Contains("relationship_system") && !rejected.Contains("SECRET"),
+                "A malformed inventory must be refused whole, never partly sent: " + malformed[..Math.Min(malformed.Length, 160)]);
+        }
+        var oldInventory = AssistantViewModel.BuildInventoryContext(AssistantCliService.Parse(new CommandResult(64,
+            "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"invalid_argument\",\"message\":\"Unknown command.\"}}", "")));
+        Assert(oldInventory.Contains("Update Distro") && oldInventory.Contains("Do not guess") && oldInventory.Contains("do not read configuration, database or credential files")
+               && AssistantViewModel.BuildInventoryContext(AssistantCliResult.Failure(AssistantCliResult.Timeout, "")).Contains("in time")
+               && AssistantViewModel.BuildInventoryContext(AssistantCliService.Parse(new CommandResult(127, "", "execvpe failed"))).Contains("not available"),
+            "An old Core, a timeout or a missing command must each give an explicit inventory-unavailable statement that forbids guessing.");
+        var turnContext = AssistantViewModel.BuildTurnContext(InventoryDocument(ValidInventoryData), ModelsDocument(ValidModelsData));
+        Assert(turnContext.StartsWith(AssistantViewModel.ContextLabel + "\n" + AssistantViewModel.ScopeReminder)
+               && turnContext.IndexOf("DwemerDistro inventory", StringComparison.Ordinal) < turnContext.IndexOf("CHIM selected models", StringComparison.Ordinal),
+            "The turn context is the label, the distro-wide scope, the inventory, then the CHIM model snapshot as one product-specific fact.");
+        Assert(AssistantCliCommands.Inventory().SequenceEqual(["inventory"]) && AssistantCliCommands.UserFor(AssistantCliCommands.Inventory()) == "root",
+            "The inventory lookup is the fixed inventory command, run through the supervised root path.");
         Assert(AssistantCliCommands.Models().SequenceEqual(["models", "herika"]) && AssistantCliService.MaxModelAssignments == 200,
             "The model lookup is the fixed models herika command.");
 
@@ -2623,8 +2736,9 @@ try
                && stateStore.Load() is { TaskId: newTask, InstallationId: var keptInstallation, Provider: "codex" } && keptInstallation == installationId
                && continued.Length == 1 && continued[0].Contains("Fix the greeting") && !access.vm.HasFileRequest,
             "Allow must prepare exactly the requested paths, keep the installation identity, and continue the original request in the new task.");
-        Assert(TurnInput(continued[0]) is [var continuedContext, var continuedText] && continuedContext.StartsWith(AssistantViewModel.ModelsContextLabel)
-               && continuedText.Contains("Fix the greeting") && access.cli.Calls.Count(call => call == "models herika") == TurnStarts(),
+        Assert(TurnInput(continued[0]) is [var continuedContext, var continuedText] && continuedContext.StartsWith(AssistantViewModel.ContextLabel)
+               && continuedText.Contains("Fix the greeting") && access.cli.Calls.Count(call => call == "models herika") == TurnStarts()
+               && access.cli.Calls.Count(call => call == "inventory") == TurnStarts() && continuedContext.Contains(AssistantViewModel.ScopeReminder),
             "Every turn, the file-access continuation included, must read the model settings afresh.");
         await access.vm.ShutdownAsync();
     }
@@ -2784,6 +2898,21 @@ static class ModelsFixture
         + "\"model\":\"gpt-test-model\",\"provider\":\"openrouter\",\"driver\":\"openai\",\"api_key\":\"SECRET-KEY\"}";
     internal const string ValidModelsData = "{\"product\":\"herika\",\"available\":true,\"scope\":\"configured_profiles\",\"captured_at\":\"2026-10-19T17:00:00Z\","
         + "\"assignments\":[" + ModelAssignment + "],\"truncated\":false,\"reason\":\"\",\"password\":\"SECRET-PW\"}";
+
+    // Core's inventory shape, plus roots, ports, paths and URLs the launcher must never forward.
+    internal const string ValidInventoryData = "{\"captured_at\":\"2026-10-19T17:00:00Z\",\"scope\":\"presence_only\",\"read_as\":\"root\",\"complete\":true,"
+        + "\"servers\":{\"available\":true,\"reason\":\"\",\"items\":[{\"product\":\"herika\",\"state\":\"installed\",\"repository_state\":\"managed\","
+        + "\"database_present\":true,\"branch\":\"aiagent\",\"version\":\"3.5.1\",\"root\":\"/var/www/html/HerikaServer\",\"port\":8081},"
+        + "{\"product\":\"stobe\",\"state\":\"not-installed\",\"repository_state\":\"absent\",\"database_present\":null,\"branch\":\"\",\"version\":\"\"}]},"
+        + "\"extensions\":{\"items\":[{\"product\":\"herika\",\"root\":\"ext\",\"state\":\"listed\",\"total\":2,\"truncated\":false,\"skipped\":0,"
+        + "\"entries\":[{\"name\":\"relationship_system\",\"kind\":\"dir\",\"mtime\":1},{\"name\":\"generic_installer.php\",\"kind\":\"file\"}]},"
+        + "{\"product\":\"dialectic\",\"root\":\"ext\",\"state\":\"product_absent\",\"total\":0,\"truncated\":false,\"skipped\":0,\"entries\":[]}],"
+        + "\"no_known_root\":[\"lorkhan\",\"stobe\",\"reign\"]},"
+        + "\"components\":{\"basis\":\"startup_markers\",\"items\":[{\"id\":\"xtts\",\"name\":\"CHIM XTTS\",\"role\":\"tts\",\"state\":\"present\","
+        + "\"path\":\"/home/dwemer/xtts-api-server/start.sh\"},{\"id\":\"chatterbox\",\"name\":\"Chatterbox\",\"role\":\"tts\",\"state\":\"absent\"}]},"
+        + "\"custom_mods\":{\"available\":true,\"reason\":\"\",\"truncated\":false,\"items\":[{\"id\":\"example-server\",\"name\":\"Example\",\"state\":\"ready\","
+        + "\"branch\":\"main\",\"commit\":\"" + "cccccccccccccccccccccccccccccccccccccccc" + "\",\"repository\":\"https://user:SECRET-TOKEN@example.invalid/x\","
+        + "\"health_url\":\"http://127.0.0.1:19000/SECRET\"}]},\"token\":\"SECRET-TOP\"}";
 }
 
 sealed class FakeAssistantTransport : IAssistantTransport
@@ -2855,11 +2984,15 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
     /// <summary>When set, models herika waits for it and, like the real service, throws when its caller cancels.</summary>
     public TaskCompletionSource? ModelsGate { get; set; }
 
+    /// <summary>The same for inventory.</summary>
+    public TaskCompletionSource? InventoryGate { get; set; }
+
     public async Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var command = string.Join(" ", arguments);
         Calls.Add(command);
         if (command == "models herika" && ModelsGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
+        if (command == "inventory" && InventoryGate is { } inventoryGate) await inventoryGate.Task.WaitAsync(cancellationToken);
         var document = Script?.Invoke(command) ?? command switch
         {
             "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true}}}",

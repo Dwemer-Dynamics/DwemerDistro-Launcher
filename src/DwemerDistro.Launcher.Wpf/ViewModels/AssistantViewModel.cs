@@ -79,31 +79,59 @@ public sealed class AssistantViewModel : ObservableObject
     private static readonly TimeSpan RpcTimeout = TimeSpan.FromSeconds(45);
     // Read before every message; a slow or missing lookup must not hold the conversation up.
     private static readonly TimeSpan ModelsTimeout = TimeSpan.FromSeconds(10);
+    // Core bounds its own server status read to 20 seconds; this covers that and the WSL round trip.
+    private static readonly TimeSpan InventoryTimeout = TimeSpan.FromSeconds(30);
     internal const string FileRequestTag = "dwemer-file-request";
     private const int MaxContinuationContextChars = 4000;
 
     /// <summary>
-    /// Sent as the thread's developer instructions. It describes what the workspace really holds and the one way to
-    /// ask for files; the launcher, not the model, decides whether anything is copied.
+    /// Sent as the thread's developer instructions. It describes the whole distro the assistant helps with, what it can
+    /// really do, what the workspace holds and the one way to ask for files; the launcher, not the model, decides
+    /// whether anything is copied.
     /// </summary>
     internal const string DeveloperInstructions =
-        "You help a DwemerDistro user with their CHIM (HerikaServer) server. You work in an isolated copy at /work, not on the live server. " +
-        "You cannot list or browse the live server folder. A task with no selected files holds only .ddistro-context/status.json and " +
-        ".ddistro-context/recent.log (sanitized status and recent log lines). Your edits stay in /work until the user reviews and approves them.\n" +
+        "You are the DwemerDistro Assistant. You help the user set up, check, understand and troubleshoot their whole DwemerDistro: " +
+        "the managed game servers (CHIM/HerikaServer for Skyrim, LORKHAN, STOBE for Kenshi, Dialectic for Fallout: New Vegas/TTW, Reign), " +
+        "the Dwemer Dashboard, voice and speech components (text to speech, speech to text), embeddings, the CHIM MCP server, and custom mods. " +
+        "You are not limited to CHIM.\n" +
+        "What you can do: read the launcher's per-message context described below, read and edit files in your isolated working copy at /work, " +
+        "and explain. You cannot run commands on the live distro, install, update, start, stop or configure anything, or list or browse live " +
+        "server folders. When the user asks for something you cannot execute, give concrete next steps grounded in the context (for example the " +
+        "launcher page or button to use, or a ddistro command they can run themselves) and say plainly that you cannot do it from here. " +
+        "Never claim you checked, ran or changed something you did not.\n" +
+        "File editing currently supports only CHIM (HerikaServer) files: only they can be copied into /work, and they change live only after the " +
+        "user reviews and approves the exact diff. Files of other servers, components or mods cannot be shared or edited through the Assistant yet. " +
+        "A task with no selected files holds only .ddistro-context/status.json and .ddistro-context/recent.log (sanitized CHIM status and recent " +
+        "CHIM log lines). Your edits stay in /work until the user reviews and approves them.\n" +
         "If you need CHIM files to read or edit, explain why in plain words, then end your message with exactly one block:\n" +
         "```" + FileRequestTag + "\n<one path per line, relative to the HerikaServer folder, e.g. ext/example/file.php>\n```\n" +
         "List at most 20 files, only paths you are confident exist or must be created. Never ask for credentials, .env files, keys, " +
         "databases, logs or user configuration; DwemerDistro refuses them. If you do not know the exact path, say so and ask the user " +
         "instead of guessing. The user decides; if they allow it, a fresh working copy with only those files is prepared and you are given " +
         "their request again. Do not write the block for any other purpose.\n" +
-        "Each user message arrives after a separate input that starts with \"" + ModelsContextLabel + "\". The launcher adds it, not the user: " +
-        "a fresh snapshot of CHIM's selected models (configured profile and role assignments with exact model IDs), or a statement that they " +
-        "are unavailable. When asked which models are selected, answer directly from it: list them by profile and role with the exact IDs, " +
-        "give the capture time, and say whether the list is truncated. It covers configured profiles, not which NPC or profile is active in " +
-        "game. If it says the models are unavailable, say so. Never read configuration, database or credential files to find models.";
+        "Each user message arrives after a separate input that starts with \"" + ContextLabel + "\". The launcher adds it, not the user. " +
+        "It restates your scope, then holds a fresh DwemerDistro inventory and a fresh snapshot of CHIM's selected models, or statements that " +
+        "they are unavailable. The inventory reports presence only: each server's install state, branch, version and whether its database " +
+        "exists; the names of entries in the known extension folders (CHIM and Dialectic ext/); component startup markers; and registered " +
+        "custom mods. Answer questions about what is installed, such as which server mods or extensions are installed, directly from it with " +
+        "its capture time; never ask the user to paste a list it already holds. When asked to check or summarize a setup, give an " +
+        "evidence-based summary from it and say what it cannot show: present does not mean enabled, loaded, running, healthy or correct, and " +
+        "an inventory is not a code audit. When asked which models are selected, answer from the model snapshot: list them by profile and role " +
+        "with the exact IDs, give the capture time, and say whether the list is truncated. It covers configured CHIM profiles, not which NPC or " +
+        "profile is active in game. If any part is unavailable, say so. Never read configuration, database or credential files to find any of this.";
 
-    /// <summary>First line of the per-message model context, so a resumed thread with older instructions still sees what it is.</summary>
-    internal const string ModelsContextLabel = "[DwemerDistro context for this message - added by the launcher, not typed by the user]";
+    /// <summary>First line of the per-message context, so a resumed thread with older instructions still sees what it is.</summary>
+    internal const string ContextLabel = "[DwemerDistro context for this message - added by the launcher, not typed by the user]";
+
+    /// <summary>
+    /// Repeated in every message's context: a thread resumed from an older launcher keeps its original developer
+    /// instructions, so the distro-wide scope and the CHIM-only file editing limit must arrive with each turn too.
+    /// </summary>
+    internal const string ScopeReminder =
+        "Scope, which applies even if this conversation began with older instructions: you are the DwemerDistro Assistant for the whole " +
+        "distro (all managed game servers, the Dwemer Dashboard, voice and speech components, and custom mods), not a CHIM-only helper. " +
+        "File editing works only for CHIM (HerikaServer) files today. For anything you cannot execute, give grounded next steps and say what " +
+        "cannot be done from here. Use the inventory below for what is installed instead of asking the user for it.";
 
     private readonly IAssistantCli _cli;
     private readonly IAssistantHost _host;
@@ -141,7 +169,7 @@ public sealed class AssistantViewModel : ObservableObject
     private string? _lastAgentText;
     private AssistantFileRequest? _fileRequest;
     private string? _pendingContinuation;
-    private CancellationTokenSource? _modelsLookup;
+    private CancellationTokenSource? _contextLookup;
 
     /// <summary>Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect.</summary>
     public AssistantViewModel(IAssistantCli cli, IAssistantHost host, IAssistantStateStore store)
@@ -530,7 +558,7 @@ public sealed class AssistantViewModel : ObservableObject
         await EnsureThreadAsync(client);
         SignInUrl = string.Empty;
         SignInCode = string.Empty;
-        SetState(AssistantState.Ready, "Describe what you want to fix or change. Edits stay in an isolated copy until you review and approve them.");
+        SetState(AssistantState.Ready, "Ask about your DwemerDistro setup, or describe a CHIM fix. Edits stay in an isolated copy until you review and approve them.");
         // A request the user allowed files for continues in the new workspace's first turn.
         if (_pendingContinuation is { } continuation)
         {
@@ -679,21 +707,19 @@ public sealed class AssistantViewModel : ObservableObject
         _lastAgentText = null;
         SetState(AssistantState.Streaming, "The assistant is responding. Press Esc or Stop to interrupt.");
 
-        // A fresh read for every message, continuations included; it is sent with the turn and never stored or logged.
+        // Fresh reads for every message, continuations included; they are sent with the turn and never stored or logged.
         var lookup = new CancellationTokenSource();
-        _modelsLookup = lookup;
+        _contextLookup = lookup;
         string context;
         try
         {
-            context = BuildModelsContext(await _cli.RunAsync(AssistantCliCommands.Models(), ModelsTimeout, lookup.Token));
-        }
-        catch (OperationCanceledException)
-        {
-            context = BuildModelsContext(AssistantCliResult.Failure(AssistantCliResult.Timeout, string.Empty));
+            var inventory = LookupAsync(AssistantCliCommands.Inventory(), InventoryTimeout, lookup.Token);
+            var models = LookupAsync(AssistantCliCommands.Models(), ModelsTimeout, lookup.Token);
+            context = BuildTurnContext(await inventory, await models);
         }
         finally
         {
-            if (ReferenceEquals(_modelsLookup, lookup)) _modelsLookup = null;
+            if (ReferenceEquals(_contextLookup, lookup)) _contextLookup = null;
         }
         var stopped = lookup.IsCancellationRequested;
         lookup.Dispose();
@@ -735,8 +761,8 @@ public sealed class AssistantViewModel : ObservableObject
     public async Task InterruptAsync()
     {
         if (State != AssistantState.Streaming) return;
-        // Still reading the model settings: nothing has been sent, so the turn is simply not started.
-        if (_modelsLookup is { } lookup)
+        // Still reading the inventory and model settings: nothing has been sent, so the turn is simply not started.
+        if (_contextLookup is { } lookup)
         {
             StatusDetail = "Stopping the response…";
             lookup.Cancel();
@@ -747,22 +773,68 @@ public sealed class AssistantViewModel : ObservableObject
         await turns.StopAsync();
     }
 
+    /// <summary>A lookup that ends early (Stop or the session closing) reads as unanswered; the caller checks which.</summary>
+    private async Task<AssistantCliResult> LookupAsync(string[] arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _cli.RunAsync(arguments, timeout, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return AssistantCliResult.Failure(AssistantCliResult.Timeout, string.Empty);
+        }
+    }
+
     /// <summary>
-    /// The labeled context sent ahead of each message: Core's projected model snapshot, or a plain statement that it is
-    /// unavailable and why. Only the allowlisted projection is serialized, never the raw document.
+    /// The labeled context sent ahead of each message: the distro-wide scope, then the inventory and the CHIM model
+    /// snapshot, each as Core's allowlisted projection or a plain statement that it is unavailable and why.
     /// </summary>
+    internal static string BuildTurnContext(AssistantCliResult inventory, AssistantCliResult models) =>
+        ContextLabel + "\n" + ScopeReminder + "\n\n" + BuildInventoryContext(inventory) + "\n\n" + BuildModelsContext(models);
+
+    private static string DescribeLookupFailure(AssistantCliResult result, string problem) =>
+        result.Ok ? problem : result.ErrorCode switch
+        {
+            AssistantCliResult.Timeout => "DwemerDistro did not answer the lookup in time.",
+            AssistantCliResult.CliMissing or AssistantCliResult.DistroMissing => "the DwemerDistro command is not available.",
+            AssistantCliResult.Protocol or "invalid_argument" or "unsupported" or "usage" or "not_found" =>
+                "this DwemerDistro Core does not provide the lookup (Update Distro adds it).",
+            _ => $"DwemerDistro reported {Shorten(result.ErrorCode, 40)}."
+        };
+
+    /// <summary>
+    /// Core's presence-only inventory of the whole distro. Only the allowlisted projection is serialized, never the raw
+    /// document, and the text says plainly what presence does not show.
+    /// </summary>
+    internal static string BuildInventoryContext(AssistantCliResult result)
+    {
+        var snapshot = AssistantCliService.ProjectInventory(result, out var problem);
+        if (snapshot is null)
+            return "DwemerDistro inventory is unavailable for this message: " + DescribeLookupFailure(result, problem) +
+                   " If asked what is installed, say it could not be read just now and point to the launcher's server and component pages. " +
+                   "Do not guess, and do not read configuration, database or credential files to find it.";
+
+        var complete = snapshot["complete"]!.GetValue<bool>();
+        return $"DwemerDistro inventory, read by DwemerDistro at {snapshot["captured_at"]!.GetValue<string>()} (UTC), just before this message. " +
+               "Scope presence_only. servers: each managed game server's install state, repository state, branch, version, and whether its " +
+               "database exists (null means unknown). extensions: the names of entries directly inside each known ext/ folder (CHIM and " +
+               "Dialectic); no_known_root lists servers without a known extension folder, so nothing was listed for them. components: whether " +
+               "each component's startup marker files are present (present means startup would try it, not that it is running). custom_mods: " +
+               "registered custom mod servers and their recorded state. None of this shows whether an extension is enabled, loaded, " +
+               "configured or working, whether a component is running or healthy, or anything about code quality; say so when it matters. " +
+               "Answer what-is-installed questions directly from it, with the capture time, instead of asking the user for a list. " +
+               (complete ? "Every section was read in full."
+                   : "Some sections are INCOMPLETE (see available, reason, state, truncated and skipped); say which when it matters.") +
+               "\n" + snapshot.ToJsonString();
+    }
+
+    /// <summary>Core's projected CHIM model snapshot, or a plain statement that it is unavailable and why.</summary>
     internal static string BuildModelsContext(AssistantCliResult result)
     {
         var snapshot = AssistantCliService.ProjectModelsSnapshot(result, out var problem);
         if (snapshot is null)
-            return Unavailable(result.Ok ? problem : result.ErrorCode switch
-            {
-                AssistantCliResult.Timeout => "DwemerDistro did not answer the lookup in time.",
-                AssistantCliResult.CliMissing or AssistantCliResult.DistroMissing => "the DwemerDistro command is not available.",
-                AssistantCliResult.Protocol or "invalid_argument" or "unsupported" or "usage" or "not_found" =>
-                    "this DwemerDistro Core does not provide the lookup (Update Distro adds it).",
-                _ => $"DwemerDistro reported {Shorten(result.ErrorCode, 40)}."
-            });
+            return Unavailable(DescribeLookupFailure(result, problem));
 
         if (!snapshot["available"]!.GetValue<bool>())
         {
@@ -772,8 +844,7 @@ public sealed class AssistantViewModel : ObservableObject
 
         var count = snapshot["assignments"]!.AsArray().Count;
         var truncated = snapshot["truncated"]!.GetValue<bool>();
-        return ModelsContextLabel + "\n" +
-               $"CHIM selected models, read by DwemerDistro from CHIM's configured profiles at {snapshot["captured_at"]!.GetValue<string>()} (UTC), " +
+        return $"CHIM selected models, read by DwemerDistro from CHIM's configured profiles at {snapshot["captured_at"]!.GetValue<string>()} (UTC), " +
                "just before this message. Scope configured_profiles: each assignment is the connector and model configured for one CHIM " +
                "profile and role. It does not show which NPC or profile is active in game right now. " +
                (truncated ? $"The list is TRUNCATED: CHIM has more assignments than the {count} shown; say so if it matters. "
@@ -782,7 +853,7 @@ public sealed class AssistantViewModel : ObservableObject
                snapshot.ToJsonString();
 
         static string Unavailable(string why) =>
-            ModelsContextLabel + "\nCHIM selected models are unavailable for this message: " + why +
+            "CHIM selected models are unavailable for this message: " + why +
             " If asked, say they could not be read. Do not guess them, and do not read configuration, database or credential files to find them.";
     }
 
@@ -923,7 +994,7 @@ public sealed class AssistantViewModel : ObservableObject
         _client = null;
         _turns = null;
         _sessionGeneration++;
-        _modelsLookup?.Cancel();
+        _contextLookup?.Cancel();
         ClearFileRequest();
         if (client is not null)
         {
