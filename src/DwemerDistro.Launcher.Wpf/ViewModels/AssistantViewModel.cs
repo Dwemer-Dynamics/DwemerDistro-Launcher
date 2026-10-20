@@ -195,18 +195,41 @@ public sealed class AssistantViewModel : ObservableObject
     /// <summary>
     /// The tool set a thread can have, as one number. 0 is none; 1 is <see cref="ReadToolName"/>; 2 adds
     /// <see cref="MemoryToolName"/>; 3 and 4 are 1 and 2 with the enhanced read schema (400 log lines, query/since filters,
-    /// coverage). The broker declares tools only on thread/start, so a thread lacking something Core now offers is upgraded
-    /// once to a new thread. Unknown revisions (from a newer launcher) count as the read tool alone.
+    /// coverage); 5 and 6 are 3 and 4 plus <see cref="ActionToolName"/>. The broker declares tools only on thread/start, so a
+    /// thread lacking something Core now offers is upgraded once to a new thread. Unknown revisions (from a newer launcher)
+    /// count as the read tool alone, so an older thread is never treated as able to propose a restart.
     /// </summary>
     internal static int ToolRevisionFor(IReadOnlyCollection<string> tools, bool enhancedRead = false) =>
-        ToolRevision(tools.Contains(ReadToolName), tools.Contains(MemoryToolName), enhancedRead);
+        ToolRevision(tools.Contains(ReadToolName), tools.Contains(MemoryToolName), enhancedRead, tools.Contains(ActionToolName));
 
-    private static int ToolRevision(bool read, bool memory, bool enhancedRead) =>
-        !read ? 0 : (memory ? 2 : 1) + (enhancedRead ? 2 : 0);
+    private static int ToolRevision(bool read, bool memory, bool enhancedRead, bool action = false)
+    {
+        if (!read) return 0;
+        if (action && enhancedRead) return memory ? 6 : 5;
+        return (memory ? 2 : 1) + (enhancedRead ? 2 : 0);
+    }
 
-    internal static bool HasMemoryTool(int toolRevision) => toolRevision is 2 or 4;
+    internal static bool HasMemoryTool(int toolRevision) => toolRevision is 2 or 4 or 6;
 
-    internal static bool HasEnhancedRead(int toolRevision) => toolRevision is 3 or 4;
+    internal static bool HasEnhancedRead(int toolRevision) => toolRevision is 3 or 4 or 5 or 6;
+
+    internal static bool HasActionTool(int toolRevision) => toolRevision is 5 or 6;
+
+    /// <summary>
+    /// Core's broker-owned live action: the model may only propose restarting an allowlisted service. The broker announces the
+    /// proposal to the launcher, and only the user's Approve restart here runs it; the model never sees the proposal id.
+    /// </summary>
+    internal const string ActionToolName = "ddistro_action";
+
+    /// <summary>Added for threads started with <see cref="ActionToolName"/>: the one exception to "you cannot change anything".</summary>
+    internal const string ActionInstructions =
+        "One exception to not changing anything: the " + ActionToolName + " tool can propose restarting the Apache web server, which " +
+        "CHIM (HerikaServer), STOBE, Dialectic and custom PHP mods share. You can only propose it; you cannot approve or run it, and no " +
+        "other service, start, stop, update, repair or configuration is possible. Propose it only when fresh " + ReadToolName + " evidence " +
+        "shows Apache is down or failing and a restart is a reasonable next step; say why first, and propose at most once per turn. The " +
+        "user then sees Approve restart and Cancel in the launcher. Report the reply's state exactly: cancelled, expired, refused, busy or " +
+        "not_executed mean nothing ran; failed means it ran but the fresh check did not pass; only verified means a new process started " +
+        "and its ports answered. Never call a restart successful from the command alone, and that check is not a full health check.";
 
     /// <summary>Core's broker-owned memory tool: search and remember only, declared when the user's retrieval is on.</summary>
     internal const string MemoryToolName = "ddistro_memory";
@@ -317,6 +340,11 @@ public sealed class AssistantViewModel : ObservableObject
     // A thread whose upgrade failed in this session continues as it was; it is not tried again on every message.
     private string? _upgradeFailedThread;
     private string _usageText = string.Empty;
+    // The restart Core's broker proposed for this thread's running turn; set only while its inline card is shown.
+    private RestartProposal? _restartProposal;
+    private sealed record RestartProposal(string Id, string ThreadId, string Label, string Impact, string Reason);
+    // The approved restart holding the host's live-change slot, from Approve until its ddistro/action/updated or the session's end.
+    private string? _restartRunningId;
     // The sha256 of the account-home config Core proposed to quarantine; set only while its inline card is shown.
     private string? _homeConfigProposal;
     // DwemerDistro tool calls of the current turn by the broker's coverage result, and the items already counted.
@@ -375,6 +403,9 @@ public sealed class AssistantViewModel : ObservableObject
         RepairHomeConfigCommand = new AsyncRelayCommand(RepairHomeConfigAsync, () => _homeConfigProposal is not null && _client is null
             && !IsMaintenanceHeld && State == AssistantState.Error);
         CancelHomeConfigRepairCommand = new RelayCommand(CancelHomeConfigRepair, () => _homeConfigProposal is not null);
+        ApproveRestartCommand = new AsyncRelayCommand(() => DecideRestartAsync(true),
+            () => _restartProposal is not null && _client is not null && State == AssistantState.Streaming && !IsMaintenanceHeld);
+        CancelRestartCommand = new AsyncRelayCommand(() => DecideRestartAsync(false), () => _restartProposal is not null);
     }
 
     public AsyncRelayCommand ConnectCommand { get; }
@@ -405,6 +436,18 @@ public sealed class AssistantViewModel : ObservableObject
     public RelayCommand CancelDeleteCommand { get; }
     public AsyncRelayCommand RepairHomeConfigCommand { get; }
     public RelayCommand CancelHomeConfigRepairCommand { get; }
+    public AsyncRelayCommand ApproveRestartCommand { get; }
+    public AsyncRelayCommand CancelRestartCommand { get; }
+
+    /// <summary>
+    /// A restart Core's broker proposed during this thread's running turn. Approve sends exactly its id once; Cancel, Stop,
+    /// a disconnect, a new chat, the turn ending or the broker's 60 second expiry all end it with nothing run.
+    /// </summary>
+    public bool IsRestartProposed => _restartProposal is not null;
+    public string RestartProposalTitle => _restartProposal is { } proposal ? $"Restart the {proposal.Label}?" : string.Empty;
+    public string RestartProposalDetail => _restartProposal is { } proposal
+        ? "Assistant's reason: " + proposal.Reason + "\n" + proposal.Impact + " Nothing runs unless you approve."
+        : string.Empty;
 
     /// <summary>
     /// Shown only after Core's broker refused the session with <see cref="HomeConfigRefusal"/> and Core's own dry run found
@@ -561,7 +604,8 @@ public sealed class AssistantViewModel : ObservableObject
     /// an older Core gets the per-message snapshots again rather than instructions for a tool nobody serves.
     /// </summary>
     private int ActiveToolRevision => ToolRevision(_threadToolRevision > 0 && _toolRevision > 0,
-        HasMemoryTool(_threadToolRevision) && HasMemoryTool(_toolRevision), HasEnhancedRead(_threadToolRevision) && HasEnhancedRead(_toolRevision));
+        HasMemoryTool(_threadToolRevision) && HasMemoryTool(_toolRevision), HasEnhancedRead(_threadToolRevision) && HasEnhancedRead(_toolRevision),
+        HasActionTool(_threadToolRevision) && HasActionTool(_toolRevision));
 
     internal static string Describe(AssistantState state) => state switch
     {
@@ -662,7 +706,8 @@ public sealed class AssistantViewModel : ObservableObject
             if (HasMemoryTool(_toolRevision))
             {
                 SetState(AssistantState.Checking, "Setting up automatic memory…");
-                if (!await Memory.EnsureAutomaticAsync()) _toolRevision = ToolRevision(true, false, HasEnhancedRead(_toolRevision));
+                if (!await Memory.EnsureAutomaticAsync())
+                    _toolRevision = ToolRevision(true, false, HasEnhancedRead(_toolRevision), HasActionTool(_toolRevision));
                 if (_isShutDown) return;
             }
 
@@ -721,6 +766,12 @@ public sealed class AssistantViewModel : ObservableObject
                 && operations.EnumerateArray().Select(operation => operation.ValueKind == JsonValueKind.String ? operation.GetString() : null)
                     .OrderBy(operation => operation, StringComparer.Ordinal).SequenceEqual(["remember", "search"])))
             offered.Add(MemoryToolName);
+        // The restart action counts only in its exact shape: one propose_restart operation, approved in the launcher.
+        if (offered.Count > 0 && AssistantCliService.GetBool(Prop(capabilities, "features"), "assistant_actions") && tools.EnumerateArray().Any(tool =>
+                AssistantCliService.GetString(tool, "name") == ActionToolName && Prop(tool, "operations") is { ValueKind: JsonValueKind.Array } operations
+                && operations.EnumerateArray().Select(operation => operation.ValueKind == JsonValueKind.String ? operation.GetString() : null)
+                    .SequenceEqual(["propose_restart"])))
+            offered.Add(ActionToolName);
         return offered;
     }
 
@@ -904,6 +955,9 @@ public sealed class AssistantViewModel : ObservableObject
             };
             // Opting in makes Core's broker declare its read tool on thread/start; the launcher itself never sends dynamicTools.
             if (_toolRevision > 0) initialize["capabilities"] = new JsonObject { ["experimentalApi"] = true };
+            // Only a launcher that can show the Approve restart prompt asks Core's broker for the action tool; Codex never sees it.
+            if (HasActionTool(_toolRevision) && initialize["capabilities"] is JsonObject capabilities)
+                capabilities["ddistroActions"] = new JsonArray("restart_service");
             await client.RequestAsync("initialize", initialize, RpcTimeout);
             await client.NotifyAsync("initialized", null);
             await RefreshAccountAsync(client);
@@ -1023,6 +1077,84 @@ public sealed class AssistantViewModel : ObservableObject
             _ => $"DwemerDistro did not repair it ({Shorten(result.ErrorCode, 40)})."
         };
         return why + " Nothing was deleted. Press Connect to check again.";
+    }
+
+    private void SetRestartProposal(RestartProposal? proposal)
+    {
+        if (_restartProposal == proposal) return;
+        _restartProposal = proposal;
+        OnPropertyChanged(nameof(IsRestartProposed));
+        OnPropertyChanged(nameof(RestartProposalTitle));
+        OnPropertyChanged(nameof(RestartProposalDetail));
+        ApproveRestartCommand.RaiseCanExecuteChanged();
+        CancelRestartCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// The user's one decision for the shown proposal. The card closes first, so a second click sends nothing. Approve first
+    /// claims the host's live-change slot (the one server, component and system updates and Apply use) and holds it until the
+    /// broker's ddistro/action/updated for this proposal or the session's end. When the slot is busy the proposal is cancelled
+    /// instead, so nothing runs.
+    /// </summary>
+    private async Task DecideRestartAsync(bool approve)
+    {
+        if (_restartProposal is not { } proposal) return;
+        SetRestartProposal(null);
+        if (_client is not { } client)
+        {
+            AddSystem("The restart was not run: the assistant session ended.");
+            return;
+        }
+        var busy = approve && !_host.TryBeginLiveChange();
+        if (approve && !busy) _restartRunningId = proposal.Id;
+        try
+        {
+            await client.RequestAsync("ddistro/action/decide", new JsonObject
+            {
+                ["proposalId"] = proposal.Id, ["threadId"] = proposal.ThreadId, ["decision"] = approve && !busy ? "approve" : "cancel"
+            }, RpcTimeout);
+            AddActivity(busy ? "The restart was not run: another server, component or system operation is running. Try again when it finishes."
+                : approve ? $"Restart approved: running it for the {proposal.Label}, then checking it fresh…" : "Restart cancelled. Nothing was run.");
+        }
+        catch (AppServerException ex) when (ex.Code != 0)
+        {
+            // The broker refused the decision (replayed, late or no longer pending): nothing was approved, so nothing runs.
+            if (_restartRunningId == proposal.Id) ReleaseRestartHold();
+            AddSystem((approve && !busy ? "The restart was not run: " : "Cancelled. ") + Shorten(ex.Message, 200));
+        }
+        catch (AppServerException ex)
+        {
+            // No answer: an approval may have reached the broker, so the slot stays held until its update or the session's end.
+            AddSystem(approve && !busy ? "The restart's outcome is unknown: " + Shorten(ex.Message, 200) + " Check the service before trying again."
+                : "The restart was not run: " + Shorten(ex.Message, 200));
+        }
+    }
+
+    /// <summary>Ends the approved restart's live-change hold, once.</summary>
+    private void ReleaseRestartHold()
+    {
+        if (_restartRunningId is null) return;
+        _restartRunningId = null;
+        _host.EndLiveChange();
+    }
+
+    /// <summary>One line for the broker's ddistro/action/updated: what ran and what the fresh check showed, never more.</summary>
+    internal static string DescribeRestartUpdate(JsonElement parameters)
+    {
+        var failed = Prop(parameters, "checks") is { ValueKind: JsonValueKind.Array } checks
+            ? checks.EnumerateArray().Where(check => AssistantCliService.GetString(check, "result") != "passed")
+                .Select(check => Shorten(AssistantCliService.GetString(check, "id"), 40)).Take(8).ToList()
+            : [];
+        return AssistantCliService.GetString(parameters, "state") switch
+        {
+            "verified" when AssistantCliService.GetBool(parameters, "verified") => "Restart verified: a new process started and its ports answered.",
+            "failed" => "The restart ran, but the fresh check did not pass" + (failed.Count > 0 ? ": " + string.Join(", ", failed) + "." : "."),
+            "cancelled" => "Restart cancelled. Nothing was run.",
+            "expired" => "The restart prompt expired. Nothing was run.",
+            "busy" => "The restart was not run: another DwemerDistro operation is running.",
+            "not_executed" or "refused" => "The restart was not run.",
+            _ => "The restart's outcome could not be confirmed. Check the service before trying again."
+        };
     }
 
     private void CancelHomeConfigRepair()
@@ -1153,8 +1285,12 @@ public sealed class AssistantViewModel : ObservableObject
         _shownThreadId = threadId;
     }
 
-    internal static string InstructionsFor(int toolRevision) =>
-        HasMemoryTool(toolRevision) ? ToolDeveloperInstructions + "\n" + MemoryInstructions : toolRevision > 0 ? ToolDeveloperInstructions : DeveloperInstructions;
+    internal static string InstructionsFor(int toolRevision)
+    {
+        if (toolRevision <= 0) return DeveloperInstructions;
+        return ToolDeveloperInstructions + (HasMemoryTool(toolRevision) ? "\n" + MemoryInstructions : string.Empty)
+            + (HasActionTool(toolRevision) ? "\n" + ActionInstructions : string.Empty);
+    }
 
     /// <summary>Added for threads started with <see cref="MemoryToolName"/>; notes never outrank policy or fresh reads.</summary>
     internal const string MemoryInstructions =
@@ -1981,6 +2117,21 @@ public sealed class AssistantViewModel : ObservableObject
             case "item/started" when ItemOf(parameters, out var type, out var id) && type == "dynamicToolCall":
                 if (FindItem(id) is null) AddActivity(DescribeToolCall(Prop(parameters, "item")), id);
                 break;
+            // Shown only for this thread's running turn of a thread started with the action tool; otherwise it expires unanswered.
+            case "ddistro/action/proposed" when HasActionTool(ActiveToolRevision) && _threadId is not null && State == AssistantState.Streaming
+                && AssistantCliService.GetString(parameters, "threadId") == _threadId
+                && AssistantCliService.GetString(parameters, "proposalId") is { Length: 32 } proposalId:
+                SetRestartProposal(new RestartProposal(proposalId, _threadId, Shorten(AssistantCliService.GetString(parameters, "label"), 80),
+                    Shorten(AssistantCliService.GetString(parameters, "impact"), 300), Shorten(AssistantCliService.GetString(parameters, "reason"), 300)));
+                break;
+            case "ddistro/action/updated":
+                // The approved run is over, whatever it reports: its hold ends here, before any thread filter.
+                var updatedId = AssistantCliService.GetString(parameters, "proposalId");
+                if (_restartRunningId is not null && _restartRunningId == updatedId) ReleaseRestartHold();
+                if (_threadId is null || AssistantCliService.GetString(parameters, "threadId") != _threadId) break;
+                if (_restartProposal?.Id == updatedId) SetRestartProposal(null);
+                AddActivity(DescribeRestartUpdate(parameters));
+                break;
             case "thread/compacted" when AssistantCliService.GetString(parameters, "threadId") == _threadId:
                 AddActivity(CompactedText);
                 break;
@@ -1991,6 +2142,7 @@ public sealed class AssistantViewModel : ObservableObject
                 var turn = Prop(parameters, "turn");
                 var status = AssistantCliService.GetString(turn, "status");
                 var completedTurn = AssistantCliService.GetString(turn, "id");
+                if (_restartProposal?.ThreadId == AssistantCliService.GetString(parameters, "threadId")) SetRestartProposal(null);
                 // A late completion of another thread or an earlier turn must not end the running one. The runner has already
                 // let go of the turn this completes, so a still-known running id means the completion is someone else's.
                 if (_threadId is null || AssistantCliService.GetString(parameters, "threadId") != _threadId
@@ -2073,12 +2225,15 @@ public sealed class AssistantViewModel : ObservableObject
         _contextLookup?.Cancel();
         _historyLoadPending = false;
         ClearFileRequest();
+        SetRestartProposal(null);
         ResetCoverage();
         if (client is not null)
         {
             try { await client.DisposeAsync(); }
             catch (Exception ex) { LauncherLogService.Operation($"Assistant session cleanup failed: {ex.GetType().Name}"); }
         }
+        // Only once the session is gone. A restart still running in the distro holds Core's maintenance lock until it finishes.
+        ReleaseRestartHold();
         ReleaseDistroActivity();
         RaiseCommands();
     }
@@ -3394,7 +3549,7 @@ public sealed class AssistantViewModel : ObservableObject
                      SendCommand, NewTaskCommand, ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand,
                      AllowFileAccessCommand, DeclineFileAccessCommand, ReopenCommand, ArchiveCommand, RenameCommand,
                      ExportChatCommand, CancelExportCommand, DeleteChatCommand, ConfirmDeleteCommand, CancelDeleteCommand,
-                     RepairHomeConfigCommand, CancelHomeConfigRepairCommand
+                     RepairHomeConfigCommand, CancelHomeConfigRepairCommand, ApproveRestartCommand, CancelRestartCommand
                  })
         {
             switch (command)

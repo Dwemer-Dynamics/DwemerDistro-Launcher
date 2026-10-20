@@ -137,6 +137,23 @@
                         </WrapPanel>
                     </Border>
 
+                    <!-- A restart Core's broker proposed in the running turn. Nothing runs until Approve restart; Cancel is the safe
+                         choice and neither button is a default. Stop, disconnect, a new chat or the broker's expiry also end it. -->
+                    <Border x:Name="RestartProposalCard" Visibility="{Binding IsRestartProposed, Converter={StaticResource BoolToVisibility}}"
+                            BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
+                            AutomationProperties.Name="Confirm the restart the assistant proposed">
+                        <StackPanel>
+                            <TextBlock x:Name="RestartProposalTitle" Text="{Binding RestartProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock x:Name="RestartProposalDetail" Text="{Binding RestartProposalDetail}" TextWrapping="Wrap" Margin="0,2,0,6" />
+                            <WrapPanel>
+                                <Button x:Name="ApproveRestartButton" Content="Approve restart" Command="{Binding ApproveRestartCommand}" Style="{StaticResource Assistant.Action}"
+                                        AutomationProperties.HelpText="Restart this service once now, then check that a new process started and its ports answer." />
+                                <Button x:Name="CancelRestartButton" Content="Cancel" Command="{Binding CancelRestartCommand}" Style="{StaticResource Assistant.Action}"
+                                        AutomationProperties.HelpText="Do not restart. Nothing is run." />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
                     <!-- Memory is automatic. Only its problems or the last Clear memory outcome are shown, plus the confirmation. -->
                     <StackPanel DataContext="{Binding Memory}">
                         <TextBlock x:Name="MemoryStatusText" Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,8,0,0"

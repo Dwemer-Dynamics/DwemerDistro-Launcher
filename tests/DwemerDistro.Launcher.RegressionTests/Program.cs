@@ -3940,6 +3940,128 @@ try
                && !AssistantViewModel.InstructionsFor(3).Contains(AssistantViewModel.MemoryInstructions) && AssistantViewModel.InstructionsFor(4).Contains(AssistantViewModel.MemoryInstructions)
                && !AssistantViewModel.BuildToolTurnContext(3, null).Contains(AssistantViewModel.MemoryReminder),
             "Only the full enhanced shape is revision 3; enhanced read without memory never gets the memory rules.");
+
+        // The restart action is revision 5/6 and only in its exact shape; threads of revisions 0-4 never count as able to propose it.
+        const string ActionTool = ",{\"name\":\"ddistro_action\",\"mutates\":true,\"operations\":[\"propose_restart\"]}";
+        System.Text.Json.JsonElement Caps(string features, string extra) =>
+            System.Text.Json.JsonDocument.Parse("{\"features\":{" + features + "}," + EnhancedTools + extra + EnhancedCoverage + "}").RootElement;
+        var withAction = Caps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool);
+        var withActionMemory = Caps("\"assistant_tools\":true,\"assistant_actions\":true,\"memory\":true",
+            ",{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}" + ActionTool);
+        int Revision(System.Text.Json.JsonElement caps) => AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(caps), AssistantViewModel.OffersEnhancedRead(caps));
+        Assert(Revision(withAction) == 5 && Revision(withActionMemory) == 6
+               && Revision(Caps("\"assistant_tools\":true", ActionTool)) == 3
+               && Revision(Caps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool.Replace("[\"propose_restart\"]", "[\"propose_restart\",\"stop\"]"))) == 3
+               && AssistantViewModel.ToolRevisionFor(["ddistro_read", "ddistro_action"]) == 1
+               && Enumerable.Range(0, 5).All(revision => !AssistantViewModel.HasActionTool(revision))
+               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(7)
+               && AssistantViewModel.HasMemoryTool(6) && !AssistantViewModel.HasMemoryTool(5) && AssistantViewModel.HasEnhancedRead(5)
+               && AssistantViewModel.InstructionsFor(5).Contains(AssistantViewModel.ActionInstructions)
+               && AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.MemoryInstructions)
+               && !AssistantViewModel.InstructionsFor(4).Contains(AssistantViewModel.ActionInstructions),
+            "Only Core's exact propose_restart tool with the enhanced read schema is revision 5/6, and only those threads get the action rules.");
+        string Update(string json) => AssistantViewModel.DescribeRestartUpdate(System.Text.Json.JsonDocument.Parse(json).RootElement);
+        Assert(Update("{\"state\":\"verified\",\"verified\":true}").StartsWith("Restart verified")
+               && Update("{\"state\":\"verified\",\"verified\":false}").Contains("could not be confirmed")
+               && Update("{\"state\":\"not_executed\"}") == "The restart was not run."
+               && Update("{\"state\":\"failed\",\"executed\":true,\"checks\":[{\"id\":\"command\",\"result\":\"passed\"},{\"id\":\"port.8081\",\"result\":\"failed\"}]}").EndsWith(": port.8081.")
+               && Update("{\"state\":\"cancelled\"}").Contains("Nothing was run") && Update("{\"state\":\"expired\"}").Contains("Nothing was run")
+               && Update("{\"state\":\"surprise\"}").Contains("could not be confirmed"),
+            "A restart is reported verified only from the broker's verified result; anything unknown is never called verified or not run.");
+
+        // The approval card through the view model: the host's live-change slot is held from Approve until the broker's update
+        // for that proposal or the session's end, and ended exactly once; a busy host cancels instead, so nothing runs.
+        const string ActionCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true,\"assistant_tools\":true,"
+            + "\"assistant_actions\":true}," + EnhancedTools + ActionTool + EnhancedCoverage + "}}";
+        System.Text.Json.Nodes.JsonNode? decideAnswer = null;
+        var action = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-act", ThreadToolRevision = 5 }, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? ActionCapabilities : null,
+            respondFirst: (method, _) => method == "ddistro/action/decide" ? decideAnswer?.DeepClone() : null);
+        string[] Decisions() { lock (action.transport.Requests) return action.transport.Bodies.Where(body => body.StartsWith("ddistro/action/decide ")).ToArray(); }
+        bool Said(string text) => action.vm.Transcript.Any(item => item.Text.Contains(text));
+        void ActionNotify(string method, string json) => action.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
+        void Propose(string id, string thread = "thr-act") => ActionNotify("ddistro/action/proposed", "{\"proposalId\":\"" + id + "\",\"threadId\":\"" + thread
+            + "\",\"turnId\":\"turn-1\",\"action\":\"restart\",\"service\":\"apache\",\"label\":\"Apache web server\",\"impact\":\"Apache is shared.\","
+            + "\"reason\":\"Port 8081 refused connections.\",\"expiresAt\":\"2026-10-20T00:00:00Z\"}");
+        void Updated(string id, string state, string checks = "[]") => ActionNotify("ddistro/action/updated", "{\"proposalId\":\"" + id
+            + "\",\"threadId\":\"thr-act\",\"state\":\"" + state + "\",\"executed\":" + (state is "verified" or "failed" ? "true" : "false")
+            + ",\"verified\":" + (state == "verified" ? "true" : "false") + ",\"checks\":" + checks + "}");
+        // Clicks the card's button, then waits for the decision request and the line its answer adds.
+        async Task DecideAsync(AsyncRelayCommand command, int decisions)
+        {
+            var lines = action.vm.Transcript.Count;
+            command.Execute(null);
+            await WaitUntilAsync(() => Decisions().Length == decisions && action.vm.Transcript.Count > lines);
+        }
+        static string P(char c) => new(c, 32);
+        lock (action.transport.Requests)
+            Assert(action.transport.Bodies.Single(body => body.StartsWith("initialize ")).Contains("\"ddistroActions\":[\"restart_service\"]")
+                   && action.transport.Bodies.Single(body => body.StartsWith("thread/resume")).Contains("thr-act"),
+                "A revision 5 thread with Core offering the action resumes as it was, and initialize opts into the action for the broker.");
+        Propose(P('0'));
+        Assert(!action.vm.IsRestartProposed, "No card while no turn is running.");
+        action.vm.InputText = "apache seems down";
+        action.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => action.vm.State == AssistantState.Streaming);
+        Propose(P('0'), thread: "thr-other");
+        Propose("short-id");
+        Assert(action.vm.State == AssistantState.Streaming && !action.vm.IsRestartProposed && !action.vm.ApproveRestartCommand.CanExecute(null),
+            "A proposal for another thread or with a malformed id shows no card.");
+
+        Propose(P('1'));
+        Assert(action.vm.IsRestartProposed && action.vm.RestartProposalTitle == "Restart the Apache web server?"
+               && action.vm.RestartProposalDetail.Contains("Port 8081 refused connections.") && action.vm.RestartProposalDetail.Contains("Nothing runs unless you approve")
+               && action.vm.ApproveRestartCommand.CanExecute(null) && action.vm.CancelRestartCommand.CanExecute(null),
+            "This thread's proposal in the running turn shows the card with the reason and impact.");
+        decideAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"cancelled\"}");
+        await DecideAsync(action.vm.CancelRestartCommand, 1);
+        Assert(Decisions()[0].Contains(P('1')) && Decisions()[0].Contains("\"decision\":\"cancel\"") && !action.vm.IsRestartProposed
+               && action.host.LiveChangeHolds == 0 && Said("Restart cancelled. Nothing was run."),
+            "Cancel sends cancel for exactly this proposal, takes no live-change slot, and says nothing ran.");
+
+        action.host.LiveChangeBusy = true;
+        Propose(P('2'));
+        await DecideAsync(action.vm.ApproveRestartCommand, 2);
+        action.host.LiveChangeBusy = false;
+        Assert(Decisions()[1].Contains(P('2')) && Decisions()[1].Contains("\"decision\":\"cancel\"") && !Decisions().Any(body => body.Contains("\"approve\""))
+               && action.host.LiveChangeHolds == 0 && !action.vm.IsRestartProposed && Said("another server, component or system operation is running"),
+            "With the host's live-change slot busy, Approve cancels the proposal instead, so nothing runs.");
+
+        decideAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"approved\"}");
+        Propose(P('3'));
+        await DecideAsync(action.vm.ApproveRestartCommand, 3);
+        Assert(Decisions()[2].Contains(P('3')) && Decisions()[2].Contains("\"decision\":\"approve\"") && action.host.LiveChangeHolds == 1
+               && !action.vm.ApproveRestartCommand.CanExecute(null) && Said("Restart approved"),
+            "Approve sends approve once and holds the live-change slot while the restart and its check run.");
+        Updated(P('9'), "verified");
+        Assert(action.host.LiveChangeHolds == 1, "Another proposal's update never ends this restart's hold.");
+        Updated(P('3'), "verified");
+        Updated(P('3'), "verified");
+        Assert(action.host.LiveChangeHolds == 0 && Said("Restart verified"), "The proposal's own update ends the hold exactly once, even when repeated.");
+
+        decideAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"$error\":{\"code\":-32001,\"message\":\"proposal is no longer pending: expired\"}}");
+        Propose(P('4'));
+        await DecideAsync(action.vm.ApproveRestartCommand, 4);
+        Assert(action.host.LiveChangeHolds == 0 && Said("The restart was not run: proposal is no longer pending"),
+            "A decision the broker refuses (late, replayed, stale) ends the hold at once and says nothing ran.");
+
+        decideAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"approved\"}");
+        Propose(P('5'));
+        await DecideAsync(action.vm.ApproveRestartCommand, 5);
+        Updated(P('5'), "failed", "[{\"id\":\"command\",\"result\":\"passed\"},{\"id\":\"port.8081\",\"result\":\"failed\"}]");
+        Assert(action.host.LiveChangeHolds == 0 && !action.vm.IsRestartProposed && Said("did not pass: port.8081."),
+            "A failed fresh check ends the hold and is reported as failed, naming the check.");
+
+        Propose(P('6'));
+        await DecideAsync(action.vm.ApproveRestartCommand, 6);
+        ActionNotify("turn/completed", "{\"threadId\":\"thr-act\",\"turn\":{\"id\":\"turn-1\",\"status\":\"completed\"}}");
+        Propose(P('7'));
+        Assert(action.host.LiveChangeHolds == 1 && Decisions().Length == 6,
+            "The turn ending (Codex gave up on the tool call) does not end the hold of a restart still running in the distro.");
+        await action.vm.ShutdownAsync();
+        Updated(P('6'), "verified");
+        Assert(action.host.LiveChangeHolds == 0 && !action.vm.IsRestartProposed && Decisions().Length == 6,
+            "The session's end releases a running restart's hold once; a late update after it releases nothing more.");
         var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
         var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
         {
@@ -4384,8 +4506,17 @@ sealed class FakeAssistantHost(string installationId) : IAssistantHost
         return true;
     }
     public void EndSessionActivity() => SessionLeaseHeld = false;
-    public bool TryBeginLiveChange() => true;
-    public void EndLiveChange() { }
+    /// <summary>Another server, component or system operation holds the live-change slot.</summary>
+    public bool LiveChangeBusy { get; set; }
+    /// <summary>Live-change slots taken and not yet ended; it never goes below 0 when each is ended exactly once.</summary>
+    public int LiveChangeHolds { get; private set; }
+    public bool TryBeginLiveChange()
+    {
+        if (LiveChangeBusy) return false;
+        LiveChangeHolds++;
+        return true;
+    }
+    public void EndLiveChange() => LiveChangeHolds--;
     public void OpenUrl(string url) { }
     public string? GetDistroInstallationId() => installationId;
 
