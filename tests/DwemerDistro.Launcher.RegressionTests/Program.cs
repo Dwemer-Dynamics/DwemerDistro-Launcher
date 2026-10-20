@@ -2491,6 +2491,430 @@ try
             "An older Core shows memory as unavailable, with no placeholder notes or settings.");
     }
 
+    // Chat export: the pure builder over native pages, with no dialog, session or file.
+    {
+        System.Text.Json.Nodes.JsonObject User(string id, string text) => new()
+        {
+            ["type"] = "userMessage", ["id"] = id,
+            ["content"] = new System.Text.Json.Nodes.JsonArray(
+                new System.Text.Json.Nodes.JsonObject { ["type"] = "text", ["text"] = AssistantViewModel.ContextLabel + "\nHIDDEN-LAUNCHER-CONTEXT" },
+                new System.Text.Json.Nodes.JsonObject { ["type"] = "text", ["text"] = text })
+        };
+        System.Text.Json.Nodes.JsonObject Agent(string id, string text) => new() { ["type"] = "agentMessage", ["id"] = id, ["text"] = text };
+        var code = "Here is my file:\r\n```php\n<?php\n  $x = ['a' => 1];\n\n\techo $x;\n```\n  trailing  \n";
+        var turns = new System.Text.Json.Nodes.JsonArray();
+        for (var n = 0; n < 110; n++)
+            turns.Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["id"] = $"t{n}", ["itemsView"] = "full",
+                ["items"] = new System.Text.Json.Nodes.JsonArray(
+                    User($"u{n}", n == 3 ? code : $"question {n}"),
+                    new System.Text.Json.Nodes.JsonObject { ["type"] = "reasoning", ["id"] = $"r{n}", ["summary"] = new System.Text.Json.Nodes.JsonArray("SECRET-REASONING") },
+                    new System.Text.Json.Nodes.JsonObject { ["type"] = "dynamicToolCall", ["id"] = $"d{n}", ["tool"] = "ddistro_read", ["contentItems"] = new System.Text.Json.Nodes.JsonArray("SECRET-TOOL-RESULT") },
+                    Agent($"a{n}", $"answer {n}"))
+            });
+        turns.Insert(50, new System.Text.Json.Nodes.JsonObject { ["id"] = "t-big", ["itemsView"] = "notLoaded", ["items"] = new System.Text.Json.Nodes.JsonArray() });
+        var bigItems = Enumerable.Range(0, 120).Select(i => (System.Text.Json.Nodes.JsonNode)(i % 2 == 0 ? User($"bu{i}", $"big user {i}") : Agent($"ba{i}", $"big reply {i}"))).ToList();
+        var exportCalls = new List<System.Text.Json.Nodes.JsonObject>();
+        Func<string, System.Text.Json.Nodes.JsonObject, CancellationToken, Task<System.Text.Json.JsonElement>> Server(
+            System.Text.Json.Nodes.JsonArray threadTurns, Func<string, System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>? first = null) =>
+            (method, parameters, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                exportCalls.Add((System.Text.Json.Nodes.JsonObject)parameters.DeepClone());
+                var node = first?.Invoke(method, parameters);
+                if (node is System.Text.Json.Nodes.JsonObject { } failure && failure["$error"] is { } error)
+                    throw new AppServerException(error["code"]!.GetValue<int>(), error["message"]!.GetValue<string>());
+                if (node is null)
+                {
+                    var start = parameters["cursor"] is { } cursor ? int.Parse(cursor.GetValue<string>()) : 0;
+                    var limit = parameters["limit"]!.GetValue<int>();
+                    var all = method == "thread/turns/list" ? threadTurns.Select(turn => turn!).ToList() : bigItems;
+                    var page = all.Skip(start).Take(limit).Select(entry => method == "thread/turns/list" ? entry.DeepClone()
+                        : new System.Text.Json.Nodes.JsonObject { ["item"] = entry.DeepClone() }).ToArray();
+                    node = new System.Text.Json.Nodes.JsonObject
+                    {
+                        ["data"] = new System.Text.Json.Nodes.JsonArray(page), ["nextCursor"] = start + limit < all.Count ? (start + limit).ToString() : null
+                    };
+                }
+                return Task.FromResult(System.Text.Json.JsonDocument.Parse(node.ToJsonString()).RootElement.Clone());
+            };
+        var now = new DateTimeOffset(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
+        var whole = await AssistantChatExport.BuildAsync(Server(turns), "Check my XTTS", ["thr-a"], new AssistantExportLimits(), now, CancellationToken.None);
+        Assert(whole.Complete && whole.Messages == 220 + 120 && whole.Status.StartsWith("Exported the whole chat: 340")
+               && whole.Markdown.StartsWith("# Check my XTTS\n") && whole.Markdown.Contains("This is the whole conversation."),
+            "A chat longer than the transcript's 200-message window exports whole, including a 120-item turn: " + whole.Status);
+        Assert(whole.Markdown.Contains("### You\n\n" + code + "\n\n### Assistant\n\nanswer 3\n\n"),
+            "User text and code keep their exact characters and newlines, CRLF included.");
+        Assert(!whole.Markdown.Contains("HIDDEN-LAUNCHER-CONTEXT") && !whole.Markdown.Contains(AssistantViewModel.ContextLabel)
+               && !whole.Markdown.Contains("SECRET-REASONING") && !whole.Markdown.Contains("SECRET-TOOL-RESULT"),
+            "The launcher's hidden context, reasoning and tool results never reach an export.");
+        var big0 = whole.Markdown.IndexOf("big user 0\n", StringComparison.Ordinal);
+        Assert(big0 > whole.Markdown.IndexOf("answer 49\n", StringComparison.Ordinal) && big0 < whole.Markdown.IndexOf("question 50\n", StringComparison.Ordinal)
+               && whole.Markdown.Contains("big reply 119\n"), "An unloaded turn is read whole through thread/items/list, in its place.");
+        Assert(exportCalls.Where(call => call.ContainsKey("sortDirection")).All(call => call["limit"]!.GetValue<int>() <= 10
+                   && call["sortDirection"]!.GetValue<string>() == "asc" && call["itemsView"]!.GetValue<string>() == "full")
+               && exportCalls.Count(call => call.ContainsKey("turnId")) == 3 && exportCalls.Where(call => call.ContainsKey("turnId")).All(call => call["limit"]!.GetValue<int>() == 50),
+            "Turns are listed oldest first, at most 10 per page with full items; a turn's items in pages of 50.");
+
+        var cycling = await AssistantChatExport.BuildAsync(Server(turns, (method, p) => method == "thread/turns/list"
+                ? System.Text.Json.Nodes.JsonNode.Parse("{\"data\":[],\"nextCursor\":\"same\"}") : null), "t", ["thr-a"], new AssistantExportLimits(), now, CancellationToken.None);
+        Assert(!cycling.Complete && cycling.Status.Contains("cursor repeated") && cycling.Markdown.Contains("PARTIAL"), "A repeating cursor stops the export and says it is partial.");
+        var turnPages = 0;
+        var failedPage = await AssistantChatExport.BuildAsync(Server(turns, (method, p) => method == "thread/turns/list" && ++turnPages == 3
+                ? System.Text.Json.Nodes.JsonNode.Parse("{\"$error\":{\"code\":-32000,\"message\":\"backend unavailable\"}}") : null),
+            "t", ["thr-old", "thr-a"], new AssistantExportLimits(), now, CancellationToken.None);
+        Assert(!failedPage.Complete && failedPage.Status.Contains("could not be read further: backend unavailable") && failedPage.Markdown.Contains("## Earlier thread 1")
+               && failedPage.Markdown.Contains("## Current thread"), "A failed page is reported as partial; earlier threads come first, under their own heading: " + failedPage.Status);
+        var truncated = await AssistantChatExport.BuildAsync(Server(turns), "t", ["thr-a"], new AssistantExportLimits(MaxBytes: 4096), now, CancellationToken.None);
+        Assert(!truncated.Complete && truncated.Status.Contains("size limit") && truncated.Messages is > 0 and < 340
+               && System.Text.Encoding.UTF8.GetByteCount(truncated.Markdown) < 4096 + 2048, "The byte cap truncates with an explicit status: " + truncated.Status);
+        using var stopExport = new CancellationTokenSource();
+        var cancelled = false;
+        try
+        {
+            await AssistantChatExport.BuildAsync(Server(turns, (method, p) => { if (method == "thread/turns/list" && p.ContainsKey("cursor")) stopExport.Cancel(); return null; }),
+                "t", ["thr-a"], new AssistantExportLimits(), now, stopExport.Token);
+        }
+        catch (OperationCanceledException) { cancelled = true; }
+        Assert(cancelled, "Cancelling an export stops it with nothing built.");
+    }
+
+    // History actions through the view model: export, delete, reopen guards, filters, migration, a full catalogue and memory revisions.
+    {
+        var actionsRoot = Path.Combine(root, "actions-" + Guid.NewGuid().ToString("N"));
+        var install = Guid.NewGuid().ToString();
+        string Ok(string data) => "{\"schema_version\":1,\"ok\":true,\"data\":" + data + "}";
+        string Fail(string code, string message) => "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"" + code + "\",\"message\":\"" + message + "\"}}";
+        var lifecycleCaps = Ok("{\"features\":{\"agent\":true,\"thread_lifecycle\":true}}");
+        AssistantTaskReference Ref(string task, string? thread) => new(AssistantTaskReference.CurrentVersion, install, LauncherConstants.DistroName, "codex", "herika", task, thread);
+        var resumed = new System.Text.Json.Nodes.JsonArray(System.Text.Json.Nodes.JsonNode.Parse(
+            "{\"id\":\"turn-0\",\"itemsView\":\"full\",\"items\":[{\"type\":\"userMessage\",\"id\":\"u0\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]},"
+            + "{\"type\":\"agentMessage\",\"id\":\"a0\",\"text\":\"hi there\"}]}"));
+        var deleteAnswer = (System.Text.Json.Nodes.JsonNode?)null;
+        var deleteFor = (Func<string, System.Text.Json.Nodes.JsonNode?>?)null;
+        // Core's thread/delete answer (or one per thread), and an export's oldest-first pages of the resumed conversation.
+        System.Text.Json.Nodes.JsonNode? Lifecycle(string method, System.Text.Json.Nodes.JsonObject parameters) => method switch
+        {
+            "thread/delete" => (deleteFor?.Invoke(parameters["threadId"]!.GetValue<string>()) ?? deleteAnswer)?.DeepClone(),
+            "thread/turns/list" when parameters["sortDirection"]?.GetValue<string>() == "asc" => System.Text.Json.Nodes.JsonNode.Parse(
+                "{\"data\":" + resumed.ToJsonString() + ",\"nextCursor\":null}"),
+            _ => null
+        };
+
+        // Without Core's thread_lifecycle flag, Delete is not offered, even with memory on.
+        {
+            var catalog = new AssistantCatalogStore(Path.Combine(actionsRoot, "no-lifecycle"));
+            var store = new AssistantStateStore(Path.Combine(actionsRoot, "no-lifecycle"));
+            var (vm, _, _, _) = await ConnectAssistantAsync(store, Ref("task-nolc", "thr-nolc"), install, "task-nolc", catalog: catalog,
+                script: command => command == "capabilities" ? Ok("{\"features\":{\"agent\":true,\"memory\":true}}") : null);
+            vm.OpenHistory();
+            vm.SelectedHistory = vm.HistoryItems.Single(item => item.IsCurrent);
+            Assert(vm.State == AssistantState.Ready && !vm.CanDeleteChats && !vm.DeleteChatCommand.CanExecute(null) && vm.DeleteHint.Length == 0,
+                "Delete stays hidden unless Core reports features.thread_lifecycle exactly true.");
+            await vm.ShutdownAsync();
+        }
+
+        // Export from the view model: the dialog first, a held lease, nothing switchable while running, Cancel writes nothing.
+        {
+            var dir = Path.Combine(actionsRoot, "export");
+            var catalog = new AssistantCatalogStore(dir);
+            var store = new AssistantStateStore(dir);
+            var (vm, _, chatTransport, host) = await ConnectAssistantAsync(store, Ref("task-exp", "thr-exp"), install, "task-exp", catalog: catalog,
+                script: command => command == "capabilities" ? lifecycleCaps : null, resumedTurns: resumed, respondFirst: Lifecycle);
+            await WaitUntilAsync(() => vm.Transcript.Count == 2);
+            var savedBefore = store.Load();
+            var requestsBefore = chatTransport.Requests.Count;
+            host.SavePath = null;
+            vm.ExportChatCommand.Execute(null);
+            await Task.Delay(50);
+            Assert(!vm.IsExporting && chatTransport.Requests.Count == requestsBefore && host.CommandLeases == 0, "A cancelled Save dialog reads and writes nothing.");
+            var target = Path.Combine(dir, "chat.md");
+            host.SavePath = target;
+            chatTransport.Hold = method => method == "thread/turns/list";
+            vm.InputText = "a message";
+            vm.ExportChatCommand.Execute(null);
+            await WaitUntilAsync(() => chatTransport.Requests.Count > requestsBefore);
+            Assert(vm.IsExporting && host.CommandLeases == 1 && !vm.CanYieldForMaintenance && !vm.SendCommand.CanExecute(null)
+                   && !vm.NewTaskCommand.CanExecute(null) && !vm.DisconnectCommand.CanExecute(null) && !vm.ExportChatCommand.CanExecute(null)
+                   && vm.CancelExportCommand.CanExecute(null), "A running export holds a distro lease and blocks maintenance, switching and a second export.");
+            vm.CancelExportCommand.Execute(null);
+            await WaitUntilAsync(() => !vm.IsExporting);
+            Assert(!File.Exists(target) && vm.ExportStatus.Contains("cancelled") && host.CommandLeases == 0, "Cancel stops the export and writes nothing: " + vm.ExportStatus);
+            chatTransport.Hold = null;
+            vm.ExportChatCommand.Execute(null);
+            await WaitUntilAsync(() => !vm.IsExporting && File.Exists(target));
+            var written = File.ReadAllBytes(target);
+            Assert(vm.ExportStatus.StartsWith("Exported the whole chat: 2") && written[0] == (byte)'#'
+                   && System.Text.Encoding.UTF8.GetString(written).Contains("### You\n\nhello\n\n### Assistant\n\nhi there\n\n"),
+                "The export is UTF-8 Markdown without a BOM: " + vm.ExportStatus);
+            Assert(store.Load() == savedBefore && !chatTransport.Requests.Skip(requestsBefore).Any(request =>
+                       request.StartsWith("turn/start") || request.StartsWith("thread/start") || request.StartsWith("thread/resume") || request.StartsWith("thread/delete")),
+                "An export only lists turns: no new turn, thread or delete, and the saved reference is unchanged.");
+            await vm.ShutdownAsync();
+        }
+
+        // Delete: explicit confirmation, a refused delete changes nothing, notes are forgotten only when asked, and a partial result says so.
+        {
+            var dir = Path.Combine(actionsRoot, "delete");
+            var catalog = new AssistantCatalogStore(dir);
+            var store = new AssistantStateStore(dir);
+            var forgetDocument = Fail("busy", "Memory is busy.");
+            var (vm, cli, chatTransport, _) = await ConnectAssistantAsync(store, Ref("task-del", "thr-del"), install, "task-del", catalog: catalog,
+                script: command => command == "capabilities" ? lifecycleCaps : command.StartsWith("memory forget") ? forgetDocument : null,
+                resumedTurns: resumed, respondFirst: Lifecycle);
+            vm.OpenHistory();
+            vm.SelectedHistory = vm.HistoryItems.Single(item => item.IsCurrent);
+            Assert(vm.CanDeleteChats && vm.DeleteChatCommand.CanExecute(null) && !vm.ConfirmDeleteCommand.CanExecute(null), "Delete first opens a confirmation.");
+            vm.DeleteChatCommand.Execute(null);
+            Assert(vm.ConfirmingDelete && !vm.ForgetChatNotes, "The confirmation opens with Also forget this chat's notes unchecked.");
+            vm.ForgetChatNotes = true;
+            vm.CancelDeleteCommand.Execute(null);
+            Assert(!vm.ConfirmingDelete && !vm.ForgetChatNotes && !chatTransport.Requests.Any(request => request.StartsWith("thread/delete")) && vm.State == AssistantState.Ready,
+                "Cancel closes the confirmation with no request and no state change.");
+            deleteAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"$error\":{\"code\":-32602,\"message\":\"threadId does not belong to this task\"}}");
+            var catalogBefore = File.ReadAllText(catalog.CatalogPath);
+            vm.DeleteChatCommand.Execute(null);
+            vm.ForgetChatNotes = true;
+            vm.ConfirmDeleteCommand.Execute(null);
+            await WaitUntilAsync(() => vm.StatusDetail.StartsWith("The chat was not deleted"));
+            Assert(vm.State == AssistantState.Ready && File.ReadAllText(catalog.CatalogPath) == catalogBefore && !cli.Calls.Any(call => call.StartsWith("memory forget"))
+                   && store.Load()?.ThreadId == "thr-del" && vm.Transcript.Count == 2, "A refused delete keeps the chat, History and notes unchanged: " + vm.StatusDetail);
+            deleteAnswer = new System.Text.Json.Nodes.JsonObject();
+            vm.DeleteChatCommand.Execute(null);
+            vm.ForgetChatNotes = true;
+            vm.ConfirmDeleteCommand.Execute(null);
+            await WaitUntilAsync(() => vm.StatusDetail.StartsWith("Chat deleted from Codex"));
+            Assert(chatTransport.Requests.Contains("thread/delete:thr-del") && cli.Calls.Contains("memory forget --thread thr-del")
+                   && vm.StatusDetail.Contains("PARTIAL") && vm.StatusDetail.Contains("Open Memory") && vm.StatusDetail.Contains("removed from History"),
+                "A chat deleted while its notes could not be forgotten is reported as partial, with where to manage notes: " + vm.StatusDetail);
+            Assert(store.Load() is null && vm.Transcript.Count == 0 && vm.State == AssistantState.Disconnected && vm.NewTaskCommand.CanExecute(null)
+                   && catalog.Load(out _)!.All(entry => entry.TaskId != "task-del"), "A deleted chat without a live change leaves History; the next Connect starts a new chat.");
+            await vm.ShutdownAsync();
+        }
+
+        // A deleted chat with a recorded live change keeps its task in History, marked as deleted rather than archived; other entries cannot be deleted.
+        {
+            var dir = Path.Combine(actionsRoot, "delete-live");
+            var catalog = new AssistantCatalogStore(dir);
+            var store = new AssistantStateStore(dir);
+            var foreign = new AssistantCatalogEntry(Guid.NewGuid().ToString(), LauncherConstants.DistroName, "codex", "task-foreign", "thr-foreign", "Foreign chat",
+                DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(-1));
+            catalog.Save([foreign], out _);
+            deleteAnswer = new System.Text.Json.Nodes.JsonObject();
+            var (vm, cli, _, _) = await ConnectAssistantAsync(store, Ref("task-live", "thr-live"), install, null, catalog: catalog, resumedTurns: resumed, respondFirst: Lifecycle,
+                script: command => command == "capabilities" ? lifecycleCaps
+                    : command == "changes status task-live" ? Ok("{\"task_id\":\"task-live\",\"product\":\"herika\",\"state\":\"applied\"}") : null);
+            vm.OpenHistory();
+            vm.ShowAllInstallations = true;
+            vm.SelectedHistory = vm.HistoryItems.Single(item => item.Entry.TaskId == "task-foreign");
+            Assert(!vm.SelectedHistory.CanReopen && !vm.ReopenCommand.CanExecute(null) && !vm.DeleteChatCommand.CanExecute(null) && vm.DeleteHint.Contains("Reopen"),
+                "Another installation's chat can be listed but never reopened or deleted here.");
+            vm.SelectedHistory = vm.HistoryItems.Single(item => item.IsCurrent);
+            vm.DeleteChatCommand.Execute(null);
+            vm.ConfirmDeleteCommand.Execute(null);
+            await WaitUntilAsync(() => vm.StatusDetail.StartsWith("Chat deleted from Codex"));
+            var kept = catalog.Load(out _)!.Single(entry => entry.TaskId == "task-live");
+            Assert(kept is { ChatDeleted: true, ThreadId: null, LiveChange: true, Archived: false } && vm.StatusDetail.Contains("live change")
+                   && !cli.Calls.Any(call => call.StartsWith("memory forget")) && vm.HistoryItems.Single(item => item.Entry.TaskId == "task-live").Details.StartsWith("Chat deleted, task kept"),
+                "The task with a receipt stays reachable, marked chat deleted; notes are kept unless asked: " + vm.StatusDetail);
+            await vm.ShutdownAsync();
+        }
+
+        // Delete chat covers every thread of the open task (earlier ones first, the open one last), never another task's chat.
+        {
+            var refused = System.Text.Json.Nodes.JsonNode.Parse("{\"$error\":{\"code\":-32602,\"message\":\"threadId does not belong to this task\"}}");
+            var grouped = Ref("task-grp", "thr-cur") with
+            {
+                SupersededThreads = ["thr-a", "thr-b"], ThreadToolRevision = 1,
+                EarlierTasks = [new AssistantPriorTask("task-earlier", "thr-earlier", false)]
+            };
+            async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTransport transport, AssistantStateStore store, AssistantCatalogStore catalog)> Group(
+                string name, Func<string, string?>? forget = null, AssistantCatalogEntry? other = null)
+            {
+                var dir = Path.Combine(actionsRoot, name);
+                var catalog = new AssistantCatalogStore(dir);
+                if (other is not null) catalog.Save([other], out _);
+                var store = new AssistantStateStore(dir);
+                var (vm, cli, transport, _) = await ConnectAssistantAsync(store, grouped, install, "task-grp", catalog: catalog, resumedTurns: resumed, respondFirst: Lifecycle,
+                    script: command => command == "capabilities" ? lifecycleCaps : command.StartsWith("memory forget") ? forget?.Invoke(command) ?? Ok("{\"forgotten\":1}") : null);
+                vm.OpenHistory();
+                vm.SelectedHistory = vm.HistoryItems.Single(item => item.IsCurrent);
+                return (vm, cli, transport, store, catalog);
+            }
+            string[] Deletes(FakeAssistantTransport transport) { lock (transport.Requests) return transport.Requests.Where(request => request.StartsWith("thread/delete")).ToArray(); }
+
+            // All three threads deleted, oldest first, each one's notes forgotten by its exact id when asked.
+            deleteAnswer = new System.Text.Json.Nodes.JsonObject();
+            deleteFor = null;
+            var all = await Group("group-all");
+            all.vm.DeleteChatCommand.Execute(null);
+            Assert(all.vm.DeleteThreadCount == 3 && all.vm.DeleteConfirmText.Contains("all 3 threads") && all.vm.ForgetNotesLabel.Contains("3 threads") && !all.vm.ForgetChatNotes,
+                "The confirmation names how many threads it deletes, with notes kept by default: " + all.vm.DeleteConfirmText);
+            all.vm.ForgetChatNotes = true;
+            all.vm.ConfirmDeleteCommand.Execute(null);
+            await WaitUntilAsync(() => all.vm.StatusDetail.StartsWith("Chat deleted from Codex"));
+            Assert(Deletes(all.transport).SequenceEqual(["thread/delete:thr-a", "thread/delete:thr-b", "thread/delete:thr-cur"])
+                   && all.cli.Calls.Where(call => call.StartsWith("memory forget")).SequenceEqual(["memory forget --thread thr-a", "memory forget --thread thr-b", "memory forget --thread thr-cur"])
+                   && all.vm.StatusDetail.Contains("all 3 threads") && all.vm.StatusDetail.Contains("Forgot 3") && all.store.Load() is null
+                   && all.catalog.Load(out _)!.All(entry => entry.TaskId != "task-grp") && all.catalog.Load(out _)!.Any(entry => entry.TaskId == "task-earlier"),
+                "Every thread of the task is deleted, the open one last, notes forgotten per thread, and the earlier task's chat is untouched: " + all.vm.StatusDetail);
+            await all.vm.ShutdownAsync();
+
+            // Notes kept by default.
+            var kept = await Group("group-notes-kept");
+            kept.vm.DeleteChatCommand.Execute(null);
+            kept.vm.ConfirmDeleteCommand.Execute(null);
+            await WaitUntilAsync(() => kept.vm.StatusDetail.StartsWith("Chat deleted from Codex"));
+            Assert(Deletes(kept.transport).Length == 3 && !kept.cli.Calls.Any(call => call.StartsWith("memory forget")) && !Deletes(kept.transport).Contains("thread/delete:thr-earlier"),
+                "Without the checkbox no memory note is forgotten, and an earlier task's thread is never deleted.");
+            await kept.vm.ShutdownAsync();
+
+            // A thread another History chat also names fails the check before the first delete: nothing is sent or changed.
+            var shared = new AssistantCatalogEntry(install, LauncherConstants.DistroName, "codex", "task-shared", "thr-shared", "Shared", DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(-1))
+                { SupersededThreads = ["thr-b"] };
+            var pre = await Group("group-preflight", other: shared);
+            var preStore = pre.store.Load();
+            var preCatalog = File.ReadAllText(pre.catalog.CatalogPath);
+            pre.vm.DeleteChatCommand.Execute(null);
+            pre.vm.ForgetChatNotes = true;
+            pre.vm.ConfirmDeleteCommand.Execute(null);
+            await WaitUntilAsync(() => pre.vm.StatusDetail.StartsWith("The chat was not deleted"));
+            Assert(Deletes(pre.transport).Length == 0 && !pre.cli.Calls.Any(call => call.StartsWith("memory forget")) && pre.store.Load() == preStore
+                   && File.ReadAllText(pre.catalog.CatalogPath) == preCatalog && pre.vm.State == AssistantState.Ready && pre.vm.StatusDetail.Contains("Nothing was sent"),
+                "A refused check before the first delete changes nothing: " + pre.vm.StatusDetail);
+            await pre.vm.ShutdownAsync();
+
+            // A refusal in the middle keeps the refused thread and the open chat, and only the deleted thread leaves the references.
+            deleteFor = thread => thread == "thr-b" ? refused : null;
+            var mid = await Group("group-mid");
+            mid.vm.DeleteChatCommand.Execute(null);
+            mid.vm.ForgetChatNotes = true;
+            mid.vm.ConfirmDeleteCommand.Execute(null);
+            await WaitUntilAsync(() => mid.vm.StatusDetail.StartsWith("PARTIAL"));
+            var midEntry = mid.catalog.Load(out _)!.Single(entry => entry.TaskId == "task-grp");
+            Assert(Deletes(mid.transport).SequenceEqual(["thread/delete:thr-a", "thread/delete:thr-b"])
+                   && mid.store.Load() is { ThreadId: "thr-cur" } midSaved && midSaved.SupersededThreads!.SequenceEqual(["thr-b"])
+                   && midEntry is { ThreadId: "thr-cur", ChatDeleted: false } && midEntry.SupersededThreads!.SequenceEqual(["thr-b"])
+                   && mid.cli.Calls.Where(call => call.StartsWith("memory forget")).SequenceEqual(["memory forget --thread thr-a"])
+                   && mid.vm.State == AssistantState.Ready && mid.vm.Transcript.Count == 2 && mid.vm.StatusDetail.Contains("deleted 1 of 3")
+                   && mid.vm.StatusDetail.Contains("still kept: thr-b, thr-cur"),
+                "A delete refused part-way keeps every thread not deleted and says exactly which: " + mid.vm.StatusDetail);
+            await mid.vm.ShutdownAsync();
+
+            // The open thread refused last: the earlier ones are gone, the open chat stays usable, and a notes failure is partial too.
+            deleteFor = thread => thread == "thr-cur" ? refused : null;
+            var cur = await Group("group-current", forget: command => command.EndsWith("thr-b") ? Fail("busy", "Memory is busy.") : null);
+            cur.vm.DeleteChatCommand.Execute(null);
+            cur.vm.ForgetChatNotes = true;
+            cur.vm.ConfirmDeleteCommand.Execute(null);
+            await WaitUntilAsync(() => cur.vm.StatusDetail.StartsWith("PARTIAL"));
+            var curEntry = cur.catalog.Load(out _)!.Single(entry => entry.TaskId == "task-grp");
+            Assert(cur.store.Load() is { ThreadId: "thr-cur", SupersededThreads: null } && curEntry is { ThreadId: "thr-cur", SupersededThreads: null, ChatDeleted: false }
+                   && cur.vm.State == AssistantState.Ready && cur.vm.Transcript.Count == 2 && cur.vm.SendCommand is not null
+                   && cur.vm.StatusDetail.Contains("deleted 2 of 3") && cur.vm.StatusDetail.Contains("still kept: thr-cur")
+                   && cur.vm.StatusDetail.Contains("NOT forgotten for thr-b") && cur.vm.StatusDetail.Contains("Open Memory"),
+                "The open chat refused last stays usable with only its own thread; a notes failure is reported with where to manage notes: " + cur.vm.StatusDetail);
+            await cur.vm.ShutdownAsync();
+            deleteFor = null;
+        }
+
+        // Reopening an older chat goes through Core's status: an applied task offers rollback, an unknown outcome forces a status check.
+        {
+            var dir = Path.Combine(actionsRoot, "reopen");
+            var catalog = new AssistantCatalogStore(dir);
+            var store = new AssistantStateStore(dir);
+            var stamp = DateTimeOffset.UtcNow.AddHours(-2);
+            catalog.Save([
+                new AssistantCatalogEntry(install, LauncherConstants.DistroName, "codex", "task-applied", "thr-applied", "Applied fix", stamp, stamp) { LiveChange = true },
+                new AssistantCatalogEntry(install, LauncherConstants.DistroName, "codex", "task-unknown", "thr-unknown", "Interrupted fix", stamp, stamp) { LiveChange = true }
+            ], out _);
+            string? Status(string command) => command switch
+            {
+                "capabilities" => lifecycleCaps,
+                "changes status task-now" => Ok("{\"task_id\":\"task-now\",\"product\":\"herika\",\"state\":\"working\"}"),
+                "changes status task-applied" => Ok("{\"task_id\":\"task-applied\",\"product\":\"herika\",\"state\":\"applied\"}"),
+                "changes status task-unknown" => Ok("{\"task_id\":\"task-unknown\",\"product\":\"herika\",\"state\":\"interrupted\"}"),
+                _ => null
+            };
+            var (vm, _, _, _) = await ConnectAssistantAsync(store, Ref("task-now", "thr-now"), install, null, catalog: catalog, script: Status);
+            vm.OpenHistory();
+            vm.SelectedHistory = vm.HistoryItems.Single(item => item.Entry.TaskId == "task-applied");
+            vm.ReopenCommand.Execute(null);
+            await WaitUntilAsync(() => vm.State == AssistantState.Ready && store.Load()?.TaskId == "task-applied");
+            Assert(vm.OutcomeText.Contains("state: applied") && vm.OutcomeText.Contains("Roll back") && vm.RollbackCommand.CanExecute(null)
+                   && store.Load()!.EarlierTasks!.Any(task => task.TaskId == "task-now"), "A reopened applied task shows its receipt and offers rollback first: " + vm.OutcomeText);
+            vm.SelectedHistory = vm.HistoryItems.Single(item => item.Entry.TaskId == "task-unknown");
+            vm.ReopenCommand.Execute(null);
+            await WaitUntilAsync(() => vm.State == AssistantState.Ready && store.Load()?.TaskId == "task-unknown");
+            Assert(vm.OutcomeText.Contains("unknown") && vm.CheckOutcomeCommand.CanExecute(null) && !vm.ReviewCommand.CanExecute(null) && !vm.RollbackCommand.CanExecute(null),
+                "A reopened task with an unknown outcome must be checked before anything is reviewed or rolled back: " + vm.OutcomeText);
+            await vm.ShutdownAsync();
+        }
+
+        // Migration from an older task reference keeps every earlier task and superseded thread reopenable.
+        {
+            var dir = Path.Combine(actionsRoot, "migrate");
+            var catalog = new AssistantCatalogStore(dir);
+            var store = new AssistantStateStore(dir);
+            var legacy = Ref("task-cur", "thr-cur") with
+            {
+                EarlierTasks = Enumerable.Range(0, AssistantTaskReference.MaxEarlierTasks).Select(n => new AssistantPriorTask($"task-e{n:D2}", n % 2 == 0 ? $"thr-e{n}" : null, n == 0)).ToArray(),
+                SupersededThreads = ["thr-s1", "thr-s2"], ThreadToolRevision = 1
+            };
+            var (vm, _, _, _) = await ConnectAssistantAsync(store, legacy, install, "task-cur", catalog: catalog);
+            vm.OpenHistory();
+            var current = vm.HistoryItems.Single(item => item.IsCurrent);
+            Assert(vm.HistoryItems.Count == 1 + AssistantTaskReference.MaxEarlierTasks && vm.HistoryItems.Where(item => !item.IsCurrent).All(item => item.CanReopen)
+                   && current.Entry.SupersededThreads!.SequenceEqual(["thr-s1", "thr-s2"]) && vm.HistoryItems.Single(item => item.Entry.TaskId == "task-e00").Entry.LiveChange
+                   && current.Title.StartsWith("Current chat (task"), "Every earlier task and superseded thread of a migrated reference stays in History and reopenable.");
+            await vm.ShutdownAsync();
+        }
+
+        // A full catalogue removes its oldest plain entry, says so, and keeps the current chat and every entry with a live change.
+        {
+            var dir = Path.Combine(actionsRoot, "full");
+            var catalog = new AssistantCatalogStore(dir);
+            var store = new AssistantStateStore(dir);
+            var start = DateTimeOffset.UtcNow.AddDays(-30);
+            var full = Enumerable.Range(0, AssistantCatalog.MaxEntries).Select(n => new AssistantCatalogEntry(install, LauncherConstants.DistroName, "codex",
+                $"task-f{n:D3}", null, $"Chat {n}", start.AddMinutes(n), start.AddMinutes(n)) { LiveChange = n == 0 }).ToList();
+            Assert(catalog.Save(full, out _) && catalog.Load(out _)!.Count == AssistantCatalog.MaxEntries, "A full catalogue round-trips whole.");
+            var (vm, _, _, _) = await ConnectAssistantAsync(store, Ref("task-fresh", null), install, "task-fresh", catalog: catalog);
+            var after = catalog.Load(out _)!;
+            Assert(after.Count == AssistantCatalog.MaxEntries && after.Any(entry => entry.TaskId == "task-fresh") && after.Any(entry => entry.TaskId == "task-f000")
+                   && after.All(entry => entry.TaskId != "task-f001") && vm.HistoryStatus.Contains("1 oldest entry was removed") && vm.HistoryStatus.Contains("not deleted"),
+                "Past " + AssistantCatalog.MaxEntries + " chats the oldest plain entry leaves with a message, never the current or a live-change entry: " + vm.HistoryStatus);
+            await vm.ShutdownAsync();
+        }
+
+        // Memory retrieval switched on applies to a new chat (revision 2); a thread started with it off never claims memory.
+        {
+            var dir = Path.Combine(actionsRoot, "memory-revision");
+            var store = new AssistantStateStore(dir);
+            var retrieval = false;
+            var memoryCaps = Ok("{\"features\":{\"agent\":true,\"assistant_tools\":true,\"memory\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false},"
+                + "{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}]}}");
+            var (vm, _, chatTransport, _) = await ConnectAssistantAsync(store, Ref("task-mem", null), install, "task-mem",
+                script: command => command switch
+                {
+                    "capabilities" => memoryCaps,
+                    "memory status" => Ok("{\"present\":true,\"settings\":{\"retrieval\":" + (retrieval ? "true" : "false") + ",\"auto_learning\":false},\"notes\":0}"),
+                    _ when command.StartsWith("changes prepare") => Ok("{\"task_id\":\"task-mem2\",\"diagnostic_only\":true}"),
+                    _ => null
+                });
+            string StartBody() { lock (chatTransport.Requests) return chatTransport.Bodies.Last(body => body.StartsWith("thread/start ")); }
+            Assert(vm.State == AssistantState.Ready && store.Load()!.ThreadToolRevision == 1 && !StartBody().Contains(AssistantViewModel.MemoryToolName)
+                   && !vm.Memory.SettingsKnown, "With retrieval off a new thread gets the read tool only and no memory instructions.");
+            retrieval = true;
+            vm.NewTaskCommand.Execute(null);
+            await WaitUntilAsync(() => vm.State == AssistantState.Ready && store.Load()?.TaskId == "task-mem2");
+            Assert(store.Load()!.ThreadToolRevision == 2 && StartBody().Contains("The " + AssistantViewModel.MemoryToolName + " tool holds short notes")
+                   && !vm.Memory.AutoLearning, "After retrieval is switched on, a new chat starts with the memory tool (revision 2); learning stays off.");
+            await vm.ShutdownAsync();
+        }
+    }
+
     // ddistro agent probe: the wrapper's check list, the bare helper's map, and nothing malformed reads as passed.
     System.Text.Json.JsonElement ProbeData(string json) => System.Text.Json.JsonDocument.Parse(json).RootElement.Clone();
     var wrapperPass = AssistantViewModel.ReadProbe(ProbeData("{\"passed\":true,\"checks\":[{\"name\":\"platform\",\"passed\":true}],\"diagnostics\":{},"
@@ -3645,6 +4069,9 @@ sealed class FakeAssistantTransport : IAssistantTransport
 
     public List<string> Requests { get; } = [];
 
+    /// <summary>Methods left unanswered while set, so a test can act while a request is in flight.</summary>
+    public Func<string, bool>? Hold { get; set; }
+
     /// <summary>Each request as "method params-json", guarded by the <see cref="Requests"/> lock.</summary>
     public List<string> Bodies { get; } = [];
 
@@ -3664,7 +4091,7 @@ sealed class FakeAssistantTransport : IAssistantTransport
                 Requests.Add(method + (parameters["threadId"] is { } thread ? ":" + thread.GetValue<string>() : string.Empty));
                 Bodies.Add(method + " " + parameters.ToJsonString());
             }
-            if (Respond(method, parameters) is { } result)
+            if (Hold?.Invoke(method) != true && Respond(method, parameters) is { } result)
             {
                 Incoming.Writer.TryWrite((result is System.Text.Json.Nodes.JsonObject { } failure && failure["$error"] is { } error
                     ? new System.Text.Json.Nodes.JsonObject { ["id"] = id.DeepClone(), ["error"] = error.DeepClone() }
@@ -3709,6 +4136,10 @@ sealed class FakeAssistantHost(string installationId) : IAssistantHost
     public void EndLiveChange() { }
     public void OpenUrl(string url) { }
     public string? GetDistroInstallationId() => installationId;
+
+    /// <summary>The path the Save dialog answers with; null is a cancelled dialog.</summary>
+    public string? SavePath { get; set; }
+    public string? ChooseSavePath(string title, string fileName, string filter) => SavePath;
 }
 
 /// <summary>Core documents for Connect; status names <paramref name="statusTask"/>, or not_found when null.</summary>

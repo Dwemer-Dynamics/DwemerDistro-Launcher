@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows.Threading;
@@ -44,7 +46,7 @@ public sealed record AssistantHistoryItem(AssistantCatalogEntry Entry, bool IsCu
 {
     public string Title => Entry.Title;
     public string Details =>
-        (IsCurrent ? "Current chat · " : Entry.Archived ? "Archived · " : string.Empty) + Entry.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") +
+        (IsCurrent ? "Current chat · " : Entry.ChatDeleted ? "Chat deleted, task kept · " : Entry.Archived ? "Archived · " : string.Empty) + Entry.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") +
         $" · task {(Entry.TaskId.Length > 8 ? Entry.TaskId[..8] : Entry.TaskId)}" + (Entry.LiveChange ? " · applied a live change" : string.Empty) +
         (CanReopen || IsCurrent ? string.Empty : " · other installation or provider");
 }
@@ -317,6 +319,11 @@ public sealed class AssistantViewModel : ObservableObject
         ReopenCommand = new AsyncRelayCommand(ReopenSelectedAsync, () => SelectedHistory is { IsCurrent: false, CanReopen: true } && CanSwitchChat);
         ArchiveCommand = new RelayCommand(ToggleArchiveSelected, () => SelectedHistory is { IsCurrent: false });
         RenameCommand = new RelayCommand(RenameSelected, () => SelectedHistory is not null && AssistantCatalogEntry.IsValidTitle(RenameText.Trim()));
+        ExportChatCommand = new AsyncRelayCommand(ExportChatAsync, () => CanExportChat);
+        CancelExportCommand = new RelayCommand(() => _export?.Cancel(), () => IsExporting);
+        DeleteChatCommand = new RelayCommand(() => ConfirmingDelete = true, () => CanDeleteSelected && !ConfirmingDelete);
+        ConfirmDeleteCommand = new AsyncRelayCommand(DeleteCurrentChatAsync, () => CanDeleteSelected && ConfirmingDelete);
+        CancelDeleteCommand = new RelayCommand(() => ConfirmingDelete = false, () => ConfirmingDelete);
         _dispatcher = Dispatcher.CurrentDispatcher;
         _statusText = Describe(AssistantState.NotChecked);
         ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => _client is null && !IsMaintenanceHeld
@@ -327,13 +334,15 @@ public sealed class AssistantViewModel : ObservableObject
         // Stop only interrupts a response and Disconnect only closes an idle session, so a click that lands just as the
         // response ends does nothing instead of closing the session.
         StopCommand = new AsyncRelayCommand(InterruptAsync, () => State == AssistantState.Streaming);
-        DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, () => _client is not null && State is not (AssistantState.Streaming or AssistantState.Applying));
+        DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, () => _client is not null && !IsExporting && State is not (AssistantState.Streaming or AssistantState.Applying));
         LoadEarlierCommand = new AsyncRelayCommand(LoadEarlierAsync, () => HasEarlierHistory && !_isLoadingHistory && _client is not null
             && State is AssistantState.Ready or AssistantState.Streaming);
         LoadNewerCommand = new AsyncRelayCommand(LoadNewerAsync, () => IsBrowsingHistory && !_isLoadingHistory);
         BackToLatestCommand = new RelayCommand(ShowLatest, () => IsBrowsingHistory);
-        SendCommand = new AsyncRelayCommand(SendAsync, () => State == AssistantState.Ready && InputText.Trim().Length > 0 && !IsInputTooLong);
-        NewTaskCommand = new AsyncRelayCommand(NewTaskAsync, () => State is AssistantState.Ready or AssistantState.Disconnected or AssistantState.Error or AssistantState.SignedOut);
+        // An export reads one consistent conversation, so nothing is sent, started or switched until it ends or is cancelled.
+        SendCommand = new AsyncRelayCommand(SendAsync, () => State == AssistantState.Ready && !IsExporting && InputText.Trim().Length > 0 && !IsInputTooLong);
+        NewTaskCommand = new AsyncRelayCommand(NewTaskAsync, () => !IsExporting
+            && State is AssistantState.Ready or AssistantState.Disconnected or AssistantState.Error or AssistantState.SignedOut);
         // An unconfirmed live change must be checked before another batch can be reviewed.
         ReviewCommand = new AsyncRelayCommand(ReviewAsync, () => State is AssistantState.Ready or AssistantState.Disconnected && _taskId is not null && !_canCheckOutcome);
         ApproveCommand = new AsyncRelayCommand(ApproveAsync, () => State == AssistantState.Review && _review is not null);
@@ -365,6 +374,11 @@ public sealed class AssistantViewModel : ObservableObject
     public AsyncRelayCommand ReopenCommand { get; }
     public RelayCommand ArchiveCommand { get; }
     public RelayCommand RenameCommand { get; }
+    public AsyncRelayCommand ExportChatCommand { get; }
+    public RelayCommand CancelExportCommand { get; }
+    public RelayCommand DeleteChatCommand { get; }
+    public AsyncRelayCommand ConfirmDeleteCommand { get; }
+    public RelayCommand CancelDeleteCommand { get; }
 
     /// <summary>The Memory panel's state and commands.</summary>
     public AssistantMemoryViewModel Memory { get; }
@@ -463,7 +477,7 @@ public sealed class AssistantViewModel : ObservableObject
     /// An open session with nothing in flight that the launcher may close for distro maintenance: a response, sign-in,
     /// review, live change or check keeps the distro held.
     /// </summary>
-    internal bool CanYieldForMaintenance => !_isShutDown && _client is not null && !_isLoadingHistory
+    internal bool CanYieldForMaintenance => !_isShutDown && _client is not null && !_isLoadingHistory && !IsExporting
         && State is AssistantState.Ready or AssistantState.SignedOut;
 
     public AssistantModelOption? SelectedModel { get => _selectedModel; set => SetProperty(ref _selectedModel, value); }
@@ -598,6 +612,8 @@ public sealed class AssistantViewModel : ObservableObject
                 return;
             }
 
+            // Deleting a chat is offered only when Core says its broker forwards the task's own thread lifecycle, never by inference.
+            CanDeleteChats = Prop(Prop(capabilities.Data, "features"), "thread_lifecycle").ValueKind == JsonValueKind.True;
             _toolRevision = ToolRevisionFor(ReadOfferedTools(capabilities.Data));
             // Core's broker declares the memory tool only while retrieval is on as the session starts, so only then does a
             // new thread get revision 2; with memory off there is no memory tool and nothing is recalled.
@@ -1294,9 +1310,13 @@ public sealed class AssistantViewModel : ObservableObject
         return ReadItems(items, ref omitted);
     }
 
-    private static List<AssistantTranscriptItem> ReadItems(IEnumerable<JsonElement> items, ref int omitted)
+    private static List<AssistantTranscriptItem> ReadItems(IEnumerable<JsonElement> items, ref int omitted) =>
+        ReadMessages(items, ref omitted).Select(message => new AssistantTranscriptItem(message.Role, message.Text, message.Id)).ToList();
+
+    /// <summary>The shown messages of thread items, oldest first and unbounded: the transcript bounds them, an export does not.</summary>
+    internal static List<(string Role, string Text, string Id)> ReadMessages(IEnumerable<JsonElement> items, ref int omitted)
     {
-        var restored = new List<AssistantTranscriptItem>();
+        var restored = new List<(string Role, string Text, string Id)>();
         foreach (var item in items)
         {
             var id = AssistantCliService.GetString(item, "id");
@@ -1307,15 +1327,14 @@ public sealed class AssistantViewModel : ObservableObject
                     if (text is null) omitted++;
                     // The first message of a workspace the user allowed files for is the launcher's, not the user's.
                     else if (text.StartsWith(HandoffLabel, StringComparison.Ordinal) || text.StartsWith(ContinuationPrefix, StringComparison.Ordinal))
-                        restored.Add(new AssistantTranscriptItem("DwemerDistro",
-                            "Continued your request in a new working copy with the files you allowed.", id));
-                    else if (text.Length > 0) restored.Add(new AssistantTranscriptItem("You", text, id));
+                        restored.Add(("DwemerDistro", "Continued your request in a new working copy with the files you allowed.", id));
+                    else if (text.Length > 0) restored.Add(("You", text, id));
                     break;
                 case "agentMessage":
                     var message = AssistantCliService.GetString(item, "text");
                     // Shown as it was after its turn; an old file request is never offered again.
                     if (ParseFileRequest(message, out _, out var visible, out _) == FileRequestParse.Valid) message = visible;
-                    if (message.Length > 0) restored.Add(new AssistantTranscriptItem("Codex", message, id));
+                    if (message.Length > 0) restored.Add(("Codex", message, id));
                     break;
             }
         }
@@ -1346,7 +1365,10 @@ public sealed class AssistantViewModel : ObservableObject
         return parts.Count == 0 && other ? null : string.Join("\n\n", parts);
     }
 
-    /// <summary>Identifiers only; the transcript and the account stay out of launcher storage. Never rewritten once closing.</summary>
+    /// <summary>
+    /// The task reference holds identifiers only; the catalogue entry it refreshes adds a short title excerpt of the user's
+    /// first message. The transcript and the account stay out of launcher storage. Never rewritten once closing.
+    /// </summary>
     private void SaveReference()
     {
         if (_isShutDown || _taskId is null || _installationId is null) return;
@@ -2466,6 +2488,7 @@ public sealed class AssistantViewModel : ObservableObject
         set
         {
             if (!SetProperty(ref _selectedHistory, value)) return;
+            ConfirmingDelete = false;
             RenameText = value?.Title ?? string.Empty;
             OnPropertyChanged(nameof(ArchiveLabel));
             RaiseHistoryCommands();
@@ -2476,7 +2499,7 @@ public sealed class AssistantViewModel : ObservableObject
     public string ArchiveLabel => SelectedHistory?.Entry.Archived == true ? "Unarchive" : "Archive";
 
     /// <summary>Another chat can be opened only while nothing is in flight.</summary>
-    private bool CanSwitchChat => !_isShutDown && !IsMaintenanceHeld && !_isLoadingHistory && State is AssistantState.Ready or AssistantState.Disconnected
+    private bool CanSwitchChat => !_isShutDown && !IsMaintenanceHeld && !_isLoadingHistory && !IsExporting && State is AssistantState.Ready or AssistantState.Disconnected
         or AssistantState.Error or AssistantState.SignedOut or AssistantState.NotChecked or AssistantState.CliAbsent or AssistantState.RuntimeAbsent;
 
     /// <summary>The History panel opened: reads the catalogue once if Connect has not.</summary>
@@ -2507,7 +2530,10 @@ public sealed class AssistantViewModel : ObservableObject
         RefreshHistoryItems();
     }
 
-    /// <summary>Creates or refreshes the current chat's entry: ids, tool revision, live change, and a title from its first message.</summary>
+    /// <summary>
+    /// Creates or refreshes the current chat's entry: ids, tool revision, live change, and a title that is a short excerpt of
+    /// the user's first message (see <see cref="AssistantCatalogEntry.MakeTitle"/>).
+    /// </summary>
     private void UpsertCurrentEntry(string? firstMessage)
     {
         if (_catalogStore is null || _isShutDown || _taskId is null || _installationId is null) return;
@@ -2535,7 +2561,11 @@ public sealed class AssistantViewModel : ObservableObject
     private void SaveCatalog()
     {
         if (_catalogStore is null || _catalog is null) return;
+        var pruned = AssistantCatalogStore.Prune(_catalog, _taskId);
         if (!_catalogStore.Save(_catalog, out var problem)) HistoryStatus = problem;
+        else if (pruned > 0)
+            HistoryStatus = $"History keeps {AssistantCatalog.MaxEntries} chats, so the {pruned} oldest {(pruned == 1 ? "entry was" : "entries were")} removed " +
+                            "from this list. Their Codex conversations, tasks and receipts were not deleted.";
         else if (HistoryStatus.StartsWith("The conversation history was not saved", StringComparison.Ordinal)
                  || HistoryStatus.StartsWith("The conversation history could not be saved", StringComparison.Ordinal)) HistoryStatus = string.Empty;
         RefreshHistoryItems();
@@ -2567,6 +2597,9 @@ public sealed class AssistantViewModel : ObservableObject
         ReopenCommand.RaiseCanExecuteChanged();
         ArchiveCommand.RaiseCanExecuteChanged();
         RenameCommand.RaiseCanExecuteChanged();
+        DeleteChatCommand.RaiseCanExecuteChanged();
+        ConfirmDeleteCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(DeleteHint));
     }
 
     private void ReplaceEntry(AssistantCatalogEntry before, AssistantCatalogEntry after)
@@ -2637,6 +2670,273 @@ public sealed class AssistantViewModel : ObservableObject
         Transcript.Clear();
         TaskText = "Opening a saved chat…";
         await ConnectAsync();
+        RefreshHistoryItems();
+    }
+
+    // --- Export and delete of the open chat ---------------------------------------------------
+
+    private CancellationTokenSource? _export;
+    private string _exportStatus = string.Empty;
+    private bool _canDeleteChats;
+    private bool _confirmingDelete;
+    private bool _forgetChatNotes;
+
+    /// <summary>Bounds of one export; tests lower them.</summary>
+    internal AssistantExportLimits ExportLimits { get; set; } = new();
+
+    public bool IsExporting => _export is not null;
+    public string ExportStatus { get => _exportStatus; private set => SetProperty(ref _exportStatus, value); }
+    private bool CanExportChat => !IsExporting && _client is not null && _threadId is not null && !_isLoadingHistory && State == AssistantState.Ready;
+
+    /// <summary>Core's capabilities say its broker forwards thread/delete for the task's own threads.</summary>
+    public bool CanDeleteChats { get => _canDeleteChats; private set { if (SetProperty(ref _canDeleteChats, value)) RaiseHistoryCommands(); } }
+
+    /// <summary>The inline confirmation card is open; closing it, by Cancel or another selection, changes nothing.</summary>
+    public bool ConfirmingDelete
+    {
+        get => _confirmingDelete;
+        private set
+        {
+            if (!SetProperty(ref _confirmingDelete, value)) return;
+            if (!value) ForgetChatNotes = false;
+            OnPropertyChanged(nameof(DeleteThreadCount));
+            OnPropertyChanged(nameof(DeleteConfirmText));
+            OnPropertyChanged(nameof(ForgetNotesLabel));
+            CancelDeleteCommand.RaiseCanExecuteChanged();
+            RaiseHistoryCommands();
+        }
+    }
+
+    /// <summary>Also forget the memory notes that name this chat's thread. Off each time the card opens.</summary>
+    public bool ForgetChatNotes { get => _forgetChatNotes; set => SetProperty(ref _forgetChatNotes, value); }
+
+    // Only the open chat, through the session of the task that owns its thread, and only while nothing else is running.
+    private bool CanDeleteSelected => CanDeleteChats && SelectedHistory is { IsCurrent: true } && _client is not null && _threadId is not null
+        && State == AssistantState.Ready && !IsExporting && !_isLoadingHistory && !IsMaintenanceHeld && !_isShutDown;
+
+    public string DeleteHint => !CanDeleteChats ? string.Empty
+        : SelectedHistory is null ? "Select the open chat to delete it."
+        : !SelectedHistory.IsCurrent ? "Only the open chat can be deleted, through its own session: Reopen this chat first."
+        : CanDeleteSelected ? (DeleteThreadCount > 1 ? $"Delete removes this chat's conversation, all {DeleteThreadCount} of its threads, from Codex." : "Delete removes this chat's conversation from Codex.")
+            + " Archive only hides a chat in this list."
+        : "Delete waits until the chat is connected and nothing is responding, under review, applying or exporting.";
+
+    private AssistantCatalogEntry? CurrentEntry() => _catalog?.FirstOrDefault(entry =>
+        entry.TaskId == _taskId && string.Equals(entry.InstallationId, _installationId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The user's Export click: the Save dialog first, then the whole conversation read page by page through the open
+    /// session while a command lease holds the distro, so maintenance cannot start under it. Nothing is sent or saved
+    /// besides the chosen file; Cancel stops the reading and writes nothing.
+    /// </summary>
+    private async Task ExportChatAsync()
+    {
+        if (!CanExportChat || _client is not { } client || _threadId is not { } threadId) return;
+        var path = _host.ChooseSavePath("Export this chat", "dwemerdistro-chat.md", "Markdown files (*.md)|*.md");
+        if (path is null) return;
+        if (!CanExportChat || !ReferenceEquals(_client, client) || _threadId != threadId)
+        {
+            ExportStatus = "The chat changed before the export began. Nothing was written.";
+            return;
+        }
+        if (!_host.TryBeginDistroActivity())
+        {
+            ExportStatus = "Distro maintenance is running. Nothing was written; try again when it finishes.";
+            return;
+        }
+        var title = CurrentEntry()?.Title ?? "DwemerDistro Assistant chat";
+        // Earlier threads of this task (a tool upgrade or failed resume replaced them) come first; the same broker owns them.
+        var threads = _supersededThreads.Where(thread => thread != threadId).Append(threadId).ToList();
+        var export = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _export = export;
+        RaiseExport();
+        ExportStatus = "Exporting the whole chat page by page… Cancel stops it and writes nothing.";
+        try
+        {
+            var result = await AssistantChatExport.BuildAsync((method, parameters, token) => client.RequestAsync(method, parameters, RpcTimeout, token),
+                title, threads, ExportLimits, DateTimeOffset.UtcNow, export.Token);
+            await File.WriteAllTextAsync(path, result.Markdown, new UTF8Encoding(false), CancellationToken.None);
+            ExportStatus = result.Status + " Saved to " + path + ".";
+        }
+        catch (OperationCanceledException)
+        {
+            ExportStatus = "Export cancelled. Nothing was written.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ExportStatus = "The export file could not be written: " + Shorten(ex.Message, 160);
+        }
+        finally
+        {
+            _export = null;
+            export.Dispose();
+            _host.EndDistroActivity();
+            RaiseExport();
+        }
+    }
+
+    private void RaiseExport()
+    {
+        OnPropertyChanged(nameof(IsExporting));
+        RaiseCommands();
+        RaiseHistoryCommands();
+    }
+
+    /// <summary>
+    /// Deletes the open chat after the user confirmed it: every thread of this task (the earlier ones a tool upgrade or failed
+    /// resume replaced, oldest first, then the open one last so the chat stays usable until the end), each through this
+    /// task's own session, then, if asked, forgets the memory notes naming exactly the deleted threads. A refused check before
+    /// the first delete changes nothing; a delete refused part-way keeps every thread not deleted and says which. Earlier
+    /// tasks are separate History chats and are never touched. A task with a recorded live change stays in History marked as
+    /// a deleted chat; the task's working copy, receipts and backups are never deleted here.
+    /// </summary>
+    private async Task DeleteCurrentChatAsync()
+    {
+        if (!CanDeleteSelected || _client is not { } client || _threadId is null) return;
+        var forget = ForgetChatNotes;
+        var group = DeleteGroup();
+        ConfirmingDelete = false;
+        if (DeletePreflight(group, forget) is { } refusal)
+        {
+            SetState(SessionState(), "The chat was not deleted: " + refusal + " Nothing was sent; History and memory notes are unchanged.");
+            return;
+        }
+
+        SetState(AssistantState.Busy, group.Count == 1 ? "Deleting this chat…" : $"Deleting this chat's {group.Count} threads…");
+        var deleted = new List<string>();
+        string? failure = null;
+        foreach (var thread in group)
+        {
+            try
+            {
+                await client.RequestAsync("thread/delete", new JsonObject { ["threadId"] = thread }, RpcTimeout);
+                deleted.Add(thread);
+            }
+            catch (AppServerException ex)
+            {
+                failure = Shorten(ex.Message, 160);
+                break;
+            }
+        }
+
+        if (deleted.Count == 0)
+        {
+            SetState(SessionState(), "The chat was not deleted: " + failure + " History and memory notes are unchanged.");
+            return;
+        }
+
+        var notes = forget ? await ForgetDeletedNotesAsync(deleted) : string.Empty;
+        if (failure is not null)
+        {
+            // Only the deleted earlier threads leave the task's references; the open chat and every other thread stay.
+            _supersededThreads = _supersededThreads.Where(thread => !deleted.Contains(thread)).ToList();
+            SaveReference();
+            if (CurrentEntry() is { } kept && _catalog is not null)
+            {
+                _catalog[_catalog.IndexOf(kept)] = kept with
+                {
+                    SupersededThreads = _supersededThreads.Where(thread => thread != _threadId).ToArray() is { Length: > 0 } left ? left : null
+                };
+                SaveCatalog();
+            }
+            RefreshHistoryItems();
+            SetState(SessionState(), $"PARTIAL: deleted {deleted.Count} of {group.Count} threads of this chat ({string.Join(", ", deleted)}), then a delete was refused: "
+                + failure + " Not deleted and still kept: " + string.Join(", ", group.Except(deleted)) + ". The open chat is unchanged; Delete chat again tries the rest." + notes);
+            return;
+        }
+
+        var entry = CurrentEntry();
+        var liveChange = _canRollback || _canCheckOutcome || entry?.LiveChange == true;
+        await EndSessionAsync(AssistantState.Disconnected, "Chat deleted.");
+        _threadId = null;
+        _supersededThreads = [];
+        if (entry is not null && _catalog is not null)
+        {
+            var index = _catalog.IndexOf(entry);
+            if (liveChange) _catalog[index] = entry with { ThreadId = null, SupersededThreads = null, ChatDeleted = true, LiveChange = true, UpdatedAt = DateTimeOffset.UtcNow };
+            else _catalog.RemoveAt(index);
+            SaveCatalog();
+        }
+        if (liveChange) RememberCurrentTask();
+        ForgetCurrentChat();
+        SetState(AssistantState.Disconnected, "Chat deleted from Codex" + (group.Count > 1 ? $" (all {group.Count} threads)" : string.Empty) + ". " + (liveChange
+            ? "Its task stays in History, marked as a deleted chat, because it has a recorded live change you may need to check or roll back."
+            : "It was removed from History.") + notes + " Press New chat or Connect to start a new chat.");
+    }
+
+    /// <summary>The threads one Delete chat removes: this task's earlier threads, oldest first, then the open one.</summary>
+    private List<string> DeleteGroup() => _threadId is not { } threadId ? []
+        : _supersededThreads.Where(thread => thread != threadId).Distinct(StringComparer.Ordinal).Append(threadId).ToList();
+
+    /// <summary>How many threads the confirmation deletes; its text names the number.</summary>
+    public int DeleteThreadCount => DeleteGroup().Count;
+
+    public string DeleteConfirmText => DeleteThreadCount <= 1
+        ? "Delete this chat's conversation from Codex? This cannot be undone; Archive only hides a chat. The task's working copy, live-change receipts and backups are kept, and a chat with a recorded live change stays in History so you can still check or roll it back."
+        : $"Delete all {DeleteThreadCount} threads of this chat from Codex: the open one and {DeleteThreadCount - 1} earlier one(s) of this same task that a tool upgrade or failed resume replaced? This cannot be undone; Archive only hides a chat. Other chats in History are not deleted. The task's working copy, live-change receipts and backups are kept, and a chat with a recorded live change stays in History so you can still check or roll it back.";
+
+    public string ForgetNotesLabel => DeleteThreadCount <= 1 ? "Also forget this chat’s notes" : $"Also forget the notes of these {DeleteThreadCount} threads";
+
+    // Checked before the first delete: every id is one recorded for this task and no other History chat names it, so a
+    // delete only reaches this chat's own threads; a refusal here sends nothing.
+    private string? DeletePreflight(List<string> group, bool forget)
+    {
+        var entry = CurrentEntry();
+        if (entry is null || entry.ThreadId != _threadId) return "this chat's History entry does not match the open chat.";
+        var others = (_catalog ?? []).Where(other => !ReferenceEquals(other, entry))
+            .SelectMany(other => (other.SupersededThreads ?? []).Append(other.ThreadId))
+            .Concat(_earlierTasks.Where(task => task.TaskId != _taskId).Select(task => task.ThreadId));
+        if (others.FirstOrDefault(thread => thread is not null && group.Contains(thread)) is { } shared)
+            return $"thread {shared} also belongs to another chat in History.";
+        if (forget && group.FirstOrDefault(thread => !AssistantCliCommands.IsValidMemoryThread(thread)) is { } bad)
+            return $"thread {bad} cannot name memory notes.";
+        return null;
+    }
+
+    // One forget per deleted thread, by its exact id; any failure is reported as partial with where to manage notes.
+    private async Task<string> ForgetDeletedNotesAsync(List<string> deleted)
+    {
+        var total = 0;
+        var failed = new List<string>();
+        foreach (var thread in deleted)
+        {
+            var forgotten = await RunCliAsync(AssistantCliCommands.MemoryForgetThread(thread), QueryTimeout, CancellationToken.None);
+            if (!forgotten.Ok)
+            {
+                failed.Add(thread + " (" + Shorten(forgotten.ErrorMessage.Length > 0 ? forgotten.ErrorMessage : forgotten.ErrorCode, 120) + ")");
+                continue;
+            }
+            total += Prop(forgotten.Data, "forgotten") is { ValueKind: JsonValueKind.Number } count && count.TryGetInt32(out var number) ? number : 0;
+        }
+        return failed.Count == 0
+            ? $" Forgot {total} memory note(s) from the deleted thread(s)."
+            : " PARTIAL: memory notes were NOT forgotten for " + string.Join(", ", failed) + (total > 0 ? $"; {total} note(s) of the other deleted threads were forgotten" : string.Empty)
+              + ". Open Memory to review and forget them.";
+    }
+
+    /// <summary>After a delete: no current task or thread, nothing shown; the next Connect prepares a new task.</summary>
+    private void ForgetCurrentChat()
+    {
+        _store.Clear();
+        _taskId = null;
+        _threadId = null;
+        _threadToolRevision = 0;
+        _supersededThreads = [];
+        _pendingUpgrade = null;
+        _upgradeFailedThread = null;
+        UsageText = string.Empty;
+        _shownThreadId = null;
+        ResetHistory();
+        _historyLoadPending = false;
+        _canRollback = false;
+        _canCheckOutcome = false;
+        _pendingContinuation = null;
+        _lastUserRequest = string.Empty;
+        ClearFileRequest();
+        HasChanges = false;
+        OutcomeText = string.Empty;
+        Transcript.Clear();
+        TaskText = "No task yet";
         RefreshHistoryItems();
     }
 
@@ -2793,11 +3093,13 @@ public sealed class AssistantViewModel : ObservableObject
     private void RaiseCommands()
     {
         OnPropertyChanged(nameof(IsApplying));
+        OnPropertyChanged(nameof(DeleteHint));
         foreach (var command in new System.Windows.Input.ICommand[]
                  {
                      ConnectCommand, RunProbeCommand, SignInCommand, OpenSignInUrlCommand, StopCommand, DisconnectCommand, LoadEarlierCommand, LoadNewerCommand, BackToLatestCommand,
                      SendCommand, NewTaskCommand, ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand,
-                     AllowFileAccessCommand, DeclineFileAccessCommand, ReopenCommand, ArchiveCommand, RenameCommand
+                     AllowFileAccessCommand, DeclineFileAccessCommand, ReopenCommand, ArchiveCommand, RenameCommand,
+                     ExportChatCommand, CancelExportCommand, DeleteChatCommand, ConfirmDeleteCommand, CancelDeleteCommand
                  })
         {
             switch (command)
