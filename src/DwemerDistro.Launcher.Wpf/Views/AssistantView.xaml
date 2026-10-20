@@ -18,6 +18,13 @@
             <Setter Property="Margin" Value="0,0,6,6" />
             <Setter Property="MinWidth" Value="96" />
         </Style>
+        <!-- Compact copy buttons: same template and focus cue as every launcher button, without the 34px floor. -->
+        <Style x:Key="Assistant.Copy" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
         <Style x:Key="Assistant.Label" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
             <Setter Property="Margin" Value="0,0,8,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -150,19 +157,34 @@
                 <Border x:Name="ChatCard" Style="{StaticResource GameCenter.Card}" Padding="0">
                     <Grid>
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <ScrollViewer x:Name="TranscriptScroll" VerticalScrollBarVisibility="Auto" Padding="12,10" Focusable="False">
+                        <!-- Copies only the visible messages below; the result is announced here, never in a dialog. -->
+                        <DockPanel Margin="12,8,10,0">
+                            <Button x:Name="CopyConversationButton" DockPanel.Dock="Right" Content="Copy conversation" Click="CopyConversation_Click"
+                                    Style="{StaticResource Assistant.Copy}"
+                                    AutomationProperties.HelpText="Copy every message in this conversation as text, one 'Role: message' block each." />
+                            <TextBlock x:Name="CopyFeedback" Style="{StaticResource GameCenter.Caption}" VerticalAlignment="Center" HorizontalAlignment="Right"
+                                       Margin="0,0,8,0" TextTrimming="CharacterEllipsis" AutomationProperties.LiveSetting="Polite" />
+                        </DockPanel>
+                        <ScrollViewer x:Name="TranscriptScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="12,6,12,10" Focusable="False">
                             <ItemsControl x:Name="TranscriptList" ItemsSource="{Binding Transcript}" Focusable="False"
                                           AutomationProperties.Name="Assistant conversation">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <StackPanel Margin="0,0,0,10">
-                                            <TextBlock Text="{Binding Role}" FontWeight="SemiBold" FontSize="11"
-                                                       Foreground="{DynamicResource GameCenter.TextMuted}" />
-                                            <TextBox Text="{Binding Text, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap"
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="{Binding Role}" FontWeight="SemiBold" FontSize="11" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource GameCenter.TextMuted}" />
+                                                <Button Content="Copy" Click="CopyReply_Click" Style="{StaticResource Assistant.Copy}" Margin="8,0,0,0"
+                                                        ToolTip="Copy this whole message"
+                                                        AutomationProperties.Name="{Binding Role, StringFormat=Copy {0} message}"
+                                                        AutomationProperties.HelpText="Copy this whole message as it is now, even while it is still arriving." />
+                                            </StackPanel>
+                                            <TextBox Text="{Binding Text, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="True" TextWrapping="Wrap"
                                                      Background="Transparent" BorderThickness="0" Padding="0,2,0,0"
                                                      Foreground="{DynamicResource GameCenter.Text}" CaretBrush="{DynamicResource GameCenter.Text}"
                                                      FontSize="13">
@@ -180,7 +202,7 @@
                         </ScrollViewer>
 
                         <!-- File access: what the assistant asked for. Nothing is copied until Allow access is clicked. -->
-                        <Border x:Name="AccessCard" Grid.Row="1" Margin="10,0,10,0" Padding="10" CornerRadius="4" BorderThickness="1"
+                        <Border x:Name="AccessCard" Grid.Row="2" Margin="10,0,10,0" Padding="10" CornerRadius="4" BorderThickness="1"
                                 BorderBrush="{DynamicResource GameCenter.Gold}" Background="{DynamicResource GameCenter.GoldTint}"
                                 Visibility="{Binding HasFileRequest, Converter={StaticResource BoolToVisibility}}"
                                 AutomationProperties.Name="File access request" AutomationProperties.LiveSetting="Polite">
@@ -210,7 +232,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Grid Grid.Row="2" Margin="10" IsEnabled="{Binding IsInputEnabled}">
+                        <Grid Grid.Row="3" Margin="10" IsEnabled="{Binding IsInputEnabled}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />

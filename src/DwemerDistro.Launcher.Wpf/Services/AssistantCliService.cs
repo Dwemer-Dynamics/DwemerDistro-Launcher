@@ -68,6 +68,8 @@ public static partial class AssistantCliCommands
     public static string[] Capabilities() => ["capabilities"];
     public static string[] AgentStatus() => ["agent", "status"];
     public static string[] AgentProbe() => ["agent", "probe"];
+    /// <summary>CHIM's configured profile/model assignments, already projected and redacted by Core.</summary>
+    public static string[] Models() => ["models", "herika"];
     public static string[] Diff(string taskId) => ["changes", "diff", RequireTaskId(taskId)];
     public static string[] Stage(string taskId) => ["changes", "stage", RequireTaskId(taskId)];
     public static string[] ChangeStatus(string taskId) => ["changes", "status", RequireTaskId(taskId)];
@@ -327,6 +329,95 @@ public sealed partial class AssistantCliService : IAssistantCli
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? string.Empty
             : string.Empty;
+
+    internal const int MaxModelAssignments = 200;
+    internal const int MaxModelFieldChars = 256;
+    private static readonly string[] ModelAssignmentStrings = ["profile", "role", "connector", "model", "provider", "driver"];
+
+    /// <summary>
+    /// Re-projects Core's <c>models herika</c> data onto its exact allowlist: every field present with its type and bound, and
+    /// nothing else copied. Returns null with a short reason when anything is missing, mistyped, oversized or inconsistent,
+    /// so an unexpected document never reaches the model partly read or with fields the launcher did not ask for.
+    /// </summary>
+    internal static System.Text.Json.Nodes.JsonObject? ProjectModelsSnapshot(AssistantCliResult result, out string problem)
+    {
+        problem = string.Empty;
+        var data = result.Data;
+        if (!result.Ok || data.ValueKind != JsonValueKind.Object)
+        {
+            problem = "DwemerDistro did not return the model settings.";
+            return null;
+        }
+        if (!TryField(data, "product", out string product) || product != "herika" ||
+            !TryField(data, "scope", out string scope) || scope != "configured_profiles" ||
+            !TryField(data, "available", out bool available) || !TryField(data, "truncated", out bool truncated) ||
+            !TryField(data, "reason", out string reason) ||
+            !TryField(data, "captured_at", out string capturedAt) || !IsUtcTimestamp(capturedAt) ||
+            !data.TryGetProperty("assignments", out var list) || list.ValueKind != JsonValueKind.Array ||
+            list.GetArrayLength() > MaxModelAssignments || !available && list.GetArrayLength() > 0)
+        {
+            problem = "DwemerDistro returned model settings in an unexpected shape.";
+            return null;
+        }
+
+        var assignments = new System.Text.Json.Nodes.JsonArray();
+        foreach (var entry in list.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object ||
+                !TryField(entry, "profile_id", out int profileId) || !TryField(entry, "connector_id", out int connectorId))
+            {
+                problem = "DwemerDistro returned a model assignment in an unexpected shape.";
+                return null;
+            }
+            var projected = new System.Text.Json.Nodes.JsonObject { ["profile_id"] = profileId };
+            foreach (var name in ModelAssignmentStrings)
+            {
+                if (!TryField(entry, name, out string value))
+                {
+                    problem = "DwemerDistro returned a model assignment in an unexpected shape.";
+                    return null;
+                }
+                projected[name] = value;
+                if (name == "role") projected["connector_id"] = connectorId;
+            }
+            assignments.Add(projected);
+        }
+
+        return new System.Text.Json.Nodes.JsonObject
+        {
+            ["product"] = product,
+            ["available"] = available,
+            ["scope"] = scope,
+            ["captured_at"] = capturedAt,
+            ["assignments"] = assignments,
+            ["truncated"] = truncated,
+            ["reason"] = reason
+        };
+    }
+
+    private static bool TryField(JsonElement element, string name, out string value)
+    {
+        value = element.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.String ? field.GetString() ?? string.Empty : string.Empty;
+        return field.ValueKind == JsonValueKind.String && value.Length <= MaxModelFieldChars && !value.Any(char.IsControl);
+    }
+
+    private static bool TryField(JsonElement element, string name, out bool value)
+    {
+        value = element.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.True;
+        return field.ValueKind is JsonValueKind.True or JsonValueKind.False;
+    }
+
+    private static bool TryField(JsonElement element, string name, out int value)
+    {
+        value = 0;
+        return element.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.Number && field.TryGetInt32(out value);
+    }
+
+    /// <summary>An ISO 8601 instant that states UTC itself (Z or +00:00), not a local or unzoned time.</summary>
+    private static bool IsUtcTimestamp(string value) =>
+        value.Length is >= 20 and <= 40 && (value.EndsWith('Z') || value.EndsWith("+00:00", StringComparison.Ordinal)) &&
+        DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed) &&
+        parsed.Offset == TimeSpan.Zero && value[4] == '-' && value[10] == 'T';
 
     internal static bool GetBool(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;

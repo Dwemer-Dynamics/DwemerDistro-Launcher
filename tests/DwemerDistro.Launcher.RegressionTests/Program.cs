@@ -1,6 +1,7 @@
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using DwemerDistro.Launcher.Wpf.Models;
+using static ModelsFixture;
 using System.Net;
 
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
@@ -2407,6 +2408,8 @@ try
             "A live saved task must reopen and resume its own conversation thread.");
 
         // Core's broker and the rust-v0.163.0 schema: threads and turns state never and /work, and never override the sandbox.
+        Assert(!reopened.cli.Calls.Contains("models herika"), "Connect must not read CHIM's model settings; only an outgoing message does.");
+        reopened.cli.Script = command => command == "models herika" ? ModelsDocumentText(ValidModelsData) : null;
         reopened.vm.InputText = "hello";
         reopened.vm.SendCommand.Execute(null);
         await WaitUntilAsync(() => { lock (reopened.transport.Requests) return reopened.transport.Bodies.Any(body => body.StartsWith("turn/start")); });
@@ -2415,7 +2418,38 @@ try
         Assert(confinedBodies.Length == 2 && confinedBodies.All(body => body.Contains("\"approvalPolicy\":\"never\"") && body.Contains("\"cwd\":\"/work\"")
                && !body.Contains("sandbox") && !body.Contains("permissions")),
             "Thread and turn requests must pin approval policy never and cwd /work, and never send a sandbox or permissions override.");
+        var sentInput = TurnInput(confinedBodies.Single(body => body.StartsWith("turn/start")));
+        Assert(reopened.cli.Calls.Count(call => call == "models herika") == 1 && sentInput.Length == 2
+               && sentInput[0].StartsWith(AssistantViewModel.ModelsContextLabel) && sentInput[0].Contains("\"model\":\"gpt-test-model\"")
+               && !sentInput[0].Contains("SECRET") && sentInput[1] == "hello"
+               && reopened.vm.Transcript.Count == 1 && reopened.vm.Transcript[0].Text == "hello"
+               && confinedBodies.Single(body => body.StartsWith("thread/resume")).Contains(AssistantViewModel.ModelsContextLabel),
+            "Each message must carry a fresh, projected model snapshot as a separate labeled input, with the visible transcript unchanged.");
         await reopened.vm.ShutdownAsync();
+
+        var stopping = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        int StoppingTurns() { lock (stopping.transport.Requests) return stopping.transport.Bodies.Count(body => body.StartsWith("turn/start")); }
+        stopping.cli.ModelsGate = new TaskCompletionSource();
+        stopping.vm.InputText = "which models?";
+        stopping.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => stopping.cli.Calls.Contains("models herika"));
+        await stopping.vm.InterruptAsync();
+        await WaitUntilAsync(() => stopping.vm.State == AssistantState.Ready);
+        Assert(stopping.vm.State == AssistantState.Ready && StoppingTurns() == 0 && stopping.vm.Transcript[^1].Text.StartsWith("Stopped before")
+               && stopping.vm.Transcript[0].Text == "which models?",
+            "Stop during the model lookup must cancel it and send no turn.");
+        stopping.cli.ModelsGate = null;
+        stopping.vm.InputText = "which models?";
+        stopping.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => StoppingTurns() == 1);
+        string unavailableBody;
+        lock (stopping.transport.Requests) unavailableBody = stopping.transport.Bodies.Single(body => body.StartsWith("turn/start"));
+        var unavailableInput = TurnInput(unavailableBody);
+        Assert(unavailableInput.Length == 2 && unavailableInput[0].Contains("unavailable") && unavailableInput[0].Contains("Update Distro")
+               && unavailableInput[1] == "which models?",
+            "An older Core without the lookup must still send the message, with an explicit unavailable statement.");
+        await stopping.vm.ShutdownAsync();
+
         var unconfined = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, confined: false);
         Assert(unconfined.vm.State == AssistantState.Error && unconfined.vm.StatusDetail.Contains("confined"),
             "A thread that does not report approval policy never and cwd /work must end the session, not reach Ready.");
@@ -2464,6 +2498,68 @@ try
                && AssistantViewModel.ReadReviewableChanges(DiffDocument("applied", 2), "t") == 0 && AssistantViewModel.ReadReviewableChanges(DiffDocument("interrupted", 2), "t") == -1
                && AssistantViewModel.ReadReviewableChanges(DiffDocument("prepared", 2, "other"), "t") == -1,
             "Review changes must follow Core's diff: reviewable edits only, and an unknown or foreign answer is not 'no changes'.");
+
+        AssistantCliResult ModelsDocument(string data) => AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(data), ""));
+        var projectedModels = AssistantCliService.ProjectModelsSnapshot(ModelsDocument(ValidModelsData), out _)!;
+        Assert(projectedModels.Select(pair => pair.Key).SequenceEqual(["product", "available", "scope", "captured_at", "assignments", "truncated", "reason"])
+               && projectedModels["assignments"]!.AsArray().Single()!.AsObject().Select(pair => pair.Key)
+                   .SequenceEqual(["profile_id", "profile", "role", "connector_id", "connector", "model", "provider", "driver"])
+               && !projectedModels.ToJsonString().Contains("SECRET"),
+            "The model snapshot must be re-projected onto its exact allowlist, dropping every unknown Core field.");
+        var modelsContext = AssistantViewModel.BuildModelsContext(ModelsDocument(ValidModelsData));
+        Assert(modelsContext.Contains("2026-10-19T17:00:00Z") && modelsContext.Contains("configured_profiles") && modelsContext.Contains("not show which NPC")
+               && modelsContext.Contains("complete (1 assignment(s))") && !modelsContext.Contains("TRUNCATED"),
+            "The context must state its capture time, its configured-profile scope and that the list is complete.");
+        Assert(AssistantViewModel.BuildModelsContext(ModelsDocument(ValidModelsData.Replace("\"truncated\":false", "\"truncated\":true"))).Contains("TRUNCATED"),
+            "A truncated snapshot must say so.");
+        var notAvailable = AssistantViewModel.BuildModelsContext(ModelsDocument(
+            "{\"product\":\"herika\",\"available\":false,\"scope\":\"configured_profiles\",\"captured_at\":\"2026-10-19T17:00:00+00:00\",\"assignments\":[],\"truncated\":false,\"reason\":\"database_unavailable\"}"));
+        Assert(notAvailable.StartsWith(AssistantViewModel.ModelsContextLabel) && notAvailable.Contains("unavailable") && notAvailable.Contains("database_unavailable")
+               && !notAvailable.Contains("assignments"),
+            "Core's own unavailable answer must reach the model as a plain statement with its reason.");
+        foreach (var malformed in new[]
+                 {
+                     ValidModelsData.Replace("\"profile_id\":1", "\"profile_id\":\"1\""),
+                     ValidModelsData.Replace("\"connector_id\":7", "\"connector_id\":7.5"),
+                     ValidModelsData.Replace("gpt-test-model", new string('m', 257)),
+                     ValidModelsData.Replace("gpt-test-model", "gpt\\u0000model"),
+                     ValidModelsData.Replace("2026-10-19T17:00:00Z", "2026-10-19T17:00:00"),
+                     ValidModelsData.Replace("2026-10-19T17:00:00Z", "2026-10-19T19:00:00+02:00"),
+                     ValidModelsData.Replace("2026-10-19T17:00:00Z", "yesterday at noon UTC Z"),
+                     ValidModelsData.Replace("\"product\":\"herika\"", "\"product\":\"stobe\""),
+                     ValidModelsData.Replace("\"scope\":\"configured_profiles\"", "\"scope\":\"active_npc\""),
+                     ValidModelsData.Replace(",\"truncated\":false", string.Empty),
+                     ValidModelsData.Replace("\"available\":true", "\"available\":false"),
+                     ValidModelsData.Replace("\"driver\":\"openai\",", string.Empty),
+                     ValidModelsData.Replace("\"assignments\":[", "\"assignments\":[\"x\","),
+                     "{\"product\":\"herika\",\"available\":true,\"scope\":\"configured_profiles\",\"captured_at\":\"2026-10-19T17:00:00Z\",\"assignments\":["
+                         + string.Join(",", Enumerable.Repeat(ModelAssignment, 201)) + "],\"truncated\":true,\"reason\":\"\"}",
+                     "[]"
+                 })
+        {
+            var rejected = AssistantViewModel.BuildModelsContext(ModelsDocument(malformed));
+            Assert(AssistantCliService.ProjectModelsSnapshot(ModelsDocument(malformed), out var why) is null && why.Length > 0
+                   && rejected.Contains("unavailable") && !rejected.Contains("gpt-test-model") && !rejected.Contains("SECRET"),
+                "A malformed model snapshot must be refused whole, never partly sent: " + malformed[..Math.Min(malformed.Length, 120)]);
+        }
+        Assert(AssistantViewModel.BuildModelsContext(ModelsDocument(ValidModelsData.Replace("Default", new string('p', 256)))).Contains(new string('p', 256)),
+            "A field of exactly 256 characters is within bounds.");
+        var oldCli = AssistantViewModel.BuildModelsContext(AssistantCliService.Parse(new CommandResult(2, "", "usage: ddistro {capabilities,agent,changes}")));
+        Assert(oldCli.Contains("Update Distro") && oldCli.Contains("Do not guess") && oldCli.Contains("do not read configuration, database or credential files")
+               && AssistantViewModel.BuildModelsContext(AssistantCliService.Parse(new CommandResult(66,
+                   "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"busy\",\"message\":\"x\"}}", ""))).Contains("reported busy")
+               && AssistantViewModel.BuildModelsContext(AssistantCliService.Parse(new CommandResult(127, "", "execvpe failed"))).Contains("not available")
+               && AssistantViewModel.BuildModelsContext(AssistantCliResult.Failure(AssistantCliResult.Timeout, "")).Contains("in time"),
+            "An old CLI, a busy Core, a missing command or a timeout must each give an explicit unavailable statement that forbids guessing or reading credentials.");
+        Assert(AssistantViewModel.DeveloperInstructions.Contains(AssistantViewModel.ModelsContextLabel) && AssistantViewModel.DeveloperInstructions.Contains("exact IDs"),
+            "The developer instructions must tell the model to answer model questions from the per-message context.");
+        Assert(AssistantCliCommands.Models().SequenceEqual(["models", "herika"]) && AssistantCliService.MaxModelAssignments == 200,
+            "The model lookup is the fixed models herika command.");
+        Assert(AssistantViewModel.FormatTranscript([new AssistantTranscriptItem("You", "Which models?"), new AssistantTranscriptItem("Codex", string.Empty, "m0"),
+                   new AssistantTranscriptItem("Codex", "Line 1\nLine 2", "m1"), new AssistantTranscriptItem("DwemerDistro", "Stopped.")])
+               == string.Join(Environment.NewLine + Environment.NewLine, "You: Which models?", "Codex: Line 1\nLine 2", "DwemerDistro: Stopped.")
+               && AssistantViewModel.FormatTranscript([]) == string.Empty,
+            "Copy conversation must give 'Role: Text' blocks separated by one blank line, skipping messages with no text yet.");
 
         var access = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
         var workspaceEdits = 0;
@@ -2532,6 +2628,9 @@ try
                && stateStore.Load() is { TaskId: newTask, InstallationId: var keptInstallation, Provider: "codex" } && keptInstallation == installationId
                && continued.Length == 1 && continued[0].Contains("Fix the greeting") && !access.vm.HasFileRequest,
             "Allow must prepare exactly the requested paths, keep the installation identity, and continue the original request in the new task.");
+        Assert(TurnInput(continued[0]) is [var continuedContext, var continuedText] && continuedContext.StartsWith(AssistantViewModel.ModelsContextLabel)
+               && continuedText.Contains("Fix the greeting") && access.cli.Calls.Count(call => call == "models herika") == TurnStarts(),
+            "Every turn, the file-access continuation included, must read the model settings afresh.");
         await access.vm.ShutdownAsync();
     }
     finally
@@ -2663,6 +2762,12 @@ static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTra
     return (vm, cli, transport);
 }
 
+static string ModelsDocumentText(string data) => "{\"schema_version\":1,\"ok\":true,\"data\":" + data + "}";
+
+/// <summary>The text of each input item of a recorded "turn/start {json}" body.</summary>
+static string[] TurnInput(string body) =>
+    System.Text.Json.Nodes.JsonNode.Parse(body[(body.IndexOf(' ') + 1)..])!["input"]!.AsArray().Select(item => item!["text"]!.GetValue<string>()).ToArray();
+
 static async Task WaitUntilAsync(Func<bool> condition)
 {
     var deadline = DateTime.UtcNow.AddSeconds(10);
@@ -2675,6 +2780,15 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static class ModelsFixture
+{
+    // Core's models herika shape, plus fields the launcher must never forward.
+    internal const string ModelAssignment = "{\"profile_id\":1,\"profile\":\"Default\",\"role\":\"main\",\"connector_id\":7,\"connector\":\"OpenRouter\","
+        + "\"model\":\"gpt-test-model\",\"provider\":\"openrouter\",\"driver\":\"openai\",\"api_key\":\"SECRET-KEY\"}";
+    internal const string ValidModelsData = "{\"product\":\"herika\",\"available\":true,\"scope\":\"configured_profiles\",\"captured_at\":\"2026-10-19T17:00:00Z\","
+        + "\"assignments\":[" + ModelAssignment + "],\"truncated\":false,\"reason\":\"\",\"password\":\"SECRET-PW\"}";
 }
 
 sealed class FakeAssistantTransport : IAssistantTransport
@@ -2743,10 +2857,14 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
     /// <summary>Optional scripted document for a command; null falls back to the defaults below.</summary>
     public Func<string, string?>? Script { get; set; }
 
-    public Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    /// <summary>When set, models herika waits for it and, like the real service, throws when its caller cancels.</summary>
+    public TaskCompletionSource? ModelsGate { get; set; }
+
+    public async Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var command = string.Join(" ", arguments);
         Calls.Add(command);
+        if (command == "models herika" && ModelsGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
         var document = Script?.Invoke(command) ?? command switch
         {
             "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true}}}",
@@ -2755,7 +2873,7 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
                 $"{{\"schema_version\":1,\"ok\":true,\"data\":{{\"task_id\":\"{statusTask}\",\"product\":\"herika\",\"state\":\"working\"}}}}",
             _ => "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"not_found\",\"message\":\"No such task.\"}}"
         };
-        return Task.FromResult(AssistantCliService.Parse(new CommandResult(document.Contains("\"ok\":true") ? 0 : 66, document, "")));
+        return AssistantCliService.Parse(new CommandResult(document.Contains("\"ok\":true") ? 0 : 66, document, ""));
     }
 
     public Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken)

@@ -160,6 +160,59 @@ public partial class AssistantView : UserControl
         }
     }
 
+    // The message as it is at the click, including a reply that is still streaming.
+    private void CopyReply_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is AssistantTranscriptItem item)
+        {
+            CopyText(item.Text, "Message copied.");
+        }
+    }
+
+    private void CopyConversation_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } viewModel)
+        {
+            CopyText(AssistantViewModel.FormatTranscript(viewModel.Transcript), "Conversation copied.");
+        }
+    }
+
+    // Only on a click, and the copied text is never logged; the outcome is shown and announced beside Copy conversation.
+    private void CopyText(string text, string copied)
+    {
+        if (text.Length == 0)
+        {
+            ShowCopyFeedback("Nothing to copy yet.", failed: false);
+            return;
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            ShowCopyFeedback(copied, failed: false);
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            ShowCopyFeedback("Could not copy: another app is using the clipboard. Try again, or select the text and press Ctrl+C.", failed: true);
+        }
+    }
+
+    private void ShowCopyFeedback(string message, bool failed)
+    {
+        CopyFeedback.Text = message;
+        CopyFeedback.ToolTip = message;
+        if (failed)
+        {
+            CopyFeedback.SetResourceReference(TextBlock.ForegroundProperty, "GameCenter.DangerText");
+        }
+        else
+        {
+            CopyFeedback.ClearValue(TextBlock.ForegroundProperty);
+        }
+
+        RaiseLiveRegion(CopyFeedback);
+    }
+
     private void AssistantView_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         ApplyLayout(e.NewSize.Width);

@@ -77,6 +77,8 @@ public sealed class AssistantViewModel : ObservableObject
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan LiveChangeTimeout = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan RpcTimeout = TimeSpan.FromSeconds(45);
+    // Read before every message; a slow or missing lookup must not hold the conversation up.
+    private static readonly TimeSpan ModelsTimeout = TimeSpan.FromSeconds(10);
     internal const string FileRequestTag = "dwemer-file-request";
     private const int MaxContinuationContextChars = 4000;
 
@@ -93,7 +95,15 @@ public sealed class AssistantViewModel : ObservableObject
         "List at most 20 files, only paths you are confident exist or must be created. Never ask for credentials, .env files, keys, " +
         "databases, logs or user configuration; DwemerDistro refuses them. If you do not know the exact path, say so and ask the user " +
         "instead of guessing. The user decides; if they allow it, a fresh working copy with only those files is prepared and you are given " +
-        "their request again. Do not write the block for any other purpose.";
+        "their request again. Do not write the block for any other purpose.\n" +
+        "Each user message arrives after a separate input that starts with \"" + ModelsContextLabel + "\". The launcher adds it, not the user: " +
+        "a fresh snapshot of CHIM's selected models (configured profile and role assignments with exact model IDs), or a statement that they " +
+        "are unavailable. When asked which models are selected, answer directly from it: list them by profile and role with the exact IDs, " +
+        "give the capture time, and say whether the list is truncated. It covers configured profiles, not which NPC or profile is active in " +
+        "game. If it says the models are unavailable, say so. Never read configuration, database or credential files to find models.";
+
+    /// <summary>First line of the per-message model context, so a resumed thread with older instructions still sees what it is.</summary>
+    internal const string ModelsContextLabel = "[DwemerDistro context for this message - added by the launcher, not typed by the user]";
 
     private readonly IAssistantCli _cli;
     private readonly IAssistantHost _host;
@@ -131,6 +141,7 @@ public sealed class AssistantViewModel : ObservableObject
     private string? _lastAgentText;
     private AssistantFileRequest? _fileRequest;
     private string? _pendingContinuation;
+    private CancellationTokenSource? _modelsLookup;
 
     /// <summary>Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect.</summary>
     public AssistantViewModel(IAssistantCli cli, IAssistantHost host, IAssistantStateStore store)
@@ -667,12 +678,41 @@ public sealed class AssistantViewModel : ObservableObject
         _lastAgentItem = null;
         _lastAgentText = null;
         SetState(AssistantState.Streaming, "The assistant is responding. Press Esc or Stop to interrupt.");
+
+        // A fresh read for every message, continuations included; it is sent with the turn and never stored or logged.
+        var lookup = new CancellationTokenSource();
+        _modelsLookup = lookup;
+        string context;
+        try
+        {
+            context = BuildModelsContext(await _cli.RunAsync(AssistantCliCommands.Models(), ModelsTimeout, lookup.Token));
+        }
+        catch (OperationCanceledException)
+        {
+            context = BuildModelsContext(AssistantCliResult.Failure(AssistantCliResult.Timeout, string.Empty));
+        }
+        finally
+        {
+            if (ReferenceEquals(_modelsLookup, lookup)) _modelsLookup = null;
+        }
+        var stopped = lookup.IsCancellationRequested;
+        lookup.Dispose();
+        if (!ReferenceEquals(_client, client) || State != AssistantState.Streaming || _threadId is null) return;
+        if (stopped)
+        {
+            AddSystem("Stopped before the message was sent.");
+            SetState(AssistantState.Ready, "Response stopped.");
+            return;
+        }
+
         try
         {
             var turn = new JsonObject
             {
                 ["threadId"] = _threadId,
-                ["input"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = text })
+                ["input"] = new JsonArray(
+                    new JsonObject { ["type"] = "text", ["text"] = context },
+                    new JsonObject { ["type"] = "text", ["text"] = text })
             };
             if (SelectedModel is not null) turn["model"] = SelectedModel.Id;
             CodexAppServerClient.AddConfinement(turn);
@@ -694,10 +734,62 @@ public sealed class AssistantViewModel : ObservableObject
     /// </summary>
     public async Task InterruptAsync()
     {
-        if (State != AssistantState.Streaming || _turns is not { } turns) return;
+        if (State != AssistantState.Streaming) return;
+        // Still reading the model settings: nothing has been sent, so the turn is simply not started.
+        if (_modelsLookup is { } lookup)
+        {
+            StatusDetail = "Stopping the response…";
+            lookup.Cancel();
+            return;
+        }
+        if (_turns is not { } turns) return;
         StatusDetail = "Stopping the response…";
         await turns.StopAsync();
     }
+
+    /// <summary>
+    /// The labeled context sent ahead of each message: Core's projected model snapshot, or a plain statement that it is
+    /// unavailable and why. Only the allowlisted projection is serialized, never the raw document.
+    /// </summary>
+    internal static string BuildModelsContext(AssistantCliResult result)
+    {
+        var snapshot = AssistantCliService.ProjectModelsSnapshot(result, out var problem);
+        if (snapshot is null)
+            return Unavailable(result.Ok ? problem : result.ErrorCode switch
+            {
+                AssistantCliResult.Timeout => "DwemerDistro did not answer the lookup in time.",
+                AssistantCliResult.CliMissing or AssistantCliResult.DistroMissing => "the DwemerDistro command is not available.",
+                AssistantCliResult.Protocol or "invalid_argument" or "unsupported" or "usage" or "not_found" =>
+                    "this DwemerDistro Core does not provide the lookup (Update Distro adds it).",
+                _ => $"DwemerDistro reported {Shorten(result.ErrorCode, 40)}."
+            });
+
+        if (!snapshot["available"]!.GetValue<bool>())
+        {
+            var reason = snapshot["reason"]!.GetValue<string>();
+            return Unavailable("CHIM's model settings could not be read" + (reason.Length > 0 ? $" ({Shorten(reason, 120)})." : "."));
+        }
+
+        var count = snapshot["assignments"]!.AsArray().Count;
+        var truncated = snapshot["truncated"]!.GetValue<bool>();
+        return ModelsContextLabel + "\n" +
+               $"CHIM selected models, read by DwemerDistro from CHIM's configured profiles at {snapshot["captured_at"]!.GetValue<string>()} (UTC), " +
+               "just before this message. Scope configured_profiles: each assignment is the connector and model configured for one CHIM " +
+               "profile and role. It does not show which NPC or profile is active in game right now. " +
+               (truncated ? $"The list is TRUNCATED: CHIM has more assignments than the {count} shown; say so if it matters. "
+                   : count == 0 ? "No assignments are configured. " : $"The list is complete ({count} assignment(s)). ") +
+               "Use it directly for questions about selected models; do not read configuration, database or credential files for this.\n" +
+               snapshot.ToJsonString();
+
+        static string Unavailable(string why) =>
+            ModelsContextLabel + "\nCHIM selected models are unavailable for this message: " + why +
+            " If asked, say they could not be read. Do not guess them, and do not read configuration, database or credential files to find them.";
+    }
+
+    /// <summary>The visible conversation as "Role: Text" blocks separated by a blank line; nothing else from the page.</summary>
+    internal static string FormatTranscript(IEnumerable<AssistantTranscriptItem> items) =>
+        string.Join(Environment.NewLine + Environment.NewLine,
+            items.Where(item => item.Text.Length > 0).Select(item => $"{item.Role}: {item.Text}"));
 
     private async Task StopAsync()
     {
@@ -836,6 +928,7 @@ public sealed class AssistantViewModel : ObservableObject
         _client = null;
         _turns = null;
         _sessionGeneration++;
+        _modelsLookup?.Cancel();
         ClearFileRequest();
         if (client is not null)
         {
