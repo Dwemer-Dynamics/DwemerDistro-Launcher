@@ -15,9 +15,16 @@ public enum AssistantState
 /// <summary>What the Assistant tab needs from the launcher: the shared distro gate and a URL opener.</summary>
 public interface IAssistantHost
 {
-    /// <summary>Holds off Compact, Export, Import and DNS repair while the assistant uses the distro.</summary>
+    /// <summary>Holds off Compact, Export, Import and DNS repair for one assistant command.</summary>
     bool TryBeginDistroActivity();
     void EndDistroActivity();
+
+    /// <summary>
+    /// The same hold for an open session. Unlike a command's, the launcher may ask an idle session to close through
+    /// <see cref="AssistantViewModel.SuspendForMaintenanceAsync"/> before it claims the distro.
+    /// </summary>
+    bool TryBeginSessionActivity();
+    void EndSessionActivity();
 
     /// <summary>Claims the same slot server, component and system updates use, for live file changes.</summary>
     bool TryBeginLiveChange();
@@ -83,6 +90,13 @@ public sealed class AssistantViewModel : ObservableObject
     private static readonly TimeSpan InventoryTimeout = TimeSpan.FromSeconds(30);
     internal const string FileRequestTag = "dwemer-file-request";
     private const int MaxContinuationContextChars = 4000;
+    // Turns per history page, read with full items; Core's broker accepts at most 10. A page that fails is retried only on
+    // request, smaller. A turn whose items are not loaded is read through thread/items/list, a bounded number of pages.
+    internal const int HistoryPageTurns = 10;
+    internal const int HistoryTurnItems = 50;
+    internal const int MaxTurnItemPages = 8;
+    private const int MaxCarriedMessages = 8;
+    private const int MaxCarriedMessageChars = 1500;
 
     /// <summary>
     /// Sent as the thread's developer instructions. It describes the whole distro the assistant helps with, what it can
@@ -143,6 +157,41 @@ public sealed class AssistantViewModel : ObservableObject
     private bool _ownsDistroActivity;
     private bool _startupConnectRequested;
     private bool _isShutDown;
+    // The user, or startup on their behalf, wants a session; Disconnect clears it, so maintenance never reopens one the user closed.
+    private bool _connectionIntent;
+    // Distro maintenance closed the session and holds the distro; nothing connects until every operation that asked ends.
+    private int _maintenanceHolds;
+    private bool IsMaintenanceHeld => _maintenanceHolds > 0;
+    private bool _reconnectAfterMaintenance;
+    // One of the operations holding the distro did not end safely, so the session waits for Connect.
+    private bool _maintenanceEndedUnsafely;
+    // Core commands running now; each holds its own distro lease, so maintenance waits for them after closing the session.
+    private int _commandsInFlight;
+    // Older conversation pages for the thread the transcript shows, read on request through thread/turns/list, newest
+    // first. Page k is always read with _historyPages[k]: its cursor (null for page 0) and the limit it was first read
+    // with (0 until then), so a page read again holds the same turns.
+    private string? _historyThreadId;
+    private readonly List<(string? Cursor, int Limit)> _historyPages = [];
+    // Messages shown from each page read, by page index.
+    private readonly List<int> _historyPageItems = [];
+    private bool _historyUnavailable;
+    private bool _isLoadingHistory;
+    private bool _historyLoadPending;
+    private int _historyPageTurns = HistoryPageTurns;
+    // The latest view shows pages [0, _latestPages) whole at its top, above them the newest _latestPartialItems
+    // messages of page _latestPages once the cap trimmed some of it, and below them everything this session added.
+    private int _latestPages;
+    private int _latestPartialItems;
+    // While an older window is shown, the latest view waits here and keeps receiving new messages; the window holds
+    // pages _windowNewest.._windowOldest, oldest at its top, with _windowPageItems messages each (oldest page first).
+    private List<AssistantTranscriptItem>? _latestView;
+    private int _windowNewest;
+    private int _windowOldest;
+    private readonly List<int> _windowPageItems = [];
+    // Changes whenever the transcript switches between the latest view and a window, so a page read across it is dropped.
+    private int _historyViewGeneration;
+    // Earlier tasks of this conversation line, newest last, kept so they stay reopenable and their receipts findable.
+    private List<AssistantPriorTask> _earlierTasks = [];
     // Cancels Connect's own readiness reads and session start when the launcher closes.
     private readonly CancellationTokenSource _lifetime = new();
     private AssistantState _state = AssistantState.NotChecked;
@@ -188,11 +237,19 @@ public sealed class AssistantViewModel : ObservableObject
         _store = store;
         _dispatcher = Dispatcher.CurrentDispatcher;
         _statusText = Describe(AssistantState.NotChecked);
-        ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => _client is null && State is not (AssistantState.Checking or AssistantState.Busy or AssistantState.Applying));
+        ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => _client is null && !IsMaintenanceHeld
+            && State is not (AssistantState.Checking or AssistantState.Busy or AssistantState.Applying));
         RunProbeCommand = new AsyncRelayCommand(RunProbeAsync, () => State == AssistantState.IsolationFailed);
         SignInCommand = new AsyncRelayCommand(SignInAsync, () => State == AssistantState.SignedOut && _client is not null);
         OpenSignInUrlCommand = new RelayCommand(() => _host.OpenUrl(SignInUrl), () => Uri.TryCreate(SignInUrl, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps);
-        StopCommand = new AsyncRelayCommand(StopAsync, () => _client is not null && State != AssistantState.Applying);
+        // Stop only interrupts a response and Disconnect only closes an idle session, so a click that lands just as the
+        // response ends does nothing instead of closing the session.
+        StopCommand = new AsyncRelayCommand(InterruptAsync, () => State == AssistantState.Streaming);
+        DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, () => _client is not null && State is not (AssistantState.Streaming or AssistantState.Applying));
+        LoadEarlierCommand = new AsyncRelayCommand(LoadEarlierAsync, () => HasEarlierHistory && !_isLoadingHistory && _client is not null
+            && State is AssistantState.Ready or AssistantState.Streaming);
+        LoadNewerCommand = new AsyncRelayCommand(LoadNewerAsync, () => IsBrowsingHistory && !_isLoadingHistory);
+        BackToLatestCommand = new RelayCommand(ShowLatest, () => IsBrowsingHistory);
         SendCommand = new AsyncRelayCommand(SendAsync, () => State == AssistantState.Ready && InputText.Trim().Length > 0);
         NewTaskCommand = new AsyncRelayCommand(NewTaskAsync, () => State is AssistantState.Ready or AssistantState.Disconnected or AssistantState.Error or AssistantState.SignedOut);
         // An unconfirmed live change must be checked before another batch can be reviewed.
@@ -210,6 +267,10 @@ public sealed class AssistantViewModel : ObservableObject
     public AsyncRelayCommand SignInCommand { get; }
     public RelayCommand OpenSignInUrlCommand { get; }
     public AsyncRelayCommand StopCommand { get; }
+    public AsyncRelayCommand DisconnectCommand { get; }
+    public AsyncRelayCommand LoadEarlierCommand { get; }
+    public AsyncRelayCommand LoadNewerCommand { get; }
+    public RelayCommand BackToLatestCommand { get; }
     public AsyncRelayCommand SendCommand { get; }
     public AsyncRelayCommand NewTaskCommand { get; }
     public AsyncRelayCommand ReviewCommand { get; }
@@ -256,8 +317,6 @@ public sealed class AssistantViewModel : ObservableObject
             OnPropertyChanged(nameof(IsChangesVisible));
             OnPropertyChanged(nameof(IsSidePanelVisible));
             OnPropertyChanged(nameof(IsProbeVisible));
-            OnPropertyChanged(nameof(IsInputEnabled));
-            OnPropertyChanged(nameof(StopButtonText));
         }
     }
 
@@ -298,9 +357,26 @@ public sealed class AssistantViewModel : ObservableObject
     public bool IsSignInVisible => State is AssistantState.SignedOut or AssistantState.SigningIn;
     public bool IsReviewVisible => State == AssistantState.Review && _review is not null;
     public bool IsProbeVisible => State == AssistantState.IsolationFailed;
-    public bool IsInputEnabled => State is AssistantState.Ready or AssistantState.Streaming;
     public bool IsApplying => State == AssistantState.Applying;
-    public string StopButtonText => State == AssistantState.Streaming ? "Stop" : "Disconnect";
+
+    /// <summary>The thread shown has older messages than the transcript shows that can still be read.</summary>
+    public bool HasEarlierHistory => !_historyUnavailable && _historyThreadId is not null && _historyThreadId == _threadId
+        && (_latestView is null ? _latestPages : _windowOldest + 1) < _historyPages.Count;
+
+    /// <summary>The transcript shows an older window of the conversation; Newer messages or Back to latest return.</summary>
+    public bool IsBrowsingHistory => _latestView is not null;
+
+    internal bool IsLoadingHistory => _isLoadingHistory;
+
+    /// <summary>The latest view, wherever it is held; new messages always go here.</summary>
+    private IList<AssistantTranscriptItem> LatestItems => (IList<AssistantTranscriptItem>?)_latestView ?? Transcript;
+
+    /// <summary>
+    /// An open session with nothing in flight that the launcher may close for distro maintenance: a response, sign-in,
+    /// review, live change or check keeps the distro held.
+    /// </summary>
+    internal bool CanYieldForMaintenance => !_isShutDown && _client is not null && !_isLoadingHistory
+        && State is AssistantState.Ready or AssistantState.SignedOut;
 
     public AssistantModelOption? SelectedModel { get => _selectedModel; set => SetProperty(ref _selectedModel, value); }
 
@@ -357,7 +433,7 @@ public sealed class AssistantViewModel : ObservableObject
     /// </summary>
     internal async Task ConnectOnStartupAsync()
     {
-        if (_startupConnectRequested || _isShutDown) return;
+        if (_startupConnectRequested || _isShutDown || IsMaintenanceHeld) return;
         _startupConnectRequested = true;
         if (State != AssistantState.NotChecked || !ConnectCommand.CanExecute(null)) return;
         try
@@ -375,9 +451,15 @@ public sealed class AssistantViewModel : ObservableObject
     internal async Task ConnectAsync()
     {
         if (_isShutDown) return;
+        if (IsMaintenanceHeld)
+        {
+            SetState(AssistantState.Disconnected, "Distro maintenance is running. Try again when it finishes.");
+            return;
+        }
+        _connectionIntent = true;
         if (!_ownsDistroActivity)
         {
-            if (!_host.TryBeginDistroActivity())
+            if (!_host.TryBeginSessionActivity())
             {
                 SetState(AssistantState.Error, "Distro maintenance is running. Try again when it finishes.");
                 return;
@@ -388,7 +470,7 @@ public sealed class AssistantViewModel : ObservableObject
         try
         {
             SetState(AssistantState.Checking, "Reading DwemerDistro capabilities…");
-            var capabilities = await _cli.RunAsync(AssistantCliCommands.Capabilities(), QueryTimeout, _lifetime.Token);
+            var capabilities = await RunCliAsync(AssistantCliCommands.Capabilities(), QueryTimeout, _lifetime.Token);
             if (!capabilities.Ok)
             {
                 FailCli(capabilities);
@@ -400,7 +482,7 @@ public sealed class AssistantViewModel : ObservableObject
                 return;
             }
 
-            var agent = await _cli.RunAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, _lifetime.Token);
+            var agent = await RunCliAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, _lifetime.Token);
             if (!agent.Ok)
             {
                 FailCli(agent);
@@ -470,7 +552,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
 
         SetState(AssistantState.Checking, $"Checking saved task {saved.TaskId}…");
-        var status = await _cli.RunAsync(AssistantCliCommands.ChangeStatus(saved.TaskId), QueryTimeout, _lifetime.Token);
+        var status = await RunCliAsync(AssistantCliCommands.ChangeStatus(saved.TaskId), QueryTimeout, _lifetime.Token);
         if (!status.Ok && (!status.HasDocument || status.ErrorCode == "busy"))
         {
             // Unknown rather than gone: keep the reference so Connect can try again.
@@ -487,6 +569,7 @@ public sealed class AssistantViewModel : ObservableObject
 
         _taskId = saved.TaskId;
         _threadId = saved.ThreadId;
+        _earlierTasks = saved.EarlierTasks?.ToList() ?? [];
         SetLiveChangeFlags(AssistantCliService.GetString(status.Data, "state"));
         TaskText = $"Task {saved.TaskId} · CHIM · reopened";
         return true;
@@ -507,7 +590,7 @@ public sealed class AssistantViewModel : ObservableObject
         if (_isShutDown) return false;
         SetState(AssistantState.Checking, "Preparing an isolated working copy…");
         // Core's prepare is not cut short, but a task it finishes after the launcher began closing is neither used nor saved.
-        var prepared = await _cli.RunAsync(AssistantCliCommands.Prepare("herika", paths), PrepareTimeout, CancellationToken.None);
+        var prepared = await RunCliAsync(AssistantCliCommands.Prepare("herika", paths), PrepareTimeout, CancellationToken.None);
         if (_isShutDown) return false;
         if (!prepared.Ok)
         {
@@ -522,6 +605,19 @@ public sealed class AssistantViewModel : ObservableObject
         }
         UseTask(taskId, paths.Length);
         return true;
+    }
+
+    /// <summary>
+    /// Keeps the current task's ids, newest last, before another task replaces it, so its conversation and any receipt
+    /// recorded by Core stay findable. Nothing is copied from it.
+    /// </summary>
+    private void RememberCurrentTask()
+    {
+        if (_taskId is null) return;
+        _earlierTasks.RemoveAll(task => task.TaskId == _taskId);
+        _earlierTasks.Add(new AssistantPriorTask(_taskId, _threadId, _canRollback || _canCheckOutcome));
+        if (_earlierTasks.Count > AssistantTaskReference.MaxEarlierTasks)
+            _earlierTasks.RemoveRange(0, _earlierTasks.Count - AssistantTaskReference.MaxEarlierTasks);
     }
 
     /// <summary>Makes a freshly prepared task current: no thread yet, nothing to review or roll back, saved for this installation.</summary>
@@ -599,6 +695,12 @@ public sealed class AssistantViewModel : ObservableObject
         SignInUrl = string.Empty;
         SignInCode = string.Empty;
         SetState(AssistantState.Ready, "Ask about your DwemerDistro setup, or describe a CHIM fix. Edits stay in an isolated copy until you review and approve them.");
+        if (_historyLoadPending)
+        {
+            _historyLoadPending = false;
+            await LoadEarlierAsync(client, initial: true);
+            if (!ReferenceEquals(_client, client)) return;
+        }
         // A request the user allowed files for continues in the new workspace's first turn.
         if (_pendingContinuation is { } continuation)
         {
@@ -660,7 +762,8 @@ public sealed class AssistantViewModel : ObservableObject
         {
             try
             {
-                var resume = new JsonObject { ["threadId"] = existing, ["developerInstructions"] = DeveloperInstructions };
+                // A long conversation can exceed the launcher's 4 MiB line limit, so history is read in pages afterwards.
+                var resume = new JsonObject { ["threadId"] = existing, ["developerInstructions"] = DeveloperInstructions, ["excludeTurns"] = true };
                 CodexAppServerClient.AddConfinement(resume);
                 result = await client.RequestAsync("thread/resume", resume, RpcTimeout);
                 resumed = true;
@@ -684,53 +787,301 @@ public sealed class AssistantViewModel : ObservableObject
         if (resumed && threadId != _threadId) throw new AppServerException(0, "The assistant resumed a different conversation than this task's.");
         _threadId = threadId;
         SaveReference();
-        if (resumed && _shownThreadId != threadId) RestoreConversation(Prop(result, "thread"));
+        if (_shownThreadId != threadId)
+        {
+            // Read once per thread shown: a reconnect, including one after a page that closed the session, never repeats it.
+            ResetHistory();
+            _historyThreadId = threadId;
+            if (resumed) _historyPages.Add((null, 0));
+            _historyLoadPending = resumed;
+            RaiseHistory();
+        }
         _shownThreadId = threadId;
     }
 
     /// <summary>
-    /// Shows a resumed thread's earlier conversation in order: the user's own text and the assistant's messages only.
-    /// rust-v0.163.0 returns it as thread.turns[].items[]; a userMessage keeps each text input the launcher sent as its own
-    /// content entry, so the labeled per-message context is dropped as a whole entry, never cut out of the user's text.
-    /// Reasoning, commands, tool calls and file changes stay hidden; nothing is sent, offered or applied here.
+    /// Reads page <paramref name="page"/> of the shown thread through rust-v0.163.0 <c>thread/turns/list</c>: newest turns
+    /// first, full items. A turn whose items did not come with it is read through <c>thread/items/list</c>, following its
+    /// cursor for up to <see cref="MaxTurnItemPages"/> pages; a turn with more is counted in the omitted messages, never
+    /// dropped silently. Only the user's own text and the assistant's messages are returned, oldest first.
     /// </summary>
-    private void RestoreConversation(JsonElement thread)
+    private async Task<(List<AssistantTranscriptItem> Items, int Omitted)> ReadHistoryPageAsync(CodexAppServerClient client, string threadId, int page)
     {
-        var restored = ReadConversation(thread, out var omitted);
-        foreach (var (item, index) in restored.TakeLast(MaxTranscriptItems).Select((item, index) => (item, index)))
-            Transcript.Insert(index, item);
-        while (Transcript.Count > MaxTranscriptItems) Transcript.RemoveAt(0);
-        if (omitted > 0) AddSystem($"{omitted} earlier message(s) in this conversation could not be shown here.");
+        var (cursor, limit) = _historyPages[page];
+        if (limit == 0) limit = _historyPageTurns;
+        var request = new JsonObject { ["threadId"] = threadId, ["limit"] = limit, ["sortDirection"] = "desc", ["itemsView"] = "full" };
+        if (cursor is not null) request["cursor"] = cursor;
+        var result = await client.RequestAsync("thread/turns/list", request, RpcTimeout);
+        var turns = Prop(result, "data") is { ValueKind: JsonValueKind.Array } data ? data.EnumerateArray().Reverse().ToList() : [];
+        var items = new List<JsonElement>();
+        var omitted = 0;
+        foreach (var turn in turns)
+        {
+            if (AssistantCliService.GetString(turn, "itemsView") == "full")
+            {
+                if (Prop(turn, "items") is { ValueKind: JsonValueKind.Array } turnItems) items.AddRange(turnItems.EnumerateArray());
+                continue;
+            }
+            // Summary or unloaded items may leave text out, so the turn's own items are read in full.
+            string? itemCursor = null;
+            for (var itemPage = 0; ; itemPage++)
+            {
+                if (itemPage == MaxTurnItemPages)
+                {
+                    omitted++;
+                    break;
+                }
+                var itemsRequest = new JsonObject
+                {
+                    ["threadId"] = threadId, ["turnId"] = AssistantCliService.GetString(turn, "id"), ["limit"] = HistoryTurnItems
+                };
+                if (itemCursor is not null) itemsRequest["cursor"] = itemCursor;
+                var listed = await client.RequestAsync("thread/items/list", itemsRequest, RpcTimeout);
+                if (Prop(listed, "data") is { ValueKind: JsonValueKind.Array } entries)
+                    items.AddRange(entries.EnumerateArray().Select(entry => Prop(entry, "item")));
+                itemCursor = AssistantCliService.GetString(listed, "nextCursor") is { Length: > 0 } nextItems ? nextItems : null;
+                if (itemCursor is null) break;
+            }
+        }
+
+        // The page's bounds are fixed by its first successful read; the next page becomes known through its cursor.
+        _historyPages[page] = (cursor, limit);
+        while (_historyPageItems.Count <= page) _historyPageItems.Add(0);
+        var restored = ReadItems(items, ref omitted);
+        _historyPageItems[page] = restored.Count;
+        if (AssistantCliService.GetString(result, "nextCursor") is { Length: > 0 } next && _historyPages.Count == page + 1)
+            _historyPages.Add((next, 0));
+        return (restored, omitted);
     }
 
+    /// <summary>
+    /// Shows the page older than the transcript's top. The latest view takes it while it fits whole under the cap; past
+    /// that the transcript becomes an older window, which slides: the page goes on top and newer pages leave the bottom.
+    /// Nothing is sent, offered or applied. A page that fails is not retried on its own; Load earlier tries again.
+    /// </summary>
+    private async Task LoadEarlierAsync(CodexAppServerClient client, bool initial)
+    {
+        if (_isLoadingHistory || _historyThreadId is not { } threadId || threadId != _threadId || !HasEarlierHistory) return;
+        var page = _latestView is null ? _latestPages : _windowOldest + 1;
+        var generation = _historyViewGeneration;
+        var read = await ReadHistoryAsync(client, threadId, page, initial);
+        if (read is not var (items, omitted) || generation != _historyViewGeneration) return;
+        if (_latestView is null && (initial || _latestPartialItems == 0 && Transcript.Count + items.Count <= MaxTranscriptItems))
+        {
+            for (var index = 0; index < items.Count; index++) Transcript.Insert(index, items[index]);
+            _latestPages = page + 1;
+            TrimTranscript();
+        }
+        else
+        {
+            if (_latestView is null) EnterWindow(page);
+            _windowOldest = page;
+            _windowPageItems.Insert(0, items.Count);
+            for (var index = 0; index < items.Count; index++) Transcript.Insert(index, items[index]);
+            while (Transcript.Count > MaxTranscriptItems && _windowNewest < _windowOldest)
+            {
+                for (var removed = _windowPageItems[^1]; removed > 0; removed--) Transcript.RemoveAt(Transcript.Count - 1);
+                _windowPageItems.RemoveAt(_windowPageItems.Count - 1);
+                _windowNewest++;
+            }
+        }
+        ReportOmitted(omitted, initial);
+        RaiseHistory();
+    }
+
+    /// <summary>
+    /// Moves an older window one page toward the present: the page goes on the bottom and older pages leave the top. Once
+    /// the next newer page is already whole in the latest view, the latest view comes back instead.
+    /// </summary>
+    private async Task LoadNewerAsync()
+    {
+        if (_latestView is null || _isLoadingHistory) return;
+        var page = _windowNewest - 1;
+        if (page < _latestPages || _client is not { } client || _historyThreadId is not { } threadId || threadId != _threadId)
+        {
+            ShowLatest();
+            return;
+        }
+        var generation = _historyViewGeneration;
+        var read = await ReadHistoryAsync(client, threadId, page, initial: false);
+        if (read is not var (items, omitted) || generation != _historyViewGeneration || _latestView is null) return;
+        _windowNewest = page;
+        _windowPageItems.Add(items.Count);
+        foreach (var item in items) Transcript.Add(item);
+        while (Transcript.Count > MaxTranscriptItems && _windowOldest > _windowNewest)
+        {
+            for (var removed = _windowPageItems[0]; removed > 0; removed--) Transcript.RemoveAt(0);
+            _windowPageItems.RemoveAt(0);
+            _windowOldest--;
+        }
+        ReportOmitted(omitted, initial: false);
+        RaiseHistory();
+    }
+
+    private async Task<(List<AssistantTranscriptItem> Items, int Omitted)?> ReadHistoryAsync(
+        CodexAppServerClient client, string threadId, int page, bool initial)
+    {
+        _isLoadingHistory = true;
+        RaiseHistory();
+        try
+        {
+            var read = await ReadHistoryPageAsync(client, threadId, page);
+            return ReferenceEquals(_client, client) && threadId == _historyThreadId ? read : null;
+        }
+        catch (AppServerException ex)
+        {
+            // A newer session owns the transcript now; a page that closed this one is still reported.
+            if (_client is not null && !ReferenceEquals(_client, client) || threadId != _historyThreadId) return null;
+            string note;
+            if (ex.Code is -32602 or CodexAppServerClient.MethodNotFound)
+            {
+                _historyUnavailable = true;
+                note = "This DwemerDistro Core cannot show this conversation's earlier messages yet. Run Update Distro to see them; they were not deleted.";
+            }
+            else
+            {
+                // Only a page never read can shrink; one already read keeps its bounds so it holds the same turns.
+                var unread = _historyPages[page].Limit == 0;
+                if (unread) _historyPageTurns = Math.Max(1, _historyPageTurns / 2);
+                note = "Earlier messages could not be loaded: " + Shorten(ex.Message, 160) +
+                       " They are kept in the conversation. Trying again reads them" + (unread ? " in a smaller page." : " again.");
+            }
+            if (initial) AddSystem(note);
+            else StatusDetail = note;
+            return null;
+        }
+        finally
+        {
+            _isLoadingHistory = false;
+            RaiseHistory();
+        }
+    }
+
+    private void ReportOmitted(int omitted, bool initial)
+    {
+        if (omitted == 0) return;
+        if (initial) AddSystem($"{omitted} earlier message(s) in this conversation could not be shown here.");
+        else StatusDetail = $"{omitted} earlier message(s) could not be shown here.";
+    }
+
+    private async Task LoadEarlierAsync()
+    {
+        if (_client is { } client) await LoadEarlierAsync(client, initial: false);
+    }
+
+    /// <summary>Keeps the latest view aside and starts an empty window just below <paramref name="page"/>.</summary>
+    private void EnterWindow(int page)
+    {
+        _latestView = Transcript.ToList();
+        _historyViewGeneration++;
+        Transcript.Clear();
+        _windowPageItems.Clear();
+        _windowNewest = page;
+        _windowOldest = page - 1;
+        StatusDetail = "Showing earlier messages. Newer messages or Back to latest returns, and so does sending a message.";
+    }
+
+    /// <summary>Shows the latest view again, with everything added to it while a window was shown.</summary>
+    private void ShowLatest()
+    {
+        if (_latestView is not { } latest) return;
+        _latestView = null;
+        _historyViewGeneration++;
+        _windowPageItems.Clear();
+        Transcript.Clear();
+        foreach (var item in latest) Transcript.Add(item);
+        RaiseHistory();
+    }
+
+    /// <summary>Forgets the shown thread's pages and returns to the latest view; its messages stay shown.</summary>
+    private void ResetHistory()
+    {
+        ShowLatest();
+        _historyThreadId = null;
+        _historyPages.Clear();
+        _historyPageItems.Clear();
+        _historyUnavailable = false;
+        _historyPageTurns = HistoryPageTurns;
+        _latestPages = 0;
+        _latestPartialItems = 0;
+        RaiseHistory();
+    }
+
+    /// <summary>
+    /// The latest view keeps its newest messages. A history message that leaves its top makes its page partial, so Load
+    /// earlier reads that page whole into a window and nothing between the window and the latest view is skipped.
+    /// </summary>
+    private void TrimTranscript()
+    {
+        var latest = LatestItems;
+        if (latest.Count <= MaxTranscriptItems) return;
+        while (latest.Count > MaxTranscriptItems)
+        {
+            latest.RemoveAt(0);
+            if (_latestPartialItems > 0)
+            {
+                _latestPartialItems--;
+                continue;
+            }
+            while (_latestPages > 0)
+            {
+                _latestPages--;
+                if (_historyPageItems[_latestPages] > 0)
+                {
+                    _latestPartialItems = _historyPageItems[_latestPages] - 1;
+                    break;
+                }
+            }
+        }
+        RaiseHistory();
+    }
+
+    private void RaiseHistory()
+    {
+        OnPropertyChanged(nameof(HasEarlierHistory));
+        OnPropertyChanged(nameof(IsBrowsingHistory));
+        LoadEarlierCommand.RaiseCanExecuteChanged();
+        LoadNewerCommand.RaiseCanExecuteChanged();
+        BackToLatestCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// A thread's conversation from rust-v0.163.0 thread.turns[].items[], in order. A userMessage keeps each text input the
+    /// launcher sent as its own content entry, so the labeled per-message context is dropped as a whole entry, never cut out
+    /// of the user's text. Reasoning, commands, tool calls and file changes stay hidden.
+    /// </summary>
     internal static List<AssistantTranscriptItem> ReadConversation(JsonElement thread, out int omitted)
     {
-        var restored = new List<AssistantTranscriptItem>();
         omitted = 0;
-        if (Prop(thread, "turns") is not { ValueKind: JsonValueKind.Array } turns) return restored;
-        foreach (var turn in turns.EnumerateArray())
+        if (Prop(thread, "turns") is not { ValueKind: JsonValueKind.Array } turns) return [];
+        var items = turns.EnumerateArray().Where(turn => Prop(turn, "items").ValueKind == JsonValueKind.Array)
+            .SelectMany(turn => Prop(turn, "items").EnumerateArray());
+        return ReadItems(items, ref omitted);
+    }
+
+    private static List<AssistantTranscriptItem> ReadItems(IEnumerable<JsonElement> items, ref int omitted)
+    {
+        var restored = new List<AssistantTranscriptItem>();
+        foreach (var item in items)
         {
-            if (Prop(turn, "items") is not { ValueKind: JsonValueKind.Array } items) continue;
-            foreach (var item in items.EnumerateArray())
+            var id = AssistantCliService.GetString(item, "id");
+            switch (AssistantCliService.GetString(item, "type"))
             {
-                var id = AssistantCliService.GetString(item, "id");
-                switch (AssistantCliService.GetString(item, "type"))
-                {
-                    case "userMessage":
-                        var text = ReadUserText(Prop(item, "content"));
-                        if (text is null) omitted++;
-                        // The first message of a workspace the user allowed files for is the launcher's, not the user's.
-                        else if (text.StartsWith(ContinuationPrefix, StringComparison.Ordinal))
-                            restored.Add(new AssistantTranscriptItem("DwemerDistro", "Continued your request with the files you allowed.", id));
-                        else if (text.Length > 0) restored.Add(new AssistantTranscriptItem("You", text, id));
-                        break;
-                    case "agentMessage":
-                        var message = AssistantCliService.GetString(item, "text");
-                        // Shown as it was after its turn; an old file request is never offered again.
-                        if (ParseFileRequest(message, out _, out var visible, out _) == FileRequestParse.Valid) message = visible;
-                        if (message.Length > 0) restored.Add(new AssistantTranscriptItem("Codex", message, id));
-                        break;
-                }
+                case "userMessage":
+                    var text = ReadUserText(Prop(item, "content"));
+                    if (text is null) omitted++;
+                    // The first message of a workspace the user allowed files for is the launcher's, not the user's.
+                    else if (text.StartsWith(HandoffLabel, StringComparison.Ordinal) || text.StartsWith(ContinuationPrefix, StringComparison.Ordinal))
+                        restored.Add(new AssistantTranscriptItem("DwemerDistro",
+                            "Continued your request in a new working copy with the files you allowed.", id));
+                    else if (text.Length > 0) restored.Add(new AssistantTranscriptItem("You", text, id));
+                    break;
+                case "agentMessage":
+                    var message = AssistantCliService.GetString(item, "text");
+                    // Shown as it was after its turn; an old file request is never offered again.
+                    if (ParseFileRequest(message, out _, out var visible, out _) == FileRequestParse.Valid) message = visible;
+                    if (message.Length > 0) restored.Add(new AssistantTranscriptItem("Codex", message, id));
+                    break;
             }
         }
         return restored;
@@ -765,7 +1116,7 @@ public sealed class AssistantViewModel : ObservableObject
     {
         if (_isShutDown || _taskId is null || _installationId is null) return;
         _store.Save(new AssistantTaskReference(AssistantTaskReference.CurrentVersion, _installationId, _cli.DistroName,
-            _provider, "herika", _taskId, _threadId));
+            _provider, "herika", _taskId, _threadId) { EarlierTasks = _earlierTasks.Count > 0 ? _earlierTasks.ToArray() : null });
     }
 
     private async Task SignInAsync()
@@ -803,6 +1154,8 @@ public sealed class AssistantViewModel : ObservableObject
     {
         var text = InputText.Trim();
         if (_client is null || _turns is null || _threadId is null || text.Length == 0) return;
+        // A message belongs below the newest ones, so an older window gives way to the latest view first.
+        ShowLatest();
         InputText = string.Empty;
         AddItem(new AssistantTranscriptItem("You", text));
         _lastUserRequest = text;
@@ -892,7 +1245,7 @@ public sealed class AssistantViewModel : ObservableObject
     {
         try
         {
-            return await _cli.RunAsync(arguments, timeout, cancellationToken);
+            return await RunCliAsync(arguments, timeout, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -971,23 +1324,107 @@ public sealed class AssistantViewModel : ObservableObject
             " If asked, say they could not be read. Do not guess them, and do not read configuration, database or credential files to find them.";
     }
 
-    private async Task StopAsync()
+    /// <summary>The user closes the session; it stays closed, even after distro maintenance, until Connect. A draft is kept.</summary>
+    private async Task DisconnectAsync()
     {
-        if (State == AssistantState.Streaming)
+        if (State is AssistantState.Streaming or AssistantState.Applying) return;
+        _connectionIntent = false;
+        _reconnectAfterMaintenance = false;
+        await EndSessionAsync(AssistantState.Disconnected, "Session closed. Connect to continue this task.");
+    }
+
+    // --- Distro maintenance -------------------------------------------------------------------
+
+    /// <summary>
+    /// Called by the launcher before Compact, Export, Import or DNS repair claim the distro. An idle session (ready or
+    /// signed out) is closed and its lease released before this returns; anything in flight refuses, so a response,
+    /// sign-in, review, live change or check is never cut off. Until <see cref="ResumeAfterMaintenance"/>, nothing connects.
+    /// </summary>
+    /// <remarks>
+    /// Each true answer is one hold, ended by exactly one <see cref="ResumeAfterMaintenance"/>, which the launcher calls
+    /// whether or not its exclusive claim then succeeds. A command still running after <see cref="MaintenanceDrainTimeout"/>
+    /// ends the hold here and refuses, so a stuck command never leaves the assistant held.
+    /// </remarks>
+    internal async Task<bool> SuspendForMaintenanceAsync()
+    {
+        if (_isShutDown) return false;
+        if (IsMaintenanceHeld)
         {
-            await InterruptAsync();
+            // Another operation already closed the session; this one holds the distro too until it ends.
+            _maintenanceHolds++;
+            return true;
+        }
+        if (!_ownsDistroActivity)
+        {
+            _maintenanceHolds = 1;
+            _reconnectAfterMaintenance = false;
+            _maintenanceEndedUnsafely = false;
+            RaiseCommands();
+            return true;
+        }
+        if (!CanYieldForMaintenance) return false;
+        _maintenanceHolds = 1;
+        _reconnectAfterMaintenance = _connectionIntent;
+        _maintenanceEndedUnsafely = false;
+        await EndSessionAsync(AssistantState.Disconnected, "Paused for distro maintenance. " + (_reconnectAfterMaintenance
+            ? "The assistant reconnects when it finishes safely." : "Connect when it finishes."));
+        // A change check the last response started may still be reading; the launcher's claim counts it until it ends.
+        var deadline = DateTime.UtcNow + MaintenanceDrainTimeout;
+        while (Volatile.Read(ref _commandsInFlight) > 0 && DateTime.UtcNow < deadline) await Task.Delay(50);
+        if (Volatile.Read(ref _commandsInFlight) == 0) return true;
+        ResumeAfterMaintenance(reconnect: true);
+        return false;
+    }
+
+    /// <summary>How long maintenance waits for running Core commands after closing the session.</summary>
+    internal TimeSpan MaintenanceDrainTimeout { get; set; } = QueryTimeout;
+
+    /// <summary>
+    /// Ends the maintenance hold. Reconnects only a session maintenance itself closed, that the user still wants, after
+    /// an operation that ended safely; otherwise Connect stays available and says why.
+    /// </summary>
+    internal void ResumeAfterMaintenance(bool reconnect)
+    {
+        if (!IsMaintenanceHeld) return;
+        if (!reconnect) _maintenanceEndedUnsafely = true;
+        if (--_maintenanceHolds > 0) return;
+        var paused = _reconnectAfterMaintenance;
+        reconnect = !_maintenanceEndedUnsafely;
+        _reconnectAfterMaintenance = false;
+        _maintenanceEndedUnsafely = false;
+        RaiseCommands();
+        if (!paused || _isShutDown || _client is not null || State != AssistantState.Disconnected) return;
+        if (!reconnect || !_connectionIntent)
+        {
+            SetState(AssistantState.Disconnected, "Distro maintenance ended. Press Connect to continue this task.");
             return;
         }
-        await EndSessionAsync(AssistantState.Disconnected, "Session closed. Connect to continue this task.");
+        _ = ReconnectAfterMaintenanceAsync();
+    }
+
+    private async Task ReconnectAfterMaintenanceAsync()
+    {
+        try
+        {
+            await ConnectAsync();
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Operation($"Assistant reconnection after maintenance failed: {ex.GetType().Name}");
+            if (!_isShutDown) await EndSessionAsync(AssistantState.Error, "The assistant could not reconnect: " + Shorten(ex.Message, 200));
+        }
     }
 
     private async Task NewTaskAsync()
     {
         await EndSessionAsync(AssistantState.NotChecked, "Starting a new task…");
+        RememberCurrentTask();
         _store.Clear();
         _taskId = null;
         _threadId = null;
         _shownThreadId = null;
+        ResetHistory();
+        _historyLoadPending = false;
         _canRollback = false;
         _canCheckOutcome = false;
         _pendingContinuation = null;
@@ -1110,6 +1547,7 @@ public sealed class AssistantViewModel : ObservableObject
         _turns = null;
         _sessionGeneration++;
         _contextLookup?.Cancel();
+        _historyLoadPending = false;
         ClearFileRequest();
         if (client is not null)
         {
@@ -1220,7 +1658,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
 
         SetState(AssistantState.Busy, "Checking the current working copy for unreviewed edits…");
-        var diff = await _cli.RunAsync(AssistantCliCommands.Diff(request.TaskId), QueryTimeout, CancellationToken.None);
+        var diff = await RunCliAsync(AssistantCliCommands.Diff(request.TaskId), QueryTimeout, CancellationToken.None);
         var pending = ReadReviewableChanges(diff, request.TaskId);
         if (!IsCurrent(request) || pending != 0)
         {
@@ -1233,7 +1671,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
 
         SetState(AssistantState.Checking, $"Preparing a working copy with the {request.Paths.Count} file(s) you allowed…");
-        var prepared = await _cli.RunAsync(AssistantCliCommands.Prepare("herika", request.Paths), PrepareTimeout, CancellationToken.None);
+        var prepared = await RunCliAsync(AssistantCliCommands.Prepare("herika", request.Paths), PrepareTimeout, CancellationToken.None);
         var taskId = AssistantCliService.GetString(prepared.Data, "task_id");
         if (!IsCurrent(request) || !prepared.Ok || !AssistantCliCommands.IsValidTaskId(taskId))
         {
@@ -1245,25 +1683,55 @@ public sealed class AssistantViewModel : ObservableObject
         }
 
         var hadRollback = _canRollback;
+        var earlierTask = request.TaskId;
+        var carried = CarryForward(LatestItems);
         await DisposeClientAsync();
+        RememberCurrentTask();
         UseTask(taskId, request.Paths.Count);
+        TaskText += $" · continued from task {ShortTaskId(earlierTask)}";
         OutcomeText = string.Empty;
-        AddSystem($"Access allowed to {request.Paths.Count} file(s) in a fresh isolated working copy:\n" + string.Join("\n", request.Paths) +
-                  (hadRollback ? "\nRoll back for the earlier applied change is no longer offered here." : string.Empty) +
+        AddSystem($"Access allowed. This conversation continues in a new isolated working copy (task {ShortTaskId(taskId)}) holding only " +
+                  $"these {request.Paths.Count} file(s):\n" + string.Join("\n", request.Paths) +
+                  $"\nThe assistant gets a summary of your request and the recent messages above, not the earlier session itself. " +
+                  $"The earlier task {ShortTaskId(earlierTask)} is kept" +
+                  (hadRollback ? ", with the receipt for its applied change; roll back is no longer offered on this page." : ".") +
                   "\nContinuing your request…");
-        _pendingContinuation = BuildContinuation(request);
+        _pendingContinuation = BuildContinuation(request, carried, taskId);
         await ConnectAsync();
     }
 
+    /// <summary>Old launchers began the first message of an allowed-files workspace with this; restored threads still show it as the launcher's.</summary>
     private const string ContinuationPrefix = "The user allowed access to these CHIM files.";
 
-    /// <summary>The first message in the new workspace: the user's own request, the assistant's reason, and the allowed files.</summary>
-    internal static string BuildContinuation(AssistantFileRequest request) =>
-        ContinuationPrefix + " They are now in /work at the same relative paths (a file that does not exist yet is absent):\n"
+    /// <summary>First line of the message that hands a conversation to a new working copy.</summary>
+    internal const string HandoffLabel = "[DwemerDistro workspace handoff - added by the launcher, not typed by the user]";
+
+    /// <summary>
+    /// The first message in the new workspace, clearly the launcher's: which task holds the allowed files now, a bounded
+    /// carry-forward of the recent conversation, the user's own request and the assistant's reason. The earlier session
+    /// is not shared with the new one; this summary is all it gets.
+    /// </summary>
+    internal static string BuildContinuation(AssistantFileRequest request, IReadOnlyList<string> carried, string newTaskId) =>
+        HandoffLabel + "\n"
+        + $"Workspace handoff: this conversation continues in a new isolated working copy, task {newTaskId}, replacing task {request.TaskId}. "
+        + "Edits made in the earlier working copy are not here. The user allowed access to these CHIM files; they are now in /work at the "
+        + "same relative paths (a file that does not exist yet is absent):\n"
         + string.Join("\n", request.Paths)
+        + (carried.Count > 0
+            ? "\n\nCarried forward from the earlier conversation, oldest first (messages may be shortened):\n" + string.Join("\n\n", carried)
+            : string.Empty)
         + "\n\nThe user's request was:\n" + Shorten(request.OriginalRequest, MaxInputChars)
         + "\n\nYour earlier reply, before the files were available:\n" + Shorten(request.Context, MaxContinuationContextChars)
         + "\n\nContinue the request using these files. Edit only what is needed; the user reviews every change before it goes live.";
+
+    /// <summary>The newest user and assistant messages shown, oldest first and bounded; launcher notes stay behind.</summary>
+    internal static IReadOnlyList<string> CarryForward(IEnumerable<AssistantTranscriptItem> transcript) =>
+        transcript.Where(item => item.Role is "You" or "Codex" && item.Text.Trim().Length > 0)
+            .TakeLast(MaxCarriedMessages)
+            .Select(item => (item.Role == "You" ? "User: " : "Assistant: ") + Shorten(item.Text.Trim(), MaxCarriedMessageChars))
+            .ToList();
+
+    private static string ShortTaskId(string taskId) => taskId.Length > 8 ? taskId[..8] : taskId;
 
     /// <summary>
     /// Asks Core's <c>changes diff</c> whether this task has edits that can still be reviewed. Review changes appears only
@@ -1273,7 +1741,7 @@ public sealed class AssistantViewModel : ObservableObject
     {
         if (_taskId is not { } taskId) return;
         var check = ++_changeCheck;
-        var diff = await _cli.RunAsync(AssistantCliCommands.Diff(taskId), QueryTimeout, CancellationToken.None);
+        var diff = await RunCliAsync(AssistantCliCommands.Diff(taskId), QueryTimeout, CancellationToken.None);
         if (check != _changeCheck || taskId != _taskId) return;
         var pending = ReadReviewableChanges(diff, taskId);
         HasChanges = pending > 0;
@@ -1309,7 +1777,7 @@ public sealed class AssistantViewModel : ObservableObject
         _review = null;
         RaiseReview();
         SetState(AssistantState.Busy, "Freezing the current changes for review…");
-        var staged = await _cli.RunAsync(AssistantCliCommands.Stage(_taskId!), PrepareTimeout, CancellationToken.None);
+        var staged = await RunCliAsync(AssistantCliCommands.Stage(_taskId!), PrepareTimeout, CancellationToken.None);
         if (!staged.Ok)
         {
             SetState(SessionState(), "Could not prepare the review: " + DescribeStageFailure(staged) + " Nothing can be approved.");
@@ -1395,7 +1863,7 @@ public sealed class AssistantViewModel : ObservableObject
         AssistantCliResult result;
         try
         {
-            result = await _cli.RunAsync(AssistantCliCommands.Apply(batch.TaskId, batch.ManifestSha256), LiveChangeTimeout, CancellationToken.None);
+            result = await RunCliAsync(AssistantCliCommands.Apply(batch.TaskId, batch.ManifestSha256), LiveChangeTimeout, CancellationToken.None);
         }
         finally
         {
@@ -1561,7 +2029,7 @@ public sealed class AssistantViewModel : ObservableObject
         AssistantCliResult result;
         try
         {
-            result = await _cli.RunAsync(AssistantCliCommands.Rollback(_taskId!), LiveChangeTimeout, CancellationToken.None);
+            result = await RunCliAsync(AssistantCliCommands.Rollback(_taskId!), LiveChangeTimeout, CancellationToken.None);
         }
         finally
         {
@@ -1575,7 +2043,7 @@ public sealed class AssistantViewModel : ObservableObject
     {
         var previous = SessionState();
         SetState(AssistantState.Busy, "Reading the task's change status…");
-        var status = await _cli.RunAsync(AssistantCliCommands.ChangeStatus(_taskId!), QueryTimeout, CancellationToken.None);
+        var status = await RunCliAsync(AssistantCliCommands.ChangeStatus(_taskId!), QueryTimeout, CancellationToken.None);
         if (status.Ok && AssistantCliService.GetString(status.Data, "task_id") == _taskId)
         {
             var state = AssistantCliService.GetString(status.Data, "state");
@@ -1601,7 +2069,7 @@ public sealed class AssistantViewModel : ObservableObject
         try
         {
             SetState(AssistantState.Checking, "Running the isolation check…");
-            var probe = await _cli.RunAsync(AssistantCliCommands.AgentProbe(), PrepareTimeout, CancellationToken.None);
+            var probe = await RunCliAsync(AssistantCliCommands.AgentProbe(), PrepareTimeout, CancellationToken.None);
             if (!probe.Ok)
             {
                 FailCli(probe);
@@ -1701,24 +2169,44 @@ public sealed class AssistantViewModel : ObservableObject
 
     private AssistantState SessionState() => _client is not null ? AssistantState.Ready : AssistantState.Disconnected;
 
+    /// <summary>
+    /// Every Core command holds the launcher's passive distro lease while it runs, so distro maintenance waits for it and
+    /// never starts underneath it; while maintenance holds the distro, the command is not run.
+    /// </summary>
+    private async Task<AssistantCliResult> RunCliAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (!_host.TryBeginDistroActivity())
+            return AssistantCliResult.Failure("busy", "Distro maintenance is running. Try again when it finishes.");
+        Interlocked.Increment(ref _commandsInFlight);
+        try
+        {
+            return await _cli.RunAsync(arguments, timeout, cancellationToken);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _commandsInFlight);
+            _host.EndDistroActivity();
+        }
+    }
+
     private void ReleaseDistroActivity()
     {
         if (!_ownsDistroActivity) return;
         _ownsDistroActivity = false;
-        _host.EndDistroActivity();
+        _host.EndSessionActivity();
     }
 
     private AssistantTranscriptItem AddItem(AssistantTranscriptItem item)
     {
-        Transcript.Add(item);
-        while (Transcript.Count > MaxTranscriptItems) Transcript.RemoveAt(0);
+        LatestItems.Add(item);
+        TrimTranscript();
         return item;
     }
 
     private void AddSystem(string text) => AddItem(new AssistantTranscriptItem("DwemerDistro", text));
 
     private AssistantTranscriptItem? FindItem(string? itemId) =>
-        string.IsNullOrEmpty(itemId) ? null : Transcript.LastOrDefault(item => item.ItemId == itemId);
+        string.IsNullOrEmpty(itemId) ? null : LatestItems.LastOrDefault(item => item.ItemId == itemId);
 
     private static bool ItemOf(JsonElement parameters, out string type, out string id)
     {
@@ -1760,8 +2248,8 @@ public sealed class AssistantViewModel : ObservableObject
         OnPropertyChanged(nameof(IsApplying));
         foreach (var command in new System.Windows.Input.ICommand[]
                  {
-                     ConnectCommand, RunProbeCommand, SignInCommand, OpenSignInUrlCommand, StopCommand, SendCommand, NewTaskCommand,
-                     ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand,
+                     ConnectCommand, RunProbeCommand, SignInCommand, OpenSignInUrlCommand, StopCommand, DisconnectCommand, LoadEarlierCommand, LoadNewerCommand, BackToLatestCommand,
+                     SendCommand, NewTaskCommand, ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand,
                      AllowFileAccessCommand, DeclineFileAccessCommand
                  })
         {

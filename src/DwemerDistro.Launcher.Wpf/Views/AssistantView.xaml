@@ -63,9 +63,19 @@
                                     AutomationProperties.HelpText="Check DwemerDistro and start the assistant for the current task." />
                             <Button Content="Sign in" Command="{Binding SignInCommand}" Style="{StaticResource Assistant.Action}"
                                     AutomationProperties.HelpText="Request a ChatGPT sign-in code. Nothing opens until you click Open sign-in page." />
-                            <Button Content="{Binding StopButtonText}" Command="{Binding StopCommand}" Style="{StaticResource Assistant.Action}"
-                                    AutomationProperties.Name="{Binding StopButtonText}"
-                                    AutomationProperties.HelpText="Stop the current response, or close the session when nothing is running." />
+                            <Button Content="Stop" Command="{Binding StopCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Stop the current response. Available only while the assistant is responding." />
+                            <Button Content="Disconnect" Command="{Binding DisconnectCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Close the assistant session. It stays closed until you press Connect; your draft is kept." />
+                            <Button Content="Load earlier messages" Command="{Binding LoadEarlierCommand}" Style="{StaticResource Assistant.Action}"
+                                    Visibility="{Binding HasEarlierHistory, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.HelpText="Show older messages of this conversation above the ones shown. Nothing is sent." />
+                            <Button Content="Newer messages" Command="{Binding LoadNewerCommand}" Style="{StaticResource Assistant.Action}"
+                                    Visibility="{Binding IsBrowsingHistory, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.HelpText="Show the messages after the earlier ones shown, then the latest. Nothing is sent." />
+                            <Button Content="Back to latest" Command="{Binding BackToLatestCommand}" Style="{StaticResource Assistant.Action}"
+                                    Visibility="{Binding IsBrowsingHistory, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.HelpText="Return to the newest messages of this conversation. Your draft is kept." />
                             <Button Content="New task" Command="{Binding NewTaskCommand}" Style="{StaticResource Assistant.Action}"
                                     AutomationProperties.HelpText="Start a new task with a fresh working copy and conversation." />
                             <Button Content="Run isolation check" Command="{Binding RunProbeCommand}" Style="{StaticResource Assistant.Action}"
@@ -196,7 +206,8 @@
                             </StackPanel>
                         </Border>
 
-                        <Grid Grid.Row="2" Margin="10" IsEnabled="{Binding IsInputEnabled}">
+                        <!-- The draft stays editable in every state; only Send waits for a ready session. -->
+                        <Grid Grid.Row="2" Margin="10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
