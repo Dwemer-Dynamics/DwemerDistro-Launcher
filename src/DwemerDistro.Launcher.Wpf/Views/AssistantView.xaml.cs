@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using UserControl = System.Windows.Controls.UserControl;
@@ -16,6 +17,8 @@ public partial class AssistantView : UserControl
     private const double NarrowWidth = 860;
     private AssistantViewModel? _viewModel;
     private bool? _isNarrow;
+    // The text run shown for each transcript item; every key is subscribed to PropertyChanged.
+    private readonly Dictionary<AssistantTranscriptItem, Run> _transcriptRuns = new();
 
     public AssistantView()
     {
@@ -40,6 +43,7 @@ public partial class AssistantView : UserControl
             _viewModel.Transcript.CollectionChanged += Transcript_CollectionChanged;
         }
 
+        RebuildTranscript();
         _isNarrow = null;
         ApplyLayout(ActualWidth);
     }
@@ -85,36 +89,151 @@ public partial class AssistantView : UserControl
         peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
     }
 
-    // Follow the conversation as it grows, including streamed text on the newest message.
-    private void Transcript_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    // Shows the current transcript from scratch, so nothing from a previous view model or task stays visible.
+    private void RebuildTranscript()
     {
-        if (e.NewItems is not null)
+        foreach (var item in _transcriptRuns.Keys)
         {
-            foreach (AssistantTranscriptItem item in e.NewItems)
+            item.PropertyChanged -= TranscriptItem_PropertyChanged;
+        }
+
+        _transcriptRuns.Clear();
+        TranscriptBox.Document.Blocks.Clear();
+        if (_viewModel is not null)
+        {
+            foreach (var item in _viewModel.Transcript)
             {
-                item.PropertyChanged += TranscriptItem_PropertyChanged;
+                TranscriptBox.Document.Blocks.Add(CreateTranscriptBlock(item));
             }
         }
 
-        if (e.OldItems is not null)
+        TranscriptBox.ScrollToEnd();
+    }
+
+    private Section CreateTranscriptBlock(AssistantTranscriptItem item)
+    {
+        var role = new Run(item.Role) { FontWeight = FontWeights.SemiBold, FontSize = 11 };
+        role.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
+        var text = new Run(item.Text);
+        _transcriptRuns[item] = text;
+        item.PropertyChanged += TranscriptItem_PropertyChanged;
+
+        var block = new Section { Tag = item, Margin = new Thickness(0, 0, 0, 10) };
+        block.Blocks.Add(new Paragraph(role) { Margin = new Thickness(0) });
+        block.Blocks.Add(new Paragraph(text) { Margin = new Thickness(0, 2, 0, 0) });
+        return block;
+    }
+
+    // Adds and removes blocks in place so a selection elsewhere survives; anything else rebuilds.
+    private void Transcript_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, _viewModel?.Transcript))
+        {
+            return;
+        }
+
+        var follow = IsFollowingTranscript();
+        var pinned = PinSelection();
+        var blocks = TranscriptBox.Document.Blocks;
+        if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
+        {
+            var before = e.NewStartingIndex >= 0 && e.NewStartingIndex < blocks.Count ? blocks.ElementAt(e.NewStartingIndex) : null;
+            foreach (AssistantTranscriptItem item in e.NewItems)
+            {
+                var block = CreateTranscriptBlock(item);
+                if (before is null)
+                {
+                    blocks.Add(block);
+                }
+                else
+                {
+                    blocks.InsertBefore(before, block);
+                }
+            }
+        }
+        else if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems is not null)
         {
             foreach (AssistantTranscriptItem item in e.OldItems)
             {
                 item.PropertyChanged -= TranscriptItem_PropertyChanged;
+                _transcriptRuns.Remove(item);
+                if (blocks.FirstOrDefault(block => ReferenceEquals(block.Tag, item)) is { } block)
+                {
+                    blocks.Remove(block);
+                }
             }
         }
+        else
+        {
+            RebuildTranscript();
+            return;
+        }
 
-        TranscriptScroll.ScrollToEnd();
+        RestoreSelection(pinned);
+        if (follow)
+        {
+            TranscriptBox.ScrollToEnd();
+        }
     }
 
     private void TranscriptItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        var atBottom = TranscriptScroll.VerticalOffset >= TranscriptScroll.ScrollableHeight - 24;
-        if (atBottom)
+        if (e.PropertyName != nameof(AssistantTranscriptItem.Text) || sender is not AssistantTranscriptItem item
+            || !_transcriptRuns.TryGetValue(item, out var run))
         {
-            TranscriptScroll.ScrollToEnd();
+            return;
+        }
+
+        var follow = IsFollowingTranscript();
+        var pinned = PinSelection();
+        var shown = run.Text;
+        // Streamed text is appended in place, so a selection inside this message keeps its position.
+        if (item.Text.StartsWith(shown, StringComparison.Ordinal))
+        {
+            run.ContentEnd.InsertTextInRun(item.Text[shown.Length..]);
+        }
+        else
+        {
+            run.Text = item.Text;
+        }
+
+        RestoreSelection(pinned);
+        if (follow)
+        {
+            TranscriptBox.ScrollToEnd();
         }
     }
+
+    // Copies of the selection ends that do not move when text arrives exactly at them, so a selection that
+    // ends where the reply is streaming, or a Ctrl+A, keeps the text it had.
+    private (TextPointer Start, TextPointer End)? PinSelection()
+    {
+        var selection = TranscriptBox.Selection;
+        return selection.IsEmpty
+            ? null
+            : (selection.Start.GetPositionAtOffset(0, LogicalDirection.Forward), selection.End.GetPositionAtOffset(0, LogicalDirection.Backward));
+    }
+
+    private void RestoreSelection((TextPointer Start, TextPointer End)? pinned)
+    {
+        var selection = TranscriptBox.Selection;
+        if (pinned is { } range && (selection.Start.CompareTo(range.Start) != 0 || selection.End.CompareTo(range.End) != 0))
+        {
+            selection.Select(range.Start, range.End);
+        }
+    }
+
+    // Follow the conversation only from the bottom, and never while the reader is selecting in it.
+    private bool IsFollowingTranscript()
+    {
+        var atBottom = TranscriptBox.VerticalOffset >= TranscriptBox.ExtentHeight - TranscriptBox.ViewportHeight - 24;
+        return atBottom && (TranscriptBox.Selection.IsEmpty || !IsTranscriptInUse());
+    }
+
+    private bool IsTranscriptInUse() =>
+        TranscriptBox.IsKeyboardFocusWithin || TranscriptBox.IsMouseCaptureWithin
+        || Keyboard.FocusedElement is FrameworkElement focused
+        && (focused as System.Windows.Controls.ContextMenu ?? focused.Parent as System.Windows.Controls.ContextMenu)?.PlacementTarget == TranscriptBox;
 
     // Enter sends, Shift+Enter keeps the newline the TextBox would insert anyway.
     private void InputBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)

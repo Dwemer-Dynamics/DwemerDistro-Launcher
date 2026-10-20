@@ -154,30 +154,16 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <ScrollViewer x:Name="TranscriptScroll" VerticalScrollBarVisibility="Auto" Padding="12,10" Focusable="False">
-                            <ItemsControl x:Name="TranscriptList" ItemsSource="{Binding Transcript}" Focusable="False"
-                                          AutomationProperties.Name="Assistant conversation">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Margin="0,0,0,10">
-                                            <TextBlock Text="{Binding Role}" FontWeight="SemiBold" FontSize="11"
-                                                       Foreground="{DynamicResource GameCenter.TextMuted}" />
-                                            <TextBox Text="{Binding Text, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="True" TextWrapping="Wrap"
-                                                     Background="Transparent" BorderThickness="0" Padding="0,2,0,0"
-                                                     Foreground="{DynamicResource GameCenter.Text}" CaretBrush="{DynamicResource GameCenter.Text}"
-                                                     FontSize="13">
-                                                <AutomationProperties.Name>
-                                                    <MultiBinding StringFormat="{}{0}: {1}">
-                                                        <Binding Path="Role" />
-                                                        <Binding Path="Text" />
-                                                    </MultiBinding>
-                                                </AutomationProperties.Name>
-                                            </TextBox>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
+                        <!-- One read-only document, so a selection, Ctrl+A and Copy can span the whole conversation.
+                             Code-behind keeps its blocks in step with Transcript. -->
+                        <RichTextBox x:Name="TranscriptBox" IsReadOnly="True" IsReadOnlyCaretVisible="True" IsUndoEnabled="False"
+                                     Background="Transparent" BorderThickness="0" Padding="10,10" FontSize="13"
+                                     Foreground="{DynamicResource GameCenter.Text}" CaretBrush="{DynamicResource GameCenter.Text}"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                     AutomationProperties.Name="Assistant conversation"
+                                     AutomationProperties.HelpText="Read-only. Ctrl+A selects the whole conversation and Ctrl+C copies the selection.">
+                            <FlowDocument PagePadding="0" />
+                        </RichTextBox>
 
                         <!-- File access: what the assistant asked for. Nothing is copied until Allow access is clicked. -->
                         <Border x:Name="AccessCard" Grid.Row="1" Margin="10,0,10,0" Padding="10" CornerRadius="4" BorderThickness="1"
