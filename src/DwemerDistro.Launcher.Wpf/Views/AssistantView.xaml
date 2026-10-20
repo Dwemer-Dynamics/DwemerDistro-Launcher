@@ -80,7 +80,9 @@
                                     Visibility="{Binding IsBrowsingHistory, Converter={StaticResource BoolToVisibility}}"
                                     AutomationProperties.HelpText="Return to the newest messages of this conversation. Your draft is kept." />
                             <Button Content="New chat" Command="{Binding NewTaskCommand}" Style="{StaticResource Assistant.Action}"
-                                    AutomationProperties.HelpText="Start a new chat with a fresh working copy. The current chat moves into History; nothing is deleted." />
+                                    AutomationProperties.HelpText="Start a new chat with a fresh working copy. The current chat is kept; nothing is deleted." />
+                            <Button x:Name="ClearMemoryButton" Content="Clear memory" Command="{Binding Memory.ResetCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Forget every note the assistant learned on this installation, after you confirm. Chats, settings and sign-in are kept." />
                             <Button Content="Run isolation check" Command="{Binding RunProbeCommand}" Style="{StaticResource Assistant.Action}"
                                     Visibility="{Binding IsProbeVisible, Converter={StaticResource BoolToVisibility}}"
                                     AutomationProperties.HelpText="Run DwemerDistro's assistant isolation check again." />
@@ -120,150 +122,34 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- History and Memory: compact toggles; their panels read nothing until opened. -->
-                    <WrapPanel Margin="0,8,0,0">
-                        <CheckBox x:Name="HistoryToggle" Content="History" Style="{StaticResource GameCenter.CheckBox}" Margin="0,0,16,0"
-                                  Checked="HistoryToggle_Checked"
-                                  AutomationProperties.HelpText="Show saved chats of this installation: search titles, rename, archive, reopen, export or delete." />
-                        <CheckBox x:Name="MemoryToggle" Content="Memory" Style="{StaticResource GameCenter.CheckBox}" Margin="0,0,16,0"
-                                  Checked="MemoryToggle_Checked"
-                                  AutomationProperties.HelpText="Show the assistant's memory notes and settings for this installation." />
-                        <TextBlock x:Name="MemoryStateText" Text="{Binding Memory.SettingsSummary}" Style="{StaticResource GameCenter.Caption}"
-                                   VerticalAlignment="Center" FontSize="11.5" />
-                    </WrapPanel>
-                    <!-- Wide layouts do not scroll the page, so the open panels scroll here and the conversation keeps its height. -->
-                    <ScrollViewer x:Name="PanelScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
-                    <StackPanel>
-                    <Border x:Name="HistoryPanel" Visibility="{Binding IsChecked, ElementName=HistoryToggle, Converter={StaticResource BoolToVisibility}}"
-                            BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,6,0,0">
-                        <StackPanel>
+                    <!-- Memory is automatic. Only its problems or the last Clear memory outcome are shown, plus the confirmation. -->
+                    <StackPanel DataContext="{Binding Memory}">
+                        <TextBlock x:Name="MemoryStatusText" Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                   AutomationProperties.LiveSetting="Polite">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding StatusText}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <!-- Nothing is sent until Clear memory here; Cancel changes nothing. -->
+                        <Border x:Name="ClearMemoryConfirmCard" Visibility="{Binding ConfirmingReset, Converter={StaticResource BoolToVisibility}}"
+                                BorderBrush="{DynamicResource GameCenter.Danger}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
+                                AutomationProperties.Name="Confirm clearing all Assistant memories">
                             <WrapPanel>
-                                <TextBlock x:Name="HistorySearchLabel" Text="Search titles" Style="{StaticResource Assistant.Label}" />
-                                <TextBox Text="{Binding HistorySearch, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}"
-                                         MinWidth="180" MaxLength="120" Margin="0,0,12,4" AutomationProperties.LabeledBy="{Binding ElementName=HistorySearchLabel}"
-                                         AutomationProperties.HelpText="Matches chat titles only, not message text." />
-                                <CheckBox Content="Show archived" IsChecked="{Binding ShowArchived}" Style="{StaticResource GameCenter.CheckBox}" Margin="0,0,12,4" VerticalAlignment="Center" />
-                                <CheckBox Content="Other installations and providers" IsChecked="{Binding ShowAllInstallations}" Style="{StaticResource GameCenter.CheckBox}"
-                                          Margin="0,0,0,4" VerticalAlignment="Center"
-                                          AutomationProperties.HelpText="List chats saved for another DwemerDistro installation or provider. They cannot be reopened here." />
+                                <TextBlock x:Name="ClearMemoryConfirmText" Text="Clear all Assistant memories?" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource GameCenter.DangerText}" VerticalAlignment="Center" Margin="0,0,12,6" />
+                                <Button x:Name="ConfirmClearMemoryButton" Content="Clear memory" Command="{Binding ConfirmResetCommand}" Style="{StaticResource Assistant.Action}"
+                                        AutomationProperties.HelpText="Forget every learned note now. Chats, task receipts, settings and sign-in are kept. This cannot be undone." />
+                                <Button x:Name="CancelClearMemoryButton" Content="Cancel" Command="{Binding CancelResetCommand}" Style="{StaticResource Assistant.Action}"
+                                        AutomationProperties.HelpText="Keep every note. Nothing is changed." />
                             </WrapPanel>
-                            <ListBox x:Name="HistoryList" ItemsSource="{Binding HistoryItems}" SelectedItem="{Binding SelectedHistory}" MaxHeight="150"
-                                     Background="#191919" BorderBrush="{DynamicResource GameCenter.Border}" Foreground="{DynamicResource GameCenter.Text}"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Saved chats">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Margin="2,2">
-                                            <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource GameCenter.Text}" />
-                                            <TextBlock Text="{Binding Details}" FontSize="11" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource GameCenter.TextMuted}" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <WrapPanel Margin="0,6,0,0">
-                                <Button Content="Reopen" Command="{Binding ReopenCommand}" Style="{StaticResource Assistant.Action}"
-                                        AutomationProperties.HelpText="Open this chat. DwemerDistro checks that its task still exists and belongs to this installation, and shows any recorded live change first." />
-                                <Button Content="{Binding ArchiveLabel}" Command="{Binding ArchiveCommand}" Style="{StaticResource Assistant.Action}"
-                                        AutomationProperties.HelpText="Archive only hides the chat in this list. Its conversation, task and receipts are kept." />
-                                <TextBox x:Name="RenameBox" Text="{Binding RenameText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}"
-                                         MinWidth="160" MaxLength="120" Margin="0,0,6,6" AutomationProperties.Name="New title for the selected chat" />
-                                <Button Content="Rename" Command="{Binding RenameCommand}" Style="{StaticResource Assistant.Action}" />
-                            </WrapPanel>
-                            <WrapPanel>
-                                <Button x:Name="ExportChatButton" Content="Export chat…" Command="{Binding ExportChatCommand}" Style="{StaticResource Assistant.Action}"
-                                        AutomationProperties.HelpText="Save the whole open chat, read page by page, as a Markdown file you choose. Only your messages and the assistant's replies are included." />
-                                <Button Content="Cancel export" Command="{Binding CancelExportCommand}" Style="{StaticResource Assistant.Action}"
-                                        Visibility="{Binding IsExporting, Converter={StaticResource BoolToVisibility}}"
-                                        AutomationProperties.HelpText="Stop the export. Nothing is written." />
-                                <Button x:Name="DeleteChatButton" Content="Delete chat…" Command="{Binding DeleteChatCommand}" Style="{StaticResource Assistant.Action}"
-                                        Visibility="{Binding CanDeleteChats, Converter={StaticResource BoolToVisibility}}"
-                                        AutomationProperties.HelpText="Delete the open chat's conversation from Codex after you confirm. Archive only hides a chat." />
-                            </WrapPanel>
-                            <TextBlock x:Name="ExportStatusText" Text="{Binding ExportStatus}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
-                                       AutomationProperties.LiveSetting="Polite" />
-                            <TextBlock x:Name="DeleteHintText" Text="{Binding DeleteHint}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
-                                       Visibility="{Binding CanDeleteChats, Converter={StaticResource BoolToVisibility}}" />
-                            <!-- Delete confirmation: nothing is sent until Delete chat here; Cancel or another selection changes nothing. -->
-                            <Border x:Name="DeleteConfirmCard" Visibility="{Binding ConfirmingDelete, Converter={StaticResource BoolToVisibility}}"
-                                    BorderBrush="{DynamicResource GameCenter.Danger}" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,6,0,6"
-                                    AutomationProperties.Name="Confirm deleting this chat">
-                                <StackPanel>
-                                    <TextBlock x:Name="DeleteConfirmTextBlock" TextWrapping="Wrap" Foreground="{DynamicResource GameCenter.DangerText}" Margin="0,0,0,6"
-                                               Text="{Binding DeleteConfirmText}" />
-                                    <CheckBox x:Name="ForgetChatNotesBox" Content="{Binding ForgetNotesLabel}" IsChecked="{Binding ForgetChatNotes}"
-                                              Style="{StaticResource GameCenter.CheckBox}" Margin="0,0,0,6"
-                                              AutomationProperties.HelpText="Also forget the memory notes that name exactly the deleted threads. Other notes are kept." />
-                                    <WrapPanel>
-                                        <Button Content="Delete chat" Command="{Binding ConfirmDeleteCommand}" Style="{StaticResource Assistant.Action}" />
-                                        <Button Content="Cancel" Command="{Binding CancelDeleteCommand}" Style="{StaticResource Assistant.Action}" />
-                                    </WrapPanel>
-                                </StackPanel>
-                            </Border>
-                            <TextBlock Text="{Binding HistoryStatus}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Foreground="{DynamicResource GameCenter.DangerText}" />
-                        </StackPanel>
-                    </Border>
-                    <Border x:Name="MemoryPanel" DataContext="{Binding Memory}" Visibility="{Binding IsChecked, ElementName=MemoryToggle, Converter={StaticResource BoolToVisibility}}"
-                            BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,6,0,0">
-                        <StackPanel>
-                            <TextBlock Text="{Binding ScopeText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                            <WrapPanel IsEnabled="{Binding SettingsKnown}">
-                                <CheckBox Content="Assistant may search notes" IsChecked="{Binding Retrieval, Mode=TwoWay}" Style="{StaticResource GameCenter.CheckBox}" Margin="0,0,16,4"
-                                          AutomationProperties.HelpText="When off, the assistant gets no memory tool and no notes. Applies from the next connection." />
-                                <CheckBox Content="Automatic learning (opt-in)" IsChecked="{Binding AutoLearning, Mode=TwoWay}" Style="{StaticResource GameCenter.CheckBox}" Margin="0,0,0,4"
-                                          AutomationProperties.HelpText="Lets the assistant store stable preferences and decisions you state. Never logs, secrets or unconfirmed fixes." />
-                            </WrapPanel>
-                            <WrapPanel>
-                                <TextBox x:Name="MemorySearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}"
-                                         MinWidth="180" MaxLength="200" Margin="0,0,6,6" AutomationProperties.Name="Search memory notes" />
-                                <Button Content="Search" Command="{Binding SearchCommand}" Style="{StaticResource Assistant.Action}" />
-                                <Button Content="Refresh" Command="{Binding RefreshCommand}" Style="{StaticResource Assistant.Action}" />
-                                <Button Content="More" Command="{Binding MoreCommand}" Style="{StaticResource Assistant.Action}" />
-                            </WrapPanel>
-                            <ListBox x:Name="MemoryList" ItemsSource="{Binding Notes}" SelectedItem="{Binding Selected}" MaxHeight="160"
-                                     Background="#191919" BorderBrush="{DynamicResource GameCenter.Border}" Foreground="{DynamicResource GameCenter.Text}"
-                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Memory notes">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Margin="2,2">
-                                            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" Foreground="{DynamicResource GameCenter.Text}" />
-                                            <TextBlock Text="{Binding SourceText}" FontSize="11" TextWrapping="Wrap" Foreground="{DynamicResource GameCenter.TextMuted}" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <WrapPanel Margin="0,6,0,0">
-                                <Button Content="Edit" Command="{Binding EditCommand}" Style="{StaticResource Assistant.Action}" />
-                                <Button Content="Forget selected" Command="{Binding ForgetCommand}" Style="{StaticResource Assistant.Action}" />
-                                <Button Content="Export…" Command="{Binding ExportCommand}" Style="{StaticResource Assistant.Action}"
-                                        AutomationProperties.HelpText="Save every note and the settings to a JSON file you choose." />
-                                <Button Content="Reset memory…" Command="{Binding ResetCommand}" Style="{StaticResource Assistant.Action}" />
-                            </WrapPanel>
-                            <Border Visibility="{Binding ConfirmingReset, Converter={StaticResource BoolToVisibility}}" BorderBrush="{DynamicResource GameCenter.Danger}"
-                                    BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,6">
-                                <StackPanel>
-                                    <TextBlock Text="Forget every memory note of this installation? Settings, chats, task receipts and sign-in are kept. This cannot be undone."
-                                               TextWrapping="Wrap" Foreground="{DynamicResource GameCenter.DangerText}" Margin="0,0,0,6" />
-                                    <WrapPanel>
-                                        <Button Content="Forget all notes" Command="{Binding ConfirmResetCommand}" Style="{StaticResource Assistant.Action}" />
-                                        <Button Content="Cancel" Command="{Binding CancelResetCommand}" Style="{StaticResource Assistant.Action}" />
-                                    </WrapPanel>
-                                </StackPanel>
-                            </Border>
-                            <TextBlock x:Name="MemoryDraftLabel" Text="Note (you decide what is stored)" Style="{StaticResource GameCenter.Caption}" />
-                            <TextBox Text="{Binding DraftText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}" AcceptsReturn="True"
-                                     TextWrapping="Wrap" Height="56" MaxLength="2400" VerticalScrollBarVisibility="Auto" Margin="0,3,0,4"
-                                     AutomationProperties.LabeledBy="{Binding ElementName=MemoryDraftLabel}" />
-                            <WrapPanel>
-                                <ComboBox ItemsSource="{Binding Kinds}" SelectedItem="{Binding DraftKind}" Style="{StaticResource GameCenter.ComboBox}" MinWidth="110" Margin="0,0,6,6"
-                                          AutomationProperties.Name="Note kind" />
-                                <Button Content="{Binding SaveLabel}" Command="{Binding SaveCommand}" Style="{StaticResource Assistant.Action}" />
-                                <Button Content="Clear" Command="{Binding CancelEditCommand}" Style="{StaticResource Assistant.Action}" />
-                                <TextBlock Text="{Binding DraftLengthText}" Style="{StaticResource GameCenter.Caption}" VerticalAlignment="Center" />
-                            </WrapPanel>
-                            <TextBlock Text="{Binding StatusText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
-                        </StackPanel>
-                    </Border>
+                        </Border>
                     </StackPanel>
-                    </ScrollViewer>
 
                     <!-- Advanced: collapsed by default; task details and hand-picked files for the next New task. -->
                     <CheckBox x:Name="AdvancedToggle" Content="Advanced" Style="{StaticResource GameCenter.CheckBox}" Margin="0,8,0,0"
@@ -306,22 +192,6 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <!-- Ctrl+F: exact text in the messages shown here; the match is selected in the transcript itself. -->
-                        <Border x:Name="FindBar" Visibility="Collapsed" Margin="10,8,10,0" Padding="8,6,8,2" CornerRadius="4" BorderThickness="1"
-                                BorderBrush="{DynamicResource GameCenter.Border}">
-                            <WrapPanel>
-                                <TextBlock x:Name="FindLabel" Text="Find" Style="{StaticResource Assistant.Label}" Margin="0,0,8,4" />
-                                <TextBox x:Name="FindBox" Style="{StaticResource Assistant.TextBox}" MinWidth="200" MaxWidth="360" MaxLength="200" Margin="0,0,6,4"
-                                         TextChanged="FindBox_TextChanged" PreviewKeyDown="FindBox_PreviewKeyDown"
-                                         AutomationProperties.LabeledBy="{Binding ElementName=FindLabel}"
-                                         AutomationProperties.HelpText="Exact text in the messages shown here. Enter finds the next match, Shift+Enter the previous, Esc closes Find." />
-                                <Button Content="Previous" Click="FindPrevious_Click" Style="{StaticResource Assistant.Action}" MinWidth="80" Margin="0,0,6,4" />
-                                <Button Content="Next" Click="FindNext_Click" Style="{StaticResource Assistant.Action}" MinWidth="80" Margin="0,0,6,4" />
-                                <Button Content="Close" Click="FindClose_Click" Style="{StaticResource Assistant.Action}" MinWidth="70" Margin="0,0,10,4" />
-                                <TextBlock x:Name="FindStatusText" Style="{StaticResource GameCenter.Caption}" VerticalAlignment="Center" TextWrapping="Wrap"
-                                           Margin="0,0,0,4" AutomationProperties.LiveSetting="Polite" />
-                            </WrapPanel>
-                        </Border>
                         <!-- One read-only document, so a selection, Ctrl+A and Copy can span the whole conversation.
                              Code-behind keeps its blocks in step with Transcript. -->
                         <RichTextBox x:Name="TranscriptBox" Grid.Row="1" IsReadOnly="True" IsReadOnlyCaretVisible="True" IsUndoEnabled="False"
@@ -330,7 +200,7 @@
                                      Foreground="{DynamicResource GameCenter.Text}" CaretBrush="{DynamicResource GameCenter.Text}"
                                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                                      AutomationProperties.Name="Assistant conversation"
-                                     AutomationProperties.HelpText="Read-only. Ctrl+F finds text in the messages shown, Ctrl+A selects the whole conversation and Ctrl+C copies the selection.">
+                                     AutomationProperties.HelpText="Read-only. Ctrl+A selects the whole conversation and Ctrl+C copies the selection.">
                             <FlowDocument PagePadding="0" />
                         </RichTextBox>
 
@@ -404,10 +274,6 @@
                                         </Style>
                                     </TextBlock.Style>
                                 </TextBlock>
-                                <Button Content="Find…" Click="OpenFind_Click" Style="{StaticResource Assistant.Action}" MinWidth="70" Margin="0,0,6,2"
-                                        AutomationProperties.HelpText="Find text in the messages shown here (Ctrl+F). Export chat in History saves the whole chat." />
-                                <Button Content="Remember selection…" Click="RememberSelection_Click" Style="{StaticResource Assistant.Action}" Margin="0,0,14,2"
-                                        AutomationProperties.HelpText="Start a memory note from the text selected in the conversation (or the last reply). You edit it before anything is stored." />
                                 <TextBlock x:Name="UsageTextBlock" Text="{Binding UsageText}" Style="{StaticResource GameCenter.Caption}"
                                            VerticalAlignment="Center" FontSize="11.5" Margin="0,0,0,2"
                                            AutomationProperties.Name="{Binding UsageText, StringFormat=Conversation usage: {0}}" />

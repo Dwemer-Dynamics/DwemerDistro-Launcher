@@ -2483,6 +2483,18 @@ try
         memory.ConfirmResetCommand.Execute(null); await WaitUntilAsync(() => !memory.IsBusy);
         Assert(memCalls.Count(call => call == "memory reset --yes") == 1 && memory.Notes.Count == 0 && memory.StatusText.Contains("settings were kept"),
             "Confirmed reset forgets notes once and keeps settings.");
+        var clearAllowed = false;
+        var clearable = new AssistantMemoryViewModel(Run, new FakeAssistantHost(Guid.NewGuid().ToString()), () => (null, null), () => clearAllowed);
+        Assert(await clearable.EnsureAutomaticAsync() && memCalls.TakeLast(2).SequenceEqual(["memory status", "memory configure --retrieval on --auto-learning on"])
+               && clearable.IsAvailable && clearable.AutoLearning && clearable.StatusText.Length == 0 && !clearable.ResetCommand.CanExecute(null),
+            "Learning left off by the earlier default is configured on, and Clear memory waits while the assistant is working.");
+        clearAllowed = true;
+        clearable.Raise();
+        var callsBeforeCancel = memCalls.Count;
+        clearable.ResetCommand.Execute(null);
+        clearable.CancelResetCommand.Execute(null);
+        Assert(!clearable.ConfirmingReset && memCalls.Count == callsBeforeCancel && clearable.ResetCommand.CanExecute(null),
+            "Cancelling Clear memory sends nothing.");
         var oldCore = new AssistantMemoryViewModel((_, _) => Task.FromResult(AssistantCliService.Parse(new CommandResult(2,
             "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"invalid_argument\",\"message\":\"Unknown command memory.\"}}", ""))),
             new FakeAssistantHost(Guid.NewGuid().ToString()), () => (null, null));
@@ -2686,7 +2698,7 @@ try
             vm.ConfirmDeleteCommand.Execute(null);
             await WaitUntilAsync(() => vm.StatusDetail.StartsWith("Chat deleted from Codex"));
             Assert(chatTransport.Requests.Contains("thread/delete:thr-del") && cli.Calls.Contains("memory forget --thread thr-del")
-                   && vm.StatusDetail.Contains("PARTIAL") && vm.StatusDetail.Contains("Open Memory") && vm.StatusDetail.Contains("removed from History"),
+                   && vm.StatusDetail.Contains("PARTIAL") && vm.StatusDetail.Contains("Clear memory") && vm.StatusDetail.Contains("removed from History"),
                 "A chat deleted while its notes could not be forgotten is reported as partial, with where to manage notes: " + vm.StatusDetail);
             Assert(store.Load() is null && vm.Transcript.Count == 0 && vm.State == AssistantState.Disconnected && vm.NewTaskCommand.CanExecute(null)
                    && catalog.Load(out _)!.All(entry => entry.TaskId != "task-del"), "A deleted chat without a live change leaves History; the next Connect starts a new chat.");
@@ -2813,7 +2825,7 @@ try
             Assert(cur.store.Load() is { ThreadId: "thr-cur", SupersededThreads: null } && curEntry is { ThreadId: "thr-cur", SupersededThreads: null, ChatDeleted: false }
                    && cur.vm.State == AssistantState.Ready && cur.vm.Transcript.Count == 2 && cur.vm.SendCommand is not null
                    && cur.vm.StatusDetail.Contains("deleted 2 of 3") && cur.vm.StatusDetail.Contains("still kept: thr-cur")
-                   && cur.vm.StatusDetail.Contains("NOT forgotten for thr-b") && cur.vm.StatusDetail.Contains("Open Memory"),
+                   && cur.vm.StatusDetail.Contains("NOT forgotten for thr-b") && cur.vm.StatusDetail.Contains("Clear memory"),
                 "The open chat refused last stays usable with only its own thread; a notes failure is reported with where to manage notes: " + cur.vm.StatusDetail);
             await cur.vm.ShutdownAsync();
             deleteFor = null;
@@ -2888,29 +2900,52 @@ try
             await vm.ShutdownAsync();
         }
 
-        // Memory retrieval switched on applies to a new chat (revision 2); a thread started with it off never claims memory.
+        // Memory is automatic: Connect configures retrieval and learning on before the broker starts, and only while Core reports
+        // them off. A Core that refuses keeps its settings and says why, and a thread started then never claims memory.
         {
             var dir = Path.Combine(actionsRoot, "memory-revision");
             var store = new AssistantStateStore(dir);
             var retrieval = false;
+            var learning = false;
+            var configureWorks = false;
+            string Settings() => "{\"retrieval\":" + (retrieval ? "true" : "false") + ",\"auto_learning\":" + (learning ? "true" : "false") + "}";
+            string Configure()
+            {
+                retrieval = learning = true;
+                return Ok("{\"settings\":" + Settings() + "}");
+            }
             var memoryCaps = Ok("{\"features\":{\"agent\":true,\"assistant_tools\":true,\"memory\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false},"
                 + "{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}]}}");
-            var (vm, _, chatTransport, _) = await ConnectAssistantAsync(store, Ref("task-mem", null), install, "task-mem",
+            const string configure = "memory configure --retrieval on --auto-learning on";
+            var (vm, cli, chatTransport, _) = await ConnectAssistantAsync(store, Ref("task-mem", null), install, "task-mem",
                 script: command => command switch
                 {
                     "capabilities" => memoryCaps,
-                    "memory status" => Ok("{\"present\":true,\"settings\":{\"retrieval\":" + (retrieval ? "true" : "false") + ",\"auto_learning\":false},\"notes\":0}"),
+                    "memory status" => Ok("{\"present\":true,\"settings\":" + Settings() + ",\"notes\":0}"),
+                    configure when configureWorks => Configure(),
                     _ when command.StartsWith("changes prepare") => Ok("{\"task_id\":\"task-mem2\",\"diagnostic_only\":true}"),
                     _ => null
                 });
             string StartBody() { lock (chatTransport.Requests) return chatTransport.Bodies.Last(body => body.StartsWith("thread/start ")); }
             Assert(vm.State == AssistantState.Ready && store.Load()!.ThreadToolRevision == 1 && !StartBody().Contains(AssistantViewModel.MemoryToolName)
-                   && !vm.Memory.SettingsKnown, "With retrieval off a new thread gets the read tool only and no memory instructions.");
-            retrieval = true;
+                   && cli.Calls.Count(call => call == configure) == 1 && cli.Calls.IndexOf(configure) < cli.Calls.IndexOf("agent status")
+                   && vm.Memory.StatusText.Contains("could not be made automatic"),
+                "A refused automatic setup is tried before the session starts, shown, and leaves a thread with the read tool only: " + vm.Memory.StatusText);
+            configureWorks = true;
             vm.NewTaskCommand.Execute(null);
             await WaitUntilAsync(() => vm.State == AssistantState.Ready && store.Load()?.TaskId == "task-mem2");
             Assert(store.Load()!.ThreadToolRevision == 2 && StartBody().Contains("The " + AssistantViewModel.MemoryToolName + " tool holds short notes")
-                   && !vm.Memory.AutoLearning, "After retrieval is switched on, a new chat starts with the memory tool (revision 2); learning stays off.");
+                   && StartBody().Contains("without asking") && vm.Memory.Retrieval && vm.Memory.AutoLearning && vm.Memory.StatusText.Length == 0
+                   && cli.Calls.Count(call => call == configure) == 2,
+                "Once Core accepts, the next chat starts with automatic retrieval and learning (revision 2) and the earlier problem is gone.");
+            var statusReads = cli.Calls.Count(call => call == "memory status");
+            vm.DisconnectCommand.Execute(null);
+            await WaitUntilAsync(() => vm.State == AssistantState.Disconnected);
+            vm.ConnectCommand.Execute(null);
+            await WaitUntilAsync(() => vm.State == AssistantState.Ready);
+            Assert(cli.Calls.Count(call => call == configure) == 2 && cli.Calls.Count(call => call == "memory status") == statusReads + 1
+                   && !cli.Calls.Any(call => call.StartsWith("memory reset")),
+                "With memory already automatic, Connect only reads its status: nothing is configured again and nothing is cleared.");
             await vm.ShutdownAsync();
         }
     }
