@@ -12,6 +12,13 @@ public sealed partial record AssistantTaskReference(
     int Version, string InstallationId, string Distro, string Provider, string Product, string TaskId, string? ThreadId)
 {
     public const int CurrentVersion = 1;
+    public const int MaxEarlierTasks = 20;
+
+    /// <summary>
+    /// Tasks this conversation line used before the current one, oldest first: kept so their conversations stay reopenable
+    /// and Core's receipts for them findable. Absent in references written by older launchers.
+    /// </summary>
+    public AssistantPriorTask[]? EarlierTasks { get; init; }
 
     /// <summary>Rejects anything a different or older build could have written, or a hand-edited file.</summary>
     public bool IsValid() =>
@@ -21,7 +28,19 @@ public sealed partial record AssistantTaskReference(
         ProviderRegex().IsMatch(Provider ?? string.Empty) &&
         Product == "herika" &&
         AssistantCliCommands.IsValidTaskId(TaskId) &&
-        (ThreadId is null || ThreadIdRegex().IsMatch(ThreadId));
+        IsValidThreadId(ThreadId) &&
+        (EarlierTasks is null || EarlierTasks.Length <= MaxEarlierTasks && EarlierTasks.All(task =>
+            task is not null && AssistantCliCommands.IsValidTaskId(task.TaskId) && task.TaskId != TaskId && IsValidThreadId(task.ThreadId)));
+
+    private static bool IsValidThreadId(string? threadId) => threadId is null || ThreadIdRegex().IsMatch(threadId);
+
+    /// <summary>Same identifiers and the same earlier tasks in order.</summary>
+    public bool Equals(AssistantTaskReference? other) =>
+        other is not null && Version == other.Version && InstallationId == other.InstallationId && Distro == other.Distro &&
+        Provider == other.Provider && Product == other.Product && TaskId == other.TaskId && ThreadId == other.ThreadId &&
+        (EarlierTasks ?? []).SequenceEqual(other.EarlierTasks ?? []);
+
+    public override int GetHashCode() => HashCode.Combine(InstallationId, TaskId, ThreadId, EarlierTasks?.Length ?? 0);
 
     /// <summary>The task may be reopened only on the same distro installation and assistant provider.</summary>
     public bool BelongsTo(string? installationId, string provider) =>
@@ -35,6 +54,9 @@ public sealed partial record AssistantTaskReference(
     [GeneratedRegex(@"^[A-Za-z0-9._:-]{1,128}\z")]
     private static partial Regex ThreadIdRegex();
 }
+
+/// <summary>An earlier task's ids; <paramref name="LiveChange"/> notes that it applied, or may have applied, a reviewed batch.</summary>
+public sealed record AssistantPriorTask(string TaskId, string? ThreadId, bool LiveChange);
 
 public interface IAssistantStateStore
 {
@@ -52,7 +74,9 @@ public interface IAssistantStateStore
 /// </summary>
 public sealed class AssistantStateStore : IAssistantStateStore
 {
-    private const int MaxFileBytes = 4096;
+    // Every reference IsValid accepts, 20 earlier tasks with the longest ids included, serializes to well under this
+    // (about 7 KiB); Save still measures, so a file it writes is always one Load reads.
+    internal const int MaxFileBytes = 16 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     public AssistantStateStore(string? localAppDataDirectory = null)
@@ -82,6 +106,12 @@ public sealed class AssistantStateStore : IAssistantStateStore
     public void Save(AssistantTaskReference reference)
     {
         if (!reference.IsValid()) return;
+        var json = JsonSerializer.SerializeToUtf8Bytes(reference, JsonOptions);
+        if (json.Length > MaxFileBytes)
+        {
+            LauncherLogService.Operation("Assistant task reference was not saved: it is larger than the launcher reads back.");
+            return;
+        }
         try
         {
             var directory = Path.GetDirectoryName(StatePath)!;
@@ -90,7 +120,7 @@ public sealed class AssistantStateStore : IAssistantStateStore
             var temporaryPath = Path.Combine(directory, $"task.{Guid.NewGuid():N}.tmp");
             try
             {
-                File.WriteAllText(temporaryPath, JsonSerializer.Serialize(reference, JsonOptions));
+                File.WriteAllBytes(temporaryPath, json);
                 File.Move(temporaryPath, StatePath, overwrite: true);
             }
             finally

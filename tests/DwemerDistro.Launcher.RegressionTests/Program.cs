@@ -2385,6 +2385,22 @@ try
         var stateStore = new AssistantStateStore(assistantStateRoot);
         stateStore.Save(savedReference);
         Assert(stateStore.Load() == savedReference, "A valid assistant task reference must round-trip.");
+        // The largest reference IsValid accepts: longest ids everywhere and a full list of earlier tasks.
+        var largestReference = savedReference with
+        {
+            InstallationId = "{" + Guid.NewGuid() + "}", Provider = new string('p', 32), TaskId = "T" + new string('t', 63), ThreadId = new string('h', 128),
+            EarlierTasks = Enumerable.Range(0, AssistantTaskReference.MaxEarlierTasks)
+                .Select(n => new AssistantPriorTask(n.ToString("D2") + new string('e', 62), new string('h', 126) + n.ToString("D2"), LiveChange: true)).ToArray()
+        };
+        stateStore.Save(largestReference);
+        Assert(largestReference.IsValid() && stateStore.Load() == largestReference
+               && new FileInfo(stateStore.StatePath).Length is > 4096 and <= AssistantStateStore.MaxFileBytes,
+            "The largest valid reference, indented as saved, must be read back by the same store.");
+        var overfull = largestReference with { EarlierTasks = [.. largestReference.EarlierTasks!, new AssistantPriorTask("X" + new string('e', 63), null, false)] };
+        stateStore.Save(overfull);
+        Assert(!overfull.IsValid() && stateStore.Load() == largestReference,
+            "A reference past the earlier-task limit must not be written, and must leave the saved one readable.");
+        stateStore.Save(savedReference);
         File.WriteAllText(stateStore.StatePath, System.Text.Json.JsonSerializer.Serialize(savedReference with { Product = "stobe" }));
         Assert(stateStore.Load() is null, "A saved reference for another product must be ignored.");
 
@@ -2446,6 +2462,12 @@ try
                && reopened.transport.Requests.Contains("thread/resume:thr-saved") && !reopened.transport.Requests.Any(r => r.StartsWith("thread/start"))
                && stateStore.Load() == savedReference,
             "A live saved task must reopen and resume its own conversation thread.");
+        string[] historyBodies;
+        lock (reopened.transport.Requests) historyBodies = reopened.transport.Bodies.Where(body => body.StartsWith("thread/resume") || body.StartsWith("thread/turns/list")).ToArray();
+        Assert(historyBodies.Length == 2 && historyBodies[0].Contains("\"excludeTurns\":true")
+               && historyBodies[1].Contains("\"sortDirection\":\"desc\"") && historyBodies[1].Contains("\"itemsView\":\"full\"")
+               && historyBodies[1].Contains($"\"limit\":{AssistantViewModel.HistoryPageTurns}") && !reopened.vm.HasEarlierHistory,
+            "A resume must leave out the turns and read one bounded, newest-first history page through thread/turns/list.");
         Assert(ShowsHistory(reopened.vm) && !reopened.transport.Requests.Any(r => r.StartsWith("turn/")) && !reopened.vm.AllowFileAccessCommand.CanExecute(null)
                && !reopened.cli.Calls.Any(call => call.StartsWith("changes prepare") || call.StartsWith("changes apply") || call.StartsWith("changes stage")),
             "A resumed thread must show its earlier user and assistant messages exactly and in order, without the launcher's context, " +
@@ -2464,7 +2486,8 @@ try
         reopened.vm.SendCommand.Execute(null);
         await WaitUntilAsync(() => { lock (reopened.transport.Requests) return reopened.transport.Bodies.Any(body => body.StartsWith("turn/start")); });
         string[] confinedBodies;
-        lock (reopened.transport.Requests) confinedBodies = reopened.transport.Bodies.Where(body => body.StartsWith("thread/") || body.StartsWith("turn/start")).ToArray();
+        lock (reopened.transport.Requests) confinedBodies = reopened.transport.Bodies.Where(body => body.StartsWith("thread/start") || body.StartsWith("thread/resume")
+            || body.StartsWith("turn/start")).ToArray();
         Assert(confinedBodies.Length == 2 && confinedBodies.All(body => body.Contains("\"approvalPolicy\":\"never\"") && body.Contains("\"cwd\":\"/work\"")
                && !body.Contains("sandbox") && !body.Contains("permissions")),
             "Thread and turn requests must pin approval policy never and cwd /work, and never send a sandbox or permissions override.");
@@ -2501,31 +2524,205 @@ try
                && ShowsHistory(startup.vm) && StartupQuiet(startup.cli, startup.transport) && stateStore.Load() == savedReference
                && startup.cli.Calls.Count == startupCalls && StartupRequests() == startupRequests,
             "Startup must reopen the saved task and resume its thread once, without a turn, sign-in, probe or prepare, and never connect again.");
+        Assert(!startup.vm.StopCommand.CanExecute(null) && startup.vm.DisconnectCommand.CanExecute(null),
+            "With nothing responding, Stop must be unavailable and only Disconnect closes the session.");
         startup.vm.StopCommand.Execute(null);
+        Assert(startup.vm.State == AssistantState.Ready, "A Stop that lands after the response ended must not close the session.");
+        startup.vm.InputText = "draft kept";
+        startup.vm.DisconnectCommand.Execute(null);
         await WaitUntilAsync(() => startup.vm.State == AssistantState.Disconnected);
+        Assert(startup.vm.InputText == "draft kept" && !startup.vm.SendCommand.CanExecute(null) && !startup.host.SessionLeaseHeld,
+            "Disconnect must keep the draft, gate Send, and release the session's distro lease.");
         await startup.vm.ConnectOnStartupAsync();
         Assert(startup.vm.State == AssistantState.Disconnected && startup.cli.Calls.Count == startupCalls,
             "After the user disconnects, a repeated startup call must not reconnect.");
         startup.vm.ConnectCommand.Execute(null);
         await WaitUntilAsync(() => startup.vm.State == AssistantState.Ready);
         Assert(startup.vm.State == AssistantState.Ready && startup.transport.Requests.Count(r => r == "thread/resume:thr-saved") == 2
-               && ShowsHistory(startup.vm) && StartupQuiet(startup.cli, startup.transport),
-            "Connecting again to the same conversation must not show its earlier messages twice.");
+               && ShowsHistory(startup.vm) && StartupQuiet(startup.cli, startup.transport) && startup.transport.Requests.Count(r => r == "thread/turns/list:thr-saved") == 1
+               && startup.vm.InputText == "draft kept" && startup.vm.SendCommand.CanExecute(null),
+            "Connecting again to the same conversation must not show or read its earlier messages twice, and the draft must survive.");
+
+        // Distro maintenance: an idle session closes and releases the distro, and reopens only if the user still wants it.
+        Assert(startup.vm.CanYieldForMaintenance && startup.host.SessionLeaseHeld && await startup.vm.SuspendForMaintenanceAsync()
+               && startup.vm.State == AssistantState.Disconnected && !startup.host.SessionLeaseHeld && startup.host.CommandLeases == 0
+               && !startup.vm.ConnectCommand.CanExecute(null),
+            "Maintenance must close an idle session, release its distro lease, and hold Connect off until it ends.");
+        var callsDuringHold = startup.cli.Calls.Count;
+        await startup.vm.ConnectAsync();
+        await startup.vm.ConnectOnStartupAsync();
+        Assert(startup.cli.Calls.Count == callsDuringHold && startup.vm.State == AssistantState.Disconnected,
+            "Nothing may connect while maintenance holds the distro.");
+        startup.vm.ResumeAfterMaintenance(reconnect: true);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Ready);
+        Assert(startup.vm.State == AssistantState.Ready && startup.host.SessionLeaseHeld && startup.transport.Requests.Count(r => r == "thread/resume:thr-saved") == 3,
+            "A session maintenance closed must reconnect to the same conversation after a safe finish.");
+        Assert(await startup.vm.SuspendForMaintenanceAsync() && startup.vm.State == AssistantState.Disconnected,
+            "A second maintenance must close the session again.");
+        startup.vm.ResumeAfterMaintenance(reconnect: false);
+        Assert(startup.vm.State == AssistantState.Disconnected && startup.vm.StatusDetail.Contains("Connect") && startup.vm.ConnectCommand.CanExecute(null),
+            "After maintenance that did not finish safely, the session must wait for Connect.");
+        startup.vm.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Ready);
+        startup.vm.DisconnectCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Disconnected);
+        var callsAfterDisconnect = startup.cli.Calls.Count;
+        Assert(await startup.vm.SuspendForMaintenanceAsync(), "Maintenance must proceed past a disconnected assistant.");
+        startup.vm.ResumeAfterMaintenance(reconnect: true);
+        await Task.Delay(50);
+        Assert(startup.vm.State == AssistantState.Disconnected && startup.cli.Calls.Count == callsAfterDisconnect,
+            "A session the user disconnected must never be reopened by maintenance.");
+        startup.vm.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Ready);
         startup.vm.NewTaskCommand.Execute(null);
         await WaitUntilAsync(() => startup.vm.State == AssistantState.Error);
         Assert(startup.vm.Transcript.Count == 0 && startup.vm.TaskText == "No task yet",
             "A new task must not keep the earlier task's restored conversation.");
         await startup.vm.ShutdownAsync();
 
-        // A resumed thread longer than the transcript keeps only its newest messages, still in order.
-        var longHistory = new System.Text.Json.Nodes.JsonArray(Enumerable.Range(1, 150).Select(turn => (System.Text.Json.Nodes.JsonNode)TurnOf($"turn-long-{turn}",
+        // A conversation longer than the transcript: the newest pages fill the latest view, older ones open a bounded
+        // window that slides to the very first message and back, and sending a message returns to the latest view.
+        const int longTurns = 250;
+        var longHistory = new System.Text.Json.Nodes.JsonArray(Enumerable.Range(1, longTurns).Select(turn => (System.Text.Json.Nodes.JsonNode)TurnOf($"turn-long-{turn}",
             UserItem($"item-lu{turn}", hiddenContext, $"question {turn}"), AgentItem($"item-la{turn}", $"answer {turn}"))).ToArray());
         var longResume = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, resumedTurns: longHistory);
-        Assert(longResume.vm.Transcript.Count == AssistantViewModel.MaxTranscriptItems && longResume.vm.Transcript[0].Text == "question 51"
-               && longResume.vm.Transcript[^1].Text == "answer 150" && longResume.vm.Transcript[^1].Role == "Codex"
-               && !longResume.vm.Transcript.Any(item => item.Text.Contains(AssistantViewModel.ContextLabel)),
-            "Restored history must respect the transcript cap and keep the newest messages in order.");
+        int Pages() { lock (longResume.transport.Requests) return longResume.transport.Requests.Count(r => r == "thread/turns/list:thr-saved"); }
+        async Task NavigateAsync(AsyncRelayCommand command)
+        {
+            var pages = Pages();
+            var browsing = longResume.vm.IsBrowsingHistory;
+            command.Execute(null);
+            await WaitUntilAsync(() => !longResume.vm.IsLoadingHistory && (Pages() > pages || longResume.vm.IsBrowsingHistory != browsing));
+        }
+        int[] Questions() => longResume.vm.Transcript.Where(item => item.Role == "You").Select(item => int.Parse(item.Text["question ".Length..])).ToArray();
+        bool Contiguous(int[] questions) => questions.Length > 0 && questions.Zip(questions.Skip(1)).All(pair => pair.Second == pair.First + 1);
+        bool Sound() => longResume.vm.Transcript.Count <= AssistantViewModel.MaxTranscriptItems
+            && longResume.vm.Transcript.Select(item => item.ItemId).Distinct().Count() == longResume.vm.Transcript.Count
+            && Contiguous(Questions()) && longResume.vm.Transcript.Where(item => item.Role == "Codex").Count() == Questions().Length
+            && !longResume.vm.Transcript.Any(item => item.Text.Contains(AssistantViewModel.ContextLabel));
+        Assert(longResume.vm.Transcript.Count == AssistantViewModel.HistoryPageTurns * 2 && longResume.vm.Transcript[0].Text == "question 241"
+               && longResume.vm.HasEarlierHistory && longResume.vm.LoadEarlierCommand.CanExecute(null) && !longResume.vm.IsBrowsingHistory,
+            "A long conversation must open with only its newest page and offer the earlier ones.");
+        var seen = new HashSet<int>();
+        while (!longResume.vm.IsBrowsingHistory && longResume.vm.HasEarlierHistory)
+        {
+            seen.UnionWith(Questions());
+            await NavigateAsync(longResume.vm.LoadEarlierCommand);
+        }
+        Assert(seen.SetEquals(Enumerable.Range(151, 100)), "The latest view must fill whole pages up to its cap first.");
+        seen.UnionWith(Questions());
+        Assert(longResume.vm.IsBrowsingHistory && Questions()[0] == 141 && Questions()[^1] == 150 && Sound()
+               && longResume.vm.BackToLatestCommand.CanExecute(null) && longResume.vm.LoadNewerCommand.CanExecute(null),
+            "Past the latest view's cap, Load earlier must open an older window right above it instead of stopping.");
+        for (var step = 0; step < 50 && longResume.vm.HasEarlierHistory; step++)
+        {
+            await NavigateAsync(longResume.vm.LoadEarlierCommand);
+            Assert(Sound(), "Every older window must stay within the cap, in order and without duplicates.");
+            seen.UnionWith(Questions());
+        }
+        Assert(Questions()[0] == 1 && longResume.vm.Transcript[0].Text == "question 1" && !longResume.vm.HasEarlierHistory
+               && !longResume.vm.LoadEarlierCommand.CanExecute(null) && seen.SetEquals(Enumerable.Range(1, longTurns)),
+            "Load earlier must reach the conversation's first message, with every message on the way shown.");
+        longResume.vm.InputText = "draft while browsing";
+        var newest = Questions()[^1];
+        for (var step = 0; step < 50 && longResume.vm.IsBrowsingHistory; step++)
+        {
+            await NavigateAsync(longResume.vm.LoadNewerCommand);
+            if (!longResume.vm.IsBrowsingHistory) break;
+            Assert(Sound() && Questions()[^1] > newest, "Newer messages must move the window toward the present without gaps.");
+            newest = Questions()[^1];
+        }
+        Assert(!longResume.vm.IsBrowsingHistory && longResume.vm.Transcript.Count == AssistantViewModel.MaxTranscriptItems
+               && longResume.vm.Transcript[0].Text == "question 151" && longResume.vm.Transcript[^1].Text == "answer 250" && Sound()
+               && newest == 150 && longResume.vm.InputText == "draft while browsing",
+            "Newer messages must end on the latest view exactly as it was, right below the last window, with the draft kept.");
+        await NavigateAsync(longResume.vm.LoadEarlierCommand);
+        Assert(longResume.vm.IsBrowsingHistory && Questions()[^1] == 150, "The window must reopen right above the latest view.");
+        longResume.vm.BackToLatestCommand.Execute(null);
+        Assert(!longResume.vm.IsBrowsingHistory && longResume.vm.Transcript[0].Text == "question 151" && longResume.vm.Transcript[^1].Text == "answer 250",
+            "Back to latest must show the latest view again.");
+        await NavigateAsync(longResume.vm.LoadEarlierCommand);
+        longResume.cli.Script = command => command switch
+        {
+            "models herika" => ModelsDocumentText(ValidModelsData),
+            "inventory" => ModelsDocumentText(ValidInventoryData),
+            _ => null
+        };
+        longResume.vm.InputText = "sent from an older window";
+        longResume.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => { lock (longResume.transport.Requests) return longResume.transport.Requests.Any(r => r.StartsWith("turn/start")); });
+        Assert(!longResume.vm.IsBrowsingHistory && longResume.vm.Transcript[^1].Text == "sent from an older window"
+               && longResume.vm.Transcript.Count == AssistantViewModel.MaxTranscriptItems && longResume.vm.Transcript[0].Text == "answer 151",
+            "Sending from an older window must return to the latest view and add the message below the newest ones.");
+        await NavigateAsync(longResume.vm.LoadEarlierCommand);
+        Assert(longResume.vm.IsBrowsingHistory && Questions()[^1] == 160 && Questions()[0] == 151,
+            "A message the latest view's cap pushed out must be the newest page of the next older window, not skipped.");
         await longResume.vm.ShutdownAsync();
+
+        // Turns whose items did not come with the page are read in full through thread/items/list, following each turn's
+        // cursor; a turn longer than the bounded read is reported, and a failed page is reported and read again smaller.
+        var itemRequests = new List<string>();
+        var failNextPage = true;
+        System.Text.Json.Nodes.JsonNode Entries(IEnumerable<System.Text.Json.Nodes.JsonNode> items, string? next) => new System.Text.Json.Nodes.JsonObject
+        {
+            ["data"] = new System.Text.Json.Nodes.JsonArray(items.Select(item => (System.Text.Json.Nodes.JsonNode)new System.Text.Json.Nodes.JsonObject { ["item"] = item }).ToArray()),
+            ["nextCursor"] = next
+        };
+        System.Text.Json.Nodes.JsonNode? MultiItem(string method, System.Text.Json.Nodes.JsonObject parameters)
+        {
+            if (method == "thread/turns/list")
+            {
+                if (failNextPage)
+                {
+                    failNextPage = false;
+                    return new System.Text.Json.Nodes.JsonObject { ["$error"] = new System.Text.Json.Nodes.JsonObject { ["code"] = -32000, ["message"] = "response too large" } };
+                }
+                var limit = parameters["limit"]!.GetValue<int>();
+                var turns = new System.Text.Json.Nodes.JsonArray(
+                    new System.Text.Json.Nodes.JsonObject { ["id"] = "turn-endless", ["status"] = "completed", ["itemsView"] = "notLoaded", ["items"] = new System.Text.Json.Nodes.JsonArray() },
+                    new System.Text.Json.Nodes.JsonObject { ["id"] = "turn-paged", ["status"] = "completed", ["itemsView"] = "summary",
+                        ["items"] = new System.Text.Json.Nodes.JsonArray(AgentItem("item-summary", "summary only")) },
+                    TurnOf("turn-full", UserItem("item-mu", "several replies?"), AgentItem("item-m1", "first reply"), AgentItem("item-m2", "second reply"),
+                        AgentItem("item-m3", "third reply")));
+                return new System.Text.Json.Nodes.JsonObject { ["data"] = turns, ["nextCursor"] = null, ["limitSeen"] = limit };
+            }
+            if (method != "thread/items/list") return null;
+            var turnId = parameters["turnId"]!.GetValue<string>();
+            var cursor = parameters["cursor"]?.GetValue<string>();
+            lock (itemRequests) itemRequests.Add(turnId + "@" + (cursor ?? "start") + "/" + parameters["limit"]!.GetValue<int>());
+            var index = cursor is null ? 0 : int.Parse(cursor);
+            if (turnId == "turn-endless")
+                return Entries([AgentItem($"item-e{index}", $"endless {index}")], (index + 1).ToString());
+            // 120 items: the user's question, then reasoning and replies; replies sit in every page.
+            var all = Enumerable.Range(0, 120).Select(n => n == 0 ? (System.Text.Json.Nodes.JsonNode)UserItem("item-p0", "long turn?")
+                : n % 2 == 0 ? AgentItem($"item-p{n}", $"paged reply {n}")
+                : new System.Text.Json.Nodes.JsonObject { ["type"] = "reasoning", ["id"] = $"item-p{n}", ["summary"] = new System.Text.Json.Nodes.JsonArray("HIDDEN") }).ToList();
+            var pageItems = all.Skip(index).Take(AssistantViewModel.HistoryTurnItems).ToList();
+            return Entries(pageItems, index + AssistantViewModel.HistoryTurnItems < all.Count ? (index + AssistantViewModel.HistoryTurnItems).ToString() : null);
+        }
+        var multi = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, respondFirst: MultiItem,
+            resumedTurns: new System.Text.Json.Nodes.JsonArray());
+        Assert(multi.vm.State == AssistantState.Ready && multi.vm.Transcript.Count == 1 && multi.vm.Transcript[0].Text.Contains("could not be loaded")
+               && multi.vm.Transcript[0].Text.Contains("response too large") && multi.vm.HasEarlierHistory && multi.vm.LoadEarlierCommand.CanExecute(null),
+            "A history page that fails must be reported, keep the session, and stay available to read again.");
+        multi.vm.LoadEarlierCommand.Execute(null);
+        await WaitUntilAsync(() => !multi.vm.HasEarlierHistory && !multi.vm.IsLoadingHistory);
+        string[] multiBodies;
+        lock (multi.transport.Requests) multiBodies = multi.transport.Bodies.Where(body => body.StartsWith("thread/turns/list")).ToArray();
+        var shown = multi.vm.Transcript.Where(item => item.Role != "DwemerDistro").Select(item => item.Role + "|" + item.Text).ToArray();
+        string[] expectedMulti = ["You|several replies?", "Codex|first reply", "Codex|second reply", "Codex|third reply", "You|long turn?",
+            .. Enumerable.Range(1, 59).Select(n => $"Codex|paged reply {n * 2}"), .. Enumerable.Range(0, AssistantViewModel.MaxTurnItemPages).Select(n => $"Codex|endless {n}")];
+        Assert(multiBodies.Length == 2 && multiBodies[0].Contains($"\"limit\":{AssistantViewModel.HistoryPageTurns}")
+               && multiBodies[1].Contains($"\"limit\":{AssistantViewModel.HistoryPageTurns / 2}") && multiBodies.All(body => body.Contains("\"itemsView\":\"full\"")),
+            "A failed page must be read again only on request, smaller, with full items.");
+        Assert(shown.SequenceEqual(expectedMulti) && !shown.Any(text => text.Contains("summary only") || text.Contains("HIDDEN"))
+               && itemRequests.Count(request => request.StartsWith("turn-paged@")) == 3
+               && itemRequests.Where(request => request.StartsWith("turn-paged@")).All(request => request.EndsWith($"/{AssistantViewModel.HistoryTurnItems}"))
+               && itemRequests.Count(request => request.StartsWith("turn-endless@")) == AssistantViewModel.MaxTurnItemPages
+               && multi.vm.StatusDetail.Contains("1 earlier message(s) could not be shown"),
+            "Every message of a multi-item turn must be shown, unloaded or summarized turns read in full through their item cursors, " +
+            "and a turn beyond the bounded read reported rather than silently cut.");
+        await multi.vm.ShutdownAsync();
         var emptyResume = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
             resumedTurns: new System.Text.Json.Nodes.JsonArray());
         Assert(emptyResume.vm.State == AssistantState.Ready && emptyResume.vm.Transcript.Count == 0,
@@ -2537,7 +2734,55 @@ try
         Assert(signedOut.vm.State == AssistantState.SignedOut && signedOut.vm.IsSignInVisible && signedOut.vm.SignInCommand.CanExecute(null)
                && signedOut.vm.SignInUrl.Length == 0 && StartupQuiet(signedOut.cli, signedOut.transport),
             "A signed-out startup must show the inline sign-in with Sign in available, without starting a login or opening a page.");
+        Assert(await signedOut.vm.SuspendForMaintenanceAsync() && !signedOut.host.SessionLeaseHeld, "A signed-out idle session must yield to maintenance.");
+        signedOut.vm.ResumeAfterMaintenance(reconnect: true);
+        await WaitUntilAsync(() => signedOut.vm.State == AssistantState.SignedOut);
+        Assert(signedOut.vm.State == AssistantState.SignedOut && StartupQuiet(signedOut.cli, signedOut.transport),
+            "A signed-out session must come back signed out after maintenance, without starting a login.");
         await signedOut.vm.ShutdownAsync();
+
+        // Maintenance waits a bounded time for a Core command the last response started. If it is still running, the
+        // hold ends at once and maintenance is refused; the gate claim never meets a held, closed assistant.
+        var drain = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        drain.cli.Script = command => command switch
+        {
+            "models herika" => ModelsDocumentText(ValidModelsData),
+            "inventory" => ModelsDocumentText(ValidInventoryData),
+            _ => null
+        };
+        drain.cli.DiffGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        drain.vm.MaintenanceDrainTimeout = TimeSpan.FromMilliseconds(100);
+        drain.vm.InputText = "check something";
+        drain.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => drain.vm.State == AssistantState.Streaming);
+        var drainCompleted = "{\"threadId\":\"thr-saved\",\"turn\":{\"id\":\"turn-1\",\"status\":\"completed\"}}";
+        drain.transport.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":" + drainCompleted + "}");
+        drain.transport.Incoming.Writer.TryWrite("{\"method\":\"test/marker\",\"params\":{}}");
+        await WaitUntilAsync(() => drain.transport.Incoming.Reader.Count == 0);
+        drain.vm.OnNotification("turn/completed", System.Text.Json.JsonDocument.Parse(drainCompleted).RootElement.Clone());
+        await WaitUntilAsync(() => drain.vm.State == AssistantState.Ready && drain.host.CommandLeases > 0);
+        var drainResumes = drain.transport.Requests.Count(r => r == "thread/resume:thr-saved");
+        Assert(drain.vm.State == AssistantState.Ready && drain.host.CommandLeases == 1 && !await drain.vm.SuspendForMaintenanceAsync(),
+            "Maintenance must be refused while a Core command is still running after the bounded wait.");
+        Assert(drain.vm.ConnectCommand.CanExecute(null) || drain.vm.State != AssistantState.Disconnected, "The refused hold must be released at once.");
+        drain.cli.DiffGate.SetResult();
+        await WaitUntilAsync(() => drain.vm.State == AssistantState.Ready && drain.host.SessionLeaseHeld);
+        Assert(drain.vm.State == AssistantState.Ready && drain.host.SessionLeaseHeld && drain.transport.Requests.Count(r => r == "thread/resume:thr-saved") == drainResumes + 1,
+            "A refused maintenance must not leave the assistant held: the session it closed reconnects at once.");
+        await WaitUntilAsync(() => drain.host.CommandLeases == 0);
+        Assert(await drain.vm.SuspendForMaintenanceAsync() && await drain.vm.SuspendForMaintenanceAsync() && !drain.host.SessionLeaseHeld,
+            "A second operation asking while the first holds the distro must hold it too.");
+        drain.vm.ResumeAfterMaintenance(reconnect: false);
+        Assert(drain.vm.State == AssistantState.Disconnected && !drain.vm.ConnectCommand.CanExecute(null),
+            "The assistant must stay held until every operation holding the distro ends.");
+        drain.vm.ResumeAfterMaintenance(reconnect: true);
+        await Task.Delay(50);
+        Assert(drain.vm.State == AssistantState.Disconnected && drain.vm.ConnectCommand.CanExecute(null) && drain.vm.StatusDetail.Contains("Press Connect")
+               && !drain.host.SessionLeaseHeld,
+            "When any of them did not finish safely, the session must wait for Connect.");
+        drain.vm.ResumeAfterMaintenance(reconnect: true);
+        Assert(drain.vm.ConnectCommand.CanExecute(null), "An extra resume must not unbalance the hold.");
+        await drain.vm.ShutdownAsync();
 
         foreach (var (name, script, expected) in new (string, Func<string, string?>, AssistantState)[]
                  {
@@ -2611,6 +2856,9 @@ try
         stopping.vm.InputText = "which models?";
         stopping.vm.SendCommand.Execute(null);
         await WaitUntilAsync(() => stopping.cli.Calls.Contains("models herika"));
+        Assert(stopping.vm.StopCommand.CanExecute(null) && !stopping.vm.DisconnectCommand.CanExecute(null) && !stopping.vm.CanYieldForMaintenance
+               && !await stopping.vm.SuspendForMaintenanceAsync() && stopping.vm.State == AssistantState.Streaming && stopping.host.CommandLeases > 0,
+            "While responding, only Stop is offered, maintenance cannot close the session, and the running lookup holds the distro.");
         await stopping.vm.InterruptAsync();
         await WaitUntilAsync(() => stopping.vm.State == AssistantState.Ready);
         Assert(stopping.vm.State == AssistantState.Ready && StoppingTurns() == 0 && stopping.vm.Transcript[^1].Text.StartsWith("Stopped before")
@@ -2654,7 +2902,10 @@ try
         Assert(stagedReview.vm.IsReviewVisible && stagedReview.vm.ApproveCommand.CanExecute(null) && stagedReview.vm.HasReviewWarnings
                && stagedReview.vm.ReviewValidationText.Contains("PHP syntax was not checked for ext/a.php") && !stagedReview.vm.ReviewValidationText.Contains("no syntax errors"),
             "Stage warnings must be visible before approval, and an unchecked PHP file must never read as passed.");
-        stagedReview.vm.StopCommand.Execute(null);
+        Assert(!stagedReview.vm.CanYieldForMaintenance && !await stagedReview.vm.SuspendForMaintenanceAsync() && stagedReview.vm.State == AssistantState.Review
+               && stagedReview.host.SessionLeaseHeld,
+            "Maintenance must not close a session with a review open.");
+        stagedReview.vm.DisconnectCommand.Execute(null);
         await WaitUntilAsync(() => stagedReview.vm.State == AssistantState.Disconnected);
         stagedReview.cli.Script = command => command.StartsWith("changes stage")
             ? "{\"schema_version\":1,\"ok\":false,\"data\":null,\"error\":{\"code\":\"failed\",\"message\":\"Validation failed; nothing was staged.\","
@@ -2903,6 +3154,12 @@ try
                && stateStore.Load() is { TaskId: newTask, InstallationId: var keptInstallation, Provider: "codex" } && keptInstallation == installationId
                && continued.Length == 1 && continued[0].Contains("Fix the greeting") && !access.vm.HasFileRequest,
             "Allow must prepare exactly the requested paths, keep the installation identity, and continue the original request in the new task.");
+        Assert(TurnInput(continued[0]) is [_, var handoff] && handoff.StartsWith(AssistantViewModel.HandoffLabel)
+               && handoff.Contains($"task {newTask}, replacing task {savedReference.TaskId}") && handoff.Contains("User: actually, wait")
+               && handoff.Contains("Assistant: I need the plugin file.") && !handoff.Contains(AssistantViewModel.ContextLabel)
+               && stateStore.Load() is { EarlierTasks: [{ TaskId: var earlierTask, ThreadId: "thr-saved" }] } && earlierTask == savedReference.TaskId
+               && access.vm.TaskText.Contains("continued from task"),
+            "The new workspace must get a labeled handoff with the recent conversation, and the earlier task must stay recorded.");
         Assert(TurnInput(continued[0]) is [var continuedContext, var continuedText] && continuedContext.StartsWith(AssistantViewModel.ContextLabel)
                && continuedText.Contains("Fix the greeting") && access.cli.Calls.Count(call => call == "models herika") == TurnStarts()
                && access.cli.Calls.Count(call => call == "inventory") == TurnStarts() && continuedContext.Contains(AssistantViewModel.ScopeReminder),
@@ -2940,6 +3197,27 @@ try
     Assert((await turnTransport.NextOutgoingAsync()).Contains("probe/marker"),
         "A stop for one turn must not be sent twice or carried over to the next turn.");
     await turnClient.DisposeAsync();
+
+    // A second launcher start hands over through the install-scoped activation event; with nothing listening it reports so.
+    var activationName = InstanceActivationChannel.BuildName("Local\\DwemerDistro.Launcher.Test" + Guid.NewGuid().ToString("N")[..16]);
+    Assert(!await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.Zero),
+        "Without a running launcher listening, activation must report failure so the caller can explain instead.");
+    var activations = 0;
+    var foregroundGrants = 0;
+    Assert(!await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.Zero, () => Interlocked.Increment(ref foregroundGrants))
+           && foregroundGrants == 0,
+        "With nothing listening, the foreground grant must not run.");
+    using (InstanceActivationChannel.Listen(activationName, () => Interlocked.Increment(ref activations)))
+    {
+        // A counting stand-in for the grant: this background test must never touch the desktop's foreground rights.
+        Assert(await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.FromSeconds(1), () => Interlocked.Increment(ref foregroundGrants)),
+            "A listening launcher must accept activation.");
+        await WaitUntilAsync(() => Volatile.Read(ref activations) == 1);
+        Assert(Volatile.Read(ref activations) == 1 && foregroundGrants == 1, "One activation request must grant once and activate the running launcher once.");
+    }
+    Assert(typeof(InstanceActivationChannel).GetField("AsfwAny", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static) is null,
+        "The second start must never grant the foreground to every process.");
+    Assert(!await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.Zero), "A closed launcher must no longer accept activation.");
 
     using (var longLine = new StringReader(new string('x', 40) + "\nok\n"))
     {
@@ -3007,39 +3285,57 @@ static ServerStatusResult StatusFor(ServerProduct product, ServerInstallState st
         }));
 }
 
-static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTransport transport)> ConnectAssistantAsync(
+static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTransport transport, FakeAssistantHost host)> ConnectAssistantAsync(
     AssistantStateStore store, AssistantTaskReference saved, string installationId, string? statusTask, bool confined = true,
     string distroName = LauncherConstants.DistroName, bool signedOut = false, bool distroBusy = false, Func<string, string?>? script = null,
     TaskCompletionSource? capabilitiesGate = null, Func<AssistantViewModel, Task>? connect = null,
-    System.Text.Json.Nodes.JsonArray? resumedTurns = null, TaskCompletionSource? prepareGate = null)
+    System.Text.Json.Nodes.JsonArray? resumedTurns = null, TaskCompletionSource? prepareGate = null,
+    Func<string, System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>? respondFirst = null)
 {
     store.Save(saved);
-    // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work. Only thread/resume
-    // (and fork and read) populate thread.turns.
+    // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work. thread/resume with
+    // excludeTurns leaves thread.turns empty; thread/turns/list pages them newest first with an opaque cursor.
     System.Text.Json.Nodes.JsonObject Thread(string id, System.Text.Json.Nodes.JsonArray? turns = null) => new()
     {
         ["thread"] = new System.Text.Json.Nodes.JsonObject { ["id"] = id, ["turns"] = turns?.DeepClone() ?? new System.Text.Json.Nodes.JsonArray() },
         ["approvalPolicy"] = confined ? "never" : "on-request",
         ["cwd"] = "/work"
     };
+    System.Text.Json.Nodes.JsonNode TurnsPage(System.Text.Json.Nodes.JsonObject parameters)
+    {
+        var all = (resumedTurns ?? new System.Text.Json.Nodes.JsonArray()).Reverse().ToList();
+        var start = parameters["cursor"] is { } cursor ? int.Parse(cursor.GetValue<string>()) : 0;
+        var limit = parameters["limit"]!.GetValue<int>();
+        var page = all.Skip(start).Take(limit).Select(turn => turn!.DeepClone()).ToArray();
+        // A display summary may leave a turn's messages out; only full items are complete.
+        if (parameters["itemsView"]?.GetValue<string>() != "full")
+            foreach (var turn in page) { turn["itemsView"] = "summary"; turn["items"] = new System.Text.Json.Nodes.JsonArray(); }
+        return new System.Text.Json.Nodes.JsonObject
+        {
+            ["data"] = new System.Text.Json.Nodes.JsonArray(page),
+            ["nextCursor"] = start + limit < all.Count ? (start + limit).ToString() : null
+        };
+    }
     var transport = new FakeAssistantTransport
     {
-        Respond = (method, parameters) => method switch
+        Respond = (method, parameters) => respondFirst?.Invoke(method, parameters) ?? method switch
         {
             "initialize" => new System.Text.Json.Nodes.JsonObject(),
             "account/read" => System.Text.Json.Nodes.JsonNode.Parse(signedOut ? "{\"account\":null,\"requiresOpenaiAuth\":true}"
                 : "{\"account\":{\"type\":\"apiKey\"},\"requiresOpenaiAuth\":false}"),
             "model/list" => System.Text.Json.Nodes.JsonNode.Parse("{\"data\":[{\"id\":\"m\",\"displayName\":\"M\",\"isDefault\":true}],\"nextCursor\":null}"),
-            "thread/resume" => Thread(parameters["threadId"]!.GetValue<string>(), resumedTurns),
+            "thread/resume" => Thread(parameters["threadId"]!.GetValue<string>(), parameters["excludeTurns"]?.GetValue<bool>() == true ? null : resumedTurns),
+            "thread/turns/list" => TurnsPage(parameters),
             "thread/start" => Thread("thr-new"),
             "turn/start" => System.Text.Json.Nodes.JsonNode.Parse("{\"turn\":{\"id\":\"turn-1\",\"items\":[],\"status\":\"inProgress\"}}"),
             _ => null
         }
     };
     var cli = new FakeAssistantCli(transport, statusTask) { DistroName = distroName, Script = script, CapabilitiesGate = capabilitiesGate, PrepareGate = prepareGate };
-    var vm = new AssistantViewModel(cli, new FakeAssistantHost(installationId) { DistroBusy = distroBusy }, store);
+    var host = new FakeAssistantHost(installationId) { DistroBusy = distroBusy };
+    var vm = new AssistantViewModel(cli, host, store);
     await (connect ?? (model => model.ConnectAsync()))(vm);
-    return (vm, cli, transport);
+    return (vm, cli, transport, host);
 }
 
 static string ModelsDocumentText(string data) => "{\"schema_version\":1,\"ok\":true,\"data\":" + data + "}";
@@ -3091,7 +3387,10 @@ sealed class FakeAssistantTransport : IAssistantTransport
     public System.Threading.Channels.Channel<string> Incoming { get; } = System.Threading.Channels.Channel.CreateUnbounded<string>();
     private readonly System.Threading.Channels.Channel<string> _outgoing = System.Threading.Channels.Channel.CreateUnbounded<string>();
 
-    /// <summary>Optional scripted App Server: a result answers the request at once; null leaves it to the test.</summary>
+    /// <summary>
+    /// Optional scripted App Server: a result answers the request at once; null leaves it to the test. A result that is
+    /// an object with an "$error" member answers with that JSON-RPC error instead.
+    /// </summary>
     public Func<string, System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>? Respond { get; init; }
 
     public List<string> Requests { get; } = [];
@@ -3117,7 +3416,9 @@ sealed class FakeAssistantTransport : IAssistantTransport
             }
             if (Respond(method, parameters) is { } result)
             {
-                Incoming.Writer.TryWrite(new System.Text.Json.Nodes.JsonObject { ["id"] = id.DeepClone(), ["result"] = result }.ToJsonString());
+                Incoming.Writer.TryWrite((result is System.Text.Json.Nodes.JsonObject { } failure && failure["$error"] is { } error
+                    ? new System.Text.Json.Nodes.JsonObject { ["id"] = id.DeepClone(), ["error"] = error.DeepClone() }
+                    : new System.Text.Json.Nodes.JsonObject { ["id"] = id.DeepClone(), ["result"] = result }).ToJsonString());
             }
         }
         return _outgoing.Writer.WriteAsync(line, cancellationToken).AsTask();
@@ -3134,10 +3435,26 @@ sealed class FakeAssistantTransport : IAssistantTransport
 
 sealed class FakeAssistantHost(string installationId) : IAssistantHost
 {
+    private int _commandLeases;
+
     /// <summary>Distro maintenance holds the shared gate.</summary>
-    public bool DistroBusy { get; init; }
-    public bool TryBeginDistroActivity() => !DistroBusy;
-    public void EndDistroActivity() { }
+    public bool DistroBusy { get; set; }
+    public int CommandLeases => Volatile.Read(ref _commandLeases);
+    public bool SessionLeaseHeld { get; private set; }
+    public bool TryBeginDistroActivity()
+    {
+        if (DistroBusy) return false;
+        Interlocked.Increment(ref _commandLeases);
+        return true;
+    }
+    public void EndDistroActivity() => Interlocked.Decrement(ref _commandLeases);
+    public bool TryBeginSessionActivity()
+    {
+        if (DistroBusy || SessionLeaseHeld) return false;
+        SessionLeaseHeld = true;
+        return true;
+    }
+    public void EndSessionActivity() => SessionLeaseHeld = false;
     public bool TryBeginLiveChange() => true;
     public void EndLiveChange() { }
     public void OpenUrl(string url) { }
@@ -3166,6 +3483,9 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
     /// <summary>The same for changes prepare, which then answers with a fresh task.</summary>
     public TaskCompletionSource? PrepareGate { get; set; }
 
+    /// <summary>When set, changes diff waits for it; the assistant runs that check without a cancellation token.</summary>
+    public TaskCompletionSource? DiffGate { get; set; }
+
     public async Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var command = string.Join(" ", arguments);
@@ -3176,6 +3496,7 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
             return AssistantCliService.Parse(new CommandResult(0,
                 "{\"schema_version\":1,\"ok\":true,\"data\":{\"task_id\":\"99999999-8888-7777-6666-555555555555\",\"diagnostic_only\":true}}", ""));
         }
+        if (command.StartsWith("changes diff") && DiffGate is { } diffGate) await diffGate.Task;
         if (command == "models herika" && ModelsGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
         if (command == "inventory" && InventoryGate is { } inventoryGate) await inventoryGate.Task.WaitAsync(cancellationToken);
         if (command == "capabilities" && CapabilitiesGate is { } capabilitiesGate) await capabilitiesGate.Task.WaitAsync(cancellationToken);

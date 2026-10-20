@@ -1,4 +1,7 @@
+using System.ComponentModel;
+using System.Windows;
 using DwemerDistro.Launcher.Wpf.Services;
+using MessageBox = System.Windows.MessageBox;
 
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
@@ -6,15 +9,66 @@ public sealed partial class MainWindowViewModel : IAssistantHost
 {
     private AssistantViewModel? _assistant;
     private bool _isAssistantLiveChangeInProgress;
+    // The connected session's own passive lease, apart from the short leases each assistant CLI call holds.
+    private bool _isAssistantSessionLeaseHeld;
 
     /// <summary>Created on first use. It runs nothing until Connect, or the one startup connection below.</summary>
-    public AssistantViewModel Assistant => _assistant ??=
-        new AssistantViewModel(new AssistantCliService(_wsl, _processRunner), this, new AssistantStateStore());
+    public AssistantViewModel Assistant => _assistant ??= CreateAssistant();
+
+    private AssistantViewModel CreateAssistant()
+    {
+        var assistant = new AssistantViewModel(new AssistantCliService(_wsl, _processRunner), this, new AssistantStateStore());
+        // Whether an idle session can be closed for maintenance follows its state, so the maintenance buttons do too.
+        assistant.PropertyChanged += Assistant_PropertyChanged;
+        return assistant;
+    }
+
+    private void Assistant_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AssistantViewModel.State)) NotifyDistroOperationGateChanged();
+    }
 
     public bool IsAssistantLiveChangeInProgress => _isAssistantLiveChangeInProgress;
 
     /// <summary>Custom mod mutations and assistant applies both change live files, so they share one gate.</summary>
     private bool IsLiveFileMutationInProgress => _isCustomModMutationInProgress || _isAssistantLiveChangeInProgress;
+
+    /// <summary>
+    /// The one passive lease an exclusive operation may look past when deciding whether it can be offered: an idle
+    /// connected assistant session, which <see cref="PauseAssistantForMaintenanceAsync"/> closes before the claim.
+    /// A responding, reviewing, applying or checking assistant, and every other passive activity, still block.
+    /// </summary>
+    private int YieldablePassiveDistroActivityCount() =>
+        Volatile.Read(ref _isAssistantSessionLeaseHeld) && _assistant?.CanYieldForMaintenance == true ? 1 : 0;
+
+    /// <summary>
+    /// Closes an idle assistant session and waits for it to release the distro before Compact, Export, Import or DNS
+    /// repair claims the exclusive slot. A busy assistant refuses and the operation is reported as blocked.
+    /// </summary>
+    private async Task<bool> PauseAssistantForMaintenanceAsync(string title)
+    {
+        // Some maintenance paths continue off the UI thread; the assistant's state lives on it.
+        if (_assistant is not { } assistant || await _dispatcher.InvokeAsync(assistant.SuspendForMaintenanceAsync).Task.Unwrap().ConfigureAwait(true))
+        {
+            return true;
+        }
+
+        AppendLog(AssistantBusyForMaintenanceMessage + Environment.NewLine, "yellow");
+        RunOnUi(() => MessageBox.Show(AssistantBusyForMaintenanceMessage, title, MessageBoxButton.OK, MessageBoxImage.Warning));
+        return false;
+    }
+
+    internal const string AssistantBusyForMaintenanceMessage =
+        "The Assistant is responding, signing in, checking, reviewing or applying changes. Let it finish or stop it on the Assistant page, then try again.";
+
+    /// <summary>
+    /// Ends the maintenance hold. The assistant reconnects only when its session was open and still wanted, and the
+    /// operation finished safely; a session the user disconnected stays disconnected.
+    /// </summary>
+    private void ResumeAssistantAfterMaintenance(bool reconnect)
+    {
+        if (_assistant is { } assistant) RunOnUi(() => assistant.ResumeAfterMaintenance(reconnect));
+    }
 
     /// <summary>
     /// Startup's one automatic Connect, queued after first-time setup was found unnecessary and the launcher-version
@@ -38,6 +92,39 @@ public sealed partial class MainWindowViewModel : IAssistantHost
     bool IAssistantHost.TryBeginDistroActivity() => TryBeginPassiveDistroActivity();
 
     void IAssistantHost.EndDistroActivity() => EndPassiveDistroActivity();
+
+    bool IAssistantHost.TryBeginSessionActivity()
+    {
+        lock (_distroOperationGate)
+        {
+            if (_isExclusiveDistroOperationInProgress || _isAssistantSessionLeaseHeld)
+            {
+                return false;
+            }
+
+            _isAssistantSessionLeaseHeld = true;
+            _passiveDistroActivityCount++;
+        }
+
+        NotifyDistroOperationGateChanged();
+        return true;
+    }
+
+    void IAssistantHost.EndSessionActivity()
+    {
+        lock (_distroOperationGate)
+        {
+            if (!_isAssistantSessionLeaseHeld)
+            {
+                return;
+            }
+
+            _isAssistantSessionLeaseHeld = false;
+            _passiveDistroActivityCount--;
+        }
+
+        NotifyDistroOperationGateChanged();
+    }
 
     bool IAssistantHost.TryBeginLiveChange()
     {
