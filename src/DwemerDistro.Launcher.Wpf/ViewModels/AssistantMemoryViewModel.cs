@@ -333,7 +333,9 @@ public sealed class AssistantMemoryViewModel : ObservableObject
             if (result.Ok && AssistantCliService.ProjectMemorySettings(result.Data) is { } settings)
             {
                 ApplySettings(settings);
-                StatusText = "Memory settings saved. New chats and the next connection use them.";
+                // Core declares the memory tool only as a session starts, so the open session keeps what it started with.
+                StatusText = "Memory settings saved. They apply to a new chat, or after Disconnect and Connect; the open session is unchanged " +
+                             "until then. A reconnected chat moves once to a new thread with the memory tool on your next message.";
             }
             else
             {
