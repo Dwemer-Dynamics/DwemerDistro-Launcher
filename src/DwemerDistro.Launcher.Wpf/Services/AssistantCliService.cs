@@ -68,6 +68,7 @@ public static partial class AssistantCliCommands
     public static string[] Capabilities() => ["capabilities"];
     public static string[] AgentStatus() => ["agent", "status"];
     public static string[] AgentProbe() => ["agent", "probe"];
+    public static string[] Diff(string taskId) => ["changes", "diff", RequireTaskId(taskId)];
     public static string[] Stage(string taskId) => ["changes", "stage", RequireTaskId(taskId)];
     public static string[] ChangeStatus(string taskId) => ["changes", "status", RequireTaskId(taskId)];
     public static string[] Rollback(string taskId) => ["changes", "rollback", RequireTaskId(taskId)];

@@ -58,6 +58,15 @@ public sealed record AssistantModelOption(string Id, string DisplayName)
 internal sealed record AssistantReviewBatch(string TaskId, string ManifestSha256, string Diff, IReadOnlyList<string> Files,
     IReadOnlyList<string> Warnings, int WarningTotal);
 
+/// <summary>
+/// Files the assistant asked for at the end of one completed turn. It is only a proposal: it is bound to the task,
+/// thread and turn it came from, and nothing is copied until the user allows it while all three are still current.
+/// </summary>
+internal sealed record AssistantFileRequest(string TaskId, string ThreadId, int Turn, IReadOnlyList<string> Paths,
+    string OriginalRequest, string Context);
+
+internal enum FileRequestParse { None, Valid, Invalid }
+
 public sealed class AssistantViewModel : ObservableObject
 {
     internal const int MaxTranscriptItems = 200;
@@ -68,6 +77,23 @@ public sealed class AssistantViewModel : ObservableObject
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan LiveChangeTimeout = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan RpcTimeout = TimeSpan.FromSeconds(45);
+    internal const string FileRequestTag = "dwemer-file-request";
+    private const int MaxContinuationContextChars = 4000;
+
+    /// <summary>
+    /// Sent as the thread's developer instructions. It describes what the workspace really holds and the one way to
+    /// ask for files; the launcher, not the model, decides whether anything is copied.
+    /// </summary>
+    internal const string DeveloperInstructions =
+        "You help a DwemerDistro user with their CHIM (HerikaServer) server. You work in an isolated copy at /work, not on the live server. " +
+        "You cannot list or browse the live server folder. A task with no selected files holds only .ddistro-context/status.json and " +
+        ".ddistro-context/recent.log (sanitized status and recent log lines). Your edits stay in /work until the user reviews and approves them.\n" +
+        "If you need CHIM files to read or edit, explain why in plain words, then end your message with exactly one block:\n" +
+        "```" + FileRequestTag + "\n<one path per line, relative to the HerikaServer folder, e.g. ext/example/file.php>\n```\n" +
+        "List at most 20 files, only paths you are confident exist or must be created. Never ask for credentials, .env files, keys, " +
+        "databases, logs or user configuration; DwemerDistro refuses them. If you do not know the exact path, say so and ask the user " +
+        "instead of guessing. The user decides; if they allow it, a fresh working copy with only those files is prepared and you are given " +
+        "their request again. Do not write the block for any other purpose.";
 
     private readonly IAssistantCli _cli;
     private readonly IAssistantHost _host;
@@ -97,6 +123,14 @@ public sealed class AssistantViewModel : ObservableObject
     private string _outcomeText = string.Empty;
     private bool _canRollback;
     private bool _canCheckOutcome;
+    private bool _hasChanges;
+    private int _changeCheck;
+    private int _turnSerial;
+    private string _lastUserRequest = string.Empty;
+    private AssistantTranscriptItem? _lastAgentItem;
+    private string? _lastAgentText;
+    private AssistantFileRequest? _fileRequest;
+    private string? _pendingContinuation;
 
     /// <summary>Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect.</summary>
     public AssistantViewModel(IAssistantCli cli, IAssistantHost host, IAssistantStateStore store)
@@ -119,6 +153,8 @@ public sealed class AssistantViewModel : ObservableObject
         RejectCommand = new RelayCommand(Reject, () => State == AssistantState.Review);
         RollbackCommand = new AsyncRelayCommand(RollbackAsync, () => _canRollback && _taskId is not null && State is AssistantState.Ready or AssistantState.Disconnected or AssistantState.Error);
         CheckOutcomeCommand = new AsyncRelayCommand(CheckOutcomeAsync, () => _canCheckOutcome && _taskId is not null && State is not (AssistantState.Applying or AssistantState.Busy));
+        AllowFileAccessCommand = new AsyncRelayCommand(AllowFileAccessAsync, () => State == AssistantState.Ready && _fileRequest is not null);
+        DeclineFileAccessCommand = new RelayCommand(DeclineFileAccess, () => _fileRequest is not null && State is not (AssistantState.Busy or AssistantState.Checking));
     }
 
     public AsyncRelayCommand ConnectCommand { get; }
@@ -133,11 +169,33 @@ public sealed class AssistantViewModel : ObservableObject
     public RelayCommand RejectCommand { get; }
     public AsyncRelayCommand RollbackCommand { get; }
     public AsyncRelayCommand CheckOutcomeCommand { get; }
+    public AsyncRelayCommand AllowFileAccessCommand { get; }
+    public RelayCommand DeclineFileAccessCommand { get; }
 
     public ObservableCollection<AssistantTranscriptItem> Transcript { get; } = new();
     public ObservableCollection<AssistantModelOption> Models { get; } = new();
-    public IReadOnlyList<string> Products { get; } = ["CHIM (HerikaServer)"];
-    public string SelectedProduct { get; set; } = "CHIM (HerikaServer)";
+
+    /// <summary>Paths the assistant asked for, shown on the access card; empty when nothing is pending.</summary>
+    public IReadOnlyList<string> FileRequestPaths => _fileRequest?.Paths ?? [];
+    public bool HasFileRequest => _fileRequest is not null;
+
+    /// <summary>Set from Core's own diff after a completed turn or a reopened task, never from the transcript.</summary>
+    public bool HasChanges
+    {
+        get => _hasChanges;
+        private set
+        {
+            if (!SetProperty(ref _hasChanges, value)) return;
+            OnPropertyChanged(nameof(IsChangesVisible));
+            OnPropertyChanged(nameof(IsSidePanelVisible));
+            ReviewCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool IsChangesVisible => HasChanges && !IsReviewVisible;
+
+    /// <summary>The right column exists only while it has something to show.</summary>
+    public bool IsSidePanelVisible => IsChangesVisible || IsReviewVisible || HasOutcome;
 
     public AssistantState State
     {
@@ -147,6 +205,8 @@ public sealed class AssistantViewModel : ObservableObject
             if (!SetProperty(ref _state, value)) return;
             OnPropertyChanged(nameof(IsSignInVisible));
             OnPropertyChanged(nameof(IsReviewVisible));
+            OnPropertyChanged(nameof(IsChangesVisible));
+            OnPropertyChanged(nameof(IsSidePanelVisible));
             OnPropertyChanged(nameof(IsProbeVisible));
             OnPropertyChanged(nameof(IsInputEnabled));
             OnPropertyChanged(nameof(StopButtonText));
@@ -161,7 +221,16 @@ public sealed class AssistantViewModel : ObservableObject
     public string SignInUrl { get => _signInUrl; private set { if (SetProperty(ref _signInUrl, value)) OpenSignInUrlCommand.RaiseCanExecuteChanged(); } }
     public string SignInCode { get => _signInCode; private set { if (SetProperty(ref _signInCode, value)) OnPropertyChanged(nameof(HasSignInCode)); } }
     public bool HasSignInCode => SignInCode.Length > 0;
-    public string OutcomeText { get => _outcomeText; private set { if (SetProperty(ref _outcomeText, value)) OnPropertyChanged(nameof(HasOutcome)); } }
+    public string OutcomeText
+    {
+        get => _outcomeText;
+        private set
+        {
+            if (!SetProperty(ref _outcomeText, value)) return;
+            OnPropertyChanged(nameof(HasOutcome));
+            OnPropertyChanged(nameof(IsSidePanelVisible));
+        }
+    }
     public bool HasOutcome => OutcomeText.Length > 0;
     public string ReviewDiff => _review?.Diff ?? string.Empty;
     public string ReviewSummary => _review is null ? string.Empty
@@ -372,11 +441,21 @@ public sealed class AssistantViewModel : ObservableObject
             SetState(AssistantState.Error, "DwemerDistro returned an invalid task id.");
             return false;
         }
+        UseTask(taskId, paths.Length);
+        return true;
+    }
+
+    /// <summary>Makes a freshly prepared task current: no thread yet, nothing to review or roll back, saved for this installation.</summary>
+    private void UseTask(string taskId, int fileCount)
+    {
         _taskId = taskId;
         _threadId = null;
+        _canRollback = false;
+        _canCheckOutcome = false;
+        ClearFileRequest();
+        HasChanges = false;
         SaveReference();
-        TaskText = $"Task {taskId} · CHIM · " + (paths.Length == 0 ? "diagnostic workspace (no files)" : $"{paths.Length} file(s)");
-        return true;
+        TaskText = $"Task {taskId} · CHIM · " + (fileCount == 0 ? "diagnostic workspace (no files)" : $"{fileCount} file(s)");
     }
 
     private async Task StartSessionAsync()
@@ -440,7 +519,17 @@ public sealed class AssistantViewModel : ObservableObject
         await EnsureThreadAsync(client);
         SignInUrl = string.Empty;
         SignInCode = string.Empty;
-        SetState(AssistantState.Ready, "Ask about this task's working copy. Changes stay in the isolated workspace until you review and approve them.");
+        SetState(AssistantState.Ready, "Describe what you want to fix or change. Edits stay in an isolated copy until you review and approve them.");
+        // A request the user allowed files for continues in the new workspace's first turn.
+        if (_pendingContinuation is { } continuation)
+        {
+            _pendingContinuation = null;
+            await StartTurnAsync(continuation);
+        }
+        else
+        {
+            await RefreshChangesAsync();
+        }
     }
 
     private static string DescribeAccount(JsonElement account)
@@ -492,7 +581,7 @@ public sealed class AssistantViewModel : ObservableObject
         {
             try
             {
-                var resume = new JsonObject { ["threadId"] = existing };
+                var resume = new JsonObject { ["threadId"] = existing, ["developerInstructions"] = DeveloperInstructions };
                 CodexAppServerClient.AddConfinement(resume);
                 result = await client.RequestAsync("thread/resume", resume, RpcTimeout);
                 resumed = true;
@@ -504,7 +593,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
         if (!resumed)
         {
-            var start = new JsonObject();
+            var start = new JsonObject { ["developerInstructions"] = DeveloperInstructions };
             if (SelectedModel is not null) start["model"] = SelectedModel.Id;
             CodexAppServerClient.AddConfinement(start);
             result = await client.RequestAsync("thread/start", start, RpcTimeout);
@@ -559,12 +648,24 @@ public sealed class AssistantViewModel : ObservableObject
 
     private async Task SendAsync()
     {
-        var client = _client;
-        var turns = _turns;
         var text = InputText.Trim();
-        if (client is null || turns is null || _threadId is null || text.Length == 0) return;
+        if (_client is null || _turns is null || _threadId is null || text.Length == 0) return;
         InputText = string.Empty;
         AddItem(new AssistantTranscriptItem("You", text));
+        _lastUserRequest = text;
+        await StartTurnAsync(text);
+    }
+
+    /// <summary>Starts one turn. Any earlier file request belongs to an earlier turn and can no longer be allowed.</summary>
+    private async Task StartTurnAsync(string text)
+    {
+        var client = _client;
+        var turns = _turns;
+        if (client is null || turns is null || _threadId is null) return;
+        ClearFileRequest();
+        _turnSerial++;
+        _lastAgentItem = null;
+        _lastAgentText = null;
         SetState(AssistantState.Streaming, "The assistant is responding. Press Esc or Stop to interrupt.");
         try
         {
@@ -616,13 +717,17 @@ public sealed class AssistantViewModel : ObservableObject
         _threadId = null;
         _canRollback = false;
         _canCheckOutcome = false;
+        _pendingContinuation = null;
+        _lastUserRequest = string.Empty;
+        ClearFileRequest();
+        HasChanges = false;
         OutcomeText = string.Empty;
         Transcript.Clear();
         TaskText = "No task yet";
         await ConnectAsync();
     }
 
-    private void OnNotification(string method, JsonElement parameters)
+    internal void OnNotification(string method, JsonElement parameters)
     {
         switch (method)
         {
@@ -642,8 +747,11 @@ public sealed class AssistantViewModel : ObservableObject
                 {
                     var final = AssistantCliService.GetString(item, "text");
                     var existing = FindItem(id);
-                    if (existing is null) AddItem(new AssistantTranscriptItem("Codex", final, id));
+                    if (existing is null) existing = AddItem(new AssistantTranscriptItem("Codex", final, id));
                     else if (final.Length > 0) existing.Replace(final);
+                    // Only the turn's last message may carry a file request, and only once the turn completes.
+                    _lastAgentItem = existing;
+                    _lastAgentText = final.Length > 0 ? final : existing.Text;
                 }
                 else if (type == "commandExecution")
                 {
@@ -651,7 +759,7 @@ public sealed class AssistantViewModel : ObservableObject
                 }
                 else if (type == "fileChange")
                 {
-                    AddSystem("Edited files in the isolated workspace. Use Review changes to see them.");
+                    AddSystem("Edited files in the isolated workspace. Nothing is live yet.");
                 }
                 break;
             case "turn/completed":
@@ -660,7 +768,17 @@ public sealed class AssistantViewModel : ObservableObject
                 if (status == "interrupted") AddSystem("Stopped.");
                 else if (status == "failed")
                     AddSystem("The response failed: " + Shorten(AssistantCliService.GetString(Prop(turn, "error"), "message"), 200));
-                if (State == AssistantState.Streaming) SetState(AssistantState.Ready, "Response complete.");
+                if (State != AssistantState.Streaming) break;
+                SetState(AssistantState.Ready, "Response complete.");
+                if (status == "completed")
+                {
+                    OfferFileRequest();
+                    _ = RefreshChangesAsync();
+                }
+                else if (_lastAgentText?.Contains(FileRequestTag, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    AddSystem("The response did not finish, so its file request was ignored. Nothing was shared.");
+                }
                 break;
             case "error":
                 if (!AssistantCliService.GetBool(parameters, "willRetry") && Prop(parameters, "error") is { ValueKind: JsonValueKind.Object } error)
@@ -718,6 +836,7 @@ public sealed class AssistantViewModel : ObservableObject
         _client = null;
         _turns = null;
         _sessionGeneration++;
+        ClearFileRequest();
         if (client is not null)
         {
             try { await client.DisposeAsync(); }
@@ -728,6 +847,177 @@ public sealed class AssistantViewModel : ObservableObject
     }
 
     public Task ShutdownAsync() => DisposeClientAsync();
+
+    // --- File access requests -----------------------------------------------------------------
+
+    /// <summary>
+    /// Reads the one fenced file-request block at the end of a completed message. Valid means a closed block of 1 to 20
+    /// distinct safe relative paths and nothing ambiguous; anything else that mentions the block is Invalid, never partly used.
+    /// </summary>
+    internal static FileRequestParse ParseFileRequest(string message, out IReadOnlyList<string> paths, out string visibleText, out string problem)
+    {
+        paths = [];
+        visibleText = message;
+        problem = string.Empty;
+        if (!message.Contains(FileRequestTag, StringComparison.OrdinalIgnoreCase)) return FileRequestParse.None;
+
+        var lines = message.Replace("\r\n", "\n").Split('\n');
+        var open = Array.FindIndex(lines, line => line.Trim() == "```" + FileRequestTag);
+        var close = open < 0 ? -1 : Array.FindIndex(lines, open + 1, line => line.Trim() == "```");
+        var mentions = lines.Count(line => line.Contains(FileRequestTag, StringComparison.OrdinalIgnoreCase));
+        var requested = close < 0 ? [] : lines[(open + 1)..close].Select(line => line.Trim()).Where(line => line.Length > 0).ToArray();
+        var duplicate = requested.GroupBy(path => path, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1)?.Key;
+        var invalid = requested.FirstOrDefault(path => !AssistantCliCommands.IsSafeRelativePath(path) || path.Split('/')[0] == ".ddistro-context");
+        if (message.Length > AssistantTranscriptItem.MaxTextChars) problem = "the message was too long to read in full.";
+        else if (open < 0 || close < 0) problem = "the file list was incomplete.";
+        else if (mentions != 1) problem = "the message held more than one file list.";
+        else if (requested.Length == 0) problem = "the file list was empty.";
+        else if (requested.Length > AssistantCliCommands.MaxRelativePaths) problem = $"it listed more than {AssistantCliCommands.MaxRelativePaths} files.";
+        else if (invalid is not null) problem = $"\"{Shorten(invalid, 80)}\" is not a plain path inside the CHIM folder.";
+        else if (duplicate is not null) problem = $"it listed \"{Shorten(duplicate, 80)}\" more than once.";
+        if (problem.Length > 0) return FileRequestParse.Invalid;
+
+        paths = requested;
+        visibleText = string.Join("\n", lines[..open].Concat(lines[(close + 1)..])).Trim();
+        if (visibleText.Length == 0) visibleText = "I need access to some CHIM files to continue.";
+        return FileRequestParse.Valid;
+    }
+
+    /// <summary>After a completed turn: turns the last message's file request into the access card, or says why it cannot.</summary>
+    private void OfferFileRequest()
+    {
+        if (_lastAgentText is not { } text || _lastAgentItem is not { } item || _taskId is null || _threadId is null) return;
+        switch (ParseFileRequest(text, out var paths, out var visible, out var problem))
+        {
+            case FileRequestParse.Valid:
+                item.Replace(visible);
+                _fileRequest = new AssistantFileRequest(_taskId, _threadId, _turnSerial, paths, _lastUserRequest,
+                    Shorten(visible, MaxContinuationContextChars));
+                RaiseFileRequest();
+                StatusDetail = "The assistant asks for access to CHIM files. Nothing is shared unless you allow it.";
+                break;
+            case FileRequestParse.Invalid:
+                AddSystem("The assistant asked for files, but the request could not be used: " + problem +
+                          " Nothing was shared. Ask it to list the files again, or choose files under Advanced.");
+                break;
+        }
+    }
+
+    private bool IsCurrent(AssistantFileRequest request) =>
+        ReferenceEquals(request, _fileRequest) && request.TaskId == _taskId && request.ThreadId == _threadId && request.Turn == _turnSerial;
+
+    private void ClearFileRequest()
+    {
+        if (_fileRequest is null) return;
+        _fileRequest = null;
+        RaiseFileRequest();
+    }
+
+    private void DeclineFileAccess()
+    {
+        ClearFileRequest();
+        AddSystem("File access not allowed. Nothing was shared.");
+    }
+
+    /// <summary>
+    /// The user's Allow click: refuses while the current copy has unreviewed edits or an unknown live change, prepares a
+    /// fresh task with exactly the requested paths through Core (which refuses secrets and unsafe paths), then reconnects
+    /// and continues the original request there. A stale request, or any failure, leaves the current task as it was.
+    /// </summary>
+    private async Task AllowFileAccessAsync()
+    {
+        var request = _fileRequest;
+        if (request is null || !IsCurrent(request))
+        {
+            ClearFileRequest();
+            StatusDetail = "That file request is out of date. Nothing was shared.";
+            return;
+        }
+        if (_canCheckOutcome)
+        {
+            StatusDetail = "Check the last live change's status before starting a new working copy. Nothing was shared.";
+            return;
+        }
+
+        SetState(AssistantState.Busy, "Checking the current working copy for unreviewed edits…");
+        var diff = await _cli.RunAsync(AssistantCliCommands.Diff(request.TaskId), QueryTimeout, CancellationToken.None);
+        var pending = ReadReviewableChanges(diff, request.TaskId);
+        if (!IsCurrent(request) || pending != 0)
+        {
+            SetState(SessionState(), !IsCurrent(request) ? "That file request is out of date. Nothing was shared."
+                : pending < 0 ? "Could not confirm the current working copy has no unreviewed edits, so nothing was switched or shared."
+                : $"The current working copy has {pending} edited file(s) you have not reviewed. Review and apply them first, " +
+                  "or press New task to discard them. Nothing was shared.");
+            if (pending > 0) HasChanges = true;
+            return;
+        }
+
+        SetState(AssistantState.Checking, $"Preparing a working copy with the {request.Paths.Count} file(s) you allowed…");
+        var prepared = await _cli.RunAsync(AssistantCliCommands.Prepare("herika", request.Paths), PrepareTimeout, CancellationToken.None);
+        var taskId = AssistantCliService.GetString(prepared.Data, "task_id");
+        if (!IsCurrent(request) || !prepared.Ok || !AssistantCliCommands.IsValidTaskId(taskId))
+        {
+            ClearFileRequest();
+            SetState(SessionState(), "Those files could not be prepared: " + Shorten(prepared.Ok
+                ? "DwemerDistro returned an invalid task id." : prepared.ErrorMessage.Length > 0 ? prepared.ErrorMessage : prepared.ErrorCode, 240) +
+                " Nothing was shared; the current task continues.");
+            return;
+        }
+
+        var hadRollback = _canRollback;
+        await DisposeClientAsync();
+        UseTask(taskId, request.Paths.Count);
+        OutcomeText = string.Empty;
+        AddSystem($"Access allowed to {request.Paths.Count} file(s) in a fresh isolated working copy:\n" + string.Join("\n", request.Paths) +
+                  (hadRollback ? "\nRoll back for the earlier applied change is no longer offered here." : string.Empty) +
+                  "\nContinuing your request…");
+        _pendingContinuation = BuildContinuation(request);
+        await ConnectAsync();
+    }
+
+    /// <summary>The first message in the new workspace: the user's own request, the assistant's reason, and the allowed files.</summary>
+    internal static string BuildContinuation(AssistantFileRequest request) =>
+        "The user allowed access to these CHIM files. They are now in /work at the same relative paths (a file that does not exist yet is absent):\n"
+        + string.Join("\n", request.Paths)
+        + "\n\nThe user's request was:\n" + Shorten(request.OriginalRequest, MaxInputChars)
+        + "\n\nYour earlier reply, before the files were available:\n" + Shorten(request.Context, MaxContinuationContextChars)
+        + "\n\nContinue the request using these files. Edit only what is needed; the user reviews every change before it goes live.";
+
+    /// <summary>
+    /// Asks Core's <c>changes diff</c> whether this task has edits that can still be reviewed. Review changes appears only
+    /// for real edits; an unreadable answer hides it and says so, and the next completed response or reconnect checks again.
+    /// </summary>
+    private async Task RefreshChangesAsync()
+    {
+        if (_taskId is not { } taskId) return;
+        var check = ++_changeCheck;
+        var diff = await _cli.RunAsync(AssistantCliCommands.Diff(taskId), QueryTimeout, CancellationToken.None);
+        if (check != _changeCheck || taskId != _taskId) return;
+        var pending = ReadReviewableChanges(diff, taskId);
+        HasChanges = pending > 0;
+        if (pending < 0)
+            StatusDetail = "Could not check this task's working copy for edits. It is checked again after the next response or when you reconnect.";
+    }
+
+    /// <summary>Edited files Core can still stage for this task: 0 when none or already applied, -1 when the answer is unusable.</summary>
+    internal static int ReadReviewableChanges(AssistantCliResult diff, string taskId)
+    {
+        if (!diff.Ok || AssistantCliService.GetString(diff.Data, "task_id") != taskId || Prop(diff.Data, "files") is not { ValueKind: JsonValueKind.Array } files)
+            return -1;
+        var state = AssistantCliService.GetString(diff.Data, "state");
+        // An apply or rollback that did not finish leaves the outcome unknown, so nothing is assumed about the edits.
+        if (state is "" or "interrupted" or "in_progress" or "rollback_interrupted") return -1;
+        if (state is not ("prepared" or "staged")) return 0;
+        return files.GetArrayLength();
+    }
+
+    private void RaiseFileRequest()
+    {
+        OnPropertyChanged(nameof(HasFileRequest));
+        OnPropertyChanged(nameof(FileRequestPaths));
+        AllowFileAccessCommand.RaiseCanExecuteChanged();
+        DeclineFileAccessCommand.RaiseCanExecuteChanged();
+    }
 
     // --- Review and live changes --------------------------------------------------------------
 
@@ -751,6 +1041,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
         if (batch.Files.Count == 0)
         {
+            HasChanges = false;
             SetState(SessionState(), "There are no changes to review yet.");
             return;
         }
@@ -832,6 +1123,7 @@ public sealed class AssistantViewModel : ObservableObject
         RaiseReview();
         OutcomeText = DescribeApply(result, batch.Files.Count, out _canRollback, out _canCheckOutcome);
         SetState(SessionState(), OutcomeText);
+        await RefreshChangesAsync();
     }
 
     /// <summary>
@@ -1177,6 +1469,8 @@ public sealed class AssistantViewModel : ObservableObject
         OnPropertyChanged(nameof(ReviewValidationText));
         OnPropertyChanged(nameof(HasReviewWarnings));
         OnPropertyChanged(nameof(IsReviewVisible));
+        OnPropertyChanged(nameof(IsChangesVisible));
+        OnPropertyChanged(nameof(IsSidePanelVisible));
     }
 
     private void RaiseCommands()
@@ -1185,7 +1479,8 @@ public sealed class AssistantViewModel : ObservableObject
         foreach (var command in new System.Windows.Input.ICommand[]
                  {
                      ConnectCommand, RunProbeCommand, SignInCommand, OpenSignInUrlCommand, StopCommand, SendCommand, NewTaskCommand,
-                     ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand
+                     ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand,
+                     AllowFileAccessCommand, DeclineFileAccessCommand
                  })
         {
             switch (command)

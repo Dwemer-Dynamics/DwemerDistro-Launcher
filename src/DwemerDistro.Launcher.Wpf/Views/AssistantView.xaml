@@ -33,9 +33,9 @@
             </Grid.RowDefinitions>
 
             <StackPanel Margin="0,0,0,10">
-                <TextBlock Text="ASSISTANT" Style="{StaticResource GameCenter.Heading}" />
-                <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0"
-                           Text="Chat with Codex about an isolated working copy of your server. Live files change only after you review and approve a batch." />
+                <TextBlock Text="ASSISTANT · CHIM" Style="{StaticResource GameCenter.Heading}" />
+                <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Text="Describe what you want to fix or change in your CHIM server. The assistant works on an isolated copy and asks before it sees any file; live files change only after you review and approve." />
             </StackPanel>
 
             <!-- Header: what is connected, as whom, and the session actions. -->
@@ -113,13 +113,33 @@
                                     HorizontalAlignment="Left" AutomationProperties.HelpText="Open the sign-in page in your browser." />
                         </StackPanel>
                     </Border>
+
+                    <!-- Advanced: collapsed by default; task details and hand-picked files for the next New task. -->
+                    <CheckBox x:Name="AdvancedToggle" Content="Advanced" Style="{StaticResource GameCenter.CheckBox}" Margin="0,8,0,0"
+                              HorizontalAlignment="Left" IsChecked="False"
+                              AutomationProperties.HelpText="Show the task details and choose files by path for the next new task." />
+                    <Border x:Name="AdvancedPanel" Visibility="{Binding IsChecked, ElementName=AdvancedToggle, Converter={StaticResource BoolToVisibility}}"
+                            BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,6,0,0">
+                        <StackPanel>
+                            <TextBlock x:Name="TaskLabel" Text="Current task" Style="{StaticResource GameCenter.Caption}" />
+                            <TextBox Text="{Binding TaskText, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}" FontFamily="Consolas"
+                                     FontSize="12" Margin="0,3,0,8" AutomationProperties.LabeledBy="{Binding ElementName=TaskLabel}" />
+                            <TextBlock x:Name="PathsLabel" Text="Files for the next New task (optional, one path relative to the CHIM folder per line)"
+                                       Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,3" />
+                            <TextBox Text="{Binding RelativePathsText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}"
+                                     AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="12"
+                                     Height="70" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" MaxLength="5000"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=PathsLabel}"
+                                     AutomationProperties.HelpText="Usually not needed: the assistant asks for the files it needs. Leave empty for a diagnostic workspace. Used when New task prepares a working copy." />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 
             <Grid x:Name="BodyGrid" Grid.Row="2" MinHeight="0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition x:Name="SideColumn" Width="320" />
+                    <ColumnDefinition x:Name="SideColumn" Width="0" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition x:Name="ChatRow" Height="*" />
@@ -131,6 +151,7 @@
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <ScrollViewer x:Name="TranscriptScroll" VerticalScrollBarVisibility="Auto" Padding="12,10" Focusable="False">
@@ -157,7 +178,39 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </ScrollViewer>
-                        <Grid Grid.Row="1" Margin="10" IsEnabled="{Binding IsInputEnabled}">
+
+                        <!-- File access: what the assistant asked for. Nothing is copied until Allow access is clicked. -->
+                        <Border x:Name="AccessCard" Grid.Row="1" Margin="10,0,10,0" Padding="10" CornerRadius="4" BorderThickness="1"
+                                BorderBrush="{DynamicResource GameCenter.Gold}" Background="{DynamicResource GameCenter.GoldTint}"
+                                Visibility="{Binding HasFileRequest, Converter={StaticResource BoolToVisibility}}"
+                                AutomationProperties.Name="File access request" AutomationProperties.LiveSetting="Polite">
+                            <StackPanel>
+                                <TextBlock Text="The assistant asks to read and edit these CHIM files" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource GameCenter.Text}" TextWrapping="Wrap" />
+                                <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto" Margin="0,4,0,4" Focusable="False">
+                                    <ItemsControl x:Name="AccessPaths" ItemsSource="{Binding FileRequestPaths}" Focusable="False"
+                                                  AutomationProperties.Name="Requested files">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12" Foreground="{DynamicResource GameCenter.Text}"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                                <TextBlock Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                           Text="Allow access copies only these files into a fresh isolated working copy and continues your request there. Live files change only after you review and approve." />
+                                <WrapPanel>
+                                    <Button Content="Allow access" Command="{Binding AllowFileAccessCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                            Margin="0,0,6,0" MinWidth="110"
+                                            AutomationProperties.HelpText="Copy only the listed files into a new isolated working copy and continue." />
+                                    <Button Content="Not now" Command="{Binding DeclineFileAccessCommand}" Style="{StaticResource Assistant.Action}" Margin="0"
+                                            AutomationProperties.HelpText="Dismiss this request. Nothing is shared." />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Grid.Row="2" Margin="10" IsEnabled="{Binding IsInputEnabled}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -174,25 +227,18 @@
                     </Grid>
                 </Border>
 
-                <!-- Task, review and live-change controls -->
-                <ScrollViewer x:Name="SidePanel" Grid.Column="1" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto" Focusable="False">
+                <!-- Review and live-change controls; this column is shown only while one of its cards is. -->
+                <ScrollViewer x:Name="SidePanel" Grid.Column="1" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto" Focusable="False"
+                              Visibility="{Binding IsSidePanelVisible, Converter={StaticResource BoolToVisibility}}">
                     <StackPanel>
-                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10">
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.Gold}"
+                                Visibility="{Binding IsChangesVisible, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel>
-                                <TextBlock Text="TASK" Style="{StaticResource GameCenter.SectionHeading}" />
-                                <TextBlock Text="{Binding TaskText}" Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,8" />
-                                <TextBlock x:Name="ProductLabel" Text="Product" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,3" />
-                                <ComboBox ItemsSource="{Binding Products}" SelectedItem="{Binding SelectedProduct}" Style="{StaticResource GameCenter.ComboBox}"
-                                          HorizontalAlignment="Stretch" AutomationProperties.LabeledBy="{Binding ElementName=ProductLabel}" />
-                                <TextBlock x:Name="PathsLabel" Text="Files for the next task (optional, one relative path per line)"
-                                           Style="{StaticResource GameCenter.Caption}" Margin="0,8,0,3" />
-                                <TextBox Text="{Binding RelativePathsText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}"
-                                         AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="12"
-                                         Height="70" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" MaxLength="5000"
-                                         AutomationProperties.LabeledBy="{Binding ElementName=PathsLabel}"
-                                         AutomationProperties.HelpText="Leave empty for a diagnostic workspace with no files. Applies when the next task is prepared." />
-                                <Button Content="Review changes" Command="{Binding ReviewCommand}" Style="{StaticResource Assistant.Action}"
-                                        HorizontalAlignment="Left" Margin="0,8,0,0"
+                                <TextBlock Text="CHANGES READY" Style="{StaticResource GameCenter.SectionHeading}" />
+                                <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,8" TextWrapping="Wrap"
+                                           Text="The assistant edited files in its isolated copy. Nothing is live yet." />
+                                <Button Content="Review changes" Command="{Binding ReviewCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                        HorizontalAlignment="Left" MinWidth="96"
                                         AutomationProperties.HelpText="Freeze the assistant's current changes into one exact batch and show its diff." />
                             </StackPanel>
                         </Border>

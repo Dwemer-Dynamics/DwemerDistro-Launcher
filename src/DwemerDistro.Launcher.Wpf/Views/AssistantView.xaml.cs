@@ -39,6 +39,9 @@ public partial class AssistantView : UserControl
             _viewModel.PropertyChanged += ViewModel_PropertyChanged;
             _viewModel.Transcript.CollectionChanged += Transcript_CollectionChanged;
         }
+
+        _isNarrow = null;
+        ApplyLayout(ActualWidth);
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -50,6 +53,16 @@ public partial class AssistantView : UserControl
         else if (e.PropertyName == nameof(AssistantViewModel.OutcomeText))
         {
             RaiseLiveRegion(OutcomeTextBlock);
+        }
+        else if (e.PropertyName == nameof(AssistantViewModel.IsSidePanelVisible))
+        {
+            _isNarrow = null;
+            ApplyLayout(ActualWidth);
+        }
+        else if (e.PropertyName == nameof(AssistantViewModel.HasFileRequest) && _viewModel?.HasFileRequest == true)
+        {
+            AccessCard.BringIntoView();
+            RaiseLiveRegion(AccessCard);
         }
     }
 
@@ -162,7 +175,9 @@ public partial class AssistantView : UserControl
 
         _isNarrow = narrow;
         // Narrow: one column, the page scrolls, and the conversation keeps a usable fixed height.
-        SideColumn.Width = narrow ? new GridLength(0) : new GridLength(320);
+        // Wide: the conversation takes the full width until there is a review or live-change card to show.
+        var side = _viewModel?.IsSidePanelVisible == true;
+        SideColumn.Width = narrow || !side ? new GridLength(0) : new GridLength(320);
         Grid.SetColumn(SidePanel, narrow ? 0 : 1);
         Grid.SetRow(SidePanel, narrow ? 1 : 0);
         SidePanel.Margin = narrow ? new Thickness(0, 10, 0, 0) : new Thickness(10, 0, 0, 0);

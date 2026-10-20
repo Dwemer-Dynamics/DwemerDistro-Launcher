@@ -2443,6 +2443,96 @@ try
                && stagedReview.vm.StatusDetail.Contains("ext/a.php: PHP Parse error"),
             "A failed re-stage must clear the earlier reviewed batch, so nothing stale can be approved.");
         await stagedReview.vm.ShutdownAsync();
+
+        // File requests: only a closed block of safe relative paths becomes a proposal; anything else fails closed.
+        const string fence = "```" + AssistantViewModel.FileRequestTag;
+        Assert(AssistantViewModel.ParseFileRequest($"Need it.\n{fence}\next/a.php\next/b.php\n```", out var askedPaths, out var askedText, out _) == FileRequestParse.Valid
+               && askedPaths.SequenceEqual(new[] { "ext/a.php", "ext/b.php" }) && askedText == "Need it."
+               && AssistantViewModel.ParseFileRequest("plain answer", out _, out _, out _) == FileRequestParse.None,
+            "A valid file request must yield its paths in order and hide only the block.");
+        foreach (var bad in new[] { $"{fence}\next/a.php", $"{fence}\n../a.php\n```", $"{fence}\n/etc/passwd\n```", $"{fence}\n-x\n```",
+                     $"{fence}\n.ddistro-context/status.json\n```", $"{fence}\n```", $"{fence}\na\n```\n{fence}\nb\n```", $"{fence}\next/a.php\next/a.php\n```",
+                     $"{fence}\n" + string.Join("\n", Enumerable.Range(0, 21).Select(i => $"f{i}.php")) + "\n```" })
+            Assert(AssistantViewModel.ParseFileRequest(bad, out var badPaths, out var badText, out var badProblem) == FileRequestParse.Invalid
+                   && badPaths.Count == 0 && badText == bad && badProblem.Length > 0,
+                "A truncated, unsafe, empty, duplicated or oversized file request must fail closed: " + bad.Replace("\n", "|"));
+        string DiffDocumentText(string task, int files, string state = "prepared") =>
+            $"{{\"schema_version\":1,\"ok\":true,\"data\":{{\"task_id\":\"{task}\",\"state\":\"{state}\",\"diff\":\"\",\"diff_truncated\":false,\"files\":["
+            + string.Join(",", Enumerable.Range(0, files).Select(i => $"{{\"path\":\"f{i}.php\",\"action\":\"modify\"}}")) + "]}}";
+        AssistantCliResult DiffDocument(string state, int files, string task = "t") => AssistantCliService.Parse(new CommandResult(0, DiffDocumentText(task, files, state), ""));
+        Assert(AssistantViewModel.ReadReviewableChanges(DiffDocument("prepared", 2), "t") == 2 && AssistantViewModel.ReadReviewableChanges(DiffDocument("staged", 0), "t") == 0
+               && AssistantViewModel.ReadReviewableChanges(DiffDocument("applied", 2), "t") == 0 && AssistantViewModel.ReadReviewableChanges(DiffDocument("interrupted", 2), "t") == -1
+               && AssistantViewModel.ReadReviewableChanges(DiffDocument("prepared", 2, "other"), "t") == -1,
+            "Review changes must follow Core's diff: reviewable edits only, and an unknown or foreign answer is not 'no changes'.");
+
+        var access = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        var workspaceEdits = 0;
+        const string newTask = "99999999-2222-3333-4444-555555555555";
+        access.cli.Script = command => command.StartsWith("changes diff ")
+            ? DiffDocumentText(command.EndsWith(newTask) ? newTask : savedReference.TaskId, workspaceEdits)
+            : command.StartsWith("changes prepare") ? $"{{\"schema_version\":1,\"ok\":true,\"data\":{{\"task_id\":\"{newTask}\",\"diagnostic_only\":false}}}}" : null;
+        // The page's notifications are dispatcher posts this console never pumps, so they are delivered directly; the turn
+        // runner reads turn/completed from the transport itself, and the trailing marker shows it has been handled.
+        void Notify(string method, string json) => access.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
+        int TurnStarts() { lock (access.transport.Requests) return access.transport.Bodies.Count(body => body.StartsWith("turn/start")); }
+        async Task CompleteTurnAsync(string request, string reply, string status = "completed")
+        {
+            var started = TurnStarts();
+            access.vm.InputText = request;
+            access.vm.SendCommand.Execute(null);
+            await WaitUntilAsync(() => access.vm.State == AssistantState.Streaming && TurnStarts() > started);
+            Notify("item/completed", "{\"threadId\":\"thr-saved\",\"item\":{\"type\":\"agentMessage\",\"id\":\"msg-" + Guid.NewGuid().ToString("N") + "\",\"text\":"
+                + System.Text.Json.JsonSerializer.Serialize(reply) + "}}");
+            await CompleteTurn(status);
+        }
+        async Task CompleteTurn(string status = "completed")
+        {
+            var completed = "{\"threadId\":\"thr-saved\",\"turn\":{\"id\":\"turn-1\",\"status\":\"" + status + "\"}}";
+            access.transport.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":" + completed + "}");
+            access.transport.Incoming.Writer.TryWrite("{\"method\":\"test/marker\",\"params\":{}}");
+            await WaitUntilAsync(() => access.transport.Incoming.Reader.Count == 0);
+            Notify("turn/completed", completed);
+        }
+        Assert(!access.vm.HasChanges && !access.vm.IsSidePanelVisible && access.cli.Calls.Contains("changes diff " + savedReference.TaskId)
+               && access.vm.StatusDetail.StartsWith("Could not check"),
+            "A reopened task whose edits cannot be read must not claim Changes ready, open the side column, or stay silent.");
+        await CompleteTurnAsync("Fix the greeting", $"I need the plugin file.\n{fence}\next/a.php\n```", status: "interrupted");
+        Assert(!access.vm.HasFileRequest, "A file request from a turn that did not complete must not become a proposal.");
+        await CompleteTurnAsync("Fix the greeting", $"I need the plugin file.\n{fence}\next/a.php\n```");
+        Assert(access.vm.HasFileRequest && access.vm.AllowFileAccessCommand.CanExecute(null)
+               && access.vm.Transcript[^1].Text == "I need the plugin file." && !access.cli.Calls.Any(c => c.StartsWith("changes prepare")),
+            "A valid request must show the access card, hide the raw block, and prepare nothing before the user allows it.");
+        var startsBeforeWait = TurnStarts();
+        access.vm.InputText = "actually, wait";
+        access.vm.SendCommand.Execute(null);
+        Assert(!access.vm.HasFileRequest && !access.vm.AllowFileAccessCommand.CanExecute(null),
+            "A new turn must make the earlier file request stale, so it can no longer be allowed.");
+        await WaitUntilAsync(() => TurnStarts() > startsBeforeWait);
+        await CompleteTurn();
+        Assert(access.vm.State == AssistantState.Ready, "The interrupting turn must complete normally.");
+
+        workspaceEdits = 1;
+        await CompleteTurnAsync("Fix the greeting", $"Edited, but I also need another file.\n{fence}\next/b.php\n```");
+        await WaitUntilAsync(() => access.vm.HasChanges);
+        Assert(access.vm.HasChanges && access.vm.IsChangesVisible && access.vm.IsSidePanelVisible, "Edits found by Core's diff after a completed turn must show Review changes.");
+        access.vm.AllowFileAccessCommand.Execute(null);
+        await WaitUntilAsync(() => access.vm.StatusDetail.Contains("not reviewed"));
+        Assert(!access.cli.Calls.Any(c => c.StartsWith("changes prepare")) && access.cli.ServedTask == savedReference.TaskId && access.vm.StatusDetail.Contains("not reviewed"),
+            "Allowing access must not silently abandon unreviewed edits in the current working copy.");
+
+        workspaceEdits = 0;
+        await CompleteTurnAsync("Fix the greeting", $"I need the plugin file.\n{fence}\next/a.php\n```");
+        await WaitUntilAsync(() => access.vm.State == AssistantState.Ready && !access.vm.HasChanges);
+        Assert(!access.vm.IsSidePanelVisible && access.vm.HasFileRequest, "Once Core's diff reports no edits, Review changes and the side column must go away.");
+        access.vm.AllowFileAccessCommand.Execute(null);
+        await WaitUntilAsync(() => { lock (access.transport.Requests) return access.transport.Bodies.Any(body => body.StartsWith("turn/start") && body.Contains("ext/a.php")); });
+        string[] continued;
+        lock (access.transport.Requests) continued = access.transport.Bodies.Where(body => body.StartsWith("turn/start") && body.Contains("ext/a.php")).ToArray();
+        Assert(access.cli.Calls.Contains("changes prepare --product herika --path ext/a.php") && access.cli.ServedTask == newTask
+               && stateStore.Load() is { TaskId: newTask, InstallationId: var keptInstallation, Provider: "codex" } && keptInstallation == installationId
+               && continued.Length == 1 && continued[0].Contains("Fix the greeting") && !access.vm.HasFileRequest,
+            "Allow must prepare exactly the requested paths, keep the installation identity, and continue the original request in the new task.");
+        await access.vm.ShutdownAsync();
     }
     finally
     {
