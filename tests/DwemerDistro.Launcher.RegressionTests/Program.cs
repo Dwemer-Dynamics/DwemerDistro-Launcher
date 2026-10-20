@@ -3881,7 +3881,7 @@ try
         tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse(CoverageItem("cv9", "ddistro_read", "checked",
             health: "{\"passed\":\"x\",\"failed\":9,\"skipped\":9}", turn: "turn-3")).RootElement);
         await CompleteToolTurn("turn-3");
-        var healthLine = tools.vm.Transcript.LastOrDefault(item => item.Role == AssistantViewModel.ActivityRole && item.Text.StartsWith("Health checks"));
+        var healthLine = tools.vm.Transcript.LastOrDefault(item => item.Role == AssistantViewModel.ActivityRole && item.Text.StartsWith("Health check results seen"));
         Assert(healthLine is not null && healthLine.Text.Contains("1 failed, 2 skipped") && !healthLine.Text.Contains("refused") && !healthLine.Text.Contains("9")
                && tools.vm.Transcript.Count(item => item.Text.StartsWith("Partial check")) == 1 && tools.vm.State == AssistantState.Ready,
             "Only the running turn's items count; verified health failed/skipped counts show, a malformed health block does not.");
@@ -3899,6 +3899,40 @@ try
                && AssistantViewModel.DescribeCoverage(new Dictionary<string, int> { ["checked"] = 4 }) is null
                && AssistantViewModel.DescribeCoverage(new Dictionary<string, int>()) is null,
             "Coverage without a valid broker result falls back to the item's own status; only DwemerDistro tools count; all-checked shows nothing.");
+        // Health checks are unique by the broker's check id with the latest result: health herika then health (all) reported
+        // 1+4 failed and 1+16 skipped as summaries but are 4 and 16 checks; a later full read never wipes another check's result.
+        AssistantViewModel.HealthCoverage? Health(string block)
+        {
+            AssistantViewModel.ReadCoverage(System.Text.Json.JsonDocument.Parse(CoverageItem("h", "ddistro_read", "checked", health: block)).RootElement.GetProperty("item"), out var parsed);
+            return parsed;
+        }
+        string Checks(params string[] pairs) => "[" + string.Join(",", pairs.Select(pair => "{\"id\":\"" + pair.Split('=')[0] + "\",\"result\":\"" + pair.Split('=')[1] + "\"}")) + "]";
+        var overlapCounts = new Dictionary<string, int> { ["checked"] = 3 };
+        var overlapChecks = new Dictionary<string, string>();
+        var herikaRead = Health("{\"passed\":1,\"failed\":1,\"skipped\":1,\"checks_complete\":true,\"checks\":" + Checks("server.herika.port=failed", "server.herika.http=skipped", "disk./=passed") + "}");
+        var allRead = Health("{\"passed\":1,\"failed\":1,\"skipped\":1,\"checks_complete\":true,\"checks\":" + Checks("server.herika.port=failed", "disk./=skipped", "postgres.port=passed") + "}");
+        var laterRead = Health("{\"passed\":1,\"failed\":0,\"skipped\":0,\"checks_complete\":true,\"checks\":" + Checks("server.herika.port=passed") + "}");
+        foreach (var read in new[] { herikaRead, allRead }) AssistantViewModel.AddHealthCoverage(overlapCounts, overlapChecks, read!);
+        var overlapLine = AssistantViewModel.DescribeCoverage(overlapCounts, overlapChecks);
+        AssistantViewModel.AddHealthCoverage(overlapCounts, overlapChecks, laterRead!);
+        var latestLine = AssistantViewModel.DescribeCoverage(overlapCounts, overlapChecks);
+        Assert(overlapLine == "Health checks: 1 failed, 2 skipped; those parts are not verified healthy."
+               && latestLine == "Health checks: 2 skipped; those parts are not verified healthy."
+               && overlapChecks["server.herika.http"] == "skipped" && overlapChecks.Count == 4,
+            $"Overlapping health reads count unique checks, the latest result wins, and a read omitting a check keeps it ({overlapLine} / {latestLine}).");
+        var oddRead = Health("{\"passed\":0,\"failed\":0,\"skipped\":0,\"checks_complete\":true,\"checks\":" + Checks("server.x.port=unknown", "BAD ID=passed") + "}");
+        var oddCounts = new Dictionary<string, int> { ["checked"] = 1 };
+        var oddChecks = new Dictionary<string, string>();
+        AssistantViewModel.AddHealthCoverage(oddCounts, oddChecks, oddRead!);
+        var oldRead = Health("{\"passed\":4,\"failed\":1,\"skipped\":2}");
+        var oldCounts = new Dictionary<string, int> { ["checked"] = 2 };
+        AssistantViewModel.AddHealthCoverage(oldCounts, new Dictionary<string, string>(), oldRead!);
+        AssistantViewModel.AddHealthCoverage(oldCounts, new Dictionary<string, string>(), oldRead!);
+        Assert(oddRead is { Complete: false, Checks.Count: 0 } && oddChecks.Count == 0
+               && AssistantViewModel.DescribeCoverage(oddCounts, oddChecks) == "Health checks: some checks were not listed; those parts are not verified healthy."
+               && oldRead is { Checks: null, Failed: 1, Skipped: 2 }
+               && AssistantViewModel.DescribeCoverage(oldCounts)!.StartsWith("Health check results seen: 2 failed, 4 skipped (overlapping reads may repeat a check)"),
+            "An unknown result or id is never counted as passed and marks the list incomplete; an older broker's counts are labelled observations.");
         Assert(AssistantViewModel.BuildToolTurnContext(2, null).Contains(AssistantViewModel.MemoryReminder)
                && AssistantViewModel.BuildToolTurnContext(2, null).StartsWith(AssistantViewModel.ContextLabel)
                && AssistantViewModel.BuildToolTurnContext(2, null).Length < 2000
@@ -3954,12 +3988,43 @@ try
                && Revision(Caps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool.Replace("[\"propose_restart\"]", "[\"propose_restart\",\"stop\"]"))) == 3
                && AssistantViewModel.ToolRevisionFor(["ddistro_read", "ddistro_action"]) == 1
                && Enumerable.Range(0, 5).All(revision => !AssistantViewModel.HasActionTool(revision))
-               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(7)
+               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(9)
                && AssistantViewModel.HasMemoryTool(6) && !AssistantViewModel.HasMemoryTool(5) && AssistantViewModel.HasEnhancedRead(5)
                && AssistantViewModel.InstructionsFor(5).Contains(AssistantViewModel.ActionInstructions)
                && AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.MemoryInstructions)
                && !AssistantViewModel.InstructionsFor(4).Contains(AssistantViewModel.ActionInstructions),
             "Only Core's exact propose_restart tool with the enhanced read schema is revision 5/6, and only those threads get the action rules.");
+        // The performance read schema (operation performance plus log_source) is revision 7/8, only on top of 5/6; a partial
+        // offer stays at the lower revision, and revisions 0-6 or unknown ones never get the performance rules.
+        const string PerfRead = "\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false,\"max_log_lines\":400,\"log_filters\":[\"query\",\"since\"],"
+            + "\"operations\":[\"inventory\",\"status\",\"models\",\"logs\",\"health\",\"performance\"],\"log_sources\":[\"apache\",\"postgres\"]}";
+        System.Text.Json.JsonElement PerfCaps(string features, string extra, string read = PerfRead) =>
+            System.Text.Json.JsonDocument.Parse("{\"features\":{" + features + "}," + read + extra + EnhancedCoverage + "}").RootElement;
+        int PerfRevision(System.Text.Json.JsonElement caps) => AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(caps),
+            AssistantViewModel.OffersEnhancedRead(caps), AssistantViewModel.OffersPerformanceRead(caps));
+        const string AllFeatures = "\"assistant_tools\":true,\"assistant_actions\":true,\"performance\":true";
+        Assert(PerfRevision(PerfCaps(AllFeatures, ActionTool)) == 7
+               && PerfRevision(PerfCaps(AllFeatures + ",\"memory\":true", ",{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}" + ActionTool)) == 8
+               && PerfRevision(PerfCaps("\"assistant_tools\":true,\"performance\":true", ActionTool)) == 3
+               && PerfRevision(PerfCaps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool)) == 5
+               && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"postgres\"", ""))) == 5
+               && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"performance\"", ""))) == 5
+               && PerfRevision(withAction) == 5
+               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(9)
+               && AssistantViewModel.HasActionTool(7) && AssistantViewModel.HasActionTool(8) && AssistantViewModel.HasEnhancedRead(8)
+               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(9)
+               && AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.PerformanceInstructions) && !AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.MemoryInstructions)
+               && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.MemoryInstructions) && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ActionInstructions)
+               && !AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.PerformanceInstructions)
+               && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.PerformanceInstructions)
+               && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ActionInstructions),
+            "Only the full performance read with the action tool is revision 7/8; partial or unknown offers get no performance rules, actions or memory.");
+        var sourceCall = AssistantViewModel.DescribeToolCall(System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_read\",\"status\":\"completed\","
+            + "\"arguments\":{\"operation\":\"logs\",\"log_source\":\"apache\",\"lines\":20}}").RootElement);
+        var perfCall = AssistantViewModel.DescribeToolCall(System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_read\",\"status\":\"completed\","
+            + "\"arguments\":{\"operation\":\"performance\",\"product\":\"herika\"}}").RootElement);
+        Assert(sourceCall == "DwemerDistro read: logs · apache · 20 lines · done" && perfCall == "DwemerDistro read: performance · herika · done",
+            $"Activity lines name log_source reads and performance reads ({sourceCall} / {perfCall}).");
         string Update(string json) => AssistantViewModel.DescribeRestartUpdate(System.Text.Json.JsonDocument.Parse(json).RootElement);
         Assert(Update("{\"state\":\"verified\",\"verified\":true}").StartsWith("Restart verified")
                && Update("{\"state\":\"verified\",\"verified\":false}").Contains("could not be confirmed")

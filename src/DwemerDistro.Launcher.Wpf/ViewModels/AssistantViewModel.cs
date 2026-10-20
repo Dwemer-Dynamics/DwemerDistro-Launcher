@@ -113,7 +113,7 @@ public sealed class AssistantViewModel : ObservableObject
     private const int MaxCarriedMessages = 8;
     private const int MaxCarriedMessageChars = 1500;
     // Operations of the read tool shown in activity lines; anything else reads as "read".
-    private static readonly string[] ToolOperations = ["inventory", "status", "models", "logs", "health"];
+    private static readonly string[] ToolOperations = ["inventory", "status", "models", "logs", "health", "performance"];
 
     /// <summary>
     /// Sent as the thread's developer instructions. It describes the whole distro the assistant helps with, what it can
@@ -162,7 +162,7 @@ public sealed class AssistantViewModel : ObservableObject
         "You are not limited to CHIM.\n" +
         "Facts about the live distro come only from the " + ReadToolName + " tool, which DwemerDistro runs read-only outside your sandbox: " +
         "inventory (what is installed: servers, ext/ entries, component startup markers, custom mods), status and health (optionally for one " +
-        "server product), models (CHIM's configured profile models; product herika only), and logs (a server product, apache or postgres, an " +
+        "server product), models (CHIM's configured profile models; product herika only), and logs (a server product or the shared apache or postgres logs, an " +
         "allowlisted log name, a line count, and any filters the tool's own schema lists, such as a literal text query or a UTC since time; " +
         "a filtered read searches only a bounded recent tail, so say so when its result is not complete). Call it for every fact you state " +
         "about the user's current setup, and give each result's " +
@@ -195,25 +195,40 @@ public sealed class AssistantViewModel : ObservableObject
     /// <summary>
     /// The tool set a thread can have, as one number. 0 is none; 1 is <see cref="ReadToolName"/>; 2 adds
     /// <see cref="MemoryToolName"/>; 3 and 4 are 1 and 2 with the enhanced read schema (400 log lines, query/since filters,
-    /// coverage); 5 and 6 are 3 and 4 plus <see cref="ActionToolName"/>. The broker declares tools only on thread/start, so a
-    /// thread lacking something Core now offers is upgraded once to a new thread. Unknown revisions (from a newer launcher)
-    /// count as the read tool alone, so an older thread is never treated as able to propose a restart.
+    /// coverage); 5 and 6 are 3 and 4 plus <see cref="ActionToolName"/>; 7 and 8 are 5 and 6 with the performance read
+    /// schema (operation performance, server-only product, log_source for apache/postgres logs). A Core offering performance
+    /// without the action tool stays at 3/4, so no revision ever implies a tool the session lacks. The broker declares tools
+    /// only on thread/start, so a thread lacking something Core now offers is upgraded once to a new thread. Unknown
+    /// revisions (from a newer launcher) count as the read tool alone, so an older thread is never treated as able to
+    /// propose a restart.
     /// </summary>
-    internal static int ToolRevisionFor(IReadOnlyCollection<string> tools, bool enhancedRead = false) =>
-        ToolRevision(tools.Contains(ReadToolName), tools.Contains(MemoryToolName), enhancedRead, tools.Contains(ActionToolName));
+    internal static int ToolRevisionFor(IReadOnlyCollection<string> tools, bool enhancedRead = false, bool performanceRead = false) =>
+        ToolRevision(tools.Contains(ReadToolName), tools.Contains(MemoryToolName), enhancedRead, tools.Contains(ActionToolName), performanceRead);
 
-    private static int ToolRevision(bool read, bool memory, bool enhancedRead, bool action = false)
+    private static int ToolRevision(bool read, bool memory, bool enhancedRead, bool action = false, bool performanceRead = false)
     {
         if (!read) return 0;
+        if (action && enhancedRead && performanceRead) return memory ? 8 : 7;
         if (action && enhancedRead) return memory ? 6 : 5;
         return (memory ? 2 : 1) + (enhancedRead ? 2 : 0);
     }
 
-    internal static bool HasMemoryTool(int toolRevision) => toolRevision is 2 or 4 or 6;
+    internal static bool HasMemoryTool(int toolRevision) => toolRevision is 2 or 4 or 6 or 8;
 
-    internal static bool HasEnhancedRead(int toolRevision) => toolRevision is 3 or 4 or 5 or 6;
+    internal static bool HasEnhancedRead(int toolRevision) => toolRevision is >= 3 and <= 8;
 
-    internal static bool HasActionTool(int toolRevision) => toolRevision is 5 or 6;
+    internal static bool HasActionTool(int toolRevision) => toolRevision is >= 5 and <= 8;
+
+    internal static bool HasPerformanceRead(int toolRevision) => toolRevision is 7 or 8;
+
+    /// <summary>Added for threads with the performance read schema: what performance measures, and where shared logs now go.</summary>
+    internal const string PerformanceInstructions =
+        "This thread's " + ReadToolName + " also has performance (optionally for one server product): bounded local timings captured now, " +
+        "namely the fixed local HTTP health answers, one PostgreSQL SELECT 1 that includes client setup, and host load, memory and pressure. " +
+        "Durations are milliseconds measured by DwemerDistro, not LLM, TTS or in-game latency; report each measured, failed or skipped item " +
+        "with its unit and reason, say when the result is partial, and never call the setup fast, slow or healthy from it alone. apache and " +
+        "postgres are log sources, not products: read their logs with operation logs and log_source; status, health and performance take a " +
+        "server product or none.";
 
     /// <summary>
     /// Core's broker-owned live action: the model may only propose restarting an allowlisted service. The broker announces the
@@ -350,6 +365,8 @@ public sealed class AssistantViewModel : ObservableObject
     // DwemerDistro tool calls of the current turn by the broker's coverage result, and the items already counted.
     private readonly Dictionary<string, int> _turnCoverage = [];
     private readonly HashSet<string> _coveredItems = [];
+    // Health checks of the current turn by the broker's check id, holding each one's latest result (see AddHealthCoverage).
+    private readonly Dictionary<string, string> _turnHealthChecks = [];
     // The last finished turn of this thread, so its late items are not counted while the next turn's id is still unknown.
     private string? _endedTurnId;
 
@@ -605,7 +622,8 @@ public sealed class AssistantViewModel : ObservableObject
     /// </summary>
     private int ActiveToolRevision => ToolRevision(_threadToolRevision > 0 && _toolRevision > 0,
         HasMemoryTool(_threadToolRevision) && HasMemoryTool(_toolRevision), HasEnhancedRead(_threadToolRevision) && HasEnhancedRead(_toolRevision),
-        HasActionTool(_threadToolRevision) && HasActionTool(_toolRevision));
+        HasActionTool(_threadToolRevision) && HasActionTool(_toolRevision),
+        HasPerformanceRead(_threadToolRevision) && HasPerformanceRead(_toolRevision));
 
     internal static string Describe(AssistantState state) => state switch
     {
@@ -699,7 +717,8 @@ public sealed class AssistantViewModel : ObservableObject
 
             // Deleting a chat is offered only when Core says its broker forwards the task's own thread lifecycle, never by inference.
             CanDeleteChats = Prop(Prop(capabilities.Data, "features"), "thread_lifecycle").ValueKind == JsonValueKind.True;
-            _toolRevision = ToolRevisionFor(ReadOfferedTools(capabilities.Data), OffersEnhancedRead(capabilities.Data));
+            _toolRevision = ToolRevisionFor(ReadOfferedTools(capabilities.Data), OffersEnhancedRead(capabilities.Data),
+                OffersPerformanceRead(capabilities.Data));
             // Memory is automatic. Core's broker declares the memory tool only while retrieval is on as the session starts, so
             // retrieval and learning are configured on here, once, before the broker starts; only then does a new thread get
             // the memory tool. If Core keeps retrieval off the session has no memory tool, and the reason stays shown.
@@ -707,7 +726,8 @@ public sealed class AssistantViewModel : ObservableObject
             {
                 SetState(AssistantState.Checking, "Setting up automatic memory…");
                 if (!await Memory.EnsureAutomaticAsync())
-                    _toolRevision = ToolRevision(true, false, HasEnhancedRead(_toolRevision), HasActionTool(_toolRevision));
+                    _toolRevision = ToolRevision(true, false, HasEnhancedRead(_toolRevision), HasActionTool(_toolRevision),
+                        HasPerformanceRead(_toolRevision));
                 if (_isShutDown) return;
             }
 
@@ -790,6 +810,20 @@ public sealed class AssistantViewModel : ObservableObject
             && Prop(tool, "max_log_lines") is { ValueKind: JsonValueKind.Number } lines && lines.TryGetInt32(out var max) && max >= 400
             && Prop(tool, "log_filters") is { ValueKind: JsonValueKind.Array } filters
             && new[] { "query", "since" }.All(filter => filters.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.String && item.GetString() == filter)));
+    }
+
+    /// <summary>
+    /// Core's performance read schema, from <c>capabilities</c>: features.performance true and a read tool listing both the
+    /// performance operation and the apache/postgres log_source values, so a thread is told about neither without the other.
+    /// </summary>
+    internal static bool OffersPerformanceRead(JsonElement capabilities)
+    {
+        static bool Lists(JsonElement array, params string[] values) => array.ValueKind == JsonValueKind.Array
+            && values.All(value => array.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.String && item.GetString() == value));
+        return Prop(Prop(capabilities, "features"), "performance").ValueKind == JsonValueKind.True
+            && Prop(Prop(capabilities, "assistant_tools"), "tools") is { ValueKind: JsonValueKind.Array } list
+            && list.EnumerateArray().Any(tool => AssistantCliService.GetString(tool, "name") == ReadToolName
+                && Lists(Prop(tool, "operations"), "performance") && Lists(Prop(tool, "log_sources"), "apache", "postgres"));
     }
 
     /// <summary>Core's <c>agent status</c> reason is a token; unknown tokens are shown, bounded, rather than hidden.</summary>
@@ -1289,7 +1323,8 @@ public sealed class AssistantViewModel : ObservableObject
     {
         if (toolRevision <= 0) return DeveloperInstructions;
         return ToolDeveloperInstructions + (HasMemoryTool(toolRevision) ? "\n" + MemoryInstructions : string.Empty)
-            + (HasActionTool(toolRevision) ? "\n" + ActionInstructions : string.Empty);
+            + (HasActionTool(toolRevision) ? "\n" + ActionInstructions : string.Empty)
+            + (HasPerformanceRead(toolRevision) ? "\n" + PerformanceInstructions : string.Empty);
     }
 
     /// <summary>Added for threads started with <see cref="MemoryToolName"/>; notes never outrank policy or fresh reads.</summary>
@@ -2102,11 +2137,10 @@ public sealed class AssistantViewModel : ObservableObject
                         && AssistantCliService.GetString(parameters, "turnId") is { Length: > 0 and <= 128 } itemTurn
                         && (_turns?.ActiveTurnId is { } activeTurn ? itemTurn == activeTurn : itemTurn != _endedTurnId)
                         && id.Length is > 0 and <= 128 && _coveredItems.Count < 256 && _coveredItems.Add(id)
-                        && ReadCoverage(item, out var healthFailed, out var healthSkipped) is { } result)
+                        && ReadCoverage(item, out var health) is { } result)
                     {
                         _turnCoverage[result] = _turnCoverage.GetValueOrDefault(result) + 1;
-                        _turnCoverage[HealthFailedKey] = _turnCoverage.GetValueOrDefault(HealthFailedKey) + healthFailed;
-                        _turnCoverage[HealthSkippedKey] = _turnCoverage.GetValueOrDefault(HealthSkippedKey) + healthSkipped;
+                        if (health is not null) AddHealthCoverage(_turnCoverage, _turnHealthChecks, health);
                     }
                 }
                 else if (type == "contextCompaction")
@@ -2153,7 +2187,7 @@ public sealed class AssistantViewModel : ObservableObject
                 else if (status == "failed")
                     AddSystem("The response failed: " + Shorten(AssistantCliService.GetString(Prop(turn, "error"), "message"), 200));
                 if (State != AssistantState.Streaming) break;
-                if (DescribeCoverage(_turnCoverage) is { } partial) AddActivity(partial);
+                if (DescribeCoverage(_turnCoverage, _turnHealthChecks) is { } partial) AddActivity(partial);
                 ResetCoverage();
                 SetState(AssistantState.Ready, "Response complete.");
                 if (status == "completed")
@@ -3392,7 +3426,7 @@ public sealed class AssistantViewModel : ObservableObject
                 : memoryStatus == "completed" || memorySuccess == JsonValueKind.True ? " · done" : " …");
         }
         var parts = new List<string> { ToolOperations.Contains(operation) ? operation : "read" };
-        foreach (var key in new[] { "product", "log" })
+        foreach (var key in new[] { "product", "log_source", "log" })
             if (AssistantCliService.GetString(arguments, key) is { Length: > 0 and <= 40 } value
                 && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.'))
                 parts.Add(value);
@@ -3422,15 +3456,21 @@ public sealed class AssistantViewModel : ObservableObject
     /// rust-v0.163.0 dynamicToolCall item (written by the broker, not the model). An older Core without coverage, or output that
     /// does not parse, counts only by the item's own status. Null for any other tool.
     /// </summary>
-    internal static string? ReadCoverage(JsonElement item) => ReadCoverage(item, out _, out _);
+    internal static string? ReadCoverage(JsonElement item) => ReadCoverage(item, out _);
 
     /// <summary>
-    /// Also the failed and skipped counts of the broker's coverage.health, when valid: a health read can complete (checked)
-    /// while some of its checks failed or were skipped, and those stay visible without calling the call itself a failure.
+    /// The broker's coverage.health of one health read, when valid: a health read can complete (checked) while some of its
+    /// checks failed or were skipped. Checks is the broker's id/result list (null from an older broker that sends counts
+    /// only); an entry that is not a known id and result is dropped and makes the list incomplete, never passed.
     /// </summary>
-    internal static string? ReadCoverage(JsonElement item, out int healthFailed, out int healthSkipped)
+    internal sealed record HealthCoverage(int Failed, int Skipped, IReadOnlyList<KeyValuePair<string, string>>? Checks, bool Complete);
+
+    private static readonly System.Text.RegularExpressions.Regex HealthCheckId = new(@"^[a-z][a-z0-9_./-]{0,63}\z");
+
+    /// <summary>Also the call's <see cref="HealthCoverage"/>, or null when the reply has none.</summary>
+    internal static string? ReadCoverage(JsonElement item, out HealthCoverage? healthCoverage)
     {
-        healthFailed = healthSkipped = 0;
+        healthCoverage = null;
         var tool = AssistantCliService.GetString(item, "tool");
         if (tool is not (ReadToolName or MemoryToolName)) return null;
         var fallback = AssistantCliService.GetString(item, "status") == "failed" || Prop(item, "success").ValueKind == JsonValueKind.False
@@ -3453,7 +3493,25 @@ public sealed class AssistantViewModel : ObservableObject
                 Prop(health, key) is { ValueKind: JsonValueKind.Number } n && n.TryGetInt32(out var v) && v is >= 0 and <= 1000 ? v : -1;
             if (health.ValueKind == JsonValueKind.Object && Count(health, "passed") >= 0 && Count(health, "failed") is >= 0 and var failed
                 && Count(health, "skipped") is >= 0 and var skipped)
-                (healthFailed, healthSkipped) = (failed, skipped);
+            {
+                List<KeyValuePair<string, string>>? checks = null;
+                var complete = true;
+                if (Prop(health, "checks") is { ValueKind: JsonValueKind.Array } list)
+                {
+                    checks = [];
+                    complete = Prop(health, "checks_complete").ValueKind == JsonValueKind.True;
+                    foreach (var check in list.EnumerateArray())
+                    {
+                        var id = AssistantCliService.GetString(check, "id");
+                        var outcome = AssistantCliService.GetString(check, "result");
+                        if (checks.Count < 64 && HealthCheckId.IsMatch(id) && outcome is "passed" or "failed" or "skipped")
+                            checks.Add(new(id, outcome));
+                        else
+                            complete = false;
+                    }
+                }
+                healthCoverage = new HealthCoverage(failed, skipped, checks, complete);
+            }
             return result;
         }
         catch (JsonException)
@@ -3463,30 +3521,66 @@ public sealed class AssistantViewModel : ObservableObject
     }
 
     /// <summary>One compact line when some of this turn's DwemerDistro calls did not fully complete; null when all were checked.</summary>
-    internal static string? DescribeCoverage(IReadOnlyDictionary<string, int> counts)
+    internal static string? DescribeCoverage(IReadOnlyDictionary<string, int> counts, IReadOnlyDictionary<string, string>? healthChecks = null)
     {
         var total = CoverageResults.Sum(result => counts.GetValueOrDefault(result));
         var gaps = new List<string>();
         foreach (var (result, words) in new[] { ("refused", "refused"), ("budget_hit", "hit the tool limit"), ("truncated", "truncated"),
                      ("failed", "failed"), ("skipped", "skipped") })
             if (counts.GetValueOrDefault(result) is > 0 and var n) gaps.Add($"{n} {words}");
-        var healthGaps = new List<string>();
-        if (counts.GetValueOrDefault(HealthFailedKey) is > 0 and var hf) healthGaps.Add($"{hf} failed");
-        if (counts.GetValueOrDefault(HealthSkippedKey) is > 0 and var hs) healthGaps.Add($"{hs} skipped");
-        var health = healthGaps.Count == 0 ? string.Empty
-            : $"Health checks: {string.Join(", ", healthGaps)}; those parts are not verified healthy.";
+        var healthParts = new List<string>();
+        // Unique checks by id (latest result each) from a current broker.
+        var uniqueGaps = new List<string>();
+        if ((healthChecks?.Values.Count(r => r == "failed") ?? 0) is > 0 and var uf) uniqueGaps.Add($"{uf} failed");
+        if ((healthChecks?.Values.Count(r => r == "skipped") ?? 0) is > 0 and var us) uniqueGaps.Add($"{us} skipped");
+        var unlisted = counts.GetValueOrDefault(HealthIncompleteKey) > 0;
+        if (uniqueGaps.Count > 0 || unlisted)
+            healthParts.Add("Health checks: " + string.Join(", ", uniqueGaps) + (unlisted ? (uniqueGaps.Count > 0 ? "; " : string.Empty)
+                + "some checks were not listed" : string.Empty) + "; those parts are not verified healthy.");
+        // An older broker sends counts only, which overlapping reads repeat, so they are observations, not unique checks.
+        var observed = new List<string>();
+        if (counts.GetValueOrDefault(HealthFailedKey) is > 0 and var hf) observed.Add($"{hf} failed");
+        if (counts.GetValueOrDefault(HealthSkippedKey) is > 0 and var hs) observed.Add($"{hs} skipped");
+        if (observed.Count > 0)
+            healthParts.Add($"Health check results seen: {string.Join(", ", observed)} (overlapping reads may repeat a check); " +
+                            "those parts are not verified healthy.");
+        var health = string.Join(" ", healthParts);
         if (total == 0 || gaps.Count == 0) return health.Length == 0 || total == 0 ? null : health;
         var partial = total - counts.GetValueOrDefault("checked");
         return $"Partial check: {partial} of {total} DwemerDistro tool call(s) in this response did not fully complete ({string.Join(", ", gaps)}). " +
                "Anything they would have shown is not covered." + (health.Length == 0 ? string.Empty : " " + health);
     }
 
-    private const string HealthFailedKey = "health:failed", HealthSkippedKey = "health:skipped";
+    private const string HealthFailedKey = "health:failed", HealthSkippedKey = "health:skipped", HealthIncompleteKey = "health:incomplete";
+    private const int MaxTurnHealthChecks = 256;
+
+    /// <summary>
+    /// Adds one health read to the turn. Listed checks update their id's latest result, so health herika then health (all)
+    /// counts each check once, a later pass replaces an earlier failure, and a read that omits a check leaves its earlier
+    /// result in place. Counts from an older broker are added as observations.
+    /// </summary>
+    internal static void AddHealthCoverage(Dictionary<string, int> counts, Dictionary<string, string> checks, HealthCoverage health)
+    {
+        if (health.Checks is null)
+        {
+            counts[HealthFailedKey] = counts.GetValueOrDefault(HealthFailedKey) + health.Failed;
+            counts[HealthSkippedKey] = counts.GetValueOrDefault(HealthSkippedKey) + health.Skipped;
+            return;
+        }
+        var complete = health.Complete;
+        foreach (var (id, result) in health.Checks)
+        {
+            if (checks.Count < MaxTurnHealthChecks || checks.ContainsKey(id)) checks[id] = result;
+            else complete = false;
+        }
+        if (!complete) counts[HealthIncompleteKey] = 1;
+    }
 
     private void ResetCoverage()
     {
         _turnCoverage.Clear();
         _coveredItems.Clear();
+        _turnHealthChecks.Clear();
     }
 
     /// <summary>Total tokens of the thread and the model's context window, when reported; empty otherwise.</summary>
