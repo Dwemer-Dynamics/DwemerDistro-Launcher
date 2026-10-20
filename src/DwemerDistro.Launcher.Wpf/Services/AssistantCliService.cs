@@ -80,6 +80,15 @@ public static partial class AssistantCliCommands
     public static string[] Capabilities() => ["capabilities"];
     public static string[] AgentStatus() => ["agent", "status"];
     public static string[] AgentProbe() => ["agent", "probe"];
+    /// <summary>Dry run for the one account-home config Core can repair; its sha256 is the proposal the user confirms.</summary>
+    public static string[] AgentHomeConfig() => ["agent", "home-config"];
+
+    public static string[] AgentHomeConfigRepair(string sha256)
+    {
+        if (!Sha256Regex().IsMatch(sha256 ?? string.Empty))
+            throw new ArgumentException("The proposal hash must be 64 lowercase hex characters.", nameof(sha256));
+        return ["agent", "home-config-repair", "--sha256", sha256!];
+    }
     /// <summary>CHIM's configured profile/model assignments, already projected and redacted by Core.</summary>
     public static string[] Models() => ["models", "herika"];
     /// <summary>A fresh, read-only presence snapshot of the whole distro: servers, ext folders, components, custom mods.</summary>

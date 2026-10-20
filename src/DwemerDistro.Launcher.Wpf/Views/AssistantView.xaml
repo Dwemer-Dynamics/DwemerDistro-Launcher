@@ -122,6 +122,21 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- Only for the broker's account_home_unmanaged_config refusal when Core's dry run found the one file it can repair.
+                         The status above explains it; nothing changes until Repair here, and Cancel changes nothing. -->
+                    <Border x:Name="HomeConfigRepairCard" Visibility="{Binding IsHomeConfigRepairOffered, Converter={StaticResource BoolToVisibility}}"
+                            BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
+                            AutomationProperties.Name="Confirm repairing the assistant's account settings file">
+                        <WrapPanel>
+                            <TextBlock x:Name="HomeConfigRepairText" Text="Move config.toml into quarantine and reconnect?" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,6" />
+                            <Button x:Name="RepairHomeConfigButton" Content="Repair" Command="{Binding RepairHomeConfigCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Move the file, unchanged, into DwemerDistro's private quarantine with a receipt, then reconnect. Sign-in and chats are kept." />
+                            <Button x:Name="CancelHomeConfigRepairButton" Content="Cancel" Command="{Binding CancelHomeConfigRepairCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Leave the file where it is. Nothing is changed; the assistant stays off." />
+                        </WrapPanel>
+                    </Border>
+
                     <!-- Memory is automatic. Only its problems or the last Clear memory outcome are shown, plus the confirmation. -->
                     <StackPanel DataContext="{Binding Memory}">
                         <TextBlock x:Name="MemoryStatusText" Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,8,0,0"

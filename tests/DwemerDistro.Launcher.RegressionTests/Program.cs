@@ -3787,8 +3787,12 @@ try
         var toolStore = new AssistantStateStore(toolStateRoot);
         var oldThread = new AssistantTaskReference(AssistantTaskReference.CurrentVersion, toolInstallation, LauncherConstants.DistroName,
             "codex", "herika", "11111111-2222-3333-4444-555555555555", "thr-old");
+        var toolTurns = 0;
         var tools = await ConnectAssistantAsync(toolStore, oldThread, toolInstallation, oldThread.TaskId,
-            script: command => command == "capabilities" ? ToolCapabilities : null);
+            script: command => command == "capabilities" ? ToolCapabilities : null,
+            respondFirst: (method, _) => method == "turn/start"
+                ? System.Text.Json.Nodes.JsonNode.Parse("{\"turn\":{\"id\":\"turn-" + Interlocked.Increment(ref toolTurns) + "\",\"items\":[],\"status\":\"inProgress\"}}")
+                : null);
         string[] ToolBodies() { lock (tools.transport.Requests) return tools.transport.Bodies.ToArray(); }
         var initialize = ToolBodies().Single(body => body.StartsWith("initialize "));
         Assert(tools.vm.State == AssistantState.Ready && initialize.Contains("\"experimentalApi\":true") && !tools.vm.HasReadTools
@@ -3826,6 +3830,87 @@ try
                && !AssistantViewModel.CarryForward(tools.vm.Transcript).Any(line => line.Contains("DwemerDistro read")),
             "A tool call must show once as muted activity without its result, and usage only for this thread.");
 
+        // Coverage comes from the broker's own reply in each dynamicToolCall item: counted per item of this thread's running
+        // turn, shown once as one compact line when something did not fully complete, and cleared for the next turn.
+        static string CoverageItem(string id, string tool, string? result, bool success = true, string? health = null, string turn = "turn-1") =>
+            "{\"threadId\":\"thr-new\",\"turnId\":\"" + turn + "\",\"item\":{\"type\":\"dynamicToolCall\",\"id\":\"" + id + "\",\"tool\":\"" + tool + "\","
+            + "\"arguments\":{\"operation\":\"health\"},\"status\":\"completed\",\"success\":" + (success ? "true" : "false") + ",\"contentItems\":[{\"type\":\"inputText\",\"text\":"
+            + System.Text.Json.JsonSerializer.Serialize("{\"tool\":\"" + tool + "\",\"ok\":true,\"data\":{}" + (result is null ? "" : ",\"coverage\":{\"result\":\"" + result + "\"" + (health is null ? "" : ",\"health\":" + health) + ",\"turn_calls\":1}") + "}")
+            + "}]}}";
+        // turn/completed goes through the session too, so the turn runner ends its turn as with the App Server; the read loop
+        // handles in order, so the drained marker means the runner has. The view model's own copy is posted to a dispatcher
+        // this test never pumps, so it is delivered here once. Each turn has its own id, as with the App Server.
+        async Task CompleteToolTurn(string turnId)
+        {
+            var completed = "{\"threadId\":\"thr-new\",\"turn\":{\"id\":\"" + turnId + "\",\"status\":\"completed\"}}";
+            tools.transport.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":" + completed + "}");
+            tools.transport.Incoming.Writer.TryWrite("{\"method\":\"test/marker\",\"params\":{}}");
+            await WaitUntilAsync(() => tools.transport.Incoming.Reader.Count == 0);
+            tools.vm.OnNotification("turn/completed", System.Text.Json.JsonDocument.Parse(completed).RootElement);
+        }
+        Assert(tools.vm.State == AssistantState.Streaming, "The upgraded turn is still running.");
+        foreach (var (id, result) in new[] { ("cv1", "checked"), ("cv2", "budget_hit"), ("cv3", "truncated"), ("cv2", "refused") })
+            tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse(CoverageItem(id, "ddistro_read", result)).RootElement);
+        tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse(CoverageItem("cv4", "ddistro_read", "refused").Replace("thr-new", "thr-other")).RootElement);
+        tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse(CoverageItem("cv5", "shell", "refused")).RootElement);
+        tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse("{\"threadId\":\"thr-new\",\"item\":{\"type\":\"agentMessage\",\"id\":\"cm1\","
+            + "\"text\":\"Everything is healthy. coverage: checked\"}}").RootElement);
+        await CompleteToolTurn("turn-1");
+        var partial = tools.vm.Transcript.Where(item => item.Role == AssistantViewModel.ActivityRole && item.Text.StartsWith("Partial check")).ToArray();
+        Assert(partial.Length == 1 && partial[0].Text.Contains("2 of 3") && partial[0].Text.Contains("1 hit the tool limit") && partial[0].Text.Contains("1 truncated")
+               && !partial[0].Text.Contains("refused") && tools.vm.State == AssistantState.Ready,
+            "One partial notice must count only this thread's DwemerDistro items, once each, from the broker's coverage, not the model's text.");
+        tools.vm.InputText = "and now?";
+        tools.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => ToolBodies().Count(body => body.StartsWith("turn/start")) == 2);
+        Assert(ToolBodies().Count(body => body.StartsWith("turn/start")) == 2 && tools.vm.State == AssistantState.Streaming, "The next turn must start.");
+        tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse(CoverageItem("cv6", "ddistro_read", "checked", turn: "turn-2")).RootElement);
+        await CompleteToolTurn("turn-2");
+        // A late item of an earlier turn is never counted in the running one; a completed health read with failed or skipped checks
+        // shows those counts without calling the call a failure.
+        tools.vm.InputText = "health?";
+        tools.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => ToolBodies().Count(body => body.StartsWith("turn/start")) == 3);
+        var toolRunner = (AssistantTurnRunner)typeof(AssistantViewModel).GetField("_turns", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(tools.vm)!;
+        await WaitUntilAsync(() => tools.vm.State == AssistantState.Streaming && toolRunner.ActiveTurnId == "turn-3");
+        tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse(CoverageItem("cv7", "ddistro_read", "refused", turn: "turn-2")).RootElement);
+        tools.vm.OnNotification("turn/completed", System.Text.Json.JsonDocument.Parse("{\"threadId\":\"thr-new\",\"turn\":{\"id\":\"turn-2\",\"status\":\"completed\"}}").RootElement);
+        Assert(tools.vm.State == AssistantState.Streaming, "A late completion of an earlier turn must not end the running one.");
+        tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse(CoverageItem("cv8", "ddistro_read", "checked",
+            health: "{\"passed\":4,\"failed\":1,\"skipped\":2}", turn: "turn-3")).RootElement);
+        tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse(CoverageItem("cv9", "ddistro_read", "checked",
+            health: "{\"passed\":\"x\",\"failed\":9,\"skipped\":9}", turn: "turn-3")).RootElement);
+        await CompleteToolTurn("turn-3");
+        var healthLine = tools.vm.Transcript.LastOrDefault(item => item.Role == AssistantViewModel.ActivityRole && item.Text.StartsWith("Health checks"));
+        Assert(healthLine is not null && healthLine.Text.Contains("1 failed, 2 skipped") && !healthLine.Text.Contains("refused") && !healthLine.Text.Contains("9")
+               && tools.vm.Transcript.Count(item => item.Text.StartsWith("Partial check")) == 1 && tools.vm.State == AssistantState.Ready,
+            "Only the running turn's items count; verified health failed/skipped counts show, a malformed health block does not.");
+        var secondInput = TurnInput(ToolBodies().Where(body => body.StartsWith("turn/start")).ElementAt(1));
+        Assert(tools.vm.Transcript.Count(item => item.Text.StartsWith("Partial check")) == 1 && tools.vm.State == AssistantState.Ready,
+            "A new turn must start with cleared coverage, and an all-checked turn shows no notice.");
+        Assert(secondInput[0].Contains(AssistantViewModel.ToolScopeReminder) && !secondInput[0].Contains(AssistantViewModel.MemoryReminder)
+               && !secondInput[0].Contains(AssistantViewModel.UpgradeNote) && secondInput[0].Length < 1500,
+            $"A later turn must carry only the short current rules, no memory rules without the memory tool ({secondInput[0].Length} chars).");
+        Assert(AssistantViewModel.ReadCoverage(System.Text.Json.JsonDocument.Parse(CoverageItem("o1", "ddistro_read", null, success: false)).RootElement.GetProperty("item")) == "failed"
+               && AssistantViewModel.ReadCoverage(System.Text.Json.JsonDocument.Parse(CoverageItem("o2", "ddistro_read", null)).RootElement.GetProperty("item")) == "checked"
+               && AssistantViewModel.ReadCoverage(System.Text.Json.JsonDocument.Parse(CoverageItem("o3", "ddistro_read", "everything_fine")).RootElement.GetProperty("item")) == "checked"
+               && AssistantViewModel.ReadCoverage(System.Text.Json.JsonDocument.Parse(CoverageItem("o4", "ddistro_memory", "budget_hit")).RootElement.GetProperty("item")) == "budget_hit"
+               && AssistantViewModel.ReadCoverage(System.Text.Json.JsonDocument.Parse(CoverageItem("o5", "shell", "checked")).RootElement.GetProperty("item")) is null
+               && AssistantViewModel.DescribeCoverage(new Dictionary<string, int> { ["checked"] = 4 }) is null
+               && AssistantViewModel.DescribeCoverage(new Dictionary<string, int>()) is null,
+            "Coverage without a valid broker result falls back to the item's own status; only DwemerDistro tools count; all-checked shows nothing.");
+        Assert(AssistantViewModel.BuildToolTurnContext(2, null).Contains(AssistantViewModel.MemoryReminder)
+               && AssistantViewModel.BuildToolTurnContext(2, null).StartsWith(AssistantViewModel.ContextLabel)
+               && AssistantViewModel.BuildToolTurnContext(2, null).Length < 2000
+               && AssistantViewModel.MemoryReminder.Contains("never logs, secrets")
+               && AssistantViewModel.ToolScopeReminder.Contains("never call everything healthy")
+               && AssistantViewModel.ToolDeveloperInstructions.Contains("bounded recent tail") && !AssistantViewModel.ToolDeveloperInstructions.Contains("1-100 lines"),
+            "Memory threads get the short memory rules every turn; the rules forbid ungrounded all-healthy claims and describe bounded log filters.");
+        var filtered = AssistantViewModel.DescribeToolCall(System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_read\",\"status\":\"completed\","
+            + "\"arguments\":{\"operation\":\"logs\",\"product\":\"apache\",\"lines\":400,\"query\":\"SECRET-QUERY\",\"since\":\"2026-10-20T14:00:00Z\"}}").RootElement);
+        Assert(filtered.Contains("400 lines") && filtered.Contains("filtered") && !filtered.Contains("SECRET-QUERY") && !filtered.Contains("2026-10-20"),
+            "A filtered log read shows its line count and that it was filtered, never the query text.");
+
         // Long drafts are kept whole and refused, never cut.
         tools.vm.InputText = new string('x', AssistantViewModel.MaxInputChars + 5);
         Assert(tools.vm.InputText.Length == AssistantViewModel.MaxInputChars + 5 && tools.vm.IsInputTooLong && !tools.vm.SendCommand.CanExecute(null)
@@ -3841,10 +3926,142 @@ try
                && toolStore.Load() is { ThreadToolRevision: 1 } kept && kept.SupersededThreads!.SequenceEqual(["thr-old"]),
             "Without Core's tool the launcher must not opt in, and saved thread references must be kept.");
         await legacy.vm.ShutdownAsync();
+
+        // Core's enhanced read schema (400 lines, query/since, coverage) is a tool revision: thread/resume keeps a thread's
+        // declared schema, so a revision 2 thread moves once to a revision 4 thread; wording alone does not.
+        const string EnhancedTools = "\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false,\"max_log_lines\":400,\"log_filters\":[\"query\",\"since\"]}";
+        const string EnhancedCoverage = "],\"coverage\":{\"results\":[\"checked\",\"failed\",\"skipped\",\"refused\",\"truncated\",\"budget_hit\"]}}";
+        var enhancedRead = System.Text.Json.JsonDocument.Parse("{\"features\":{\"assistant_tools\":true}," + EnhancedTools + EnhancedCoverage + "}").RootElement;
+        Assert(AssistantViewModel.OffersEnhancedRead(enhancedRead)
+               && AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(enhancedRead), AssistantViewModel.OffersEnhancedRead(enhancedRead)) == 3
+               && !AssistantViewModel.OffersEnhancedRead(System.Text.Json.JsonDocument.Parse("{" + EnhancedTools + "]}}").RootElement)
+               && !AssistantViewModel.OffersEnhancedRead(System.Text.Json.JsonDocument.Parse("{" + EnhancedTools.Replace("400", "100") + EnhancedCoverage + "}").RootElement)
+               && !AssistantViewModel.HasMemoryTool(3) && AssistantViewModel.HasMemoryTool(4) && AssistantViewModel.HasEnhancedRead(4) && !AssistantViewModel.HasEnhancedRead(2)
+               && !AssistantViewModel.InstructionsFor(3).Contains(AssistantViewModel.MemoryInstructions) && AssistantViewModel.InstructionsFor(4).Contains(AssistantViewModel.MemoryInstructions)
+               && !AssistantViewModel.BuildToolTurnContext(3, null).Contains(AssistantViewModel.MemoryReminder),
+            "Only the full enhanced shape is revision 3; enhanced read without memory never gets the memory rules.");
+        var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
+        var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
+        {
+            "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true,\"assistant_tools\":true,\"memory\":true}," + EnhancedTools
+                + ",{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}" + EnhancedCoverage + "}}",
+            "memory status" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"present\":true,\"settings\":{\"retrieval\":true,\"auto_learning\":true},\"notes\":0}}",
+            _ => null
+        });
+        string[] EnhancedBodies() { lock (enhanced.transport.Requests) return enhanced.transport.Bodies.ToArray(); }
+        Assert(enhanced.vm.State == AssistantState.Ready && EnhancedBodies().Count(body => body.StartsWith("thread/start")) == 0
+               && EnhancedBodies().Single(body => body.StartsWith("thread/resume")).Contains("thr-mem2"),
+            "A revision 2 thread resumes as it was until its next message.");
+        enhanced.vm.InputText = "check the logs";
+        enhanced.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => EnhancedBodies().Any(body => body.StartsWith("turn/start")));
+        var enhancedInput = TurnInput(EnhancedBodies().Single(body => body.StartsWith("turn/start")));
+        Assert(EnhancedBodies().Count(body => body.StartsWith("thread/start")) == 1 && enhancedInput[0].Contains(AssistantViewModel.UpgradeNote)
+               && enhancedInput[0].Contains(AssistantViewModel.MemoryReminder) && EnhancedBodies().Single(body => body.StartsWith("thread/start")).Contains("tool holds short notes")
+               && toolStore.Load() is { ThreadId: "thr-new", ThreadToolRevision: 4 } moved && moved.SupersededThreads!.SequenceEqual(["thr-mem2"]) && moved.TaskId == oldThread.TaskId,
+            "With the enhanced schema offered, a revision 2 thread moves once to a revision 4 thread of the same task, keeping the earlier thread.");
+        var completedEnhanced = "{\"threadId\":\"thr-new\",\"turn\":{\"id\":\"turn-1\",\"status\":\"completed\"}}";
+        enhanced.transport.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":" + completedEnhanced + "}");
+        enhanced.transport.Incoming.Writer.TryWrite("{\"method\":\"test/marker\",\"params\":{}}");
+        await WaitUntilAsync(() => enhanced.transport.Incoming.Reader.Count == 0);
+        enhanced.vm.OnNotification("turn/completed", System.Text.Json.JsonDocument.Parse(completedEnhanced).RootElement);
+        await WaitUntilAsync(() => enhanced.vm.State == AssistantState.Ready);
+        enhanced.vm.InputText = "and now?";
+        enhanced.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => EnhancedBodies().Count(body => body.StartsWith("turn/start")) == 2);
+        Assert(EnhancedBodies().Count(body => body.StartsWith("thread/start")) == 1 && !TurnInput(EnhancedBodies().Last(body => body.StartsWith("turn/start")))[0].Contains(AssistantViewModel.UpgradeNote),
+            "The upgrade happens once: the next message stays on the revision 4 thread.");
+        await enhanced.vm.ShutdownAsync();
     }
     finally
     {
         if (Directory.Exists(toolStateRoot)) Directory.Delete(toolStateRoot, recursive: true);
+    }
+
+    // The broker refuses a session whose Codex account folder holds an unmanaged config. Only for that refusal, and only when
+    // Core's dry run calls it repairable, an inline card offers Repair; it confirms exactly the proposal's hash, then reconnects.
+    var homeStateRoot = Path.Combine(Path.GetTempPath(), "dwemerdistro-assistant-home-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var homeInstallation = "{" + Guid.NewGuid() + "}";
+        var homeStore = new AssistantStateStore(homeStateRoot);
+        var homeRef = new AssistantTaskReference(AssistantTaskReference.CurrentVersion, homeInstallation, LauncherConstants.DistroName,
+            "codex", "herika", "22222222-3333-4444-5555-666666666666", "thr-home");
+        var proposal = new string('b', 64);
+        var refusing = "account_home_unmanaged_config";
+        string? homeConfig = "{\"schema_version\":1,\"ok\":true,\"data\":{\"state\":\"repairable\",\"reason\":null,\"file\":\"config.toml\",\"sha256\":\"" + proposal + "\",\"size\":43,\"receipt\":null}}";
+        string? repairDoc = "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"busy\",\"message\":\"An assistant session is running.\",\"details\":{}}}";
+        var home = await ConnectAssistantAsync(homeStore, homeRef, homeInstallation, homeRef.TaskId,
+            respondFirst: (method, _) => method == "initialize" && refusing.Length > 0
+                ? System.Text.Json.Nodes.JsonNode.Parse("{\"$error\":{\"code\":-32001,\"message\":\"DwemerDistro assistant unavailable\",\"data\":{\"reason\":\"" + refusing + "\"}}}")
+                : null,
+            script: command => command == "agent home-config" ? homeConfig : command.StartsWith("agent home-config-repair") ? repairDoc : null);
+        int HomeChecks() => home.cli.Calls.Count(call => call == "agent home-config");
+        Assert(home.vm.State == AssistantState.Error && home.vm.IsHomeConfigRepairOffered && home.vm.RepairHomeConfigCommand.CanExecute(null)
+               && home.vm.StatusDetail.Contains("config.toml") && home.vm.StatusDetail.Contains("Nothing changes unless you press Repair")
+               && HomeChecks() == 1 && !home.cli.Calls.Any(call => call.StartsWith("agent home-config-repair")),
+            "The refusal must be explained plainly and offer Repair inline, running only Core's dry run.");
+        home.vm.CancelHomeConfigRepairCommand.Execute(null);
+        Assert(!home.vm.IsHomeConfigRepairOffered && !home.vm.RepairHomeConfigCommand.CanExecute(null) && home.vm.StatusDetail.StartsWith("Repair cancelled")
+               && !home.cli.Calls.Any(call => call.StartsWith("agent home-config-repair")),
+            "Cancel must change nothing and run nothing.");
+        await home.vm.ConnectAsync();
+        Assert(home.vm.IsHomeConfigRepairOffered && HomeChecks() == 2, "Connect must check again and offer the proposal again.");
+        home.vm.RepairHomeConfigCommand.Execute(null);
+        await WaitUntilAsync(() => home.vm.State == AssistantState.Error && !home.vm.IsHomeConfigRepairOffered);
+        Assert(home.cli.Calls.Contains("agent home-config-repair --sha256 " + proposal) && home.vm.StatusDetail.Contains("nothing was moved")
+               && home.vm.StatusDetail.Contains("Nothing was deleted") && home.cli.Calls.Count(call => call == "capabilities") == 2,
+            "A busy repair must report that nothing moved and must not reconnect on its own.");
+        await home.vm.ConnectAsync();
+        repairDoc = "{\"schema_version\":1,\"ok\":true,\"data\":{\"state\":\"repaired\",\"reason\":null,\"file\":\"config.toml\",\"sha256\":\"" + proposal
+            + "\",\"size\":43,\"receipt\":{\"id\":\"20261020T120000Z-abcd1234\",\"path\":\"/var/lib/dwemerdistro/assistant/agent/quarantine/x\"}}}";
+        refusing = string.Empty;
+        home.vm.RepairHomeConfigCommand.Execute(null);
+        await WaitUntilAsync(() => home.vm.State == AssistantState.Ready);
+        Assert(home.vm.State == AssistantState.Ready && home.cli.Calls.Count(call => call.StartsWith("agent home-config-repair")) == 2
+               && home.vm.Transcript.Any(item => item.Text.Contains("quarantine") && item.Text.Contains("20261020T120000Z-abcd1234"))
+               && !home.vm.IsHomeConfigRepairOffered && homeStore.Load() is { ThreadId: "thr-home" },
+            "A confirmed repair must name its receipt, reconnect, and keep the chat's thread.");
+        await home.vm.ShutdownAsync();
+
+        // Anything Core does not call repairable gets a plain reason and no Repair; another refusal never runs the dry run.
+        foreach (var (document, expected) in new[]
+                 {
+                     ("{\"schema_version\":1,\"ok\":true,\"data\":{\"state\":\"refused\",\"reason\":\"config_unknown_content\",\"file\":\"config.toml\",\"sha256\":null,\"size\":120,\"receipt\":null}}",
+                      "left exactly as it is"),
+                     ("{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"invalid_argument\",\"message\":\"Expected agent status\"}}", "Update Distro"),
+                     ("{\"schema_version\":1,\"ok\":true,\"data\":{\"state\":\"repairable\",\"reason\":null,\"file\":\"config.toml\",\"sha256\":\"not-a-hash\",\"size\":43,\"receipt\":null}}",
+                      "does not recognize")
+                 })
+        {
+            refusing = "account_home_unmanaged_config";
+            homeConfig = document;
+            var unknown = await ConnectAssistantAsync(homeStore, homeRef, homeInstallation, homeRef.TaskId,
+                respondFirst: (method, _) => method == "initialize"
+                    ? System.Text.Json.Nodes.JsonNode.Parse("{\"$error\":{\"code\":-32001,\"message\":\"DwemerDistro assistant unavailable\",\"data\":{\"reason\":\"" + refusing + "\"}}}")
+                    : null,
+                script: command => command == "agent home-config" ? homeConfig : null);
+            Assert(unknown.vm.State == AssistantState.Error && !unknown.vm.IsHomeConfigRepairOffered && !unknown.vm.RepairHomeConfigCommand.CanExecute(null)
+                   && unknown.vm.StatusDetail.Contains(expected) && !unknown.cli.Calls.Any(call => call.StartsWith("agent home-config-repair")),
+                "No repair may be offered unless Core's dry run proposes one: " + expected);
+            await unknown.vm.ShutdownAsync();
+        }
+        var other = await ConnectAssistantAsync(homeStore, homeRef, homeInstallation, homeRef.TaskId,
+            respondFirst: (method, _) => method == "initialize"
+                ? System.Text.Json.Nodes.JsonNode.Parse("{\"$error\":{\"code\":-32001,\"message\":\"DwemerDistro assistant unavailable\",\"data\":{\"reason\":\"busy\"}}}")
+                : null);
+        Assert(other.vm.State == AssistantState.Error && !other.vm.IsHomeConfigRepairOffered && other.vm.StatusDetail.Contains("(busy)")
+               && !other.cli.Calls.Any(call => call.StartsWith("agent home-config")),
+            "Only the account-home refusal may lead to the repair check.");
+        await other.vm.ShutdownAsync();
+        Assert(AssistantCliCommands.AgentHomeConfigRepair(proposal).SequenceEqual(["agent", "home-config-repair", "--sha256", proposal])
+               && ThrowsArgumentException(() => AssistantCliCommands.AgentHomeConfigRepair("--json"))
+               && ThrowsArgumentException(() => AssistantCliCommands.AgentHomeConfigRepair(proposal.ToUpperInvariant())),
+            "The repair argv carries only a validated 64-hex proposal.");
+    }
+    finally
+    {
+        if (Directory.Exists(homeStateRoot)) Directory.Delete(homeStateRoot, recursive: true);
     }
 
     // Markdown subset: chunks stay stable while a reply streams; links are http(s) only; HTML stays literal.
