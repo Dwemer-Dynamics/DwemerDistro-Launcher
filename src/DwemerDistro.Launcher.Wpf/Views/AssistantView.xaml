@@ -55,8 +55,11 @@
                                        AutomationProperties.Name="{Binding StatusText, StringFormat=Assistant status: {0}}"
                                        AutomationProperties.HelpText="{Binding StatusDetail}"
                                        AutomationProperties.LiveSetting="Polite" />
-                            <TextBlock Text="{Binding StatusDetail}" Style="{StaticResource GameCenter.Caption}" Margin="0,3,0,0"
-                                       MaxHeight="96" TextTrimming="CharacterEllipsis" />
+                            <ScrollViewer MaxHeight="96" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                          Focusable="False" Margin="0,3,0,0">
+                                <TextBlock x:Name="StatusDetailText" Text="{Binding StatusDetail}" Style="{StaticResource GameCenter.Caption}"
+                                           TextWrapping="Wrap" />
+                            </ScrollViewer>
                         </StackPanel>
                         <WrapPanel x:Name="SessionActions" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" MaxWidth="440">
                             <Button Content="Connect" Command="{Binding ConnectCommand}" Style="{StaticResource GameCenter.PrimaryButton}" Margin="0,0,6,6" MinWidth="96"
@@ -84,23 +87,16 @@
                         </WrapPanel>
                     </Grid>
 
-                    <WrapPanel Margin="0,8,0,0">
-                        <StackPanel Orientation="Horizontal" Margin="0,0,18,4">
+                    <WrapPanel Margin="0,6,0,0">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,18,2">
                             <TextBlock x:Name="ProviderLabel" Text="Provider" Style="{StaticResource Assistant.Label}" />
-                            <TextBlock Text="{Binding ProviderText}" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center"
+                            <TextBlock Text="{Binding ProviderText}" Style="{StaticResource GameCenter.Caption}" VerticalAlignment="Center"
                                        AutomationProperties.LabeledBy="{Binding ElementName=ProviderLabel}" />
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,18,4">
-                            <TextBlock x:Name="ModelLabel" Text="Model" Style="{StaticResource Assistant.Label}" />
-                            <ComboBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" DisplayMemberPath="DisplayName"
-                                      Style="{StaticResource GameCenter.ComboBox}" MinWidth="180" MaxWidth="260"
-                                      AutomationProperties.LabeledBy="{Binding ElementName=ModelLabel}"
-                                      AutomationProperties.HelpText="Models offered by the assistant for this account. Used from the next message." />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
                             <TextBlock x:Name="AccountLabel" Text="Account" Style="{StaticResource Assistant.Label}" />
-                            <TextBlock Text="{Binding AccountText}" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center"
-                                       TextTrimming="CharacterEllipsis" MaxWidth="260"
+                            <TextBlock Text="{Binding AccountText}" Style="{StaticResource GameCenter.Caption}" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="260" ToolTip="{Binding AccountText}"
                                        AutomationProperties.LabeledBy="{Binding ElementName=AccountLabel}" />
                         </StackPanel>
                     </WrapPanel>
@@ -212,14 +208,43 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
                             <TextBox x:Name="InputBox" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
                                      Style="{StaticResource Assistant.TextBox}" AcceptsReturn="True" TextWrapping="Wrap"
-                                     MinHeight="38" MaxHeight="120" VerticalScrollBarVisibility="Auto" MaxLength="8000"
+                                     MinHeight="38" MaxHeight="120" VerticalScrollBarVisibility="Auto"
                                      PreviewKeyDown="InputBox_PreviewKeyDown"
                                      AutomationProperties.Name="Message to the assistant"
-                                     AutomationProperties.HelpText="Enter sends. Shift+Enter adds a new line. Esc stops a response." />
+                                     AutomationProperties.HelpText="Enter sends. Shift+Enter adds a new line. Esc stops a response. Messages over 8,000 characters are not cut; shorten them to send." />
                             <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
                                     Margin="8,0,0,0" MinWidth="80" VerticalAlignment="Bottom" />
+                            <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,2">
+                                    <TextBlock x:Name="ModelLabel" Text="Model" Style="{StaticResource Assistant.Label}" />
+                                    <ComboBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" DisplayMemberPath="DisplayName"
+                                              Style="{StaticResource GameCenter.ComboBox}" MinWidth="150" MaxWidth="240"
+                                              AutomationProperties.LabeledBy="{Binding ElementName=ModelLabel}"
+                                              AutomationProperties.HelpText="Models offered by the assistant for this account. Used from the next message." />
+                                </StackPanel>
+                                <TextBlock x:Name="InputLengthText" Text="{Binding InputLengthText}" VerticalAlignment="Center" Margin="0,0,14,2"
+                                           FontSize="11.5" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsInputTooLong}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock x:Name="UsageTextBlock" Text="{Binding UsageText}" Style="{StaticResource GameCenter.Caption}"
+                                           VerticalAlignment="Center" FontSize="11.5" Margin="0,0,0,2"
+                                           AutomationProperties.Name="{Binding UsageText, StringFormat=Conversation usage: {0}}" />
+                            </WrapPanel>
                         </Grid>
                     </Grid>
                 </Border>
@@ -243,9 +268,17 @@
                         <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.Gold}"
                                 Visibility="{Binding IsReviewVisible, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel>
-                                <TextBlock Text="REVIEW" Style="{StaticResource GameCenter.SectionHeading}" />
-                                <TextBlock Text="{Binding ReviewSummary}" Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,6" MaxHeight="90"
-                                           TextTrimming="CharacterEllipsis" />
+                                <DockPanel>
+                                    <CheckBox x:Name="WiderReviewToggle" DockPanel.Dock="Right" Content="Wider" Style="{StaticResource GameCenter.CheckBox}"
+                                              VerticalAlignment="Center" Checked="WiderReviewToggle_Changed" Unchecked="WiderReviewToggle_Changed"
+                                              AutomationProperties.HelpText="Give the review more width on wide windows." />
+                                    <TextBlock Text="REVIEW" Style="{StaticResource GameCenter.SectionHeading}" />
+                                </DockPanel>
+                                <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                              Focusable="False" Margin="0,4,0,6">
+                                    <TextBlock x:Name="ReviewSummaryText" Text="{Binding ReviewSummary}" Style="{StaticResource GameCenter.Caption}"
+                                               TextWrapping="Wrap" />
+                                </ScrollViewer>
                                 <!-- Validation sits above Approve; a check DwemerDistro could not run is a warning, never shown as passed. -->
                                 <Border x:Name="ReviewValidation" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,0,0,8">
                                     <Border.Style>
@@ -293,7 +326,7 @@
                             <StackPanel>
                                 <TextBlock Text="LAST LIVE CHANGE" Style="{StaticResource GameCenter.SectionHeading}" />
                                 <TextBlock x:Name="OutcomeTextBlock" Text="{Binding OutcomeText}" Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,8"
-                                           AutomationProperties.LiveSetting="Assertive" />
+                                           TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" />
                                 <WrapPanel>
                                     <Button Content="Check status" Command="{Binding CheckOutcomeCommand}" Style="{StaticResource Assistant.Action}"
                                             AutomationProperties.HelpText="Ask DwemerDistro what this task's live change state is." />

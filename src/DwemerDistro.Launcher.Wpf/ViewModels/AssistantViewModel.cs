@@ -97,6 +97,8 @@ public sealed class AssistantViewModel : ObservableObject
     internal const int MaxTurnItemPages = 8;
     private const int MaxCarriedMessages = 8;
     private const int MaxCarriedMessageChars = 1500;
+    // Operations of the read tool shown in activity lines; anything else reads as "read".
+    private static readonly string[] ToolOperations = ["inventory", "status", "models", "logs", "health"];
 
     /// <summary>
     /// Sent as the thread's developer instructions. It describes the whole distro the assistant helps with, what it can
@@ -133,6 +135,55 @@ public sealed class AssistantViewModel : ObservableObject
         "an inventory is not a code audit. When asked which models are selected, answer from the model snapshot: list them by profile and role " +
         "with the exact IDs, give the capture time, and say whether the list is truncated. It covers configured CHIM profiles, not which NPC or " +
         "profile is active in game. If any part is unavailable, say so. Never read configuration, database or credential files to find any of this.";
+
+    /// <summary>
+    /// The developer instructions of a thread started with DwemerDistro's read tools. Facts come from fresh tool calls, not
+    /// from a snapshot sent with each message, and the instructions say what a check did and did not cover.
+    /// </summary>
+    internal const string ToolDeveloperInstructions =
+        "You are the DwemerDistro Assistant. You help the user set up, check, understand and troubleshoot their whole DwemerDistro: " +
+        "the managed game servers (CHIM/HerikaServer for Skyrim, LORKHAN, STOBE for Kenshi, Dialectic for Fallout: New Vegas/TTW, Reign), " +
+        "the Dwemer Dashboard, voice and speech components (text to speech, speech to text), embeddings, the CHIM MCP server, and custom mods. " +
+        "You are not limited to CHIM.\n" +
+        "Facts about the live distro come only from the " + ReadToolName + " tool, which DwemerDistro runs read-only outside your sandbox: " +
+        "inventory (what is installed: servers, ext/ entries, component startup markers, custom mods), status and health (optionally for one " +
+        "server product), models (CHIM's configured profile models; product herika only), and logs (a server product, apache or postgres, an " +
+        "allowlisted log name and 1-100 lines). Call it for every fact you state about the user's current setup, and give each result's " +
+        "captured_at time. Never answer from memory or earlier turns when a fresh read is possible, and never ask the user for a list or " +
+        "log the tool can read.\n" +
+        "When asked to check the setup, run health, plus inventory or status as needed, then report each check as passed, failed or skipped " +
+        "with its reason, and the limits of what was checked. Presence is not health: an installed server, extension or component is not " +
+        "proof that it is enabled, running, loaded, configured or correct, and health covers only what it reports. If a call fails or is " +
+        "refused, say so plainly; do not guess. The tool has per-turn and per-session call limits; when it says a limit is reached, answer " +
+        "from the evidence already gathered.\n" +
+        "You cannot run commands on the live distro, install, update, start, stop, repair or configure anything; the tool only reads. When " +
+        "the user asks for something you cannot execute, give concrete next steps (the launcher page or button, or a ddistro command they can " +
+        "run themselves) and say it cannot be done from here. Never claim you checked, ran or changed something you did not.\n" +
+        "File editing is separate from reading: it currently supports only CHIM (HerikaServer) files, copied into your isolated working copy " +
+        "at /work, and they change live only after the user reviews and approves the exact diff. Files of other servers, components or mods " +
+        "cannot be edited through the Assistant yet, but you can still read and diagnose them with the tool.\n" +
+        "If you need CHIM files to read or edit, explain why in plain words, then end your message with exactly one block:\n" +
+        "```" + FileRequestTag + "\n<one path per line, relative to the HerikaServer folder, e.g. ext/example/file.php>\n```\n" +
+        "List at most 20 files, only paths you are confident exist or must be created. Never ask for credentials, .env files, keys, " +
+        "databases or user configuration; DwemerDistro refuses them. The user decides; if they allow it, a fresh working copy with only those " +
+        "files is prepared and you are given their request again. Do not write the block for any other purpose.\n" +
+        "Each user message arrives after a short separate input that starts with \"" + ContextLabel + "\". The launcher adds it, not the user.\n" +
+        "Format replies in plain Markdown: headings, lists, emphasis, fenced code blocks, simple tables and http(s) links. HTML is shown as text.";
+
+    /// <summary>The one Core read tool the broker declares on thread/start for clients that opt into experimentalApi.</summary>
+    internal const string ReadToolName = "ddistro_read";
+
+    /// <summary>
+    /// The tool set a thread can have, as one number. 0 is none; 1 is <see cref="ReadToolName"/>. A later Core tool (for
+    /// example memory) adds a higher revision here, and threads started with less are upgraded once to a new thread.
+    /// </summary>
+    internal static int ToolRevisionFor(IReadOnlyCollection<string> tools) => tools.Contains(ReadToolName) ? 1 : 0;
+
+    /// <summary>Prepended to a launcher-made context after a tool upgrade; the earlier thread stays in the task's references.</summary>
+    internal const string UpgradeNote =
+        "This conversation was moved to a new thread of the same task so you can use DwemerDistro's read tools. The earlier thread is " +
+        "kept but not shared with you; below is a bounded summary of its recent messages, oldest first (messages may be shortened). " +
+        "Do not treat facts in it as current: read them again with the tool.";
 
     /// <summary>First line of the per-message context, so a resumed thread with older instructions still sees what it is.</summary>
     internal const string ContextLabel = "[DwemerDistro context for this message - added by the launcher, not typed by the user]";
@@ -225,6 +276,15 @@ public sealed class AssistantViewModel : ObservableObject
     private AssistantFileRequest? _fileRequest;
     private string? _pendingContinuation;
     private CancellationTokenSource? _contextLookup;
+    // The tool revision Core offers now (from capabilities), and the one the current thread was started with.
+    private int _toolRevision;
+    private int _threadToolRevision;
+    private List<string> _supersededThreads = [];
+    // The upgrade summary waits here until a turn of the new thread actually starts, so a Stop right after the upgrade keeps it.
+    private string? _pendingUpgrade;
+    // A thread whose upgrade failed in this session continues as it was; it is not tried again on every message.
+    private string? _upgradeFailedThread;
+    private string _usageText = string.Empty;
 
     /// <summary>
     /// Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect, either the
@@ -250,7 +310,7 @@ public sealed class AssistantViewModel : ObservableObject
             && State is AssistantState.Ready or AssistantState.Streaming);
         LoadNewerCommand = new AsyncRelayCommand(LoadNewerAsync, () => IsBrowsingHistory && !_isLoadingHistory);
         BackToLatestCommand = new RelayCommand(ShowLatest, () => IsBrowsingHistory);
-        SendCommand = new AsyncRelayCommand(SendAsync, () => State == AssistantState.Ready && InputText.Trim().Length > 0);
+        SendCommand = new AsyncRelayCommand(SendAsync, () => State == AssistantState.Ready && InputText.Trim().Length > 0 && !IsInputTooLong);
         NewTaskCommand = new AsyncRelayCommand(NewTaskAsync, () => State is AssistantState.Ready or AssistantState.Disconnected or AssistantState.Error or AssistantState.SignedOut);
         // An unconfirmed live change must be checked before another batch can be reviewed.
         ReviewCommand = new AsyncRelayCommand(ReviewAsync, () => State is AssistantState.Ready or AssistantState.Disconnected && _taskId is not null && !_canCheckOutcome);
@@ -388,10 +448,38 @@ public sealed class AssistantViewModel : ObservableObject
         get => _inputText;
         set
         {
-            var bounded = (value ?? string.Empty).Length > MaxInputChars ? value![..MaxInputChars] : value ?? string.Empty;
-            if (SetProperty(ref _inputText, bounded)) SendCommand.RaiseCanExecuteChanged();
+            // Never cut: a draft over the limit stays whole, says how much to remove, and cannot be sent.
+            if (!SetProperty(ref _inputText, value ?? string.Empty)) return;
+            OnPropertyChanged(nameof(InputLengthText));
+            OnPropertyChanged(nameof(IsInputTooLong));
+            SendCommand.RaiseCanExecuteChanged();
         }
     }
+
+    public bool IsInputTooLong => InputText.Trim().Length > MaxInputChars;
+
+    /// <summary>Shown under the composer once a draft nears the limit.</summary>
+    public string InputLengthText
+    {
+        get
+        {
+            var length = InputText.Trim().Length;
+            if (length > MaxInputChars) return $"{length:N0} / {MaxInputChars:N0} characters. Remove {length - MaxInputChars:N0} to send; nothing is cut.";
+            return length >= MaxInputChars * 3 / 4 ? $"{length:N0} / {MaxInputChars:N0} characters" : string.Empty;
+        }
+    }
+
+    /// <summary>Token use and compaction of the current thread, when the App Server reports them.</summary>
+    public string UsageText { get => _usageText; private set => SetProperty(ref _usageText, value); }
+
+    /// <summary>The current thread has DwemerDistro's read tools.</summary>
+    public bool HasReadTools => ActiveToolRevision > 0;
+
+    /// <summary>
+    /// The tools usable now: what the thread was started with, limited to what Core still answers. A tool thread resumed on
+    /// an older Core gets the per-message snapshots again rather than instructions for a tool nobody serves.
+    /// </summary>
+    private int ActiveToolRevision => Math.Min(_threadToolRevision, _toolRevision);
 
     internal static string Describe(AssistantState state) => state switch
     {
@@ -482,6 +570,8 @@ public sealed class AssistantViewModel : ObservableObject
                 return;
             }
 
+            _toolRevision = ToolRevisionFor(ReadOfferedTools(capabilities.Data));
+
             var agent = await RunCliAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, _lifetime.Token);
             if (!agent.Ok)
             {
@@ -517,6 +607,20 @@ public sealed class AssistantViewModel : ObservableObject
         {
             if (_client is null) ReleaseDistroActivity();
         }
+    }
+
+    /// <summary>
+    /// The read-only tools Core's broker declares, from <c>capabilities</c>: only when features.assistant_tools is true and
+    /// assistant_tools lists the tool as not mutating. Anything else offers none, and the launcher keeps per-message snapshots.
+    /// </summary>
+    internal static IReadOnlyCollection<string> ReadOfferedTools(JsonElement capabilities)
+    {
+        if (!AssistantCliService.GetBool(Prop(capabilities, "features"), "assistant_tools")
+            || Prop(Prop(capabilities, "assistant_tools"), "tools") is not { ValueKind: JsonValueKind.Array } tools)
+            return [];
+        return tools.EnumerateArray()
+            .Where(tool => AssistantCliService.GetString(tool, "name") == ReadToolName && Prop(tool, "mutates").ValueKind == JsonValueKind.False)
+            .Select(_ => ReadToolName).Distinct().ToArray();
     }
 
     /// <summary>Core's <c>agent status</c> reason is a token; unknown tokens are shown, bounded, rather than hidden.</summary>
@@ -570,6 +674,8 @@ public sealed class AssistantViewModel : ObservableObject
         _taskId = saved.TaskId;
         _threadId = saved.ThreadId;
         _earlierTasks = saved.EarlierTasks?.ToList() ?? [];
+        _threadToolRevision = saved.ThreadId is null ? 0 : saved.ThreadToolRevision ?? 0;
+        _supersededThreads = saved.SupersededThreads?.ToList() ?? [];
         SetLiveChangeFlags(AssistantCliService.GetString(status.Data, "state"));
         TaskText = $"Task {saved.TaskId} · CHIM · reopened";
         return true;
@@ -625,6 +731,9 @@ public sealed class AssistantViewModel : ObservableObject
     {
         _taskId = taskId;
         _threadId = null;
+        _threadToolRevision = 0;
+        _supersededThreads = [];
+        _pendingUpgrade = null;
         _canRollback = false;
         _canCheckOutcome = false;
         ClearFileRequest();
@@ -660,7 +769,7 @@ public sealed class AssistantViewModel : ObservableObject
 
         try
         {
-            await client.RequestAsync("initialize", new JsonObject
+            var initialize = new JsonObject
             {
                 ["clientInfo"] = new JsonObject
                 {
@@ -668,7 +777,10 @@ public sealed class AssistantViewModel : ObservableObject
                     ["title"] = "DwemerDistro Launcher",
                     ["version"] = LauncherConstants.LauncherVersion
                 }
-            }, RpcTimeout);
+            };
+            // Opting in makes Core's broker declare its read tool on thread/start; the launcher itself never sends dynamicTools.
+            if (_toolRevision > 0) initialize["capabilities"] = new JsonObject { ["experimentalApi"] = true };
+            await client.RequestAsync("initialize", initialize, RpcTimeout);
             await client.NotifyAsync("initialized", null);
             await RefreshAccountAsync(client);
         }
@@ -763,7 +875,10 @@ public sealed class AssistantViewModel : ObservableObject
             try
             {
                 // A long conversation can exceed the launcher's 4 MiB line limit, so history is read in pages afterwards.
-                var resume = new JsonObject { ["threadId"] = existing, ["developerInstructions"] = DeveloperInstructions, ["excludeTurns"] = true };
+                var resume = new JsonObject
+                {
+                    ["threadId"] = existing, ["developerInstructions"] = InstructionsFor(ActiveToolRevision), ["excludeTurns"] = true
+                };
                 CodexAppServerClient.AddConfinement(resume);
                 result = await client.RequestAsync("thread/resume", resume, RpcTimeout);
                 resumed = true;
@@ -773,20 +888,18 @@ public sealed class AssistantViewModel : ObservableObject
                 AddSystem("The earlier conversation for this task could not be resumed, so a new one was started.");
             }
         }
-        if (!resumed)
-        {
-            var start = new JsonObject { ["developerInstructions"] = DeveloperInstructions };
-            if (SelectedModel is not null) start["model"] = SelectedModel.Id;
-            CodexAppServerClient.AddConfinement(start);
-            result = await client.RequestAsync("thread/start", start, RpcTimeout);
-        }
+        if (!resumed) result = await StartThreadAsync(client);
         var threadId = AssistantCliService.GetString(Prop(result, "thread"), "id");
         if (threadId.Length == 0) throw new AppServerException(0, "The assistant did not open a conversation thread.");
         if (!CodexAppServerClient.IsConfined(result))
             throw new AppServerException(0, "The assistant did not confirm it is confined to the task's isolated workspace, so the session was closed.");
         if (resumed && threadId != _threadId) throw new AppServerException(0, "The assistant resumed a different conversation than this task's.");
+        // A replaced thread (one that could not be resumed) is kept in the task's references rather than lost.
+        if (!resumed && _threadId is { } replaced && replaced != threadId) KeepSuperseded(replaced);
+        if (!resumed) _threadToolRevision = _toolRevision;
         _threadId = threadId;
         SaveReference();
+        OnPropertyChanged(nameof(HasReadTools));
         if (_shownThreadId != threadId)
         {
             // Read once per thread shown: a reconnect, including one after a page that closed the session, never repeats it.
@@ -797,6 +910,70 @@ public sealed class AssistantViewModel : ObservableObject
             RaiseHistory();
         }
         _shownThreadId = threadId;
+    }
+
+    private static string InstructionsFor(int toolRevision) => toolRevision > 0 ? ToolDeveloperInstructions : DeveloperInstructions;
+
+    /// <summary>A new thread of the current task. Core's broker adds its tool declaration itself when this session opted in.</summary>
+    private async Task<JsonElement> StartThreadAsync(CodexAppServerClient client)
+    {
+        var start = new JsonObject { ["developerInstructions"] = InstructionsFor(_toolRevision) };
+        if (SelectedModel is not null) start["model"] = SelectedModel.Id;
+        CodexAppServerClient.AddConfinement(start);
+        return await client.RequestAsync("thread/start", start, RpcTimeout);
+    }
+
+    private void KeepSuperseded(string threadId)
+    {
+        _supersededThreads.Remove(threadId);
+        _supersededThreads.Add(threadId);
+        if (_supersededThreads.Count > AssistantTaskReference.MaxEarlierTasks)
+            _supersededThreads.RemoveRange(0, _supersededThreads.Count - AssistantTaskReference.MaxEarlierTasks);
+    }
+
+    /// <summary>
+    /// A thread started before Core offered its tools never gains them on resume. Before its next message, the task moves
+    /// once to a new thread started with them; the earlier thread id stays in the task's references, its messages stay
+    /// shown, and the new thread gets a bounded summary in the launcher's context. Returns that summary, or null when the
+    /// upgrade failed (the earlier thread then continues as it was).
+    /// </summary>
+    private async Task<string?> UpgradeThreadAsync(CodexAppServerClient client)
+    {
+        if (_threadId is not { } earlier || earlier == _upgradeFailedThread) return null;
+        _upgradeFailedThread = earlier;
+        // The message just sent is the last item; it goes to the new thread as itself, not in the summary.
+        var carried = CarryForward(LatestItems.Take(Math.Max(0, LatestItems.Count - 1)));
+        JsonElement result;
+        try
+        {
+            result = await StartThreadAsync(client);
+        }
+        catch (AppServerException ex)
+        {
+            if (ReferenceEquals(_client, client))
+                AddSystem("Could not move this conversation to a thread with DwemerDistro's read tools: " + Shorten(ex.Message, 160) +
+                          " It continues without them.");
+            return null;
+        }
+        var threadId = AssistantCliService.GetString(Prop(result, "thread"), "id");
+        if (!ReferenceEquals(_client, client)) return null;
+        if (threadId.Length == 0 || threadId == earlier || !CodexAppServerClient.IsConfined(result))
+        {
+            AddSystem("The new conversation thread was not confirmed, so this conversation continues without DwemerDistro's read tools.");
+            return null;
+        }
+        _upgradeFailedThread = null;
+        KeepSuperseded(earlier);
+        _threadId = threadId;
+        _shownThreadId = threadId;
+        _threadToolRevision = _toolRevision;
+        // The shown messages stay; older pages belong to the earlier thread, which Load earlier no longer reads.
+        ResetHistory();
+        SaveReference();
+        OnPropertyChanged(nameof(HasReadTools));
+        AddActivity("Upgraded once: this task continues in a new conversation thread with DwemerDistro's read tools. The earlier " +
+                    $"thread {Shorten(earlier, 12)} is kept in this task's references; the assistant gets a short summary of the recent messages, not the thread.");
+        return UpgradeNote + (carried.Count > 0 ? "\n" + string.Join("\n\n", carried) : "\n(No earlier messages were shown.)");
     }
 
     /// <summary>
@@ -1116,7 +1293,12 @@ public sealed class AssistantViewModel : ObservableObject
     {
         if (_isShutDown || _taskId is null || _installationId is null) return;
         _store.Save(new AssistantTaskReference(AssistantTaskReference.CurrentVersion, _installationId, _cli.DistroName,
-            _provider, "herika", _taskId, _threadId) { EarlierTasks = _earlierTasks.Count > 0 ? _earlierTasks.ToArray() : null });
+            _provider, "herika", _taskId, _threadId)
+        {
+            EarlierTasks = _earlierTasks.Count > 0 ? _earlierTasks.ToArray() : null,
+            ThreadToolRevision = _threadId is not null && _threadToolRevision > 0 ? _threadToolRevision : null,
+            SupersededThreads = _supersededThreads.Count > 0 ? _supersededThreads.Where(thread => thread != _threadId).ToArray() : null
+        });
     }
 
     private async Task SignInAsync()
@@ -1175,14 +1357,21 @@ public sealed class AssistantViewModel : ObservableObject
         SetState(AssistantState.Streaming, "The assistant is responding. Press Esc or Stop to interrupt.");
 
         // Fresh reads for every message, continuations included; they are sent with the turn and never stored or logged.
+        // A thread with Core's read tools reads for itself, so it gets only the scope, after a one-time upgrade if needed.
         var lookup = new CancellationTokenSource();
         _contextLookup = lookup;
         string context;
         try
         {
-            var inventory = LookupAsync(AssistantCliCommands.Inventory(), InventoryTimeout, lookup.Token);
-            var models = LookupAsync(AssistantCliCommands.Models(), ModelsTimeout, lookup.Token);
-            context = BuildTurnContext(await inventory, await models);
+            if (_toolRevision > _threadToolRevision) _pendingUpgrade = await UpgradeThreadAsync(client);
+            if (ActiveToolRevision > 0)
+                context = BuildToolTurnContext(_pendingUpgrade);
+            else
+            {
+                var inventory = LookupAsync(AssistantCliCommands.Inventory(), InventoryTimeout, lookup.Token);
+                var models = LookupAsync(AssistantCliCommands.Models(), ModelsTimeout, lookup.Token);
+                context = BuildTurnContext(await inventory, await models);
+            }
         }
         finally
         {
@@ -1210,6 +1399,7 @@ public sealed class AssistantViewModel : ObservableObject
             if (SelectedModel is not null) turn["model"] = SelectedModel.Id;
             CodexAppServerClient.AddConfinement(turn);
             await turns.StartAsync(_threadId, turn);
+            _pendingUpgrade = null;
         }
         catch (AppServerException ex)
         {
@@ -1259,6 +1449,18 @@ public sealed class AssistantViewModel : ObservableObject
     /// </summary>
     internal static string BuildTurnContext(AssistantCliResult inventory, AssistantCliResult models) =>
         ContextLabel + "\n" + ScopeReminder + "\n\n" + BuildInventoryContext(inventory) + "\n\n" + BuildModelsContext(models);
+
+    /// <summary>
+    /// The context ahead of each message in a thread with Core's read tools: the label and the scope only, plus the
+    /// one-time upgrade summary. No snapshot is attached; the assistant reads what it needs.
+    /// </summary>
+    internal static string BuildToolTurnContext(string? upgrade) =>
+        ContextLabel + "\n" + ToolScopeReminder + (upgrade is null ? string.Empty : "\n\n" + upgrade);
+
+    internal const string ToolScopeReminder =
+        "Scope: you are the DwemerDistro Assistant for the whole distro, not a CHIM-only helper. Use " + ReadToolName + " for current " +
+        "facts (inventory, status, health, models, logs) instead of asking the user or relying on earlier turns; presence is not health. " +
+        "File editing works only for CHIM (HerikaServer) files today, after the user reviews the diff.";
 
     private static string DescribeLookupFailure(AssistantCliResult result, string problem) =>
         result.Ok ? problem : result.ErrorCode switch
@@ -1422,6 +1624,10 @@ public sealed class AssistantViewModel : ObservableObject
         _store.Clear();
         _taskId = null;
         _threadId = null;
+        _threadToolRevision = 0;
+        _supersededThreads = [];
+        _pendingUpgrade = null;
+        UsageText = string.Empty;
         _shownThreadId = null;
         ResetHistory();
         _historyLoadPending = false;
@@ -1471,6 +1677,25 @@ public sealed class AssistantViewModel : ObservableObject
                 {
                     AddSystem("Edited files in the isolated workspace. Nothing is live yet.");
                 }
+                else if (type == "dynamicToolCall")
+                {
+                    var line = DescribeToolCall(item);
+                    if (FindItem(id) is { Role: ActivityRole } started) started.Replace(line);
+                    else AddActivity(line, id);
+                }
+                else if (type == "contextCompaction")
+                {
+                    AddActivity(CompactedText);
+                }
+                break;
+            case "item/started" when ItemOf(parameters, out var type, out var id) && type == "dynamicToolCall":
+                if (FindItem(id) is null) AddActivity(DescribeToolCall(Prop(parameters, "item")), id);
+                break;
+            case "thread/compacted" when AssistantCliService.GetString(parameters, "threadId") == _threadId:
+                AddActivity(CompactedText);
+                break;
+            case "thread/tokenUsage/updated" when AssistantCliService.GetString(parameters, "threadId") == _threadId:
+                UsageText = DescribeUsage(Prop(parameters, "tokenUsage"));
                 break;
             case "turn/completed":
                 var turn = Prop(parameters, "turn");
@@ -2204,6 +2429,53 @@ public sealed class AssistantViewModel : ObservableObject
     }
 
     private void AddSystem(string text) => AddItem(new AssistantTranscriptItem("DwemerDistro", text));
+
+    /// <summary>Role of muted activity lines shown between replies: tool reads, upgrades and compaction. Never carried forward.</summary>
+    internal const string ActivityRole = "Activity";
+
+    private const string CompactedText = "The conversation was compacted to fit the model's context. Earlier detail may now be summarized.";
+
+    private void AddActivity(string text, string? itemId = null) => AddItem(new AssistantTranscriptItem(ActivityRole, text, itemId));
+
+    /// <summary>
+    /// One line for a ddistro_read call from rust-v0.163.0 dynamicToolCall: the operation and target when they match the
+    /// tool's own argument shapes, and its status. Results are never shown here; the assistant reports them.
+    /// </summary>
+    internal static string DescribeToolCall(JsonElement item)
+    {
+        var arguments = Prop(item, "arguments");
+        var operation = AssistantCliService.GetString(arguments, "operation");
+        var parts = new List<string> { ToolOperations.Contains(operation) ? operation : "read" };
+        foreach (var key in new[] { "product", "log" })
+            if (AssistantCliService.GetString(arguments, key) is { Length: > 0 and <= 40 } value
+                && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.'))
+                parts.Add(value);
+        if (Prop(arguments, "lines") is { ValueKind: JsonValueKind.Number } lines && lines.TryGetInt32(out var count) && count is > 0 and <= 100)
+            parts.Add($"{count} lines");
+        var tool = AssistantCliService.GetString(item, "tool");
+        var what = (tool.Length == 0 || tool == ReadToolName ? "DwemerDistro read" : "Tool " + Shorten(tool, 40)) + ": " + string.Join(" · ", parts);
+        var success = Prop(item, "success").ValueKind;
+        return AssistantCliService.GetString(item, "status") switch
+        {
+            "failed" => what + " · failed",
+            _ when success == JsonValueKind.False => what + " · refused or failed",
+            "completed" => what + " · done",
+            _ when success == JsonValueKind.True => what + " · done",
+            _ => what + " …"
+        };
+    }
+
+    /// <summary>Total tokens of the thread and the model's context window, when reported; empty otherwise.</summary>
+    internal static string DescribeUsage(JsonElement usage)
+    {
+        static long Read(JsonElement element, string name) =>
+            Prop(element, name) is { ValueKind: JsonValueKind.Number } value && value.TryGetInt64(out var number) && number >= 0 ? number : -1;
+        var total = Read(Prop(usage, "total"), "totalTokens");
+        var last = Read(Prop(usage, "last"), "totalTokens");
+        var window = Read(usage, "modelContextWindow");
+        if (total < 0) return string.Empty;
+        return $"{total:N0} tokens used" + (last >= 0 && window > 0 ? $" · last turn {last:N0} of {window:N0} context" : string.Empty);
+    }
 
     private AssistantTranscriptItem? FindItem(string? itemId) =>
         string.IsNullOrEmpty(itemId) ? null : LatestItems.LastOrDefault(item => item.ItemId == itemId);

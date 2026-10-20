@@ -17,8 +17,23 @@ public partial class AssistantView : UserControl
     private const double NarrowWidth = 860;
     private AssistantViewModel? _viewModel;
     private bool? _isNarrow;
-    // The text run shown for each transcript item; every key is subscribed to PropertyChanged.
-    private readonly Dictionary<AssistantTranscriptItem, Run> _transcriptRuns = new();
+    // Below this width the review column is not offered wider.
+    private const double WideReviewWidth = 560;
+    private const double ReviewWidth = 320;
+    // What is shown for each transcript item; every key is subscribed to PropertyChanged.
+    private readonly Dictionary<AssistantTranscriptItem, TranscriptEntry> _transcriptRuns = new();
+
+    /// <summary>
+    /// One item's blocks. Plain items (the user's own text, launcher notes, activity) keep one run that streaming appends to;
+    /// assistant replies keep their Markdown chunks, so only chunks from the first changed one are rendered again.
+    /// </summary>
+    private sealed class TranscriptEntry(Section body, Run? plain)
+    {
+        public Section Body { get; } = body;
+        public Run? Plain { get; } = plain;
+        public List<string> Chunks { get; } = [];
+        public List<Block[]> Rendered { get; } = [];
+    }
 
     public AssistantView()
     {
@@ -112,16 +127,56 @@ public partial class AssistantView : UserControl
 
     private Section CreateTranscriptBlock(AssistantTranscriptItem item)
     {
+        item.PropertyChanged += TranscriptItem_PropertyChanged;
+        var block = new Section { Tag = item, Margin = new Thickness(0, 0, 0, 10) };
+        if (item.Role == AssistantViewModel.ActivityRole)
+        {
+            // Tool reads and other activity sit between replies, muted and outside the assistant's own text.
+            var activity = new Run(item.Text);
+            var line = new Paragraph(activity) { Margin = new Thickness(0), FontSize = 11.5, FontStyle = FontStyles.Italic };
+            line.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
+            block.Margin = new Thickness(0, 0, 0, 6);
+            block.Blocks.Add(line);
+            _transcriptRuns[item] = new TranscriptEntry(block, activity);
+            return block;
+        }
+
         var role = new Run(item.Role) { FontWeight = FontWeights.SemiBold, FontSize = 11 };
         role.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
-        var text = new Run(item.Text);
-        _transcriptRuns[item] = text;
-        item.PropertyChanged += TranscriptItem_PropertyChanged;
-
-        var block = new Section { Tag = item, Margin = new Thickness(0, 0, 0, 10) };
         block.Blocks.Add(new Paragraph(role) { Margin = new Thickness(0) });
-        block.Blocks.Add(new Paragraph(text) { Margin = new Thickness(0, 2, 0, 0) });
+        if (item.Role != "Codex")
+        {
+            var text = new Run(item.Text);
+            block.Blocks.Add(new Paragraph(text) { Margin = new Thickness(0, 2, 0, 0) });
+            _transcriptRuns[item] = new TranscriptEntry(block, text);
+            return block;
+        }
+
+        var entry = new TranscriptEntry(block, null);
+        _transcriptRuns[item] = entry;
+        RenderMarkdown(entry, item.Text);
         return block;
+    }
+
+    /// <summary>Renders again only from the first chunk that changed; older chunks keep their blocks and any selection in them.</summary>
+    private static void RenderMarkdown(TranscriptEntry entry, string text)
+    {
+        var chunks = AssistantMarkdown.SplitChunks(text);
+        var first = 0;
+        while (first < chunks.Count && first < entry.Chunks.Count && chunks[first] == entry.Chunks[first]) first++;
+        for (var index = entry.Rendered.Count - 1; index >= first; index--)
+        {
+            foreach (var block in entry.Rendered[index]) entry.Body.Blocks.Remove(block);
+            entry.Rendered.RemoveAt(index);
+            entry.Chunks.RemoveAt(index);
+        }
+        for (var index = first; index < chunks.Count; index++)
+        {
+            var blocks = AssistantMarkdown.RenderChunk(chunks[index]);
+            foreach (var block in blocks) entry.Body.Blocks.Add(block);
+            entry.Rendered.Add(blocks);
+            entry.Chunks.Add(chunks[index]);
+        }
     }
 
     // Adds and removes blocks in place so a selection elsewhere survives; anything else rebuilds.
@@ -179,18 +234,21 @@ public partial class AssistantView : UserControl
     private void TranscriptItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName != nameof(AssistantTranscriptItem.Text) || sender is not AssistantTranscriptItem item
-            || !_transcriptRuns.TryGetValue(item, out var run))
+            || !_transcriptRuns.TryGetValue(item, out var entry))
         {
             return;
         }
 
         var follow = IsFollowingTranscript();
         var pinned = PinSelection();
-        var shown = run.Text;
-        // Streamed text is appended in place, so a selection inside this message keeps its position.
-        if (item.Text.StartsWith(shown, StringComparison.Ordinal))
+        if (entry.Plain is not { } run)
         {
-            run.ContentEnd.InsertTextInRun(item.Text[shown.Length..]);
+            RenderMarkdown(entry, item.Text);
+        }
+        // Streamed text is appended in place, so a selection inside this message keeps its position.
+        else if (item.Text.StartsWith(run.Text, StringComparison.Ordinal))
+        {
+            run.ContentEnd.InsertTextInRun(item.Text[run.Text.Length..]);
         }
         else
         {
@@ -217,7 +275,10 @@ public partial class AssistantView : UserControl
     private void RestoreSelection((TextPointer Start, TextPointer End)? pinned)
     {
         var selection = TranscriptBox.Selection;
-        if (pinned is { } range && (selection.Start.CompareTo(range.Start) != 0 || selection.End.CompareTo(range.End) != 0))
+        // A re-rendered tail moves a pinned end to where it was removed; an end that left the document is not restored.
+        if (pinned is { } range && range.Start.IsInSameDocument(TranscriptBox.Document.ContentStart)
+            && range.End.IsInSameDocument(TranscriptBox.Document.ContentStart) && range.Start.CompareTo(range.End) <= 0
+            && (selection.Start.CompareTo(range.Start) != 0 || selection.End.CompareTo(range.End) != 0))
         {
             selection.Select(range.Start, range.End);
         }
@@ -279,6 +340,12 @@ public partial class AssistantView : UserControl
         }
     }
 
+    private void WiderReviewToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        _isNarrow = null;
+        ApplyLayout(ActualWidth);
+    }
+
     private void AssistantView_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         ApplyLayout(e.NewSize.Width);
@@ -296,7 +363,8 @@ public partial class AssistantView : UserControl
         // Narrow: one column, the page scrolls, and the conversation keeps a usable fixed height.
         // Wide: the conversation takes the full width until there is a review or live-change card to show.
         var side = _viewModel?.IsSidePanelVisible == true;
-        SideColumn.Width = narrow || !side ? new GridLength(0) : new GridLength(320);
+        var wide = WiderReviewToggle.IsChecked == true && width >= WideReviewWidth * 2;
+        SideColumn.Width = narrow || !side ? new GridLength(0) : new GridLength(wide ? WideReviewWidth : ReviewWidth);
         Grid.SetColumn(SidePanel, narrow ? 0 : 1);
         Grid.SetRow(SidePanel, narrow ? 1 : 0);
         SidePanel.Margin = narrow ? new Thickness(0, 10, 0, 0) : new Thickness(10, 0, 0, 0);

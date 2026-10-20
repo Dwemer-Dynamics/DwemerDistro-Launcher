@@ -20,6 +20,19 @@ public sealed partial record AssistantTaskReference(
     /// </summary>
     public AssistantPriorTask[]? EarlierTasks { get; init; }
 
+    /// <summary>
+    /// The DwemerDistro tool set <see cref="ThreadId"/> was started with (see <c>AssistantViewModel.ToolRevisionFor</c>);
+    /// null or 0 means none. A thread only gets tools at thread/start, so a lower revision than Core now offers is upgraded
+    /// once to a new thread of the same task.
+    /// </summary>
+    public int? ThreadToolRevision { get; init; }
+
+    /// <summary>
+    /// Earlier threads of the current task, oldest first, that a tool upgrade replaced. Kept so their conversations stay
+    /// reachable; never reassigned to another task.
+    /// </summary>
+    public string[]? SupersededThreads { get; init; }
+
     /// <summary>Rejects anything a different or older build could have written, or a hand-edited file.</summary>
     public bool IsValid() =>
         Version == CurrentVersion &&
@@ -30,7 +43,10 @@ public sealed partial record AssistantTaskReference(
         AssistantCliCommands.IsValidTaskId(TaskId) &&
         IsValidThreadId(ThreadId) &&
         (EarlierTasks is null || EarlierTasks.Length <= MaxEarlierTasks && EarlierTasks.All(task =>
-            task is not null && AssistantCliCommands.IsValidTaskId(task.TaskId) && task.TaskId != TaskId && IsValidThreadId(task.ThreadId)));
+            task is not null && AssistantCliCommands.IsValidTaskId(task.TaskId) && task.TaskId != TaskId && IsValidThreadId(task.ThreadId))) &&
+        ThreadToolRevision is null or (>= 0 and <= 1000) &&
+        (SupersededThreads is null || SupersededThreads.Length <= MaxEarlierTasks
+            && SupersededThreads.All(thread => thread is not null && IsValidThreadId(thread) && thread != ThreadId));
 
     private static bool IsValidThreadId(string? threadId) => threadId is null || ThreadIdRegex().IsMatch(threadId);
 
@@ -38,7 +54,8 @@ public sealed partial record AssistantTaskReference(
     public bool Equals(AssistantTaskReference? other) =>
         other is not null && Version == other.Version && InstallationId == other.InstallationId && Distro == other.Distro &&
         Provider == other.Provider && Product == other.Product && TaskId == other.TaskId && ThreadId == other.ThreadId &&
-        (EarlierTasks ?? []).SequenceEqual(other.EarlierTasks ?? []);
+        (EarlierTasks ?? []).SequenceEqual(other.EarlierTasks ?? []) && (ThreadToolRevision ?? 0) == (other.ThreadToolRevision ?? 0) &&
+        (SupersededThreads ?? []).SequenceEqual(other.SupersededThreads ?? []);
 
     public override int GetHashCode() => HashCode.Combine(InstallationId, TaskId, ThreadId, EarlierTasks?.Length ?? 0);
 
@@ -74,9 +91,9 @@ public interface IAssistantStateStore
 /// </summary>
 public sealed class AssistantStateStore : IAssistantStateStore
 {
-    // Every reference IsValid accepts, 20 earlier tasks with the longest ids included, serializes to well under this
-    // (about 7 KiB); Save still measures, so a file it writes is always one Load reads.
-    internal const int MaxFileBytes = 16 * 1024;
+    // Every reference IsValid accepts, 20 earlier tasks and 20 superseded threads with the longest ids included, serializes
+    // to well under this (about 10 KiB); Save still measures, so a file it writes is always one Load reads.
+    internal const int MaxFileBytes = 24 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     public AssistantStateStore(string? localAppDataDirectory = null)

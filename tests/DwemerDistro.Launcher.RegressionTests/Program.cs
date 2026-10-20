@@ -3171,6 +3171,114 @@ try
         if (Directory.Exists(assistantStateRoot)) Directory.Delete(assistantStateRoot, recursive: true);
     }
 
+    // Core's typed read tool: opted into only when capabilities offer it, never declared by the launcher, and an old thread
+    // moves once to a new thread of the same task with a bounded summary, keeping the old thread's id.
+    const string ToolCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true,\"assistant_tools\":true},"
+        + "\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false}]}}}";
+    Assert(AssistantViewModel.ReadOfferedTools(System.Text.Json.JsonDocument.Parse("{\"features\":{\"assistant_tools\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":true}]}}").RootElement).Count == 0
+           && AssistantViewModel.ReadOfferedTools(System.Text.Json.JsonDocument.Parse("{\"features\":{\"assistant_tools\":false},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false}]}}").RootElement).Count == 0
+           && AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(System.Text.Json.JsonDocument.Parse(ToolCapabilities).RootElement.GetProperty("data"))) == 1,
+        "Only a non-mutating ddistro_read under features.assistant_tools counts as offered.");
+    var toolStateRoot = Path.Combine(Path.GetTempPath(), "dwemerdistro-assistant-tools-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var toolInstallation = "{" + Guid.NewGuid() + "}";
+        var toolStore = new AssistantStateStore(toolStateRoot);
+        var oldThread = new AssistantTaskReference(AssistantTaskReference.CurrentVersion, toolInstallation, LauncherConstants.DistroName,
+            "codex", "herika", "11111111-2222-3333-4444-555555555555", "thr-old");
+        var tools = await ConnectAssistantAsync(toolStore, oldThread, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? ToolCapabilities : null);
+        string[] ToolBodies() { lock (tools.transport.Requests) return tools.transport.Bodies.ToArray(); }
+        var initialize = ToolBodies().Single(body => body.StartsWith("initialize "));
+        Assert(tools.vm.State == AssistantState.Ready && initialize.Contains("\"experimentalApi\":true") && !tools.vm.HasReadTools
+               && ToolBodies().Single(body => body.StartsWith("thread/resume")).Contains(AssistantViewModel.DeveloperInstructions[..60]),
+            "With Core's tool offered, initialize opts into experimentalApi and an old thread resumes as it was.");
+        tools.vm.InputText = "is everything healthy?";
+        tools.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => ToolBodies().Any(body => body.StartsWith("turn/start")));
+        var upgradedTurn = ToolBodies().Single(body => body.StartsWith("turn/start"));
+        var upgradedInput = TurnInput(upgradedTurn);
+        var upgradedSaved = toolStore.Load();
+        Assert(ToolBodies().Count(body => body.StartsWith("thread/start")) == 1 && upgradedTurn.Contains("thr-new")
+               && ToolBodies().All(body => !body.Contains("dynamicTools"))
+               && ToolBodies().Single(body => body.StartsWith("thread/start")).Contains(AssistantViewModel.ReadToolName)
+               && upgradedInput[0].StartsWith(AssistantViewModel.ContextLabel) && upgradedInput[0].Contains(AssistantViewModel.ToolScopeReminder)
+               && upgradedInput[0].Contains(AssistantViewModel.UpgradeNote) && upgradedInput[1] == "is everything healthy?"
+               && !tools.cli.Calls.Contains("inventory") && !tools.cli.Calls.Contains("models herika")
+               && upgradedSaved is { ThreadId: "thr-new", ThreadToolRevision: 1 } && upgradedSaved.SupersededThreads!.SequenceEqual(["thr-old"])
+               && upgradedSaved.TaskId == oldThread.TaskId && tools.vm.HasReadTools
+               && tools.vm.Transcript.Any(item => item.Role == AssistantViewModel.ActivityRole && item.Text.Contains("thr-old")),
+            "An old thread must move once to a tool thread of the same task, keep its id, and send only scope plus a bounded summary.");
+
+        // Tool calls show as muted activity outside the reply; token usage and compaction become bounded status.
+        tools.vm.OnNotification("item/started", System.Text.Json.JsonDocument.Parse("{\"item\":{\"type\":\"dynamicToolCall\",\"id\":\"tc1\",\"tool\":\"ddistro_read\","
+            + "\"arguments\":{\"operation\":\"logs\",\"product\":\"herika\",\"log\":\"<script>\",\"lines\":50},\"status\":\"inProgress\"}}").RootElement);
+        tools.vm.OnNotification("item/completed", System.Text.Json.JsonDocument.Parse("{\"item\":{\"type\":\"dynamicToolCall\",\"id\":\"tc1\",\"tool\":\"ddistro_read\","
+            + "\"arguments\":{\"operation\":\"logs\",\"product\":\"herika\",\"lines\":50},\"status\":\"completed\",\"success\":true,\"contentItems\":[{\"type\":\"inputText\",\"text\":\"SECRET-RESULT\"}]}}").RootElement);
+        tools.vm.OnNotification("thread/tokenUsage/updated", System.Text.Json.JsonDocument.Parse("{\"threadId\":\"thr-new\",\"turnId\":\"turn-1\",\"tokenUsage\":"
+            + "{\"total\":{\"totalTokens\":12345},\"last\":{\"totalTokens\":2000},\"modelContextWindow\":258000}}").RootElement);
+        tools.vm.OnNotification("thread/tokenUsage/updated", System.Text.Json.JsonDocument.Parse("{\"threadId\":\"thr-other\",\"tokenUsage\":{\"total\":{\"totalTokens\":1}}}").RootElement);
+        var activity = tools.vm.Transcript.Where(item => item.ItemId == "tc1").ToArray();
+        Assert(activity.Length == 1 && activity[0].Role == AssistantViewModel.ActivityRole && activity[0].Text.Contains("logs · herika · 50 lines · done")
+               && !tools.vm.Transcript.Any(item => item.Text.Contains("SECRET-RESULT") || item.Text.Contains("<script>"))
+               && tools.vm.UsageText.Contains("12,345") && tools.vm.UsageText.Contains("258,000")
+               && !AssistantViewModel.CarryForward(tools.vm.Transcript).Any(line => line.Contains("DwemerDistro read")),
+            "A tool call must show once as muted activity without its result, and usage only for this thread.");
+
+        // Long drafts are kept whole and refused, never cut.
+        tools.vm.InputText = new string('x', AssistantViewModel.MaxInputChars + 5);
+        Assert(tools.vm.InputText.Length == AssistantViewModel.MaxInputChars + 5 && tools.vm.IsInputTooLong && !tools.vm.SendCommand.CanExecute(null)
+               && tools.vm.InputLengthText.Contains("Remove 5"),
+            "A draft over the limit must stay whole, explain how much to remove, and not send.");
+        await tools.vm.ShutdownAsync();
+
+        // A legacy Core: no opt-in, snapshots continue, and a saved tool thread is not upgraded or downgraded.
+        var legacy = await ConnectAssistantAsync(toolStore, upgradedSaved!, toolInstallation, oldThread.TaskId);
+        string[] LegacyBodies() { lock (legacy.transport.Requests) return legacy.transport.Bodies.ToArray(); }
+        Assert(!LegacyBodies().Single(body => body.StartsWith("initialize ")).Contains("experimentalApi") && !legacy.vm.HasReadTools
+               && LegacyBodies().Single(body => body.StartsWith("thread/resume")).Contains(AssistantViewModel.DeveloperInstructions[..60])
+               && toolStore.Load() is { ThreadToolRevision: 1 } kept && kept.SupersededThreads!.SequenceEqual(["thr-old"]),
+            "Without Core's tool the launcher must not opt in, and saved thread references must be kept.");
+        await legacy.vm.ShutdownAsync();
+    }
+    finally
+    {
+        if (Directory.Exists(toolStateRoot)) Directory.Delete(toolStateRoot, recursive: true);
+    }
+
+    // Markdown subset: chunks stay stable while a reply streams; links are http(s) only; HTML stays literal.
+    var markdownError = (string?)null;
+    var markdownThread = new Thread(() =>
+    {
+        try
+        {
+            var streamed = "# Title\n\nSome **bold** and `code`.\n\n```php\n  $x = 1;\n";
+            var chunks = DwemerDistro.Launcher.Wpf.Views.AssistantMarkdown.SplitChunks(streamed);
+            var more = DwemerDistro.Launcher.Wpf.Views.AssistantMarkdown.SplitChunks(streamed + "  echo $x;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |");
+            Assert(chunks.Count == 3 && more.Count == 4 && more.Take(2).SequenceEqual(chunks.Take(2)),
+                "Earlier chunks must stay identical while later text streams in.");
+            var code = (System.Windows.Documents.Paragraph)DwemerDistro.Launcher.Wpf.Views.AssistantMarkdown.RenderChunk(more[2]).Single();
+            var codeText = new System.Windows.Documents.TextRange(code.ContentStart, code.ContentEnd).Text;
+            Assert(codeText.TrimEnd('\r', '\n') == "  $x = 1;\r\n  echo $x;", "A code block must keep its exact text and indentation: " + codeText);
+            Assert(DwemerDistro.Launcher.Wpf.Views.AssistantMarkdown.RenderChunk(more[3]).Single() is System.Windows.Documents.Table,
+                "A pipe table must render as a table.");
+            var html = (System.Windows.Documents.Paragraph)DwemerDistro.Launcher.Wpf.Views.AssistantMarkdown.RenderChunk(
+                "<b>x</b> [ok](https://example.invalid/a) [bad](javascript:alert(1)) [file](file:///c:/x)").Single();
+            var links = html.Inlines.OfType<System.Windows.Documents.Hyperlink>().ToArray();
+            Assert(links.Length == 1 && links[0].NavigateUri.Scheme == "https"
+                   && new System.Windows.Documents.TextRange(html.ContentStart, html.ContentEnd).Text.StartsWith("<b>x</b> ok [bad](javascript:"),
+                "Only http(s) links render as links; HTML and other schemes stay literal.");
+        }
+        catch (Exception ex)
+        {
+            markdownError = ex.Message;
+        }
+    });
+    markdownThread.SetApartmentState(ApartmentState.STA);
+    markdownThread.Start();
+    markdownThread.Join();
+    Assert(markdownError is null, markdownError ?? string.Empty);
+
     // Stop before turn/start answers: interrupt exactly that turn once its id is known, never a later one.
     var turnTransport = new FakeAssistantTransport();
     var turnClient = new CodexAppServerClient(turnTransport);
