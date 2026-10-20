@@ -68,6 +68,11 @@ public static partial class AssistantCliCommands
     public static string[] Capabilities() => ["capabilities"];
     public static string[] AgentStatus() => ["agent", "status"];
     public static string[] AgentProbe() => ["agent", "probe"];
+    /// <summary>CHIM's configured profile/model assignments, already projected and redacted by Core.</summary>
+    public static string[] Models() => ["models", "herika"];
+    /// <summary>A fresh, read-only presence snapshot of the whole distro: servers, ext folders, components, custom mods.</summary>
+    public static string[] Inventory() => ["inventory"];
+    public static string[] Diff(string taskId) => ["changes", "diff", RequireTaskId(taskId)];
     public static string[] Stage(string taskId) => ["changes", "stage", RequireTaskId(taskId)];
     public static string[] ChangeStatus(string taskId) => ["changes", "status", RequireTaskId(taskId)];
     public static string[] Rollback(string taskId) => ["changes", "rollback", RequireTaskId(taskId)];
@@ -326,6 +331,285 @@ public sealed partial class AssistantCliService : IAssistantCli
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? string.Empty
             : string.Empty;
+
+    internal const int MaxModelAssignments = 200;
+    internal const int MaxModelFieldChars = 256;
+    private static readonly string[] ModelAssignmentStrings = ["profile", "role", "connector", "model", "provider", "driver"];
+
+    /// <summary>
+    /// Re-projects Core's <c>models herika</c> data onto its exact allowlist: every field present with its type and bound, and
+    /// nothing else copied. Returns null with a short reason when anything is missing, mistyped, oversized or inconsistent,
+    /// so an unexpected document never reaches the model partly read or with fields the launcher did not ask for.
+    /// </summary>
+    internal static System.Text.Json.Nodes.JsonObject? ProjectModelsSnapshot(AssistantCliResult result, out string problem)
+    {
+        problem = string.Empty;
+        var data = result.Data;
+        if (!result.Ok || data.ValueKind != JsonValueKind.Object)
+        {
+            problem = "DwemerDistro did not return the model settings.";
+            return null;
+        }
+        if (!TryField(data, "product", out string product) || product != "herika" ||
+            !TryField(data, "scope", out string scope) || scope != "configured_profiles" ||
+            !TryField(data, "available", out bool available) || !TryField(data, "truncated", out bool truncated) ||
+            !TryField(data, "reason", out string reason) ||
+            !TryField(data, "captured_at", out string capturedAt) || !IsUtcTimestamp(capturedAt) ||
+            !data.TryGetProperty("assignments", out var list) || list.ValueKind != JsonValueKind.Array ||
+            list.GetArrayLength() > MaxModelAssignments || !available && list.GetArrayLength() > 0)
+        {
+            problem = "DwemerDistro returned model settings in an unexpected shape.";
+            return null;
+        }
+
+        var assignments = new System.Text.Json.Nodes.JsonArray();
+        foreach (var entry in list.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object ||
+                !TryField(entry, "profile_id", out int profileId) || !TryField(entry, "connector_id", out int connectorId))
+            {
+                problem = "DwemerDistro returned a model assignment in an unexpected shape.";
+                return null;
+            }
+            var projected = new System.Text.Json.Nodes.JsonObject { ["profile_id"] = profileId };
+            foreach (var name in ModelAssignmentStrings)
+            {
+                if (!TryField(entry, name, out string value))
+                {
+                    problem = "DwemerDistro returned a model assignment in an unexpected shape.";
+                    return null;
+                }
+                projected[name] = value;
+                if (name == "role") projected["connector_id"] = connectorId;
+            }
+            assignments.Add(projected);
+        }
+
+        return new System.Text.Json.Nodes.JsonObject
+        {
+            ["product"] = product,
+            ["available"] = available,
+            ["scope"] = scope,
+            ["captured_at"] = capturedAt,
+            ["assignments"] = assignments,
+            ["truncated"] = truncated,
+            ["reason"] = reason
+        };
+    }
+
+    internal const int MaxInventoryEntries = 200;
+    internal const int MaxInventoryMods = 100;
+    internal const int MaxInventoryStringChars = 128;
+    private static readonly string[] InventoryProducts = ["herika", "lorkhan", "stobe", "dialectic", "reign"];
+    private static readonly string[] InventoryEntryKinds = ["dir", "file", "link", "other"];
+
+    /// <summary>
+    /// Re-projects Core's <c>inventory</c> data onto its exact allowlist, like <see cref="ProjectModelsSnapshot"/>: every
+    /// field present with its type and bound, nothing else copied, and anything unexpected refuses the whole snapshot.
+    /// </summary>
+    internal static System.Text.Json.Nodes.JsonObject? ProjectInventory(AssistantCliResult result, out string problem)
+    {
+        problem = string.Empty;
+        if (!result.Ok || result.Data.ValueKind != JsonValueKind.Object)
+        {
+            problem = "DwemerDistro did not return the inventory.";
+            return null;
+        }
+        try
+        {
+            return ProjectInventoryData(result.Data);
+        }
+        catch (InvalidDataException)
+        {
+            problem = "DwemerDistro returned the inventory in an unexpected shape.";
+            return null;
+        }
+    }
+
+    private static System.Text.Json.Nodes.JsonObject ProjectInventoryData(JsonElement data)
+    {
+        var capturedAt = InventoryString(data, "captured_at");
+        if (InventoryString(data, "scope") != "presence_only" || !IsUtcTimestamp(capturedAt)) throw BadInventory();
+
+        var servers = InventoryObject(data, "servers");
+        var serverItems = new System.Text.Json.Nodes.JsonArray();
+        foreach (var server in InventoryArray(servers, "items", InventoryProducts.Length))
+        {
+            var present = Prop(server, "database_present");
+            if (present.ValueKind is not (JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null)) throw BadInventory();
+            serverItems.Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["product"] = InventoryProduct(server, "product"),
+                ["state"] = InventoryToken(server, "state"),
+                ["repository_state"] = InventoryToken(server, "repository_state"),
+                ["database_present"] = present.ValueKind == JsonValueKind.Null ? null : present.GetBoolean(),
+                ["branch"] = InventoryString(server, "branch"),
+                ["version"] = InventoryString(server, "version")
+            });
+        }
+
+        var extensions = InventoryObject(data, "extensions");
+        var extensionItems = new System.Text.Json.Nodes.JsonArray();
+        foreach (var folder in InventoryArray(extensions, "items", InventoryProducts.Length))
+        {
+            if (InventoryString(folder, "root") != "ext") throw BadInventory();
+            var entries = new System.Text.Json.Nodes.JsonArray();
+            foreach (var entry in InventoryArray(folder, "entries", MaxInventoryEntries))
+            {
+                var name = InventoryString(entry, "name");
+                var kind = InventoryString(entry, "kind");
+                if (!InventoryNameRegex().IsMatch(name) || !InventoryEntryKinds.Contains(kind)) throw BadInventory();
+                entries.Add(new System.Text.Json.Nodes.JsonObject { ["name"] = name, ["kind"] = kind });
+            }
+            extensionItems.Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["product"] = InventoryProduct(folder, "product"),
+                ["root"] = "ext",
+                ["state"] = InventoryToken(folder, "state"),
+                ["total"] = InventoryCount(folder, "total"),
+                ["truncated"] = InventoryBool(folder, "truncated"),
+                ["skipped"] = InventoryCount(folder, "skipped"),
+                ["entries"] = entries
+            });
+        }
+        var noKnownRoot = new System.Text.Json.Nodes.JsonArray();
+        foreach (var product in InventoryArray(extensions, "no_known_root", InventoryProducts.Length))
+            noKnownRoot.Add(product.ValueKind == JsonValueKind.String && InventoryProducts.Contains(product.GetString()) ? product.GetString() : throw BadInventory());
+
+        var components = InventoryObject(data, "components");
+        if (InventoryString(components, "basis") != "startup_markers") throw BadInventory();
+        var componentItems = new System.Text.Json.Nodes.JsonArray();
+        foreach (var component in InventoryArray(components, "items", 32))
+            componentItems.Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["id"] = InventoryToken(component, "id"),
+                ["name"] = InventoryString(component, "name"),
+                ["role"] = InventoryToken(component, "role"),
+                ["state"] = InventoryToken(component, "state")
+            });
+
+        var mods = InventoryObject(data, "custom_mods");
+        var modItems = new System.Text.Json.Nodes.JsonArray();
+        foreach (var mod in InventoryArray(mods, "items", MaxInventoryMods))
+        {
+            var id = InventoryString(mod, "id");
+            var commit = InventoryString(mod, "commit");
+            if (!InventoryModIdRegex().IsMatch(id) || commit.Length > 0 && !InventoryCommitRegex().IsMatch(commit)) throw BadInventory();
+            modItems.Add(new System.Text.Json.Nodes.JsonObject
+            {
+                ["id"] = id,
+                ["name"] = InventoryString(mod, "name"),
+                ["state"] = InventoryToken(mod, "state"),
+                ["branch"] = InventoryString(mod, "branch"),
+                ["commit"] = commit
+            });
+        }
+
+        // Core's complete flag is only trusted when the projected sections agree: anything unavailable,
+        // truncated, skipped, redirected or unreadable makes the snapshot incomplete.
+        var serverSection = InventorySection(servers, serverItems);
+        var modSection = InventorySection(mods, modItems, withTruncated: true);
+        var complete = InventoryBool(data, "complete")
+            && (bool)serverSection["available"]! && (bool)modSection["available"]! && !(bool)modSection["truncated"]!
+            && extensionItems.All(item => (string)item!["state"]! is "listed" or "absent" or "product_absent"
+                                          && !(bool)item["truncated"]! && (int)item["skipped"]! == 0)
+            && componentItems.All(item => (string)item!["state"]! is "present" or "absent");
+
+        return new System.Text.Json.Nodes.JsonObject
+        {
+            ["captured_at"] = capturedAt,
+            ["scope"] = "presence_only",
+            ["read_as"] = InventoryString(data, "read_as"),
+            ["complete"] = complete,
+            ["servers"] = serverSection,
+            ["extensions"] = new System.Text.Json.Nodes.JsonObject { ["items"] = extensionItems, ["no_known_root"] = noKnownRoot },
+            ["components"] = new System.Text.Json.Nodes.JsonObject { ["basis"] = "startup_markers", ["items"] = componentItems },
+            ["custom_mods"] = modSection
+        };
+    }
+
+    /// <summary>An available flag, a reason token (empty when available) and its items; unavailable sections hold none.</summary>
+    private static System.Text.Json.Nodes.JsonObject InventorySection(JsonElement section, System.Text.Json.Nodes.JsonArray items, bool withTruncated = false)
+    {
+        var available = InventoryBool(section, "available");
+        var reason = InventoryString(section, "reason");
+        if (available ? reason.Length > 0 : items.Count > 0 || reason.Length == 0 || !InventoryTokenRegex().IsMatch(reason)) throw BadInventory();
+        var projected = new System.Text.Json.Nodes.JsonObject { ["available"] = available, ["reason"] = reason };
+        if (withTruncated) projected["truncated"] = InventoryBool(section, "truncated");
+        projected["items"] = items;
+        return projected;
+    }
+
+    private static InvalidDataException BadInventory() => new("inventory");
+
+    private static JsonElement Prop(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value : default;
+
+    private static JsonElement InventoryObject(JsonElement element, string name) =>
+        Prop(element, name) is { ValueKind: JsonValueKind.Object } value ? value : throw BadInventory();
+
+    private static IEnumerable<JsonElement> InventoryArray(JsonElement element, string name, int limit) =>
+        Prop(element, name) is { ValueKind: JsonValueKind.Array } value && value.GetArrayLength() <= limit
+            ? value.EnumerateArray().ToArray() : throw BadInventory();
+
+    // Prop is undefined for a non-object element, so an array item of the wrong kind is refused, never thrown on.
+    private static string InventoryString(JsonElement element, string name) =>
+        Prop(element, name) is { ValueKind: JsonValueKind.String } value && value.GetString() is { Length: <= MaxInventoryStringChars } text
+            && !text.Any(char.IsControl) ? text : throw BadInventory();
+
+    private static bool InventoryBool(JsonElement element, string name) => Prop(element, name).ValueKind switch
+    {
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        _ => throw BadInventory()
+    };
+
+    private static int InventoryCount(JsonElement element, string name) =>
+        Prop(element, name) is { ValueKind: JsonValueKind.Number } value && value.TryGetInt32(out var count) && count >= 0 ? count : throw BadInventory();
+
+    private static string InventoryToken(JsonElement element, string name) =>
+        InventoryString(element, name) is var value && value.Length > 0 && InventoryTokenRegex().IsMatch(value) ? value : throw BadInventory();
+
+    private static string InventoryProduct(JsonElement element, string name) =>
+        InventoryString(element, name) is var value && InventoryProducts.Contains(value) ? value : throw BadInventory();
+
+    // Core's state tokens and component ids; an empty reason is checked separately.
+    [GeneratedRegex(@"^([a-z][a-z0-9_-]{0,31})?\z")]
+    private static partial Regex InventoryTokenRegex();
+
+    // Same as Core's INVENTORY_NAME: a plain folder or file name, never a path.
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9 ._+()@,=~-]{0,127}\z")]
+    private static partial Regex InventoryNameRegex();
+
+    [GeneratedRegex(@"^[a-z][a-z0-9-]{1,30}[a-z0-9]\z")]
+    private static partial Regex InventoryModIdRegex();
+
+    [GeneratedRegex(@"^[0-9a-f]{40}\z")]
+    private static partial Regex InventoryCommitRegex();
+
+    private static bool TryField(JsonElement element, string name, out string value)
+    {
+        value = element.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.String ? field.GetString() ?? string.Empty : string.Empty;
+        return field.ValueKind == JsonValueKind.String && value.Length <= MaxModelFieldChars && !value.Any(char.IsControl);
+    }
+
+    private static bool TryField(JsonElement element, string name, out bool value)
+    {
+        value = element.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.True;
+        return field.ValueKind is JsonValueKind.True or JsonValueKind.False;
+    }
+
+    private static bool TryField(JsonElement element, string name, out int value)
+    {
+        value = 0;
+        return element.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.Number && field.TryGetInt32(out value);
+    }
+
+    /// <summary>An ISO 8601 instant that states UTC itself (Z or +00:00), not a local or unzoned time.</summary>
+    private static bool IsUtcTimestamp(string value) =>
+        value.Length is >= 20 and <= 40 && (value.EndsWith('Z') || value.EndsWith("+00:00", StringComparison.Ordinal)) &&
+        DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed) &&
+        parsed.Offset == TimeSpan.Zero && value[4] == '-' && value[10] == 'T';
 
     internal static bool GetBool(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.True;

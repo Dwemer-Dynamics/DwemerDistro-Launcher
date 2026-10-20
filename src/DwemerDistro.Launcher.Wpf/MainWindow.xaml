@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:views="clr-namespace:DwemerDistro.Launcher.Wpf.Views"
         mc:Ignorable="d"
         Title="DWEMER DISTRO"
         Icon="Assets/DwemerDistro.ico"
@@ -298,6 +299,8 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="2" Checked="DestinationNav_Checked" />
                     <RadioButton x:Name="LogsNavButton" GroupName="Destination" Content="LO_GS"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
+                    <RadioButton x:Name="AssistantNavButton" GroupName="Destination" Content="_ASSISTANT"
+                                 Style="{StaticResource GameCenter.NavButton}" Tag="4" Checked="DestinationNav_Checked" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <!-- The one Update Distro action in the normal launcher. The widest state is reserved
@@ -1463,6 +1466,11 @@
                         </WrapPanel>
                     </StackPanel>
                 </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Assistant">
+                <!-- The view model is created on first binding and runs nothing until Connect. -->
+                <views:AssistantView x:Name="AssistantLandmark" DataContext="{Binding Assistant}" />
             </TabItem>
         </TabControl>
 

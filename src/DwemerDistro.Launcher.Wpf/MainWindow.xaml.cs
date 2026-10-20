@@ -90,6 +90,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_viewModel.IsAssistantLiveChangeInProgress)
+        {
+            e.Cancel = true;
+            // Explain inline on the Assistant page; the apply or rollback keeps running.
+            AssistantNavButton.IsChecked = true;
+            _viewModel.Assistant.ShowCloseBlocked();
+            _ = Dispatcher.BeginInvoke(AssistantLandmark.RevealStatus, System.Windows.Threading.DispatcherPriority.Loaded);
+            return;
+        }
+
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
         await _viewModel.ShutdownAsync();
     }
@@ -468,6 +478,9 @@ public partial class MainWindow : Window
             case Key.G:
                 LogsNavButton.IsChecked = true;
                 return true;
+            case Key.A:
+                AssistantNavButton.IsChecked = true;
+                return true;
             case Key.Space:
                 SystemCommands.ShowSystemMenu(this, PointToScreen(new System.Windows.Point(8, 36)));
                 return true;
@@ -483,6 +496,7 @@ public partial class MainWindow : Window
             1 => (FrameworkElement)SetupLandmark,
             2 => SettingsLandmark,
             3 => LogsLandmark,
+            4 => AssistantLandmark,
             _ => LibraryLandmark
         };
         // Visual order: the sidebar's game list and utilities, then the header, page and console.

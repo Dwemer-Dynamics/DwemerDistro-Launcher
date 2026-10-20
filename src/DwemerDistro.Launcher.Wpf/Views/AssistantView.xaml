@@ -1,0 +1,299 @@
+<UserControl x:Class="DwemerDistro.Launcher.Wpf.Views.AssistantView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             PreviewKeyDown="AssistantView_PreviewKeyDown"
+             SizeChanged="AssistantView_SizeChanged">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <Style x:Key="Assistant.TextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#191919" />
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style x:Key="Assistant.Action" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="MinWidth" Value="96" />
+        </Style>
+        <Style x:Key="Assistant.Label" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer x:Name="PageScroll" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+        <Grid x:Name="PageGrid" Margin="18,16,18,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Margin="0,0,0,10">
+                <TextBlock Text="ASSISTANT" Style="{StaticResource GameCenter.Heading}" />
+                <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Text="Ask about your DwemerDistro setup: installed servers, mods and components. Get help with setup steps and problems." />
+            </StackPanel>
+
+            <!-- Header: what is connected, as whom, and the session actions. -->
+            <Border Grid.Row="1" Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Margin="0,0,12,0">
+                            <TextBlock x:Name="StatusTextBlock" Text="{Binding StatusText}" Style="{StaticResource GameCenter.SectionHeading}"
+                                       AutomationProperties.Name="{Binding StatusText, StringFormat=Assistant status: {0}}"
+                                       AutomationProperties.HelpText="{Binding StatusDetail}"
+                                       AutomationProperties.LiveSetting="Polite" />
+                            <TextBlock Text="{Binding StatusDetail}" Style="{StaticResource GameCenter.Caption}" Margin="0,3,0,0"
+                                       MaxHeight="96" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                        <WrapPanel x:Name="SessionActions" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" MaxWidth="440">
+                            <Button Content="Connect" Command="{Binding ConnectCommand}" Style="{StaticResource GameCenter.PrimaryButton}" Margin="0,0,6,6" MinWidth="96"
+                                    AutomationProperties.HelpText="Check DwemerDistro and start the assistant for the current task." />
+                            <Button Content="Sign in" Command="{Binding SignInCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Request a ChatGPT sign-in code. Nothing opens until you click Open sign-in page." />
+                            <Button Content="{Binding StopButtonText}" Command="{Binding StopCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.Name="{Binding StopButtonText}"
+                                    AutomationProperties.HelpText="Stop the current response, or close the session when nothing is running." />
+                            <Button Content="New task" Command="{Binding NewTaskCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Start a new task with a fresh working copy and conversation." />
+                            <Button Content="Run isolation check" Command="{Binding RunProbeCommand}" Style="{StaticResource Assistant.Action}"
+                                    Visibility="{Binding IsProbeVisible, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.HelpText="Run DwemerDistro's assistant isolation check again." />
+                        </WrapPanel>
+                    </Grid>
+
+                    <WrapPanel Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,18,4">
+                            <TextBlock x:Name="ProviderLabel" Text="Provider" Style="{StaticResource Assistant.Label}" />
+                            <TextBlock Text="{Binding ProviderText}" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center"
+                                       AutomationProperties.LabeledBy="{Binding ElementName=ProviderLabel}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,18,4">
+                            <TextBlock x:Name="ModelLabel" Text="Model" Style="{StaticResource Assistant.Label}" />
+                            <ComboBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" DisplayMemberPath="DisplayName"
+                                      Style="{StaticResource GameCenter.ComboBox}" MinWidth="180" MaxWidth="260"
+                                      AutomationProperties.LabeledBy="{Binding ElementName=ModelLabel}"
+                                      AutomationProperties.HelpText="Models offered by the assistant for this account. Used from the next message." />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock x:Name="AccountLabel" Text="Account" Style="{StaticResource Assistant.Label}" />
+                            <TextBlock Text="{Binding AccountText}" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="260"
+                                       AutomationProperties.LabeledBy="{Binding ElementName=AccountLabel}" />
+                        </StackPanel>
+                    </WrapPanel>
+
+                    <!-- Sign-in: the supported URL and code are shown here; the browser opens only on click. -->
+                    <Border Visibility="{Binding IsSignInVisible, Converter={StaticResource BoolToVisibility}}"
+                            BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,8,0,0">
+                        <StackPanel>
+                            <TextBlock x:Name="SignInUrlLabel" Text="Sign-in page" Style="{StaticResource GameCenter.Caption}" />
+                            <TextBox Text="{Binding SignInUrl, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}" FontFamily="Consolas"
+                                     Margin="0,3,0,6" AutomationProperties.LabeledBy="{Binding ElementName=SignInUrlLabel}" />
+                            <StackPanel Orientation="Horizontal" Visibility="{Binding HasSignInCode, Converter={StaticResource BoolToVisibility}}" Margin="0,0,0,6">
+                                <TextBlock x:Name="SignInCodeLabel" Text="Code" Style="{StaticResource Assistant.Label}" />
+                                <TextBox Text="{Binding SignInCode, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                         FontFamily="Consolas" FontSize="18" FontWeight="Bold" MinWidth="160"
+                                         AutomationProperties.LabeledBy="{Binding ElementName=SignInCodeLabel}" />
+                                <Button Content="Copy code" Click="CopySignInCode_Click" Style="{StaticResource Assistant.Action}" Margin="6,0,0,0" />
+                            </StackPanel>
+                            <Button Content="Open sign-in page" Command="{Binding OpenSignInUrlCommand}" Style="{StaticResource Assistant.Action}"
+                                    HorizontalAlignment="Left" AutomationProperties.HelpText="Open the sign-in page in your browser." />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Advanced: collapsed by default; task details and hand-picked files for the next New task. -->
+                    <CheckBox x:Name="AdvancedToggle" Content="Advanced" Style="{StaticResource GameCenter.CheckBox}" Margin="0,8,0,0"
+                              HorizontalAlignment="Left" IsChecked="False"
+                              AutomationProperties.HelpText="Show the task details and choose CHIM files by path for the next new task. File editing supports CHIM only." />
+                    <Border x:Name="AdvancedPanel" Visibility="{Binding IsChecked, ElementName=AdvancedToggle, Converter={StaticResource BoolToVisibility}}"
+                            BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,6,0,0">
+                        <StackPanel>
+                            <TextBlock x:Name="TaskLabel" Text="Current task" Style="{StaticResource GameCenter.Caption}" />
+                            <TextBox Text="{Binding TaskText, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}" FontFamily="Consolas"
+                                     FontSize="12" Margin="0,3,0,8" AutomationProperties.LabeledBy="{Binding ElementName=TaskLabel}" />
+                            <TextBlock x:Name="PathsLabel" Text="CHIM files for the next New task (optional, one path relative to the HerikaServer folder per line). File editing supports only CHIM (HerikaServer) today; other servers, components and mods cannot be edited here yet."
+                                       Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,3" />
+                            <TextBox Text="{Binding RelativePathsText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}"
+                                     AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="12"
+                                     Height="70" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" MaxLength="5000"
+                                     AutomationProperties.LabeledBy="{Binding ElementName=PathsLabel}"
+                                     AutomationProperties.HelpText="Usually not needed: the assistant asks for the files it needs. Leave empty for a diagnostic workspace. Used when New task prepares a working copy." />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <Grid x:Name="BodyGrid" Grid.Row="2" MinHeight="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition x:Name="SideColumn" Width="0" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="ChatRow" Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- Conversation -->
+                <Border x:Name="ChatCard" Style="{StaticResource GameCenter.Card}" Padding="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <!-- One read-only document, so a selection, Ctrl+A and Copy can span the whole conversation.
+                             Code-behind keeps its blocks in step with Transcript. -->
+                        <RichTextBox x:Name="TranscriptBox" IsReadOnly="True" IsReadOnlyCaretVisible="True" IsUndoEnabled="False"
+                                     Background="Transparent" BorderThickness="0" Padding="10,10" FontSize="13"
+                                     Foreground="{DynamicResource GameCenter.Text}" CaretBrush="{DynamicResource GameCenter.Text}"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                     AutomationProperties.Name="Assistant conversation"
+                                     AutomationProperties.HelpText="Read-only. Ctrl+A selects the whole conversation and Ctrl+C copies the selection.">
+                            <FlowDocument PagePadding="0" />
+                        </RichTextBox>
+
+                        <!-- File access: what the assistant asked for. Nothing is copied until Allow access is clicked. -->
+                        <Border x:Name="AccessCard" Grid.Row="1" Margin="10,0,10,0" Padding="10" CornerRadius="4" BorderThickness="1"
+                                BorderBrush="{DynamicResource GameCenter.Gold}" Background="{DynamicResource GameCenter.GoldTint}"
+                                Visibility="{Binding HasFileRequest, Converter={StaticResource BoolToVisibility}}"
+                                AutomationProperties.Name="File access request" AutomationProperties.LiveSetting="Polite">
+                            <StackPanel>
+                                <TextBlock Text="The assistant asks to read and edit these CHIM files" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource GameCenter.Text}" TextWrapping="Wrap" />
+                                <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto" Margin="0,4,0,4" Focusable="False">
+                                    <ItemsControl x:Name="AccessPaths" ItemsSource="{Binding FileRequestPaths}" Focusable="False"
+                                                  AutomationProperties.Name="Requested files">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12" Foreground="{DynamicResource GameCenter.Text}"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                                <TextBlock Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                           Text="Allow access copies only these files into a fresh isolated working copy and continues your request there. Only CHIM (HerikaServer) files can be shared and edited today. Live files change only after you review and approve." />
+                                <WrapPanel>
+                                    <Button Content="Allow access" Command="{Binding AllowFileAccessCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                            Margin="0,0,6,0" MinWidth="110"
+                                            AutomationProperties.HelpText="Copy only the listed files into a new isolated working copy and continue." />
+                                    <Button Content="Not now" Command="{Binding DeclineFileAccessCommand}" Style="{StaticResource Assistant.Action}" Margin="0"
+                                            AutomationProperties.HelpText="Dismiss this request. Nothing is shared." />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Grid Grid.Row="2" Margin="10" IsEnabled="{Binding IsInputEnabled}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="InputBox" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource Assistant.TextBox}" AcceptsReturn="True" TextWrapping="Wrap"
+                                     MinHeight="38" MaxHeight="120" VerticalScrollBarVisibility="Auto" MaxLength="8000"
+                                     PreviewKeyDown="InputBox_PreviewKeyDown"
+                                     AutomationProperties.Name="Message to the assistant"
+                                     AutomationProperties.HelpText="Enter sends. Shift+Enter adds a new line. Esc stops a response." />
+                            <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                    Margin="8,0,0,0" MinWidth="80" VerticalAlignment="Bottom" />
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- Review and live-change controls; this column is shown only while one of its cards is. -->
+                <ScrollViewer x:Name="SidePanel" Grid.Column="1" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto" Focusable="False"
+                              Visibility="{Binding IsSidePanelVisible, Converter={StaticResource BoolToVisibility}}">
+                    <StackPanel>
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.Gold}"
+                                Visibility="{Binding IsChangesVisible, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel>
+                                <TextBlock Text="CHANGES READY" Style="{StaticResource GameCenter.SectionHeading}" />
+                                <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,8" TextWrapping="Wrap"
+                                           Text="The assistant edited files in its isolated copy. Nothing is live yet." />
+                                <Button Content="Review changes" Command="{Binding ReviewCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                        HorizontalAlignment="Left" MinWidth="96"
+                                        AutomationProperties.HelpText="Freeze the assistant's current changes into one exact batch and show its diff." />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.Gold}"
+                                Visibility="{Binding IsReviewVisible, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel>
+                                <TextBlock Text="REVIEW" Style="{StaticResource GameCenter.SectionHeading}" />
+                                <TextBlock Text="{Binding ReviewSummary}" Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,6" MaxHeight="90"
+                                           TextTrimming="CharacterEllipsis" />
+                                <!-- Validation sits above Approve; a check DwemerDistro could not run is a warning, never shown as passed. -->
+                                <Border x:Name="ReviewValidation" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,0,0,8">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasReviewWarnings}" Value="True">
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto" Focusable="False">
+                                        <TextBlock x:Name="ReviewValidationText" Text="{Binding ReviewValidationText}" TextWrapping="Wrap" FontSize="12"
+                                                   AutomationProperties.Name="{Binding ReviewValidationText}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasReviewWarnings}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </ScrollViewer>
+                                </Border>
+                                <WrapPanel Margin="0,0,0,2">
+                                    <Button Content="Approve and apply" Command="{Binding ApproveCommand}" Style="{StaticResource GameCenter.SuccessButton}"
+                                            Margin="0,0,6,6" IsDefault="False"
+                                            AutomationProperties.HelpText="Apply exactly this reviewed batch to the live CHIM files, once." />
+                                    <Button Content="Reject" Command="{Binding RejectCommand}" Style="{StaticResource Assistant.Action}"
+                                            AutomationProperties.HelpText="Clear this review. Nothing is applied." />
+                                </WrapPanel>
+                                <TextBox x:Name="DiffBox" Text="{Binding ReviewDiff, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                         FontFamily="Consolas" FontSize="11" TextWrapping="NoWrap" Height="200"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                         AutomationProperties.Name="Diff of the reviewed batch" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12"
+                                Visibility="{Binding HasOutcome, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel>
+                                <TextBlock Text="LAST LIVE CHANGE" Style="{StaticResource GameCenter.SectionHeading}" />
+                                <TextBlock x:Name="OutcomeTextBlock" Text="{Binding OutcomeText}" Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,8"
+                                           AutomationProperties.LiveSetting="Assertive" />
+                                <WrapPanel>
+                                    <Button Content="Check status" Command="{Binding CheckOutcomeCommand}" Style="{StaticResource Assistant.Action}"
+                                            AutomationProperties.HelpText="Ask DwemerDistro what this task's live change state is." />
+                                    <Button Content="Roll back" Command="{Binding RollbackCommand}" Style="{StaticResource Assistant.Action}"
+                                            AutomationProperties.HelpText="Restore the live files recorded by this task's apply receipt." />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</UserControl>
