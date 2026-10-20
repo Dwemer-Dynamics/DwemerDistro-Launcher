@@ -17,7 +17,7 @@ public sealed partial class MainWindowViewModel : IAssistantHost
 
     private AssistantViewModel CreateAssistant()
     {
-        var assistant = new AssistantViewModel(new AssistantCliService(_wsl, _processRunner), this, new AssistantStateStore());
+        var assistant = new AssistantViewModel(new AssistantCliService(_wsl, _processRunner), this, new AssistantStateStore(), new AssistantCatalogStore());
         // Whether an idle session can be closed for maintenance follows its state, so the maintenance buttons do too.
         assistant.PropertyChanged += Assistant_PropertyChanged;
         return assistant;
@@ -152,4 +152,11 @@ public sealed partial class MainWindowViewModel : IAssistantHost
     void IAssistantHost.OpenUrl(string url) => _processRunner.OpenExternalUrl(url);
 
     string? IAssistantHost.GetDistroInstallationId() => _wsl.GetDistroRegistrationId();
+
+    // Only from the user's own click: the dialog is shown before anything is read or written.
+    string? IAssistantHost.ChooseSavePath(string title, string fileName, string filter)
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog { Title = title, FileName = fileName, Filter = filter, AddExtension = true, OverwritePrompt = true };
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
 }
