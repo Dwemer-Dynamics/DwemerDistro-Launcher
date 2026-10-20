@@ -2349,6 +2349,148 @@ try
            && replayedRollback.StartsWith("Rollback incomplete") && rollbackCheck,
         "A replayed or failed apply must report Core's partial, failed or interrupted state, never a blanket success.");
 
+    // Conversation catalogue: migration from task.json, round trip, bounds, invalid entries and an unreadable file.
+    {
+        var catRoot = Path.Combine(root, "catalog-" + Guid.NewGuid().ToString("N"));
+        var catInstall = Guid.NewGuid().ToString();
+        var catStore = new AssistantCatalogStore(catRoot);
+        var legacy = new AssistantTaskReference(AssistantTaskReference.CurrentVersion, catInstall, LauncherConstants.DistroName, "codex", "herika", "task-current", "thr-current")
+        {
+            EarlierTasks = [new AssistantPriorTask("task-old1", "thr-old1", true), new AssistantPriorTask("task-old2", null, false)],
+            SupersededThreads = ["thr-super"], ThreadToolRevision = 1
+        };
+        var migrated = AssistantCatalogStore.Migrate(legacy, DateTimeOffset.UtcNow);
+        Assert(migrated.Count == 3 && migrated[0].TaskId == "task-current" && migrated[0].SupersededThreads!.SequenceEqual(["thr-super"])
+               && migrated[0].ThreadToolRevision == 1 && migrated.Single(entry => entry.TaskId == "task-old1").LiveChange
+               && migrated.Single(entry => entry.TaskId == "task-old2").ThreadId is null,
+            "Migration must keep the current task, its superseded threads and tool revision, and every earlier task with its live-change flag.");
+        Assert(catStore.Load(out var catProblem) is { Count: 0 } && catProblem.Length == 0, "An absent catalogue is empty, not a problem.");
+        Assert(catStore.Save(migrated, out _) && catStore.Load(out _)!.Select(entry => entry.TaskId).SequenceEqual(migrated.OrderByDescending(e => e.UpdatedAt).Select(e => e.TaskId)),
+            "The catalogue must round-trip newest first.");
+        var many = Enumerable.Range(0, AssistantCatalog.MaxEntries + 25).Select(index => migrated[0] with
+        {
+            TaskId = $"task-{index:D4}", Title = new string('t', AssistantCatalogEntry.MaxTitleChars),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(index), CreatedAt = DateTimeOffset.UtcNow.AddMinutes(index),
+            SupersededThreads = Enumerable.Range(0, 20).Select(t => $"thr-{index}-{t}-" + new string('x', 100)).ToArray()
+        }).ToList();
+        Assert(catStore.Save(many, out var bigProblem) && catStore.Load(out _)!.Count == AssistantCatalog.MaxEntries
+               && catStore.Load(out _)![0].TaskId == $"task-{AssistantCatalog.MaxEntries + 24:D4}",
+            "The catalogue keeps the newest " + AssistantCatalog.MaxEntries + " entries at their largest valid size: " + bigProblem);
+        var catFile = catStore.CatalogPath;
+        var good = File.ReadAllText(catFile);
+        File.WriteAllText(catFile, good.Replace("\"TaskId\": \"task-0224\"", "\"TaskId\": \"--bad task\""));
+        var partial = catStore.Load(out var partialProblem);
+        Assert(partial!.Count == AssistantCatalog.MaxEntries - 1 && partialProblem.Contains("unreadable"), "An invalid entry is left out and reported, not fatal.");
+        File.WriteAllText(catFile, "{ not json");
+        var damaged = catStore.Load(out var damagedProblem);
+        Assert(damaged is null && damagedProblem.Contains("will not change it") && !catStore.Save(migrated, out var refused) && refused.Length > 0
+               && File.ReadAllText(catFile) == "{ not json", "An unreadable catalogue must be reported and never overwritten.");
+        Assert(!AssistantCatalogEntry.IsValidTitle(" padded") && !AssistantCatalogEntry.IsValidTitle("a\nb") && AssistantCatalogEntry.MakeTitle("  hello\n  world ") == "hello world"
+               && AssistantCatalogEntry.MakeTitle(new string('w', 500)).Length <= AssistantCatalogEntry.MaxTitleChars, "Titles are single-line and bounded.");
+    }
+
+    // Memory: exact argv, value limits, projections and tool revision.
+    {
+        Assert(AssistantCliCommands.MemoryAdd(" Prefer XTTS ", "preference", "task-1", "thr-1").SequenceEqual(
+                   ["memory", "add", "--text", "Prefer XTTS", "--kind", "preference", "--task", "task-1", "--thread", "thr-1"])
+               && AssistantCliCommands.MemoryConfigure(false, null).SequenceEqual(["memory", "configure", "--retrieval", "off"])
+               && AssistantCliCommands.MemoryReset().SequenceEqual(["memory", "reset", "--yes"])
+               && AssistantCliCommands.MemoryList(50, 0).SequenceEqual(["memory", "list", "--limit", "50", "--offset", "0"])
+               && AssistantCliCommands.MemoryForgetThread("thr-1").SequenceEqual(["memory", "forget", "--thread", "thr-1"]),
+            "Memory commands must be Core's exact argument vectors.");
+        foreach (var bad in new Func<string[]>[]
+                 {
+                     () => AssistantCliCommands.MemoryAdd("--json", "note", null, null), () => AssistantCliCommands.MemoryAdd(new string('x', 2001), "note", null, null),
+                     () => AssistantCliCommands.MemoryAdd("ok", "secret", null, null), () => AssistantCliCommands.MemoryAdd("bell\a", "note", null, null),
+                     () => AssistantCliCommands.MemorySearch(new string('q', 201)), () => AssistantCliCommands.MemoryForget(0),
+                     () => AssistantCliCommands.MemoryForgetThread("thr:colon"), () => AssistantCliCommands.MemoryList(201, 0),
+                     () => AssistantCliCommands.MemoryConfigure(null, null), () => AssistantCliCommands.MemoryAdd("  ", "note", null, null)
+                 })
+        {
+            var threw = false;
+            try { bad(); } catch (ArgumentException) { threw = true; }
+            Assert(threw, "Out-of-contract memory arguments must never reach the CLI.");
+        }
+        var noteJson = "{\"id\":7,\"kind\":\"decision\",\"text\":\"Use the GPU build\",\"source\":\"assistant\",\"task_id\":\"task-1\",\"thread_id\":\"thr-1\","
+            + "\"captured_at\":\"2026-10-01T10:00:00Z\",\"updated_at\":\"2026-10-02T10:00:00Z\",\"expires_at\":null,\"expired\":false,\"extra\":\"SECRET\"}";
+        var note = AssistantCliService.ProjectMemoryNote(System.Text.Json.JsonDocument.Parse(noteJson).RootElement);
+        Assert(note is { Id: 7, Source: "assistant", TaskId: "task-1", ThreadId: "thr-1" } && note.SourceText.Contains("Learned by the assistant")
+               && note.SourceText.Contains("edited") && note.SourceText.Contains("task task-1") && !System.Text.Json.JsonSerializer.Serialize(note).Contains("SECRET"),
+            "A memory note must keep its source, provenance and timestamps and nothing else.");
+        foreach (var badNote in new[] { noteJson.Replace("\"decision\"", "\"policy\""), noteJson.Replace("\"id\":7", "\"id\":\"7\""),
+                     noteJson.Replace("2026-10-01T10:00:00Z", "yesterday"), noteJson.Replace("\"assistant\"", "\"model\"") })
+            Assert(AssistantCliService.ProjectMemoryNote(System.Text.Json.JsonDocument.Parse(badNote).RootElement) is null, "A malformed note is refused whole.");
+        System.Text.Json.JsonElement Caps(string json) => System.Text.Json.JsonDocument.Parse(json).RootElement;
+        var withMemory = Caps("{\"features\":{\"assistant_tools\":true,\"memory\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false},"
+            + "{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}]}}");
+        var widened = Caps("{\"features\":{\"assistant_tools\":true,\"memory\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false},"
+            + "{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\",\"reset\"]}]}}");
+        Assert(AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(withMemory)) == 2
+               && AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(widened)) == 1
+               && AssistantViewModel.ToolRevisionFor(["ddistro_memory"]) == 0,
+            "Revision 2 needs the read tool and the memory tool in its exact search|remember shape.");
+        var memoryCall = AssistantViewModel.DescribeToolCall(Caps("{\"tool\":\"ddistro_memory\",\"status\":\"completed\",\"arguments\":{\"operation\":\"remember\",\"kind\":\"decision\",\"text\":\"PRIVATE NOTE\"}}"));
+        Assert(memoryCall == "Memory: remembered a decision · done", "Memory activity is quiet and never shows note text: " + memoryCall);
+    }
+
+    // Memory panel: settings, CRUD, refusals and reset confirmation through a scripted runner.
+    {
+        var memCalls = new List<string>();
+        var memSettings = (Retrieval: true, Auto: false);
+        string Doc(bool ok, string body) => ok ? "{\"schema_version\":1,\"ok\":true,\"data\":" + body + "}"
+            : "{\"schema_version\":1,\"ok\":false,\"error\":" + body + "}";
+        var memNote = "{\"id\":3,\"kind\":\"note\",\"text\":\"Keep XTTS on GPU\",\"source\":\"user\",\"task_id\":null,\"thread_id\":null,"
+            + "\"captured_at\":\"2026-10-01T10:00:00Z\",\"updated_at\":\"2026-10-01T10:00:00Z\",\"expires_at\":null,\"expired\":false}";
+        Task<AssistantCliResult> Run(IReadOnlyList<string> arguments, TimeSpan _)
+        {
+            var command = string.Join(" ", arguments);
+            memCalls.Add(command);
+            var settings = $"{{\"retrieval\":{(memSettings.Retrieval ? "true" : "false")},\"auto_learning\":{(memSettings.Auto ? "true" : "false")}}}";
+            var document = command switch
+            {
+                "memory status" => Doc(true, "{\"present\":true,\"settings\":" + settings + ",\"notes\":1}"),
+                _ when command.StartsWith("memory list") => Doc(true, "{\"notes\":[" + memNote + "],\"total\":1,\"limit\":50,\"offset\":0,\"next_offset\":null}"),
+                _ when command.Contains("token=") => Doc(false, "{\"code\":\"refused\",\"message\":\"The note looks like it contains a credential.\"}"),
+                _ when command.StartsWith("memory add") => Doc(true, "{\"note\":" + memNote.Replace("\"id\":3", "\"id\":4") + ",\"duplicate\":false}"),
+                _ when command.StartsWith("memory configure") => Doc(true, "{\"settings\":" + settings.Replace("\"auto_learning\":false", command.Contains("--auto-learning on") ? "\"auto_learning\":true" : "\"auto_learning\":false") + "}"),
+                _ when command.StartsWith("memory forget") => Doc(true, "{\"forgotten\":1,\"by\":\"id\"}"),
+                "memory reset --yes" => Doc(true, "{\"forgotten\":2,\"settings_kept\":true}"),
+                _ => Doc(false, "{\"code\":\"invalid_argument\",\"message\":\"no\"}")
+            };
+            return Task.FromResult(AssistantCliService.Parse(new CommandResult(document.Contains("\"ok\":true") ? 0 : 2, document, "")));
+        }
+        var memory = new AssistantMemoryViewModel(Run, new FakeAssistantHost(Guid.NewGuid().ToString()), () => ("task-9", "thr:not-core"));
+        Assert(memCalls.Count == 0 && !memory.SettingsKnown, "The memory panel reads nothing until it is opened.");
+        await memory.RefreshAsync();
+        Assert(memory.SettingsKnown && memory.Retrieval && !memory.AutoLearning && memory.Notes.Single().Id == 3 && memory.IsAvailable,
+            "Refresh shows Core's settings (retrieval on, learning off) and notes.");
+        memory.AutoLearning = true;
+        await WaitUntilAsync(() => !memory.IsBusy);
+        Assert(memory.AutoLearning && memCalls.Contains("memory configure --auto-learning on"), "Automatic learning turns on only through Core.");
+        memory.BeginNote("Remember: token=abc123");
+        memory.SaveCommand.Execute(null); await WaitUntilAsync(() => !memory.IsBusy);
+        Assert(memory.DraftText.Contains("token=") && memory.StatusText.Contains("credential") && memory.Notes.Count == 1,
+            "A refused note stays in the editor with Core's reason and nothing is added.");
+        memory.BeginNote("Prefer Chatterbox voices");
+        memory.DraftKind = "preference";
+        memory.SaveCommand.Execute(null); await WaitUntilAsync(() => !memory.IsBusy);
+        Assert(memCalls.Last() == "memory add --text Prefer Chatterbox voices --kind preference --task task-9" && memory.Notes[0].Id == 4 && memory.DraftText.Length == 0,
+            "A user note carries its task source; a thread id Core would refuse is left out.");
+        memory.ResetCommand.Execute(null);
+        Assert(memory.ConfirmingReset && !memCalls.Contains("memory reset --yes"), "Reset needs a second explicit confirmation.");
+        memory.CancelResetCommand.Execute(null);
+        memory.ResetCommand.Execute(null);
+        memory.ConfirmResetCommand.Execute(null); await WaitUntilAsync(() => !memory.IsBusy);
+        Assert(memCalls.Count(call => call == "memory reset --yes") == 1 && memory.Notes.Count == 0 && memory.StatusText.Contains("settings were kept"),
+            "Confirmed reset forgets notes once and keeps settings.");
+        var oldCore = new AssistantMemoryViewModel((_, _) => Task.FromResult(AssistantCliService.Parse(new CommandResult(2,
+            "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"invalid_argument\",\"message\":\"Unknown command memory.\"}}", ""))),
+            new FakeAssistantHost(Guid.NewGuid().ToString()), () => (null, null));
+        await oldCore.RefreshAsync();
+        Assert(!oldCore.IsAvailable && !oldCore.SettingsKnown && oldCore.StatusText.Contains("Update Distro") && !oldCore.ExportCommand.CanExecute(null),
+            "An older Core shows memory as unavailable, with no placeholder notes or settings.");
+    }
+
     // ddistro agent probe: the wrapper's check list, the bare helper's map, and nothing malformed reads as passed.
     System.Text.Json.JsonElement ProbeData(string json) => System.Text.Json.JsonDocument.Parse(json).RootElement.Clone();
     var wrapperPass = AssistantViewModel.ReadProbe(ProbeData("{\"passed\":true,\"checks\":[{\"name\":\"platform\",\"passed\":true}],\"diagnostics\":{},"
@@ -3266,8 +3408,8 @@ try
                 "<b>x</b> [ok](https://example.invalid/a) [bad](javascript:alert(1)) [file](file:///c:/x)").Single();
             var links = html.Inlines.OfType<System.Windows.Documents.Hyperlink>().ToArray();
             Assert(links.Length == 1 && links[0].NavigateUri.Scheme == "https"
-                   && new System.Windows.Documents.TextRange(html.ContentStart, html.ContentEnd).Text.StartsWith("<b>x</b> ok [bad](javascript:"),
-                "Only http(s) links render as links; HTML and other schemes stay literal.");
+                   && new System.Windows.Documents.TextRange(html.ContentStart, html.ContentEnd).Text.StartsWith("<b>x</b> ok (https://example.invalid/a) [bad](javascript:"),
+                "Only http(s) links render as links, with their address as selectable text; HTML and other schemes stay literal.");
         }
         catch (Exception ex)
         {
@@ -3398,7 +3540,7 @@ static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTra
     string distroName = LauncherConstants.DistroName, bool signedOut = false, bool distroBusy = false, Func<string, string?>? script = null,
     TaskCompletionSource? capabilitiesGate = null, Func<AssistantViewModel, Task>? connect = null,
     System.Text.Json.Nodes.JsonArray? resumedTurns = null, TaskCompletionSource? prepareGate = null,
-    Func<string, System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>? respondFirst = null)
+    Func<string, System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>? respondFirst = null, IAssistantCatalogStore? catalog = null)
 {
     store.Save(saved);
     // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work. thread/resume with
@@ -3441,7 +3583,7 @@ static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTra
     };
     var cli = new FakeAssistantCli(transport, statusTask) { DistroName = distroName, Script = script, CapabilitiesGate = capabilitiesGate, PrepareGate = prepareGate };
     var host = new FakeAssistantHost(installationId) { DistroBusy = distroBusy };
-    var vm = new AssistantViewModel(cli, host, store);
+    var vm = new AssistantViewModel(cli, host, store, catalog);
     await (connect ?? (model => model.ConnectAsync()))(vm);
     return (vm, cli, transport, host);
 }

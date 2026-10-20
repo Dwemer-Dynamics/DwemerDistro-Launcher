@@ -232,6 +232,9 @@ internal static partial class AssistantMarkdown
                     var link = new Hyperlink { NavigateUri = uri, ToolTip = uri.AbsoluteUri };
                     link.Inlines.Add(new Run(label));
                     inlines.Add(link);
+                    // The address is part of the selectable text, so it can be read and copied with the reply.
+                    if (!string.Equals(label.Trim(), uri.AbsoluteUri, StringComparison.Ordinal) && !string.Equals(label.Trim(), match.Groups["url"].Value, StringComparison.Ordinal))
+                        inlines.Add(new Run($" ({uri.AbsoluteUri})"));
                 }
                 else
                 {
