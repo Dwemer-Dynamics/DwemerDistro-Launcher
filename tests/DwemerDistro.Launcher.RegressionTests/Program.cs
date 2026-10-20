@@ -2555,11 +2555,6 @@ try
             "The developer instructions must tell the model to answer model questions from the per-message context.");
         Assert(AssistantCliCommands.Models().SequenceEqual(["models", "herika"]) && AssistantCliService.MaxModelAssignments == 200,
             "The model lookup is the fixed models herika command.");
-        Assert(AssistantViewModel.FormatTranscript([new AssistantTranscriptItem("You", "Which models?"), new AssistantTranscriptItem("Codex", string.Empty, "m0"),
-                   new AssistantTranscriptItem("Codex", "Line 1\nLine 2", "m1"), new AssistantTranscriptItem("DwemerDistro", "Stopped.")])
-               == string.Join(Environment.NewLine + Environment.NewLine, "You: Which models?", "Codex: Line 1\nLine 2", "DwemerDistro: Stopped.")
-               && AssistantViewModel.FormatTranscript([]) == string.Empty,
-            "Copy conversation must give 'Role: Text' blocks separated by one blank line, skipping messages with no text yet.");
 
         var access = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
         var workspaceEdits = 0;

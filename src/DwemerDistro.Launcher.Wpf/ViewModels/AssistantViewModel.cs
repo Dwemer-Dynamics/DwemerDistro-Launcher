@@ -786,11 +786,6 @@ public sealed class AssistantViewModel : ObservableObject
             " If asked, say they could not be read. Do not guess them, and do not read configuration, database or credential files to find them.";
     }
 
-    /// <summary>The visible conversation as "Role: Text" blocks separated by a blank line; nothing else from the page.</summary>
-    internal static string FormatTranscript(IEnumerable<AssistantTranscriptItem> items) =>
-        string.Join(Environment.NewLine + Environment.NewLine,
-            items.Where(item => item.Text.Length > 0).Select(item => $"{item.Role}: {item.Text}"));
-
     private async Task StopAsync()
     {
         if (State == AssistantState.Streaming)
