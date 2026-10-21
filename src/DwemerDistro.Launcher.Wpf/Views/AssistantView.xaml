@@ -137,19 +137,23 @@
                         </WrapPanel>
                     </Border>
 
-                    <!-- A restart Core's broker proposed in the running turn. Nothing runs until Approve restart; Cancel is the safe
-                         choice and neither button is a default. Stop, disconnect, a new chat or the broker's expiry also end it. -->
-                    <Border x:Name="RestartProposalCard" Visibility="{Binding IsRestartProposed, Converter={StaticResource BoolToVisibility}}"
+                    <!-- An action Core's broker proposed in the running turn: a restart, a model change or its undo, with Core's exact
+                         before/after lines for a model change. Nothing runs until Approve restart, Apply change or Undo change; Cancel
+                         is the safe choice and neither button is a default. Stop, disconnect, a new chat or the broker's expiry also end it. -->
+                    <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
                             BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
-                            AutomationProperties.Name="Confirm the restart the assistant proposed">
+                            AutomationProperties.Name="Confirm the action the assistant proposed">
                         <StackPanel>
-                            <TextBlock x:Name="RestartProposalTitle" Text="{Binding RestartProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock x:Name="RestartProposalDetail" Text="{Binding RestartProposalDetail}" TextWrapping="Wrap" Margin="0,2,0,6" />
+                            <TextBlock x:Name="RestartProposalTitle" Text="{Binding ActionProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock x:Name="RestartProposalDetail" Text="{Binding ActionProposalDetail}" TextWrapping="Wrap" Margin="0,2,0,6" />
+                            <TextBlock x:Name="ActionProposalDiff" Text="{Binding ActionProposalDiff}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                                       Margin="0,0,0,6" Visibility="{Binding HasActionProposalDiff, Converter={StaticResource BoolToVisibility}}"
+                                       AutomationProperties.Name="Exact change: the line starting with minus is now, the line starting with plus is after" />
                             <WrapPanel>
-                                <Button x:Name="ApproveRestartButton" Content="Approve restart" Command="{Binding ApproveRestartCommand}" Style="{StaticResource Assistant.Action}"
-                                        AutomationProperties.HelpText="Restart this service once now, then check that a new process started and its ports answer." />
-                                <Button x:Name="CancelRestartButton" Content="Cancel" Command="{Binding CancelRestartCommand}" Style="{StaticResource Assistant.Action}"
-                                        AutomationProperties.HelpText="Do not restart. Nothing is run." />
+                                <Button x:Name="ApproveRestartButton" Content="{Binding ApproveActionLabel}" Command="{Binding ApproveActionCommand}" Style="{StaticResource Assistant.Action}"
+                                        AutomationProperties.HelpText="Run exactly this once now, then check it fresh." />
+                                <Button x:Name="CancelRestartButton" Content="Cancel" Command="{Binding CancelActionCommand}" Style="{StaticResource Assistant.Action}"
+                                        AutomationProperties.HelpText="Do not run it. Nothing is changed." />
                             </WrapPanel>
                         </StackPanel>
                     </Border>

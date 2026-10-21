@@ -3988,7 +3988,7 @@ try
                && Revision(Caps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool.Replace("[\"propose_restart\"]", "[\"propose_restart\",\"stop\"]"))) == 3
                && AssistantViewModel.ToolRevisionFor(["ddistro_read", "ddistro_action"]) == 1
                && Enumerable.Range(0, 5).All(revision => !AssistantViewModel.HasActionTool(revision))
-               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(9)
+               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(11)
                && AssistantViewModel.HasMemoryTool(6) && !AssistantViewModel.HasMemoryTool(5) && AssistantViewModel.HasEnhancedRead(5)
                && AssistantViewModel.InstructionsFor(5).Contains(AssistantViewModel.ActionInstructions)
                && AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.MemoryInstructions)
@@ -4010,14 +4010,14 @@ try
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"postgres\"", ""))) == 5
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"performance\"", ""))) == 5
                && PerfRevision(withAction) == 5
-               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(9)
+               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(11)
                && AssistantViewModel.HasActionTool(7) && AssistantViewModel.HasActionTool(8) && AssistantViewModel.HasEnhancedRead(8)
-               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(9)
+               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(11)
                && AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.PerformanceInstructions) && !AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.MemoryInstructions) && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ActionInstructions),
+               && !AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.PerformanceInstructions)
+               && !AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.ActionInstructions),
             "Only the full performance read with the action tool is revision 7/8; partial or unknown offers get no performance rules, actions or memory.");
         var sourceCall = AssistantViewModel.DescribeToolCall(System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_read\",\"status\":\"completed\","
             + "\"arguments\":{\"operation\":\"logs\",\"log_source\":\"apache\",\"lines\":20}}").RootElement);
@@ -4127,6 +4127,159 @@ try
         Updated(P('6'), "verified");
         Assert(action.host.LiveChangeHolds == 0 && !action.vm.IsRestartProposed && Decisions().Length == 6,
             "The session's end releases a running restart's hold once; a late update after it releases nothing more.");
+
+        // Model settings are revision 9/10: only on top of the full 7/8 shape and only with Core's exact configure_model operations,
+        // the model_options and update_check reads and both features. Older or partial Cores stay at 7/8, and unknown revisions
+        // (11 and up) never get the model, action or performance rules.
+        const string ModelRead = "\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false,\"max_log_lines\":400,\"log_filters\":[\"query\",\"since\"],"
+            + "\"operations\":[\"inventory\",\"status\",\"models\",\"logs\",\"health\",\"performance\",\"model_options\",\"update_check\"],\"log_sources\":[\"apache\",\"postgres\"]}";
+        const string ModelAction = ",{\"name\":\"ddistro_action\",\"mutates\":true,\"operations\":[\"propose_restart\"],\"capability_operations\":"
+            + "{\"restart_service\":[\"propose_restart\"],\"configure_model\":[\"propose_model_change\",\"propose_model_rollback\"]}}";
+        const string ModelFeatures = AllFeatures + ",\"model_settings\":true,\"update_check\":true";
+        int ModelRevision(System.Text.Json.JsonElement caps) => AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(caps),
+            AssistantViewModel.OffersEnhancedRead(caps), AssistantViewModel.OffersPerformanceRead(caps), AssistantViewModel.OffersModelSettings(caps));
+        Assert(ModelRevision(PerfCaps(ModelFeatures, ModelAction, ModelRead)) == 9
+               && ModelRevision(PerfCaps(ModelFeatures + ",\"memory\":true", ",{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}"
+                   + ModelAction, ModelRead)) == 10
+               && ModelRevision(PerfCaps(AllFeatures, ModelAction, ModelRead)) == 7
+               && ModelRevision(PerfCaps(ModelFeatures, ModelAction, PerfRead)) == 7
+               && ModelRevision(PerfCaps(ModelFeatures, ModelAction, ModelRead.Replace(",\"update_check\"", ""))) == 7
+               && ModelRevision(PerfCaps(ModelFeatures, ModelAction.Replace(",\"propose_model_rollback\"", ""), ModelRead)) == 7
+               && ModelRevision(PerfCaps(ModelFeatures, ActionTool, ModelRead)) == 7
+               && ModelRevision(PerfCaps(ModelFeatures.Replace("\"assistant_actions\":true,", ""), ModelAction, ModelRead)) == 3
+               && Enumerable.Range(0, 9).All(revision => !AssistantViewModel.HasModelSettings(revision))
+               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(11)
+               && AssistantViewModel.HasActionTool(9) && AssistantViewModel.HasPerformanceRead(10) && AssistantViewModel.HasEnhancedRead(10)
+               && AssistantViewModel.HasMemoryTool(10) && !AssistantViewModel.HasMemoryTool(9)
+               && !AssistantViewModel.HasActionTool(11) && !AssistantViewModel.HasMemoryTool(11) && !AssistantViewModel.HasPerformanceRead(11)
+               && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ModelSettingsInstructions)
+               && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.PerformanceInstructions)
+               && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ActionInstructions)
+               && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.MemoryInstructions)
+               && AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.MemoryInstructions)
+               && !AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ModelSettingsInstructions)
+               && !AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.ModelSettingsInstructions),
+            "Only Core's full model settings shape on top of 7/8 is revision 9/10; partial offers and unknown revisions never get model rules.");
+
+        // A model proposal is shown only on a thread with model settings, with Core's exact three diff lines, never as a restart.
+        const string ModelDiff = "\"change\":{\"diff\":[\"CHIM profile 1 (Default Profile), fast role (llm_secondary_id)\","
+            + "\"- connector 2: Gemini 2.5 Flash Lite (google/gemini-2.5-flash-lite; openrouter/openrouterjson)\","
+            + "\"+ connector 3: GLM 5.2 (z-ai/glm-5.2; openrouter/openrouterjson)\"]}";
+        System.Text.Json.JsonElement ProposalJson(string kind, string change = ModelDiff) => System.Text.Json.JsonDocument.Parse(
+            "{\"action\":\"" + kind + "\",\"label\":\"CHIM model assignment\",\"impact\":\"i\",\"reason\":\"r\"," + change + "}").RootElement;
+        Assert(AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 7) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_rollback"), P('e'), "t", 8) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"b\"]}"), P('e'), "t", 9) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"\",\"c\"]}"), P('e'), "t", 9) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("stop_everything"), P('e'), "t", 10) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("restart"), P('e'), "t", 4) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("restart"), P('e'), "t", 7) is { Kind: "restart", Diff: "" }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 9) is { Kind: "model_change" } shownChange
+               && shownChange.Diff.Split('\n').Length == 3 && shownChange.Diff.Contains("+ connector 3: GLM 5.2"),
+            "Model proposals need revision 9/10 and three non-empty diff lines; unknown actions and older threads never show a card.");
+        // The approved diff is never shortened: a long label/model line within Core's bound is kept exactly, while an over-bound
+        // or non-string line rejects the whole card instead of showing a truncated plan.
+        string LongDiff(string plus, string minus = "\"- connector 2: Gemini\"") => "\"change\":{\"diff\":[\"CHIM profile 1, fast role\"," + minus + "," + plus + "]}";
+        var longLine = "+ connector 3: " + new string('L', 400) + " (" + new string('m', 700) + "; openrouter/openrouterjson)";
+        var maxLine = "+ connector 3: " + new string('x', AssistantViewModel.ModelDiffLineMax - 15);
+        Assert(longLine.Length > 300 && longLine.Length <= AssistantViewModel.ModelDiffLineMax && maxLine.Length == AssistantViewModel.ModelDiffLineMax
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", LongDiff("\"" + longLine + "\"")), P('e'), "t", 9) is { } longChange
+               && longChange.Diff.Split('\n')[2] == longLine
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_rollback", LongDiff("\"" + maxLine + "\"")), P('e'), "t", 9) is { } maxChange
+               && maxChange.Diff.Split('\n')[2] == maxLine
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", LongDiff("\"" + maxLine + "y\"")), P('e'), "t", 9) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", LongDiff("\"ok\"", "\"- " + new string('z', 1300) + "\"")), P('e'), "t", 9) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", LongDiff("3")), P('e'), "t", 9) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", LongDiff("null")), P('e'), "t", 9) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", LongDiff("[\"+ connector 3\"]")), P('e'), "t", 9) is null,
+            "Model diff lines up to Core's 1200 characters are kept exactly; longer or non-string lines reject the card, never truncate it.");
+        string ModelUpdate(string json, bool undo = false) => AssistantViewModel.DescribeModelUpdate(System.Text.Json.JsonDocument.Parse(json).RootElement, undo);
+        Assert(ModelUpdate("{\"state\":\"verified\",\"verified\":true}") == "Model change verified: the CHIM database shows the new connector. In-game replies were not tested."
+               && ModelUpdate("{\"state\":\"verified\",\"verified\":true}", undo: true).StartsWith("Undo verified")
+               && ModelUpdate("{\"state\":\"verified\",\"verified\":false}").Contains("could not be confirmed")
+               && ModelUpdate("{\"state\":\"unknown\"}").Contains("could not be confirmed") && ModelUpdate("{\"state\":\"surprise\"}").Contains("could not be confirmed")
+               && ModelUpdate("{\"state\":\"unverified\"}").Contains("did not show it")
+               && ModelUpdate("{\"state\":\"conflict\"}").Contains("nothing was overwritten")
+               && ModelUpdate("{\"state\":\"not_executed\"}").Contains("Nothing was changed") && ModelUpdate("{\"state\":\"expired\"}").Contains("Nothing was changed")
+               && AssistantViewModel.DescribeActionUpdate("restart", System.Text.Json.JsonDocument.Parse("{\"state\":\"verified\",\"verified\":true}").RootElement)
+                   .StartsWith("Restart verified"),
+            "A model change is verified only from the broker's verified state, and only as a database read; unknown is never called done.");
+
+        // Through the view model on a revision 9 thread: initialize opts into configure_model, the card shows the exact diff and
+        // Apply change or Undo change, approval holds the live-change slot until the proposal's own update, and a restart still works.
+        const string ModelCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + ModelFeatures + "},"
+            + ModelRead + ModelAction + EnhancedCoverage + "}}";
+        System.Text.Json.Nodes.JsonNode? modelAnswer = null;
+        var model = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-model", ThreadToolRevision = 9 }, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? ModelCapabilities : null,
+            respondFirst: (method, _) => method == "ddistro/action/decide" ? modelAnswer?.DeepClone() : null);
+        string[] ModelDecisions() { lock (model.transport.Requests) return model.transport.Bodies.Where(body => body.StartsWith("ddistro/action/decide ")).ToArray(); }
+        bool ModelSaid(string text) => model.vm.Transcript.Any(item => item.Text.Contains(text));
+        void ModelNotify(string method, string json) => model.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
+        void ProposeModel(string id, string kind = "model_change") => ModelNotify("ddistro/action/proposed", "{\"proposalId\":\"" + id
+            + "\",\"threadId\":\"thr-model\",\"turnId\":\"turn-1\",\"action\":\"" + kind + "\",\"label\":\"CHIM model assignment\","
+            + "\"impact\":\"Only which connector this role uses changes.\",\"reason\":\"You asked for GLM 5.2 as the fast model.\","
+            + "\"expiresAt\":\"2026-10-20T00:00:00Z\"," + ModelDiff + "}");
+        void ModelUpdated(string id, string kind, string state) => ModelNotify("ddistro/action/updated", "{\"proposalId\":\"" + id
+            + "\",\"threadId\":\"thr-model\",\"action\":\"" + kind + "\",\"state\":\"" + state + "\",\"executed\":" + (state is "verified" ? "true" : "false")
+            + ",\"verified\":" + (state == "verified" ? "true" : "false") + ",\"checks\":[]}");
+        async Task ModelDecideAsync(AsyncRelayCommand command, int decisions)
+        {
+            var lines = model.vm.Transcript.Count;
+            command.Execute(null);
+            await WaitUntilAsync(() => ModelDecisions().Length == decisions && model.vm.Transcript.Count > lines);
+        }
+        lock (model.transport.Requests)
+            Assert(model.transport.Bodies.Single(body => body.StartsWith("initialize ")).Contains("\"ddistroActions\":[\"restart_service\",\"configure_model\"]")
+                   && model.transport.Bodies.Single(body => body.StartsWith("thread/resume")).Contains("Exceptions to not changing anything"),
+                "A revision 9 thread with Core offering model settings resumes with the model rules and opts into configure_model.");
+        model.vm.InputText = "make the fast model GLM 5.2";
+        model.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => model.vm.State == AssistantState.Streaming);
+        ProposeModel(P('a'));
+        Assert(model.vm.IsActionProposed && model.vm.ActionProposalTitle == "Change this CHIM model assignment?" && model.vm.ApproveActionLabel == "Apply change"
+               && model.vm.HasActionProposalDiff && model.vm.ActionProposalDiff.Contains("- connector 2: Gemini 2.5 Flash Lite")
+               && model.vm.ActionProposalDiff.Contains("+ connector 3: GLM 5.2") && model.vm.ActionProposalDetail.Contains("Nothing changes unless you apply it")
+               && model.vm.IsRestartProposed && model.vm.ApproveRestartCommand == model.vm.ApproveActionCommand,
+            "The model card shows the exact before and after, Apply change, and the restart names read the same card.");
+        modelAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"cancelled\"}");
+        await ModelDecideAsync(model.vm.CancelActionCommand, 1);
+        Assert(ModelDecisions()[0].Contains(P('a')) && ModelDecisions()[0].Contains("\"decision\":\"cancel\"") && model.host.LiveChangeHolds == 0
+               && !model.vm.IsActionProposed && ModelSaid("Cancelled. Nothing was changed."),
+            "Cancel sends cancel for exactly this proposal, takes no live-change slot, and says nothing changed.");
+
+        modelAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"approved\"}");
+        ProposeModel(P('b'));
+        await ModelDecideAsync(model.vm.ApproveActionCommand, 2);
+        Assert(ModelDecisions()[1].Contains(P('b')) && ModelDecisions()[1].Contains("\"decision\":\"approve\"") && model.host.LiveChangeHolds == 1
+               && ModelSaid("Change approved"), "Apply change sends approve once and holds the live-change slot while it runs.");
+        ModelUpdated(P('9'), "model_change", "verified");
+        Assert(model.host.LiveChangeHolds == 1, "Another proposal's update never ends this change's hold.");
+        ModelUpdated(P('b'), "restart", "verified");
+        Assert(model.host.LiveChangeHolds == 0 && ModelSaid("Model change verified: the CHIM database shows the new connector."),
+            "The change's own update ends the hold and is described as the model change the user approved, whatever action it names.");
+
+        ProposeModel(P('c'), "model_rollback");
+        Assert(model.vm.ApproveActionLabel == "Undo change" && model.vm.ActionProposalTitle == "Undo the last model change?",
+            "An undo proposal shows Undo change.");
+        await ModelDecideAsync(model.vm.ApproveActionCommand, 3);
+        ModelUpdated(P('c'), "model_rollback", "conflict");
+        Assert(model.host.LiveChangeHolds == 0 && ModelSaid("The undo was not applied: the profile or connector changed since the preview"),
+            "A conflicting undo ends the hold and says nothing was overwritten.");
+
+        ProposeModel(P('d'));
+        await ModelDecideAsync(model.vm.ApproveActionCommand, 4);
+        ModelUpdated(P('d'), "model_change", "unknown");
+        Assert(model.host.LiveChangeHolds == 0 && ModelSaid("The model change's outcome could not be confirmed"),
+            "An unknown outcome is never reported as done or as not run.");
+
+        ModelNotify("ddistro/action/proposed", "{\"proposalId\":\"" + P('f') + "\",\"threadId\":\"thr-model\",\"turnId\":\"turn-1\",\"action\":\"restart\","
+            + "\"service\":\"apache\",\"label\":\"Apache web server\",\"impact\":\"Apache is shared.\",\"reason\":\"Port 8081 refused.\",\"expiresAt\":\"2026-10-20T00:00:00Z\"}");
+        Assert(model.vm.ActionProposalTitle == "Restart the Apache web server?" && model.vm.ApproveActionLabel == "Approve restart" && !model.vm.HasActionProposalDiff,
+            "A restart on a model settings thread keeps its own card and wording.");
+        await model.vm.ShutdownAsync();
+        Assert(!model.vm.IsActionProposed && model.host.LiveChangeHolds == 0, "The session's end closes the card and holds nothing.");
         var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
         var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
         {

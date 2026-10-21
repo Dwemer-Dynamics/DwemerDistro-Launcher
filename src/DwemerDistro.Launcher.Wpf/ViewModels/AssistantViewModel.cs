@@ -113,7 +113,8 @@ public sealed class AssistantViewModel : ObservableObject
     private const int MaxCarriedMessages = 8;
     private const int MaxCarriedMessageChars = 1500;
     // Operations of the read tool shown in activity lines; anything else reads as "read".
-    private static readonly string[] ToolOperations = ["inventory", "status", "models", "logs", "health", "performance"];
+    private static readonly string[] ToolOperations = ["inventory", "status", "models", "logs", "health", "performance", "model_options", "update_check",
+        "propose_restart", "propose_model_change", "propose_model_rollback"];
 
     /// <summary>
     /// Sent as the thread's developer instructions. It describes the whole distro the assistant helps with, what it can
@@ -196,30 +197,65 @@ public sealed class AssistantViewModel : ObservableObject
     /// The tool set a thread can have, as one number. 0 is none; 1 is <see cref="ReadToolName"/>; 2 adds
     /// <see cref="MemoryToolName"/>; 3 and 4 are 1 and 2 with the enhanced read schema (400 log lines, query/since filters,
     /// coverage); 5 and 6 are 3 and 4 plus <see cref="ActionToolName"/>; 7 and 8 are 5 and 6 with the performance read
-    /// schema (operation performance, server-only product, log_source for apache/postgres logs). A Core offering performance
-    /// without the action tool stays at 3/4, so no revision ever implies a tool the session lacks. The broker declares tools
-    /// only on thread/start, so a thread lacking something Core now offers is upgraded once to a new thread. Unknown
-    /// revisions (from a newer launcher) count as the read tool alone, so an older thread is never treated as able to
-    /// propose a restart.
+    /// schema (operation performance, server-only product, log_source for apache/postgres logs); 9 and 10 are 7 and 8 with
+    /// model settings (the action tool's configure_model operations plus the model_options and update_check reads). A Core
+    /// offering performance without the action tool stays at 3/4, and model settings count only on top of 7/8, so no
+    /// revision ever implies a tool the session lacks. The broker declares tools only on thread/start, so a thread lacking
+    /// something Core now offers is upgraded once to a new thread. Unknown revisions (from a newer launcher) count as the read
+    /// tool alone, so an older thread is never treated as able to propose a restart or a model change.
     /// </summary>
-    internal static int ToolRevisionFor(IReadOnlyCollection<string> tools, bool enhancedRead = false, bool performanceRead = false) =>
-        ToolRevision(tools.Contains(ReadToolName), tools.Contains(MemoryToolName), enhancedRead, tools.Contains(ActionToolName), performanceRead);
+    internal static int ToolRevisionFor(IReadOnlyCollection<string> tools, bool enhancedRead = false, bool performanceRead = false,
+        bool modelSettings = false) =>
+        ToolRevision(tools.Contains(ReadToolName), tools.Contains(MemoryToolName), enhancedRead, tools.Contains(ActionToolName), performanceRead,
+            modelSettings);
 
-    private static int ToolRevision(bool read, bool memory, bool enhancedRead, bool action = false, bool performanceRead = false)
+    private static int ToolRevision(bool read, bool memory, bool enhancedRead, bool action = false, bool performanceRead = false,
+        bool modelSettings = false)
     {
         if (!read) return 0;
+        if (action && enhancedRead && performanceRead && modelSettings) return memory ? 10 : 9;
         if (action && enhancedRead && performanceRead) return memory ? 8 : 7;
         if (action && enhancedRead) return memory ? 6 : 5;
         return (memory ? 2 : 1) + (enhancedRead ? 2 : 0);
     }
 
-    internal static bool HasMemoryTool(int toolRevision) => toolRevision is 2 or 4 or 6 or 8;
+    internal static bool HasMemoryTool(int toolRevision) => toolRevision is 2 or 4 or 6 or 8 or 10;
 
-    internal static bool HasEnhancedRead(int toolRevision) => toolRevision is >= 3 and <= 8;
+    internal static bool HasEnhancedRead(int toolRevision) => toolRevision is >= 3 and <= 10;
 
-    internal static bool HasActionTool(int toolRevision) => toolRevision is >= 5 and <= 8;
+    internal static bool HasActionTool(int toolRevision) => toolRevision is >= 5 and <= 10;
 
-    internal static bool HasPerformanceRead(int toolRevision) => toolRevision is 7 or 8;
+    internal static bool HasPerformanceRead(int toolRevision) => toolRevision is >= 7 and <= 10;
+
+    internal static bool HasModelSettings(int toolRevision) => toolRevision is 9 or 10;
+
+    /// <summary>
+    /// Replaces <see cref="ActionInstructions"/> for threads with model settings: the restart and the one CHIM model assignment
+    /// the Assistant can propose, and the local update check. Ambiguous targets are asked about, never guessed.
+    /// </summary>
+    internal const string ModelSettingsInstructions =
+        "Exceptions to not changing anything, both made only through the " + ActionToolName + " tool, which can only propose: you cannot approve " +
+        "or run anything, and the user decides in the launcher. Say why first; propose each operation at most once per turn.\n" +
+        "Restart: propose_restart can restart the Apache web server, which CHIM (HerikaServer), STOBE, Dialectic and custom PHP mods share. " +
+        "Propose it only when fresh " + ReadToolName + " evidence shows Apache is down or failing; the user sees Approve restart and Cancel. failed " +
+        "means it ran but the fresh check did not pass; only verified means a new process started and its ports answered, which is not a full " +
+        "health check.\n" +
+        "Model assignment: propose_model_change sets which existing LLM connector one CHIM (HerikaServer) profile uses for one role (standard, " +
+        "fast, powerful, experimental, formatter, fallback, diary). First read " + ReadToolName + " model_options for the profile and connector " +
+        "ids; never guess an id. If the request does not name exactly one profile and role, for example when several profiles exist, ask which " +
+        "one: one profile and role per proposal, never several or all at once. " + ActionToolName + " cannot change connectors, API keys, " +
+        "conf.php, files or other products. The user sees the exact before and after with Apply change and Cancel. propose_model_rollback " +
+        "(reason only) undoes this chat's last applied model change exactly; the user sees Undo change and Cancel. " + ActionToolName +
+        " can do nothing else: no other service, start, stop, update, repair or setting. These limits describe only " + ActionToolName +
+        "; the read-only tools and the reviewed CHIM file workflow above are unchanged, with all their existing rules and refusals.\n" +
+        "Report each reply's state exactly: refused, busy, cancelled, expired, conflict (something changed since the preview; nothing was " +
+        "overwritten) and not_executed mean nothing changed; unknown means the outcome could not be confirmed, so read model_options before " +
+        "anything else; verified for a model change means a fresh read of the CHIM database shows the new assignment, not that the provider or " +
+        "in-game replies work. To confirm a change later, read model_options again.\n" +
+        ReadToolName + " update_check (optionally for one server product) reports local blockers to a server update: tracked edits block it, " +
+        "untracked files may, and unmanaged, unreadable or busy installs are unknown. It never fetches, updates or discards anything and does not " +
+        "check the network, so no_local_blockers does not mean an update exists, is safe or would not conflict. You cannot run updates; point " +
+        "the user to the launcher's update for that server.";
 
     /// <summary>Added for threads with the performance read schema: what performance measures, and where shared logs now go.</summary>
     internal const string PerformanceInstructions =
@@ -355,11 +391,13 @@ public sealed class AssistantViewModel : ObservableObject
     // A thread whose upgrade failed in this session continues as it was; it is not tried again on every message.
     private string? _upgradeFailedThread;
     private string _usageText = string.Empty;
-    // The restart Core's broker proposed for this thread's running turn; set only while its inline card is shown.
-    private RestartProposal? _restartProposal;
-    private sealed record RestartProposal(string Id, string ThreadId, string Label, string Impact, string Reason);
-    // The approved restart holding the host's live-change slot, from Approve until its ddistro/action/updated or the session's end.
-    private string? _restartRunningId;
+    // The action Core's broker proposed for this thread's running turn (a restart or a model change); set only while its
+    // inline card is shown. Kind is restart, model_change or model_rollback; Diff is the broker's exact before/after lines.
+    private ActionProposal? _actionProposal;
+    internal sealed record ActionProposal(string Id, string ThreadId, string Kind, string Label, string Impact, string Reason, string Diff);
+    // The approved action holding the host's live-change slot, from Approve until its ddistro/action/updated or the session's end.
+    private string? _actionRunningId;
+    private string _actionRunningKind = "restart";
     // The sha256 of the account-home config Core proposed to quarantine; set only while its inline card is shown.
     private string? _homeConfigProposal;
     // DwemerDistro tool calls of the current turn by the broker's coverage result, and the items already counted.
@@ -420,9 +458,9 @@ public sealed class AssistantViewModel : ObservableObject
         RepairHomeConfigCommand = new AsyncRelayCommand(RepairHomeConfigAsync, () => _homeConfigProposal is not null && _client is null
             && !IsMaintenanceHeld && State == AssistantState.Error);
         CancelHomeConfigRepairCommand = new RelayCommand(CancelHomeConfigRepair, () => _homeConfigProposal is not null);
-        ApproveRestartCommand = new AsyncRelayCommand(() => DecideRestartAsync(true),
-            () => _restartProposal is not null && _client is not null && State == AssistantState.Streaming && !IsMaintenanceHeld);
-        CancelRestartCommand = new AsyncRelayCommand(() => DecideRestartAsync(false), () => _restartProposal is not null);
+        ApproveActionCommand = new AsyncRelayCommand(() => DecideActionAsync(true),
+            () => _actionProposal is not null && _client is not null && State == AssistantState.Streaming && !IsMaintenanceHeld);
+        CancelActionCommand = new AsyncRelayCommand(() => DecideActionAsync(false), () => _actionProposal is not null);
     }
 
     public AsyncRelayCommand ConnectCommand { get; }
@@ -453,18 +491,42 @@ public sealed class AssistantViewModel : ObservableObject
     public RelayCommand CancelDeleteCommand { get; }
     public AsyncRelayCommand RepairHomeConfigCommand { get; }
     public RelayCommand CancelHomeConfigRepairCommand { get; }
-    public AsyncRelayCommand ApproveRestartCommand { get; }
-    public AsyncRelayCommand CancelRestartCommand { get; }
+    public AsyncRelayCommand ApproveActionCommand { get; }
+    public AsyncRelayCommand CancelActionCommand { get; }
 
     /// <summary>
-    /// A restart Core's broker proposed during this thread's running turn. Approve sends exactly its id once; Cancel, Stop,
-    /// a disconnect, a new chat, the turn ending or the broker's 60 second expiry all end it with nothing run.
+    /// An action Core's broker proposed during this thread's running turn: a restart, a model change or its undo. Approve sends
+    /// exactly its id once; Cancel, Stop, a disconnect, a new chat, the turn ending or the broker's 60 second expiry all end it
+    /// with nothing run.
     /// </summary>
-    public bool IsRestartProposed => _restartProposal is not null;
-    public string RestartProposalTitle => _restartProposal is { } proposal ? $"Restart the {proposal.Label}?" : string.Empty;
-    public string RestartProposalDetail => _restartProposal is { } proposal
-        ? "Assistant's reason: " + proposal.Reason + "\n" + proposal.Impact + " Nothing runs unless you approve."
+    public bool IsActionProposed => _actionProposal is not null;
+    public string ActionProposalTitle => _actionProposal switch
+    {
+        { Kind: "model_change" } => "Change this CHIM model assignment?",
+        { Kind: "model_rollback" } => "Undo the last model change?",
+        { } proposal => $"Restart the {proposal.Label}?",
+        _ => string.Empty
+    };
+    public string ActionProposalDetail => _actionProposal is { } proposal
+        ? "Assistant's reason: " + proposal.Reason + "\n" + proposal.Impact
+            + (proposal.Kind == "restart" ? " Nothing runs unless you approve." : " Nothing changes unless you apply it.")
         : string.Empty;
+    /// <summary>The exact before and after lines of a model change or undo, as Core's preview reported them; empty for a restart.</summary>
+    public string ActionProposalDiff => _actionProposal?.Diff ?? string.Empty;
+    public bool HasActionProposalDiff => ActionProposalDiff.Length > 0;
+    public string ApproveActionLabel => _actionProposal?.Kind switch
+    {
+        "model_change" => "Apply change",
+        "model_rollback" => "Undo change",
+        _ => "Approve restart"
+    };
+
+    // The restart names from before model changes, kept so existing bindings and tests read the same card and commands.
+    public AsyncRelayCommand ApproveRestartCommand => ApproveActionCommand;
+    public AsyncRelayCommand CancelRestartCommand => CancelActionCommand;
+    public bool IsRestartProposed => IsActionProposed;
+    public string RestartProposalTitle => ActionProposalTitle;
+    public string RestartProposalDetail => ActionProposalDetail;
 
     /// <summary>
     /// Shown only after Core's broker refused the session with <see cref="HomeConfigRefusal"/> and Core's own dry run found
@@ -623,7 +685,8 @@ public sealed class AssistantViewModel : ObservableObject
     private int ActiveToolRevision => ToolRevision(_threadToolRevision > 0 && _toolRevision > 0,
         HasMemoryTool(_threadToolRevision) && HasMemoryTool(_toolRevision), HasEnhancedRead(_threadToolRevision) && HasEnhancedRead(_toolRevision),
         HasActionTool(_threadToolRevision) && HasActionTool(_toolRevision),
-        HasPerformanceRead(_threadToolRevision) && HasPerformanceRead(_toolRevision));
+        HasPerformanceRead(_threadToolRevision) && HasPerformanceRead(_toolRevision),
+        HasModelSettings(_threadToolRevision) && HasModelSettings(_toolRevision));
 
     internal static string Describe(AssistantState state) => state switch
     {
@@ -718,7 +781,7 @@ public sealed class AssistantViewModel : ObservableObject
             // Deleting a chat is offered only when Core says its broker forwards the task's own thread lifecycle, never by inference.
             CanDeleteChats = Prop(Prop(capabilities.Data, "features"), "thread_lifecycle").ValueKind == JsonValueKind.True;
             _toolRevision = ToolRevisionFor(ReadOfferedTools(capabilities.Data), OffersEnhancedRead(capabilities.Data),
-                OffersPerformanceRead(capabilities.Data));
+                OffersPerformanceRead(capabilities.Data), OffersModelSettings(capabilities.Data));
             // Memory is automatic. Core's broker declares the memory tool only while retrieval is on as the session starts, so
             // retrieval and learning are configured on here, once, before the broker starts; only then does a new thread get
             // the memory tool. If Core keeps retrieval off the session has no memory tool, and the reason stays shown.
@@ -727,7 +790,7 @@ public sealed class AssistantViewModel : ObservableObject
                 SetState(AssistantState.Checking, "Setting up automatic memory…");
                 if (!await Memory.EnsureAutomaticAsync())
                     _toolRevision = ToolRevision(true, false, HasEnhancedRead(_toolRevision), HasActionTool(_toolRevision),
-                        HasPerformanceRead(_toolRevision));
+                        HasPerformanceRead(_toolRevision), HasModelSettings(_toolRevision));
                 if (_isShutDown) return;
             }
 
@@ -824,6 +887,26 @@ public sealed class AssistantViewModel : ObservableObject
             && Prop(Prop(capabilities, "assistant_tools"), "tools") is { ValueKind: JsonValueKind.Array } list
             && list.EnumerateArray().Any(tool => AssistantCliService.GetString(tool, "name") == ReadToolName
                 && Lists(Prop(tool, "operations"), "performance") && Lists(Prop(tool, "log_sources"), "apache", "postgres"));
+    }
+
+    /// <summary>
+    /// Core's model settings, from <c>capabilities</c>: features.model_settings and update_check true, a read tool listing the
+    /// model_options and update_check operations, and an action tool whose configure_model operations are exactly
+    /// propose_model_change and propose_model_rollback. An older or partial Core offers none of it.
+    /// </summary>
+    internal static bool OffersModelSettings(JsonElement capabilities)
+    {
+        static IEnumerable<string?> Strings(JsonElement array) => array.ValueKind == JsonValueKind.Array
+            ? array.EnumerateArray().Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : null).ToList()
+            : [];
+        var features = Prop(capabilities, "features");
+        if (Prop(features, "model_settings").ValueKind != JsonValueKind.True || Prop(features, "update_check").ValueKind != JsonValueKind.True
+            || Prop(Prop(capabilities, "assistant_tools"), "tools") is not { ValueKind: JsonValueKind.Array } list)
+            return false;
+        return list.EnumerateArray().Any(tool => AssistantCliService.GetString(tool, "name") == ReadToolName
+                && Strings(Prop(tool, "operations")).Contains("model_options") && Strings(Prop(tool, "operations")).Contains("update_check"))
+            && list.EnumerateArray().Any(tool => AssistantCliService.GetString(tool, "name") == ActionToolName
+                && Strings(Prop(Prop(tool, "capability_operations"), "configure_model")).SequenceEqual(["propose_model_change", "propose_model_rollback"]));
     }
 
     /// <summary>Core's <c>agent status</c> reason is a token; unknown tokens are shown, bounded, rather than hidden.</summary>
@@ -991,7 +1074,9 @@ public sealed class AssistantViewModel : ObservableObject
             if (_toolRevision > 0) initialize["capabilities"] = new JsonObject { ["experimentalApi"] = true };
             // Only a launcher that can show the Approve restart prompt asks Core's broker for the action tool; Codex never sees it.
             if (HasActionTool(_toolRevision) && initialize["capabilities"] is JsonObject capabilities)
-                capabilities["ddistroActions"] = new JsonArray("restart_service");
+                capabilities["ddistroActions"] = HasModelSettings(_toolRevision)
+                    ? new JsonArray("restart_service", "configure_model")
+                    : new JsonArray("restart_service");
             await client.RequestAsync("initialize", initialize, RpcTimeout);
             await client.NotifyAsync("initialized", null);
             await RefreshAccountAsync(client);
@@ -1113,15 +1198,41 @@ public sealed class AssistantViewModel : ObservableObject
         return why + " Nothing was deleted. Press Connect to check again.";
     }
 
-    private void SetRestartProposal(RestartProposal? proposal)
+    private void SetActionProposal(ActionProposal? proposal)
     {
-        if (_restartProposal == proposal) return;
-        _restartProposal = proposal;
-        OnPropertyChanged(nameof(IsRestartProposed));
-        OnPropertyChanged(nameof(RestartProposalTitle));
-        OnPropertyChanged(nameof(RestartProposalDetail));
-        ApproveRestartCommand.RaiseCanExecuteChanged();
-        CancelRestartCommand.RaiseCanExecuteChanged();
+        if (_actionProposal == proposal) return;
+        _actionProposal = proposal;
+        foreach (var name in new[] { nameof(IsActionProposed), nameof(ActionProposalTitle), nameof(ActionProposalDetail), nameof(ActionProposalDiff),
+                     nameof(HasActionProposalDiff), nameof(ApproveActionLabel), nameof(IsRestartProposed), nameof(RestartProposalTitle),
+                     nameof(RestartProposalDetail) })
+            OnPropertyChanged(name);
+        ApproveActionCommand.RaiseCanExecuteChanged();
+        CancelActionCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// The card for one ddistro/action/proposed of this thread, or null when this thread's tools cannot have proposed it. A
+    /// restart (an older Core sends no action) needs the action tool; a model change or undo needs model settings and Core's
+    /// exact three diff lines. Any other action is never shown, so it expires with nothing run.
+    /// </summary>
+    internal const int ModelDiffLineMax = 1200;
+
+    internal static ActionProposal? ReadActionProposal(JsonElement parameters, string id, string threadId, int toolRevision)
+    {
+        var action = AssistantCliService.GetString(parameters, "action");
+        var label = Shorten(AssistantCliService.GetString(parameters, "label"), 80);
+        var impact = Shorten(AssistantCliService.GetString(parameters, "impact"), 300);
+        var reason = Shorten(AssistantCliService.GetString(parameters, "reason"), 300);
+        if (action is "" or "restart")
+            return HasActionTool(toolRevision) ? new ActionProposal(id, threadId, "restart", label, impact, reason, string.Empty) : null;
+        if (action is not ("model_change" or "model_rollback") || !HasModelSettings(toolRevision)
+            || Prop(Prop(parameters, "change"), "diff") is not { ValueKind: JsonValueKind.Array } diff || diff.GetArrayLength() != 3)
+            return null;
+        // The user approves exactly these lines, so they are shown whole: a non-string, empty or longer-than-Core line rejects
+        // the card rather than being shortened (Core and the broker cap each at ModelDiffLineMax characters).
+        var lines = diff.EnumerateArray().Select(line => line.ValueKind == JsonValueKind.String ? line.GetString() ?? string.Empty : string.Empty).ToList();
+        return lines.Any(line => line.Length == 0 || line.EnumerateRunes().Count() > ModelDiffLineMax) ? null
+            : new ActionProposal(id, threadId, action, label, impact, reason, string.Join("\n", lines));
     }
 
     /// <summary>
@@ -1130,46 +1241,97 @@ public sealed class AssistantViewModel : ObservableObject
     /// broker's ddistro/action/updated for this proposal or the session's end. When the slot is busy the proposal is cancelled
     /// instead, so nothing runs.
     /// </summary>
-    private async Task DecideRestartAsync(bool approve)
+    private async Task DecideActionAsync(bool approve)
     {
-        if (_restartProposal is not { } proposal) return;
-        SetRestartProposal(null);
+        if (_actionProposal is not { } proposal) return;
+        SetActionProposal(null);
+        var restart = proposal.Kind == "restart";
+        var notRun = restart ? "The restart was not run: " : "Nothing was changed: ";
         if (_client is not { } client)
         {
-            AddSystem("The restart was not run: the assistant session ended.");
+            AddSystem(notRun + "the assistant session ended.");
             return;
         }
         var busy = approve && !_host.TryBeginLiveChange();
-        if (approve && !busy) _restartRunningId = proposal.Id;
+        if (approve && !busy)
+        {
+            _actionRunningId = proposal.Id;
+            _actionRunningKind = proposal.Kind;
+        }
         try
         {
             await client.RequestAsync("ddistro/action/decide", new JsonObject
             {
                 ["proposalId"] = proposal.Id, ["threadId"] = proposal.ThreadId, ["decision"] = approve && !busy ? "approve" : "cancel"
             }, RpcTimeout);
-            AddActivity(busy ? "The restart was not run: another server, component or system operation is running. Try again when it finishes."
-                : approve ? $"Restart approved: running it for the {proposal.Label}, then checking it fresh…" : "Restart cancelled. Nothing was run.");
+            string line;
+            if (busy) line = notRun + "another server, component or system operation is running. Try again when it finishes.";
+            else if (!approve) line = restart ? "Restart cancelled. Nothing was run." : "Cancelled. Nothing was changed.";
+            else if (restart) line = $"Restart approved: running it for the {proposal.Label}, then checking it fresh…";
+            else line = proposal.Kind == "model_rollback" ? "Undo approved: restoring the previous connector, then reading it back…"
+                : "Change approved: applying it, then reading it back…";
+            AddActivity(line);
         }
         catch (AppServerException ex) when (ex.Code != 0)
         {
             // The broker refused the decision (replayed, late or no longer pending): nothing was approved, so nothing runs.
-            if (_restartRunningId == proposal.Id) ReleaseRestartHold();
-            AddSystem((approve && !busy ? "The restart was not run: " : "Cancelled. ") + Shorten(ex.Message, 200));
+            if (_actionRunningId == proposal.Id) ReleaseActionHold();
+            AddSystem((approve && !busy ? notRun : "Cancelled. ") + Shorten(ex.Message, 200));
         }
         catch (AppServerException ex)
         {
             // No answer: an approval may have reached the broker, so the slot stays held until its update or the session's end.
-            AddSystem(approve && !busy ? "The restart's outcome is unknown: " + Shorten(ex.Message, 200) + " Check the service before trying again."
-                : "The restart was not run: " + Shorten(ex.Message, 200));
+            var unknown = restart ? "The restart's outcome is unknown: " + Shorten(ex.Message, 200) + " Check the service before trying again."
+                : "The change's outcome is unknown: " + Shorten(ex.Message, 200) + " Check the model settings before trying again.";
+            AddSystem(approve && !busy ? unknown : notRun + Shorten(ex.Message, 200));
         }
     }
 
-    /// <summary>Ends the approved restart's live-change hold, once.</summary>
-    private void ReleaseRestartHold()
+    /// <summary>Ends the approved action's live-change hold, once.</summary>
+    private void ReleaseActionHold()
     {
-        if (_restartRunningId is null) return;
-        _restartRunningId = null;
+        if (_actionRunningId is null) return;
+        _actionRunningId = null;
         _host.EndLiveChange();
+    }
+
+    /// <summary>The kind the launcher approved or showed for this update's proposal; only otherwise the update's own action.</summary>
+    private string UpdatedActionKind(string proposalId, JsonElement parameters)
+    {
+        if (_actionRunningId is not null && _actionRunningId == proposalId) return _actionRunningKind;
+        if (_actionProposal?.Id == proposalId) return _actionProposal.Kind;
+        var action = AssistantCliService.GetString(parameters, "action");
+        return action is "model_change" or "model_rollback" ? action : "restart";
+    }
+
+    /// <summary>One line for the broker's ddistro/action/updated of a restart, a model change or its undo.</summary>
+    internal static string DescribeActionUpdate(string kind, JsonElement parameters) => kind switch
+    {
+        "model_change" => DescribeModelUpdate(parameters, false),
+        "model_rollback" => DescribeModelUpdate(parameters, true),
+        _ => DescribeRestartUpdate(parameters)
+    };
+
+    /// <summary>
+    /// What a model change or undo did: verified only from the broker's verified state, which means a fresh read of the CHIM
+    /// database shows the assignment, never that the provider or in-game replies work. Anything unknown is never called done.
+    /// </summary>
+    internal static string DescribeModelUpdate(JsonElement parameters, bool undo)
+    {
+        var what = undo ? "The undo" : "The model change";
+        return AssistantCliService.GetString(parameters, "state") switch
+        {
+            "verified" when AssistantCliService.GetBool(parameters, "verified") => (undo
+                ? "Undo verified: the CHIM database shows the previous connector again."
+                : "Model change verified: the CHIM database shows the new connector.") + " In-game replies were not tested.",
+            "unverified" => what + " was written, but a fresh read did not show it. Check the model settings.",
+            "conflict" => what + " was not applied: the profile or connector changed since the preview, so nothing was overwritten.",
+            "cancelled" => "Cancelled. Nothing was changed.",
+            "expired" => "The prompt expired. Nothing was changed.",
+            "busy" => what + " was not applied: another DwemerDistro operation is running.",
+            "not_executed" or "refused" => what + " was not applied. Nothing was changed.",
+            _ => what + "'s outcome could not be confirmed. Check the model settings before trying again."
+        };
     }
 
     /// <summary>One line for the broker's ddistro/action/updated: what ran and what the fresh check showed, never more.</summary>
@@ -1322,8 +1484,11 @@ public sealed class AssistantViewModel : ObservableObject
     internal static string InstructionsFor(int toolRevision)
     {
         if (toolRevision <= 0) return DeveloperInstructions;
-        return ToolDeveloperInstructions + (HasMemoryTool(toolRevision) ? "\n" + MemoryInstructions : string.Empty)
-            + (HasActionTool(toolRevision) ? "\n" + ActionInstructions : string.Empty)
+        // Model settings threads get the restart rules inside ModelSettingsInstructions, which also allows the model change.
+        var actions = string.Empty;
+        if (HasModelSettings(toolRevision)) actions = "\n" + ModelSettingsInstructions;
+        else if (HasActionTool(toolRevision)) actions = "\n" + ActionInstructions;
+        return ToolDeveloperInstructions + (HasMemoryTool(toolRevision) ? "\n" + MemoryInstructions : string.Empty) + actions
             + (HasPerformanceRead(toolRevision) ? "\n" + PerformanceInstructions : string.Empty);
     }
 
@@ -2151,20 +2316,21 @@ public sealed class AssistantViewModel : ObservableObject
             case "item/started" when ItemOf(parameters, out var type, out var id) && type == "dynamicToolCall":
                 if (FindItem(id) is null) AddActivity(DescribeToolCall(Prop(parameters, "item")), id);
                 break;
-            // Shown only for this thread's running turn of a thread started with the action tool; otherwise it expires unanswered.
-            case "ddistro/action/proposed" when HasActionTool(ActiveToolRevision) && _threadId is not null && State == AssistantState.Streaming
+            // Shown only for this thread's running turn of a thread started with the tools for that action; otherwise it expires unanswered.
+            case "ddistro/action/proposed" when _threadId is not null && State == AssistantState.Streaming
                 && AssistantCliService.GetString(parameters, "threadId") == _threadId
-                && AssistantCliService.GetString(parameters, "proposalId") is { Length: 32 } proposalId:
-                SetRestartProposal(new RestartProposal(proposalId, _threadId, Shorten(AssistantCliService.GetString(parameters, "label"), 80),
-                    Shorten(AssistantCliService.GetString(parameters, "impact"), 300), Shorten(AssistantCliService.GetString(parameters, "reason"), 300)));
+                && AssistantCliService.GetString(parameters, "proposalId") is { Length: 32 } proposalId
+                && ReadActionProposal(parameters, proposalId, _threadId, ActiveToolRevision) is { } proposal:
+                SetActionProposal(proposal);
                 break;
             case "ddistro/action/updated":
                 // The approved run is over, whatever it reports: its hold ends here, before any thread filter.
                 var updatedId = AssistantCliService.GetString(parameters, "proposalId");
-                if (_restartRunningId is not null && _restartRunningId == updatedId) ReleaseRestartHold();
+                var updatedKind = UpdatedActionKind(updatedId, parameters);
+                if (_actionRunningId is not null && _actionRunningId == updatedId) ReleaseActionHold();
                 if (_threadId is null || AssistantCliService.GetString(parameters, "threadId") != _threadId) break;
-                if (_restartProposal?.Id == updatedId) SetRestartProposal(null);
-                AddActivity(DescribeRestartUpdate(parameters));
+                if (_actionProposal?.Id == updatedId) SetActionProposal(null);
+                AddActivity(DescribeActionUpdate(updatedKind, parameters));
                 break;
             case "thread/compacted" when AssistantCliService.GetString(parameters, "threadId") == _threadId:
                 AddActivity(CompactedText);
@@ -2176,7 +2342,7 @@ public sealed class AssistantViewModel : ObservableObject
                 var turn = Prop(parameters, "turn");
                 var status = AssistantCliService.GetString(turn, "status");
                 var completedTurn = AssistantCliService.GetString(turn, "id");
-                if (_restartProposal?.ThreadId == AssistantCliService.GetString(parameters, "threadId")) SetRestartProposal(null);
+                if (_actionProposal?.ThreadId == AssistantCliService.GetString(parameters, "threadId")) SetActionProposal(null);
                 // A late completion of another thread or an earlier turn must not end the running one. The runner has already
                 // let go of the turn this completes, so a still-known running id means the completion is someone else's.
                 if (_threadId is null || AssistantCliService.GetString(parameters, "threadId") != _threadId
@@ -2259,15 +2425,15 @@ public sealed class AssistantViewModel : ObservableObject
         _contextLookup?.Cancel();
         _historyLoadPending = false;
         ClearFileRequest();
-        SetRestartProposal(null);
+        SetActionProposal(null);
         ResetCoverage();
         if (client is not null)
         {
             try { await client.DisposeAsync(); }
             catch (Exception ex) { LauncherLogService.Operation($"Assistant session cleanup failed: {ex.GetType().Name}"); }
         }
-        // Only once the session is gone. A restart still running in the distro holds Core's maintenance lock until it finishes.
-        ReleaseRestartHold();
+        // Only once the session is gone. An action still running in the distro holds Core's maintenance lock until it finishes.
+        ReleaseActionHold();
         ReleaseDistroActivity();
         RaiseCommands();
     }
@@ -3643,7 +3809,7 @@ public sealed class AssistantViewModel : ObservableObject
                      SendCommand, NewTaskCommand, ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand,
                      AllowFileAccessCommand, DeclineFileAccessCommand, ReopenCommand, ArchiveCommand, RenameCommand,
                      ExportChatCommand, CancelExportCommand, DeleteChatCommand, ConfirmDeleteCommand, CancelDeleteCommand,
-                     RepairHomeConfigCommand, CancelHomeConfigRepairCommand, ApproveRestartCommand, CancelRestartCommand
+                     RepairHomeConfigCommand, CancelHomeConfigRepairCommand, ApproveActionCommand, CancelActionCommand
                  })
         {
             switch (command)
