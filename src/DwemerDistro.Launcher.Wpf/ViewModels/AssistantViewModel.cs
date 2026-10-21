@@ -2741,7 +2741,7 @@ public sealed class AssistantViewModel : ObservableObject
                 break;
             case FileRequestParse.Invalid:
                 AddSystem("The assistant asked for files, but the request could not be used: " + problem +
-                          " Nothing was shared. Ask it to list the files again, or choose files under Advanced.");
+                          " Nothing was shared. Ask it to list the files again.");
                 break;
         }
     }
