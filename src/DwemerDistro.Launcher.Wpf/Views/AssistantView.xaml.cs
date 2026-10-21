@@ -15,6 +15,8 @@ public partial class AssistantView : UserControl
 {
     // Below this width the task and review column moves under the conversation.
     private const double NarrowWidth = 860;
+    private const double NarrowChatHeight = 380;
+    private const double NarrowChatWithCardHeight = 700;
     private AssistantViewModel? _viewModel;
     private bool? _isNarrow;
     // Below this width the review column is not offered wider.
@@ -78,10 +80,15 @@ public partial class AssistantView : UserControl
             _isNarrow = null;
             ApplyLayout(ActualWidth);
         }
-        else if (e.PropertyName == nameof(AssistantViewModel.HasFileRequest) && _viewModel?.HasFileRequest == true)
+        else if (e.PropertyName == nameof(AssistantViewModel.IsActionProposed))
         {
-            AccessCard.BringIntoView();
-            RaiseLiveRegion(AccessCard);
+            // The card sits above the composer; it is announced and given room, but never focused, so typing elsewhere is not interrupted.
+            // A transcript followed to its end stays there once the card takes its space.
+            var follow = IsFollowingTranscript();
+            _isNarrow = null;
+            ApplyLayout(ActualWidth);
+            if (follow) Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () => TranscriptBox.ScrollToEnd());
+            if (_viewModel?.IsActionProposed == true) RaiseLiveRegion(RestartProposalTitle);
         }
     }
 
@@ -138,6 +145,21 @@ public partial class AssistantView : UserControl
             block.Margin = new Thickness(0, 0, 0, 6);
             block.Blocks.Add(line);
             _transcriptRuns[item] = new TranscriptEntry(block, activity);
+            return block;
+        }
+
+        if (item.Role is AssistantViewModel.OutputRole or AssistantViewModel.CommandRole)
+        {
+            // A live command's code or redacted output: monospace, selectable with the rest, and output is appended in place as it streams.
+            var label = new Run(item.Role) { FontWeight = FontWeights.SemiBold, FontSize = 11 };
+            label.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
+            block.Blocks.Add(new Paragraph(label) { Margin = new Thickness(0) });
+            var output = new Run(item.Text);
+            block.Blocks.Add(new Paragraph(output)
+            {
+                Margin = new Thickness(0, 2, 0, 0), FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 12
+            });
+            _transcriptRuns[item] = new TranscriptEntry(block, output);
             return block;
         }
 
@@ -314,7 +336,7 @@ public partial class AssistantView : UserControl
     // Keys only reach this handler while focus is inside the Assistant page; Esc anywhere on it stops a response.
     private void AssistantView_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key != Key.Escape || ViewModel is not { State: AssistantState.Streaming } viewModel)
+        if (e.Key != Key.Escape || ViewModel is not { } viewModel || !viewModel.StopCommand.CanExecute(null))
         {
             return;
         }
@@ -372,7 +394,8 @@ public partial class AssistantView : UserControl
         SidePanel.Margin = narrow ? new Thickness(0, 10, 0, 0) : new Thickness(10, 0, 0, 0);
         SidePanel.VerticalScrollBarVisibility = narrow ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         ChatRow.Height = narrow ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
-        ChatCard.Height = narrow ? 380 : double.NaN;
+        // A proposal card sits inside the conversation card, so in one column the card grows instead of squeezing the transcript.
+        ChatCard.Height = narrow ? (_viewModel?.IsActionProposed == true ? NarrowChatWithCardHeight : NarrowChatHeight) : double.NaN;
         SessionActions.HorizontalAlignment = narrow ? System.Windows.HorizontalAlignment.Left : System.Windows.HorizontalAlignment.Right;
         Grid.SetColumn(SessionActions, narrow ? 0 : 1);
         Grid.SetColumnSpan(SessionActions, narrow ? 2 : 1);

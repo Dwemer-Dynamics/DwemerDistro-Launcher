@@ -4122,7 +4122,7 @@ try
                && Revision(Caps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool.Replace("[\"propose_restart\"]", "[\"propose_restart\",\"stop\"]"))) == 3
                && AssistantViewModel.ToolRevisionFor(["ddistro_read", "ddistro_action"]) == 1
                && Enumerable.Range(0, 5).All(revision => !AssistantViewModel.HasActionTool(revision))
-               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(13)
+               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(15)
                && AssistantViewModel.HasMemoryTool(6) && !AssistantViewModel.HasMemoryTool(5) && AssistantViewModel.HasEnhancedRead(5)
                && AssistantViewModel.InstructionsFor(5).Contains(AssistantViewModel.ActionInstructions)
                && AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.MemoryInstructions)
@@ -4144,14 +4144,14 @@ try
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"postgres\"", ""))) == 5
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"performance\"", ""))) == 5
                && PerfRevision(withAction) == 5
-               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(13)
+               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(15)
                && AssistantViewModel.HasActionTool(7) && AssistantViewModel.HasActionTool(8) && AssistantViewModel.HasEnhancedRead(8)
-               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(13)
+               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(15)
                && AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.PerformanceInstructions) && !AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.MemoryInstructions) && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.ActionInstructions),
+               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.PerformanceInstructions)
+               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.ActionInstructions),
             "Only the full performance read with the action tool is revision 7/8; partial or unknown offers get no performance rules, actions or memory.");
         var sourceCall = AssistantViewModel.DescribeToolCall(System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_read\",\"status\":\"completed\","
             + "\"arguments\":{\"operation\":\"logs\",\"log_source\":\"apache\",\"lines\":20}}").RootElement);
@@ -4264,7 +4264,7 @@ try
 
         // Model settings are revision 9/10: only on top of the full 7/8 shape and only with Core's exact configure_model operations,
         // the model_options and update_check reads and both features. Older or partial Cores stay at 7/8, and unknown revisions
-        // (13 and up) never get the model, action or performance rules.
+        // (15 and up) never get the model, action or performance rules.
         const string ModelRead = "\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false,\"max_log_lines\":400,\"log_filters\":[\"query\",\"since\"],"
             + "\"operations\":[\"inventory\",\"status\",\"models\",\"logs\",\"health\",\"performance\",\"model_options\",\"update_check\"],\"log_sources\":[\"apache\",\"postgres\"]}";
         const string ModelAction = ",{\"name\":\"ddistro_action\",\"mutates\":true,\"operations\":[\"propose_restart\"],\"capability_operations\":"
@@ -4282,17 +4282,17 @@ try
                && ModelRevision(PerfCaps(ModelFeatures, ActionTool, ModelRead)) == 7
                && ModelRevision(PerfCaps(ModelFeatures.Replace("\"assistant_actions\":true,", ""), ModelAction, ModelRead)) == 3
                && Enumerable.Range(0, 9).All(revision => !AssistantViewModel.HasModelSettings(revision))
-               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(13)
+               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(15)
                && AssistantViewModel.HasActionTool(9) && AssistantViewModel.HasPerformanceRead(10) && AssistantViewModel.HasEnhancedRead(10)
                && AssistantViewModel.HasMemoryTool(10) && !AssistantViewModel.HasMemoryTool(9)
-               && !AssistantViewModel.HasActionTool(13) && !AssistantViewModel.HasMemoryTool(13) && !AssistantViewModel.HasPerformanceRead(13)
+               && !AssistantViewModel.HasActionTool(15) && !AssistantViewModel.HasMemoryTool(15) && !AssistantViewModel.HasPerformanceRead(15)
                && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ModelSettingsInstructions)
                && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.PerformanceInstructions)
                && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.MemoryInstructions)
                && !AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ModelSettingsInstructions)
-               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.ModelSettingsInstructions),
+               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.ModelSettingsInstructions),
             "Only Core's full model settings shape on top of 7/8 is revision 9/10; partial offers and unknown revisions never get model rules.");
 
         // A model proposal is shown only on a thread with model settings, with Core's exact three diff lines, never as a restart.
@@ -4303,7 +4303,7 @@ try
             "{\"action\":\"" + kind + "\",\"label\":\"CHIM model assignment\",\"impact\":\"i\",\"reason\":\"r\"," + change + "}").RootElement;
         Assert(AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 7) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_rollback"), P('e'), "t", 8) is null
-               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 15) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"b\"]}"), P('e'), "t", 9) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"\",\"c\"]}"), P('e'), "t", 9) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("stop_everything"), P('e'), "t", 10) is null
@@ -4427,7 +4427,7 @@ try
                && ModelRevision(PerfCaps(FoundationFeatures, ModelAction + FoundationTools, PerfRead)) == 7
                && ModelRevision(PerfCaps(FoundationFeatures, ActionTool + FoundationTools, ModelRead)) == 7
                && !AssistantViewModel.ReadOfferedTools(PerfCaps(ModelFeatures, ModelAction + FoundationTools, ModelRead)).Contains("ddistro_explore")
-               && Enumerable.Range(0, 11).All(revision => !AssistantViewModel.HasFoundations(revision)) && !AssistantViewModel.HasFoundations(13)
+               && Enumerable.Range(0, 11).All(revision => !AssistantViewModel.HasFoundations(revision)) && !AssistantViewModel.HasFoundations(15)
                && AssistantViewModel.HasMemoryTool(12) && !AssistantViewModel.HasMemoryTool(11) && AssistantViewModel.HasModelSettings(11)
                && AssistantViewModel.HasActionTool(12) && AssistantViewModel.HasPerformanceRead(11) && AssistantViewModel.HasEnhancedRead(12)
                && AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.FoundationDeveloperInstructions)
@@ -4437,7 +4437,7 @@ try
                && AssistantViewModel.InstructionsFor(12).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(10).Contains("You cannot run commands on the live distro")
                && !AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.FoundationActionInstructions)
-               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.FoundationActionInstructions)
+               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.FoundationActionInstructions)
                && AssistantViewModel.BuildToolTurnContext(11, null).Contains(AssistantViewModel.FoundationScopeReminder)
                && new[] { AssistantViewModel.FoundationDeveloperInstructions, AssistantViewModel.FoundationScopeReminder }.All(text =>
                    text.Contains("live public schema") && text.Contains("is_active") && text.Contains("backup snapshot")
@@ -4467,7 +4467,7 @@ try
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange("\"@@ -1 +1 @@\",\"-old\",\"+new\"")), P('e'), "t", 11) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines).Replace(manifest, "ABC")), P('e'), "t", 11) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 10) is null
-               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 15) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service), P('e'), "t", 11) is { Kind: "service", Target: "herika", Verb: "update" } serviceCard
                && serviceCard.Diff == "Operation: update\nTarget: herika\nBranch: main\nUpdate HerikaServer from origin/main\nRestarts Apache afterwards"
                && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service.Replace("\"update\"", "\"exec\"")), P('e'), "t", 11) is null
@@ -4572,6 +4572,175 @@ try
         FoundationUpdated(P('f'), "service", "verified");
         Assert(foundation.host.LiveChangeHolds == 0 && !foundation.vm.IsActionProposed && FoundationDecisions().Length == 5,
             "The session's end releases a running service operation's hold once; a late update releases nothing more.");
+        // Live run is revision 13/14: only with features.live_run and ddistro_run listed on top of the full foundation offer. Its
+        // threads get the live rules instead of the foundation ones, whose "no commands on live roots" no longer holds.
+        const string LiveTools = FoundationTools + ",{\"name\":\"ddistro_run\",\"mutates\":true}";
+        const string LiveFeatures = FoundationFeatures + ",\"live_run\":true";
+        Assert(ModelRevision(PerfCaps(LiveFeatures, ModelAction + LiveTools, ModelRead)) == 13
+               && ModelRevision(PerfCaps(LiveFeatures + ",\"memory\":true", ",{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}"
+                   + ModelAction + LiveTools, ModelRead)) == 14
+               && ModelRevision(PerfCaps(FoundationFeatures, ModelAction + LiveTools, ModelRead)) == 11
+               && ModelRevision(PerfCaps(LiveFeatures, ModelAction + FoundationTools, ModelRead)) == 11
+               && ModelRevision(PerfCaps(ModelFeatures + ",\"live_run\":true", ModelAction + LiveTools, ModelRead)) == 9
+               && AssistantViewModel.HasLiveRun(13) && AssistantViewModel.HasLiveRun(14) && !AssistantViewModel.HasLiveRun(12) && !AssistantViewModel.HasLiveRun(15)
+               && AssistantViewModel.HasFoundations(13) && AssistantViewModel.HasModelSettings(14) && AssistantViewModel.HasMemoryTool(14) && !AssistantViewModel.HasMemoryTool(13)
+               && AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.LiveRunInstructions)
+               && AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.LiveActionInstructions)
+               && AssistantViewModel.InstructionsFor(13).Contains("RECHAT_P") && AssistantViewModel.InstructionsFor(13).Contains("never ask the user to paste")
+               && !AssistantViewModel.InstructionsFor(13).Contains("no commands on live roots") && !AssistantViewModel.InstructionsFor(13).Contains("There is no arbitrary SQL")
+               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.FoundationActionInstructions)
+               && !AssistantViewModel.InstructionsFor(12).Contains(AssistantViewModel.LiveRunInstructions)
+               && AssistantViewModel.InstructionsFor(14).Contains(AssistantViewModel.MemoryInstructions)
+               && AssistantViewModel.BuildToolTurnContext(13, null).Contains(AssistantViewModel.LiveScopeReminder)
+               && AssistantViewModel.BuildToolTurnContext(12, null).Contains(AssistantViewModel.FoundationScopeReminder)
+               && !AssistantViewModel.BuildToolTurnContext(12, null).Contains(AssistantViewModel.RunToolName),
+            "Only Core's ready live run offer is 13/14 with the live rules; older and partial offers keep their own rules.");
+
+        // The card is bound to the exact request: the launcher hashes what it shows as Core's run_bytes (vectors from Python json.dumps).
+        Assert(AssistantViewModel.RunDigest(new AssistantViewModel.LiveRunRequest("bash", "echo \"hi\"\tthere\n\u00e9\u2028 \\x\r\nend", "dwemer", null, false, 300,
+                   null, "", false, false, "")) == "846a04b32990bef4871080a33453202631a98c01ccf60f37100adb8d0482053a"
+               && AssistantViewModel.RunDigest(new AssistantViewModel.LiveRunRequest("psql", "SELECT 1;", "postgres", "/var/www/html", true, 60, "dwemer", "", false, false, ""))
+                   == "785b7ef88a59aa8011000c0ce7e19ea1031bc2d89df98a304b301867444fbe30",
+            "The live run digest matches Core's sorted compact JSON of the request, byte for byte.");
+        const string LiveDigest = "785b7ef88a59aa8011000c0ce7e19ea1031bc2d89df98a304b301867444fbe30";
+        var liveCodeHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("SELECT 1;"))).ToLowerInvariant();
+        string LiveChange(string code = "SELECT 1;", string digest = LiveDigest) => "\"decisions\":[\"approve\",\"approve_session\",\"cancel\"],"
+            + "\"change\":{\"interpreter\":\"psql\",\"code\":\"" + code + "\",\"account\":\"postgres\",\"cwd\":\"/var/www/html\",\"network\":true,"
+            + "\"timeout_seconds\":60,\"database\":\"dwemer\",\"code_sha256\":\"" + liveCodeHash + "\",\"digest\":\"" + digest + "\",\"scope\":{\"account\":\"postgres\","
+            + "\"root\":false,\"network\":true},\"grant\":null,\"widens_grant\":false}";
+        Assert(AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange()), P('e'), "t", 13) is { Kind: "live_run", Run: { Digest: LiveDigest, CanAllowForTask: true } }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange()), P('e'), "t", 12) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange(digest: new string('0', 64))), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange(code: "SELECT 2;")), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange(code: "SELECT 1;\\u202e")), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange().Replace("\"postgres\",\"cwd\"", "\"ddagent\",\"cwd\"")), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange().Replace("\"timeout_seconds\":60", "\"timeout_seconds\":7200")), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange().Replace("\"interpreter\":\"psql\"", "\"interpreter\":\"sh\"")), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 13) is { Kind: "file_change" }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service), P('e'), "t", 14) is { Kind: "service" },
+            "A live run card needs revision 13/14 and a request that hashes to the broker's digest; tampered, hidden or invalid requests show nothing.");
+        string LiveEnd(string json) => AssistantViewModel.DescribeLiveJobEnd("run_0123456789abcdef", System.Text.Json.JsonDocument.Parse(json).RootElement);
+        Assert(LiveEnd("{\"state\":\"exited\",\"exitCode\":0,\"durationMs\":1200}").Contains("exited with code 0") && LiveEnd("{\"state\":\"exited\",\"exitCode\":0}").Contains("not verification")
+               && LiveEnd("{\"state\":\"exited\",\"exitCode\":3}").Contains("code 3") && !LiveEnd("{\"state\":\"exited\",\"exitCode\":3}").Contains("not verification")
+               && LiveEnd("{\"state\":\"timed_out\"}").Contains("may have changed things partway") && LiveEnd("{\"state\":\"unknown\"}").Contains("outcome is unknown")
+               && LiveEnd("{\"state\":\"exited\"}").Contains("outcome is unknown") && LiveEnd("{\"state\":\"refused\",\"reason\":\"invalid_request\"}").Contains("Nothing ran"),
+            "A live job's end is reported from the broker's state only; exit 0 is never called verified, and unknown is never called done.");
+
+        // Through the view model: a foundation thread on a live Core opts into live_run, moves once to a revision 13 thread, and the run
+        // card sends exactly its digest; Allow for this task shows a grant line with Revoke; output streams in place; Stop cancels the job.
+        const string LiveCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + LiveFeatures + "},"
+            + ModelRead + ModelAction + LiveTools + EnhancedCoverage + "}}";
+        System.Text.Json.Nodes.JsonNode? liveAnswer = null;
+        var live = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-live11", ThreadToolRevision = 11 }, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? LiveCapabilities : null,
+            respondFirst: (method, _) => method switch
+            {
+                "ddistro/action/decide" => liveAnswer?.DeepClone(),
+                "ddistro/run/cancel" => System.Text.Json.Nodes.JsonNode.Parse("{\"jobId\":\"run_0123456789abcdef\",\"state\":\"running\",\"stopping\":true}"),
+                "ddistro/run/revoke" => System.Text.Json.Nodes.JsonNode.Parse("{\"revoked\":true}"),
+                _ => null
+            });
+        string[] LiveBodies() { lock (live.transport.Requests) return live.transport.Bodies.ToArray(); }
+        string[] LiveDecisions() => LiveBodies().Where(body => body.StartsWith("ddistro/action/decide ")).ToArray();
+        void LiveNotify(string method, string json) => live.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
+        void ProposeLive(string id, string change) => LiveNotify("ddistro/action/proposed", "{\"proposalId\":\"" + id + "\",\"threadId\":\"thr-new\",\"turnId\":\"turn-1\","
+            + "\"action\":\"live_run\",\"label\":\"Run on the live distro as postgres\",\"impact\":\"Runs this code on the LIVE DwemerDistro.\",\"reason\":\"Read RECHAT_P.\","
+            + "\"expiresAt\":\"2026-10-20T00:00:00Z\"," + change + "}");
+        bool LiveSaid(string text) => live.vm.Transcript.Any(item => item.Text.Contains(text));
+        Assert(LiveBodies().Single(body => body.StartsWith("initialize ")).Contains(
+                   "\"ddistroActions\":[\"restart_service\",\"configure_model\",\"change_files\",\"service_control\",\"live_run\"],\"ddistroTools\":[\"explore\",\"exec\"]"),
+            "A launcher on a live-ready Core asks for live_run beside the foundation actions.");
+        live.vm.InputText = "set RECHAT_P to 51";
+        live.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => LiveBodies().Any(body => body.StartsWith("turn/start")));
+        Assert(TurnInput(LiveBodies().Single(body => body.StartsWith("turn/start")))[0].Contains(AssistantViewModel.LiveScopeReminder)
+               && LiveBodies().Single(body => body.StartsWith("thread/start")).Contains("RECHAT_P")
+               && toolStore.Load() is { ThreadId: "thr-new", ThreadToolRevision: 13 } liveRef && liveRef.SupersededThreads!.Contains("thr-live11")
+               && LiveSaid("approved live command tools") && live.vm.Transcript.Any(item => item.Text == "set RECHAT_P to 51"),
+            "A foundation thread moves once to a revision 13 thread with the live rules, keeping its messages and the earlier thread.");
+        await WaitUntilAsync(() => live.vm.State == AssistantState.Streaming);
+
+        ProposeLive(P('a'), LiveChange(digest: new string('0', 64)));
+        Assert(!live.vm.IsActionProposed, "A card whose code does not hash to the broker's digest is never shown.");
+        ProposeLive(P('b'), LiveChange());
+        Assert(live.vm.IsActionProposed && live.vm.IsLiveRunProposed && live.vm.ActionProposalTitle == "Run this on the live distro?"
+               && live.vm.ApproveActionLabel == "Run once" && live.vm.CanAllowRunForTask && live.vm.LiveRunCode == "SELECT 1;" && !live.vm.HasActionProposalDiff
+               && live.vm.LiveRunFlags == "psql · as postgres · network on · folder /var/www/html · limit 60 s · database dwemer"
+               && live.vm.ActionProposalDetail.Contains("Read RECHAT_P.") && live.vm.ActionProposalDetail.Contains("Nothing runs until you choose.") && live.vm.ActionProposalDetail.Contains("Allow for this task: later commands as postgres with network, then run without asking"),
+            "The run card shows the exact code, compact account, network, folder and limit, and Run once and Allow for this task.");
+        liveAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"approved\"}");
+        live.vm.ApproveActionCommand.Execute(null);
+        await WaitUntilAsync(() => LiveDecisions().Length == 1 && LiveSaid("Approved once"));
+        Assert(LiveDecisions()[0].Contains(P('b')) && LiveDecisions()[0].Contains("\"decision\":\"approve\"") && LiveDecisions()[0].Contains("\"digest\":\"" + LiveDigest + "\"")
+               && !live.vm.IsActionProposed && live.host.LiveChangeHolds == 0,
+            "Run once sends approve with the digest the launcher computed and holds no host live-change slot.");
+        var linesBeforeStarted = live.vm.Transcript.Count;
+        LiveNotify("ddistro/action/updated", "{\"proposalId\":\"" + P('b') + "\",\"threadId\":\"thr-new\",\"action\":\"live_run\",\"state\":\"started\",\"executed\":true,\"verified\":false}");
+        Assert(live.vm.Transcript.Count == linesBeforeStarted, "A started update adds no line of its own; ddistro/run/started says it.");
+        ProposeLive(P('c'), LiveChange());
+        liveAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"approved_session\"}");
+        live.vm.ApproveRunForTaskCommand.Execute(null);
+        await WaitUntilAsync(() => LiveDecisions().Length == 2 && LiveSaid("Allowed for this task: this command runs now"));
+        Assert(LiveDecisions()[1].Contains("\"decision\":\"approve_session\"") && LiveDecisions()[1].Contains("\"digest\":\"" + LiveDigest + "\""),
+            "Allow for this task sends approve_session with the digest.");
+        LiveNotify("ddistro/run/grant", "{\"active\":true,\"scope\":{\"scopes\":[{\"account\":\"postgres\",\"network\":true}],\"root\":false,\"granted_at\":\"2026-10-20T00:00:00Z\"},\"reason\":\"approved\"}");
+        Assert(live.vm.HasRunGrant && live.vm.RunGrantText.Contains("postgres") && live.vm.RunGrantText.Contains("as postgres with network") && live.vm.RevokeRunGrantCommand.CanExecute(null),
+            "An active grant shows one compact line with Revoke.");
+
+        Assert(AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange().Replace("\"grant\":null,\"widens_grant\":false",
+                   "\"grant\":{\"scopes\":[{\"account\":\"dwemer\",\"network\":false}],\"root\":false,\"granted_at\":\"x\"},\"widens_grant\":true")), P('e'), "t", 13)
+                   is { Run: { WidensGrant: true, GrantAfter: "as postgres with network (added alongside the current as dwemer without network; permissions are never combined)" } },
+            "A widening card adds exactly this request's scope next to the current scopes, never their union.");
+        // Core's scopes are never combined: root without network and dwemer with network stay two lines, with no root-with-network claim.
+        var rootAndDwemer = System.Text.Json.JsonDocument.Parse("{\"active\":true,\"scope\":{\"scopes\":[{\"account\":\"dwemer\",\"network\":true},{\"account\":\"root\",\"network\":false}],\"root\":true,\"granted_at\":\"x\"},\"reason\":\"approved\"}").RootElement;
+        Assert(AssistantViewModel.DescribeRunGrant(rootAndDwemer) == "Allowed for this task: live commands as dwemer with network, or as root (or any account) without network. Permissions are never combined; others still ask."
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange().Replace("\"grant\":null,\"widens_grant\":false", "\"grant\":{\"scopes\":[{\"account\":\"dwemer\",\"network\":true},{\"account\":\"root\",\"network\":false}],\"root\":true,\"granted_at\":\"x\"},\"widens_grant\":true")), P('e'), "t", 13)
+                   is { Run: { GrantAfter: "as postgres with network (added alongside the current as dwemer with network, or as root (or any account) without network; permissions are never combined)" } },
+            "Root without network and dwemer with network show as distinct scopes, never as root with network or one merged account list.");
+        var oldGrant = System.Text.Json.JsonDocument.Parse("{\"active\":true,\"scope\":{\"accounts\":[\"root\",\"dwemer\"],\"root\":true,\"network\":true,\"granted_at\":\"x\"},\"reason\":\"approved\"}").RootElement;
+        Assert(AssistantViewModel.DescribeRunGrant(oldGrant) is { } unread && unread.Contains("could not be read") && !unread.Contains("root") && !unread.Contains("network on")
+               && AssistantViewModel.DescribeRunGrant(System.Text.Json.JsonDocument.Parse("{\"active\":false,\"scope\":null,\"reason\":\"revoked\"}").RootElement) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange().Replace("\"grant\":null,\"widens_grant\":false", "\"grant\":{\"accounts\":[\"dwemer\"],\"root\":false,\"network\":false},\"widens_grant\":true")), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange().Replace("\"scope\":{\"account\":\"postgres\",", "\"scope\":{\"account\":\"root\",")), P('e'), "t", 13) is null,
+            "An unreadable or old-shape grant claims no scope but keeps Revoke, and a card whose grant or scope does not match is never shown.");
+        LiveNotify("ddistro/run/started", "{\"threadId\":\"thr-new\",\"turnId\":\"turn-1\",\"jobId\":\"run_00000000000000aa\",\"approval\":\"task_grant\",\"state\":\"starting\","
+            + "\"spec\":{\"interpreter\":\"psql\",\"account\":\"postgres\",\"network\":false,\"code\":\"SELECT 3;\"}}");
+        LiveNotify("ddistro/run/updated", "{\"threadId\":\"thr-new\",\"jobId\":\"run_00000000000000aa\",\"state\":\"exited\",\"exitCode\":0,\"durationMs\":40}");
+        Assert(live.vm.Transcript.Any(item => item.Role == AssistantViewModel.CommandRole && item.Text == "SELECT 3;") && LiveSaid("covered by Allow for this task")
+               && LiveSaid("Exit code 0 is not verification") && !live.vm.HasRunningJobs,
+            "A grant-covered run had no card, so the transcript shows the exact code that ran and its end.");
+        const string Job = "run_0123456789abcdef";
+        LiveNotify("ddistro/run/started", "{\"threadId\":\"thr-new\",\"turnId\":\"turn-1\",\"jobId\":\"" + Job + "\",\"approval\":\"user_task_grant\",\"digest\":\"" + LiveDigest
+            + "\",\"state\":\"starting\",\"spec\":{\"interpreter\":\"psql\",\"account\":\"postgres\",\"network\":true}}");
+        LiveNotify("ddistro/run/output", "{\"threadId\":\"thr-new\",\"jobId\":\"" + Job + "\",\"offset\":0,\"text\":\"line1\\nline2\\n\",\"notStreamed\":0}");
+        LiveNotify("ddistro/run/output", "{\"threadId\":\"thr-new\",\"jobId\":\"" + Job + "\",\"offset\":100,\"text\":\"x\\n\",\"notStreamed\":88}");
+        var outputItem = live.vm.Transcript.Single(item => item.Role == AssistantViewModel.OutputRole);
+        Assert(live.vm.HasRunningJobs && live.vm.StopCommand.CanExecute(null) && LiveSaid("Live command started as postgres with network, allowed for this task")
+               && outputItem.Text == "line1\nline2\n[… 88 characters not shown …]\nx",
+            "Output is appended in place to one block for the job, and text Core did not stream is marked, never hidden.");
+        LiveNotify("ddistro/run/output", "{\"threadId\":\"thr-new\",\"jobId\":\"" + Job + "\",\"offset\":102,\"text\":\"" + new string('y', 40000) + "\",\"notStreamed\":0}");
+        LiveNotify("ddistro/run/output", "{\"threadId\":\"thr-new\",\"jobId\":\"" + Job + "\",\"offset\":40102,\"text\":\"later\",\"notStreamed\":0}");
+        Assert(outputItem.Text.Length <= AssistantViewModel.MaxLiveOutputChars + 200 && outputItem.Text.EndsWith("the assistant can read the rest from the job.]")
+               && !outputItem.Text.Contains("later") && live.vm.Transcript.Count(item => item.Role == AssistantViewModel.OutputRole) == 1,
+            "A flood is bounded in the transcript and says where the rest is.");
+
+        live.vm.StopCommand.Execute(null);
+        await WaitUntilAsync(() => LiveBodies().Any(body => body.StartsWith("ddistro/run/cancel ")));
+        Assert(LiveBodies().Single(body => body.StartsWith("ddistro/run/cancel ")).Contains("\"jobId\":\"" + Job + "\"")
+               && LiveBodies().Single(body => body.StartsWith("ddistro/run/cancel ")).Contains("\"threadId\":\"thr-new\""),
+            "Stop asks the broker to cancel the running live job by its thread and job id.");
+        LiveNotify("ddistro/run/updated", "{\"threadId\":\"thr-new\",\"jobId\":\"" + Job + "\",\"state\":\"cancelled\",\"started\":true,\"exitCode\":null,\"signal\":15,"
+            + "\"succeeded\":false,\"verified\":false,\"reason\":\"user_cancel\",\"durationMs\":1500,\"outputChars\":40107}");
+        Assert(!live.vm.HasRunningJobs && LiveSaid("was stopped before it finished") && LiveSaid("(user_cancel)") && LiveSaid("may have changed things partway"),
+            "The job's end comes from the broker's update and never claims nothing changed.");
+        live.vm.RevokeRunGrantCommand.Execute(null);
+        await WaitUntilAsync(() => !live.vm.HasRunGrant);
+        Assert(LiveBodies().Single(body => body.StartsWith("ddistro/run/revoke ")) == "ddistro/run/revoke {}" && LiveSaid("every later live command asks again"),
+            "Revoke sends ddistro/run/revoke and removes the grant line.");
+        LiveNotify("ddistro/run/started", "{\"threadId\":\"thr-new\",\"turnId\":\"turn-1\",\"jobId\":\"run_fedcba9876543210\",\"approval\":\"user_once\",\"state\":\"starting\",\"spec\":{}}");
+        await live.vm.ShutdownAsync();
+        Assert(!live.vm.HasRunningJobs && !live.vm.HasRunGrant && !live.vm.IsActionProposed && LiveSaid("stops its running live commands"),
+            "The session's end clears its jobs and grant, saying the broker stops what was running.");
         var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
         var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
         {

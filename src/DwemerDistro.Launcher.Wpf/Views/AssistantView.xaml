@@ -67,7 +67,7 @@
                             <Button Content="Sign in" Command="{Binding SignInCommand}" Style="{StaticResource Assistant.Action}"
                                     AutomationProperties.HelpText="Request a ChatGPT sign-in code. Nothing opens until you click Open sign-in page." />
                             <Button Content="Stop" Command="{Binding StopCommand}" Style="{StaticResource Assistant.Action}"
-                                    AutomationProperties.HelpText="Stop the current response. Available only while the assistant is responding." />
+                                    AutomationProperties.HelpText="Stop the current response and any live command still running. Available only while one is." />
                             <Button Content="Disconnect" Command="{Binding DisconnectCommand}" Style="{StaticResource Assistant.Action}"
                                     AutomationProperties.HelpText="Close the assistant session. It stays closed until you press Connect; your draft is kept." />
                             <Button Content="Load earlier messages" Command="{Binding LoadEarlierCommand}" Style="{StaticResource Assistant.Action}"
@@ -137,30 +137,6 @@
                         </WrapPanel>
                     </Border>
 
-                    <!-- An action Core's broker proposed in the running turn: a restart, a model change or its undo, a file change or
-                         undo, or a registered service operation, with Core's exact lines (before/after, full diff or operation summary). Nothing runs until Approve restart, Apply change or Undo change; Cancel
-                         is the safe choice and neither button is a default. Stop, disconnect, a new chat or the broker's expiry also end it. -->
-                    <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
-                            BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
-                            AutomationProperties.Name="Confirm the action the assistant proposed">
-                        <StackPanel>
-                            <TextBlock x:Name="RestartProposalTitle" Text="{Binding ActionProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock x:Name="RestartProposalDetail" Text="{Binding ActionProposalDetail}" TextWrapping="Wrap" Margin="0,2,0,6" />
-                            <!-- Read-only and selectable: a file change's complete diff can be long, so it scrolls instead of being cut. -->
-                            <TextBox x:Name="ActionProposalDiff" Text="{Binding ActionProposalDiff, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
-                                     FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" MaxHeight="320"
-                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                                     Margin="0,0,0,6" Visibility="{Binding HasActionProposalDiff, Converter={StaticResource BoolToVisibility}}"
-                                     AutomationProperties.Name="Exact change: lines starting with minus are now, lines starting with plus are after" />
-                            <WrapPanel>
-                                <Button x:Name="ApproveRestartButton" Content="{Binding ApproveActionLabel}" Command="{Binding ApproveActionCommand}" Style="{StaticResource Assistant.Action}"
-                                        AutomationProperties.HelpText="Run exactly this once now, then check it fresh." />
-                                <Button x:Name="CancelRestartButton" Content="Cancel" Command="{Binding CancelActionCommand}" Style="{StaticResource Assistant.Action}"
-                                        AutomationProperties.HelpText="Do not run it. Nothing is changed." />
-                            </WrapPanel>
-                        </StackPanel>
-                    </Border>
-
                     <!-- Memory is automatic. Only its problems or the last Clear memory outcome are shown, plus the confirmation. -->
                     <StackPanel DataContext="{Binding Memory}">
                         <TextBlock x:Name="MemoryStatusText" Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,8,0,0"
@@ -223,36 +199,66 @@
                             <FlowDocument PagePadding="0" />
                         </RichTextBox>
 
-                        <!-- File access: what the assistant asked for. Nothing is copied until Allow access is clicked. -->
-                        <Border x:Name="AccessCard" Grid.Row="2" Margin="10,0,10,0" Padding="10" CornerRadius="4" BorderThickness="1"
-                                BorderBrush="{DynamicResource GameCenter.Gold}" Background="{DynamicResource GameCenter.GoldTint}"
-                                Visibility="{Binding HasFileRequest, Converter={StaticResource BoolToVisibility}}"
-                                AutomationProperties.Name="File access request" AutomationProperties.LiveSetting="Polite">
-                            <StackPanel>
-                                <TextBlock Text="The assistant asks to read and edit these CHIM files" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource GameCenter.Text}" TextWrapping="Wrap" />
-                                <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto" Margin="0,4,0,4" Focusable="False">
-                                    <ItemsControl x:Name="AccessPaths" ItemsSource="{Binding FileRequestPaths}" Focusable="False"
-                                                  AutomationProperties.Name="Requested files">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12" Foreground="{DynamicResource GameCenter.Text}"
-                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding}" />
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </ScrollViewer>
-                                <TextBlock Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
-                                           Text="Allow access copies only these files into a fresh isolated working copy and continues your request there. Only CHIM (HerikaServer) files can be shared and edited today. Live files change only after you review and approve." />
-                                <WrapPanel>
-                                    <Button Content="Allow access" Command="{Binding AllowFileAccessCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
-                                            Margin="0,0,6,0" MinWidth="110"
-                                            AutomationProperties.HelpText="Copy only the listed files into a new isolated working copy and continue." />
-                                    <Button Content="Not now" Command="{Binding DeclineFileAccessCommand}" Style="{StaticResource Assistant.Action}" Margin="0"
-                                            AutomationProperties.HelpText="Dismiss this request. Nothing is shared." />
-                                </WrapPanel>
+                        <StackPanel Grid.Row="2" Margin="10,0,10,0">
+                            <!-- An action Core's broker proposed in the running turn, just above the composer: a live command, a restart, a model
+                                 change or its undo, a file change or undo, or a registered service operation, with Core's exact code or lines. Nothing
+                                 runs until Run once, Allow for this task, Approve restart, Apply change or Undo change; Cancel is the safe choice, no
+                                 button is a default and nothing takes focus. Stop, disconnect, a new chat or the broker's expiry also end it. -->
+                            <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
+                                    BorderBrush="{DynamicResource GameCenter.Gold}" Background="{DynamicResource GameCenter.GoldTint}"
+                                    BorderThickness="1" CornerRadius="4" Padding="10,8" Margin="0,0,0,6"
+                                    AutomationProperties.Name="Confirm the action the assistant proposed">
+                                <StackPanel>
+                                    <TextBlock x:Name="RestartProposalTitle" Text="{Binding ActionProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource GameCenter.Text}" AutomationProperties.LiveSetting="Polite" />
+                                    <TextBlock x:Name="LiveRunFlagsText" Text="{Binding LiveRunFlags}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
+                                               Foreground="{DynamicResource GameCenter.Text}"
+                                               Visibility="{Binding IsLiveRunProposed, Converter={StaticResource BoolToVisibility}}"
+                                               AutomationProperties.Name="{Binding LiveRunFlags, StringFormat=Runs with: {0}}" />
+                                    <TextBlock x:Name="RestartProposalDetail" Text="{Binding ActionProposalDetail}" TextWrapping="Wrap" Margin="0,2,0,6"
+                                               Foreground="{DynamicResource GameCenter.Text}" FontSize="12" />
+                                    <!-- Read-only and selectable: exactly the code that runs, whole; long code scrolls instead of being cut. -->
+                                    <TextBox x:Name="LiveRunCodeBox" Text="{Binding LiveRunCode, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                             FontFamily="Consolas" FontSize="12" TextWrapping="NoWrap" MaxHeight="180"
+                                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                             Margin="0,0,0,6" Visibility="{Binding IsLiveRunProposed, Converter={StaticResource BoolToVisibility}}"
+                                             AutomationProperties.Name="Exact code that runs on the live distro" />
+                                    <!-- Read-only and selectable: a file change's complete diff can be long, so it scrolls instead of being cut. -->
+                                    <TextBox x:Name="ActionProposalDiff" Text="{Binding ActionProposalDiff, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                             FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" MaxHeight="200"
+                                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                             Margin="0,0,0,6" Visibility="{Binding HasActionProposalDiff, Converter={StaticResource BoolToVisibility}}"
+                                             AutomationProperties.Name="Exact change: lines starting with minus are now, lines starting with plus are after" />
+                                    <WrapPanel>
+                                        <Button x:Name="ApproveRestartButton" Content="{Binding ApproveActionLabel}" Command="{Binding ApproveActionCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" AutomationProperties.HelpText="Run exactly this once now. A live command is not verified by its exit code." />
+                                        <Button x:Name="AllowRunForTaskButton" Content="Allow for this task" Command="{Binding ApproveRunForTaskCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" Visibility="{Binding CanAllowRunForTask, Converter={StaticResource BoolToVisibility}}"
+                                                AutomationProperties.HelpText="Run this now, and let later live commands with the same account and network run without asking in this session, until you revoke it." />
+                                        <Button x:Name="CancelRestartButton" Content="Cancel" Command="{Binding CancelActionCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" AutomationProperties.HelpText="Do not run it. Nothing is changed." />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Live commands still running and the session's Allow for this task, in one compact line. -->
+                            <StackPanel x:Name="LiveRunStatus" Margin="0,0,0,2" Visibility="{Binding HasRunStatus, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock x:Name="RunningJobsTextBlock" Text="{Binding RunningJobsText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                                           Margin="0,0,0,4" AutomationProperties.LiveSetting="Polite"
+                                           Visibility="{Binding HasRunningJobs, Converter={StaticResource BoolToVisibility}}" />
+                                <Grid Visibility="{Binding HasRunGrant, Converter={StaticResource BoolToVisibility}}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="RunGrantTextBlock" Text="{Binding RunGrantText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                                               VerticalAlignment="Center" Margin="0,0,8,4" AutomationProperties.LiveSetting="Polite" />
+                                    <Button x:Name="RevokeRunGrantButton" Grid.Column="1" Content="Revoke" Command="{Binding RevokeRunGrantCommand}" Style="{StaticResource Assistant.Action}"
+                                            MinWidth="72" Margin="0,0,0,4" VerticalAlignment="Center"
+                                            AutomationProperties.HelpText="End Allow for this task: every later live command asks again. Running commands continue; Stop cancels them." />
+                                </Grid>
                             </StackPanel>
-                        </Border>
+                        </StackPanel>
 
                         <!-- The draft stays editable in every state; only Send waits for a ready session. -->
                         <Grid Grid.Row="3" Margin="10">
