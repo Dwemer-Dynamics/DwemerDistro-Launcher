@@ -4122,7 +4122,7 @@ try
                && Revision(Caps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool.Replace("[\"propose_restart\"]", "[\"propose_restart\",\"stop\"]"))) == 3
                && AssistantViewModel.ToolRevisionFor(["ddistro_read", "ddistro_action"]) == 1
                && Enumerable.Range(0, 5).All(revision => !AssistantViewModel.HasActionTool(revision))
-               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(15)
+               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(17)
                && AssistantViewModel.HasMemoryTool(6) && !AssistantViewModel.HasMemoryTool(5) && AssistantViewModel.HasEnhancedRead(5)
                && AssistantViewModel.InstructionsFor(5).Contains(AssistantViewModel.ActionInstructions)
                && AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.MemoryInstructions)
@@ -4144,14 +4144,14 @@ try
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"postgres\"", ""))) == 5
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"performance\"", ""))) == 5
                && PerfRevision(withAction) == 5
-               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(15)
+               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(17)
                && AssistantViewModel.HasActionTool(7) && AssistantViewModel.HasActionTool(8) && AssistantViewModel.HasEnhancedRead(8)
-               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(15)
+               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(17)
                && AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.PerformanceInstructions) && !AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.MemoryInstructions) && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.ActionInstructions),
+               && !AssistantViewModel.InstructionsFor(17).Contains(AssistantViewModel.PerformanceInstructions)
+               && !AssistantViewModel.InstructionsFor(17).Contains(AssistantViewModel.ActionInstructions),
             "Only the full performance read with the action tool is revision 7/8; partial or unknown offers get no performance rules, actions or memory.");
         var sourceCall = AssistantViewModel.DescribeToolCall(System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_read\",\"status\":\"completed\","
             + "\"arguments\":{\"operation\":\"logs\",\"log_source\":\"apache\",\"lines\":20}}").RootElement);
@@ -4282,17 +4282,17 @@ try
                && ModelRevision(PerfCaps(ModelFeatures, ActionTool, ModelRead)) == 7
                && ModelRevision(PerfCaps(ModelFeatures.Replace("\"assistant_actions\":true,", ""), ModelAction, ModelRead)) == 3
                && Enumerable.Range(0, 9).All(revision => !AssistantViewModel.HasModelSettings(revision))
-               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(15)
+               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(17)
                && AssistantViewModel.HasActionTool(9) && AssistantViewModel.HasPerformanceRead(10) && AssistantViewModel.HasEnhancedRead(10)
                && AssistantViewModel.HasMemoryTool(10) && !AssistantViewModel.HasMemoryTool(9)
-               && !AssistantViewModel.HasActionTool(15) && !AssistantViewModel.HasMemoryTool(15) && !AssistantViewModel.HasPerformanceRead(15)
+               && !AssistantViewModel.HasActionTool(17) && !AssistantViewModel.HasMemoryTool(17) && !AssistantViewModel.HasPerformanceRead(17)
                && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ModelSettingsInstructions)
                && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.PerformanceInstructions)
                && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.MemoryInstructions)
                && !AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ModelSettingsInstructions)
-               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.ModelSettingsInstructions),
+               && !AssistantViewModel.InstructionsFor(17).Contains(AssistantViewModel.ModelSettingsInstructions),
             "Only Core's full model settings shape on top of 7/8 is revision 9/10; partial offers and unknown revisions never get model rules.");
 
         // A model proposal is shown only on a thread with model settings, with Core's exact three diff lines, never as a restart.
@@ -4303,7 +4303,7 @@ try
             "{\"action\":\"" + kind + "\",\"label\":\"CHIM model assignment\",\"impact\":\"i\",\"reason\":\"r\"," + change + "}").RootElement;
         Assert(AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 7) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_rollback"), P('e'), "t", 8) is null
-               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 15) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 17) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"b\"]}"), P('e'), "t", 9) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"\",\"c\"]}"), P('e'), "t", 9) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("stop_everything"), P('e'), "t", 10) is null
@@ -4427,7 +4427,7 @@ try
                && ModelRevision(PerfCaps(FoundationFeatures, ModelAction + FoundationTools, PerfRead)) == 7
                && ModelRevision(PerfCaps(FoundationFeatures, ActionTool + FoundationTools, ModelRead)) == 7
                && !AssistantViewModel.ReadOfferedTools(PerfCaps(ModelFeatures, ModelAction + FoundationTools, ModelRead)).Contains("ddistro_explore")
-               && Enumerable.Range(0, 11).All(revision => !AssistantViewModel.HasFoundations(revision)) && !AssistantViewModel.HasFoundations(15)
+               && Enumerable.Range(0, 11).All(revision => !AssistantViewModel.HasFoundations(revision)) && !AssistantViewModel.HasFoundations(17)
                && AssistantViewModel.HasMemoryTool(12) && !AssistantViewModel.HasMemoryTool(11) && AssistantViewModel.HasModelSettings(11)
                && AssistantViewModel.HasActionTool(12) && AssistantViewModel.HasPerformanceRead(11) && AssistantViewModel.HasEnhancedRead(12)
                && AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.FoundationDeveloperInstructions)
@@ -4437,7 +4437,7 @@ try
                && AssistantViewModel.InstructionsFor(12).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(10).Contains("You cannot run commands on the live distro")
                && !AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.FoundationActionInstructions)
-               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.FoundationActionInstructions)
+               && !AssistantViewModel.InstructionsFor(17).Contains(AssistantViewModel.FoundationActionInstructions)
                && AssistantViewModel.BuildToolTurnContext(11, null).Contains(AssistantViewModel.FoundationScopeReminder)
                && new[] { AssistantViewModel.FoundationDeveloperInstructions, AssistantViewModel.FoundationScopeReminder }.All(text =>
                    text.Contains("live public schema") && text.Contains("is_active") && text.Contains("backup snapshot")
@@ -4467,7 +4467,7 @@ try
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange("\"@@ -1 +1 @@\",\"-old\",\"+new\"")), P('e'), "t", 11) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines).Replace(manifest, "ABC")), P('e'), "t", 11) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 10) is null
-               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 15) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 17) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service), P('e'), "t", 11) is { Kind: "service", Target: "herika", Verb: "update" } serviceCard
                && serviceCard.Diff == "Operation: update\nTarget: herika\nBranch: main\nUpdate HerikaServer from origin/main\nRestarts Apache afterwards"
                && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service.Replace("\"update\"", "\"exec\"")), P('e'), "t", 11) is null
@@ -4582,7 +4582,7 @@ try
                && ModelRevision(PerfCaps(FoundationFeatures, ModelAction + LiveTools, ModelRead)) == 11
                && ModelRevision(PerfCaps(LiveFeatures, ModelAction + FoundationTools, ModelRead)) == 11
                && ModelRevision(PerfCaps(ModelFeatures + ",\"live_run\":true", ModelAction + LiveTools, ModelRead)) == 9
-               && AssistantViewModel.HasLiveRun(13) && AssistantViewModel.HasLiveRun(14) && !AssistantViewModel.HasLiveRun(12) && !AssistantViewModel.HasLiveRun(15)
+               && AssistantViewModel.HasLiveRun(13) && AssistantViewModel.HasLiveRun(14) && !AssistantViewModel.HasLiveRun(12) && !AssistantViewModel.HasLiveRun(17)
                && AssistantViewModel.HasFoundations(13) && AssistantViewModel.HasModelSettings(14) && AssistantViewModel.HasMemoryTool(14) && !AssistantViewModel.HasMemoryTool(13)
                && AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.LiveRunInstructions)
                && AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.LiveActionInstructions)
@@ -4741,6 +4741,75 @@ try
         await live.vm.ShutdownAsync();
         Assert(!live.vm.HasRunningJobs && !live.vm.HasRunGrant && !live.vm.IsActionProposed && LiveSaid("stops its running live commands"),
             "The session's end clears its jobs and grant, saying the broker stops what was running.");
+
+        // Automatic routine runs are revision 15/16, only when Core describes live_run.automatic exactly. A revision 13 thread moves once to
+        // 15; the launcher asks for live_run_auto, the automatic rules replace the approve-every-run ones, a routine run shows its code in
+        // the transcript, and a destructive card (declared, flagged or with a risk the launcher does not know) is confirm-once only.
+        const string AutoFacts = ",\"live_run\":{\"automatic\":{\"capability\":\"live_run_auto\",\"risk\":[\"routine\",\"destructive\"],\"grants\":false}}";
+        int AutoRevision(System.Text.Json.JsonElement caps) => AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(caps),
+            AssistantViewModel.OffersEnhancedRead(caps), AssistantViewModel.OffersPerformanceRead(caps), AssistantViewModel.OffersModelSettings(caps),
+            AssistantViewModel.OffersAutomaticRun(caps));
+        Assert(AutoRevision(LiveDoc(AutoFacts)) == 15 && AutoRevision(LiveDoc(string.Empty)) == 13
+               && !AssistantViewModel.OffersAutomaticRun(LiveDoc(AutoFacts.Replace("\"grants\":false", "\"grants\":true")))
+               && !AssistantViewModel.OffersAutomaticRun(LiveDoc(AutoFacts.Replace("\"routine\",\"destructive\"", "\"routine\",\"destructive\",\"low\"")))
+               && AssistantViewModel.HasAutoRun(15) && AssistantViewModel.HasAutoRun(16) && !AssistantViewModel.HasAutoRun(14) && !AssistantViewModel.HasAutoRun(17)
+               && AssistantViewModel.HasLiveRun(15) && AssistantViewModel.HasMemoryTool(16) && !AssistantViewModel.HasMemoryTool(15) && !AssistantViewModel.HasLiveRun(17)
+               && AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.AutoRunInstructions) && AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.AutoActionInstructions)
+               && AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.AutoDeveloperInstructions) && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.LiveRunInstructions)
+               && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.LiveActionInstructions) && !AssistantViewModel.InstructionsFor(15).Contains("once the user approves it")
+               && AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.LiveDeveloperInstructions) && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.AutoRunInstructions)
+               && AssistantViewModel.InstructionsFor(16).Contains(AssistantViewModel.MemoryInstructions)
+               && AssistantViewModel.BuildToolTurnContext(15, null).Contains(AssistantViewModel.AutoScopeReminder) && AssistantViewModel.BuildToolTurnContext(13, null).Contains(AssistantViewModel.LiveScopeReminder),
+            "Only Core's exact automatic offer is 15/16 with the automatic rules; 13/14 keep approving every run.");
+        System.Text.Json.JsonElement LiveDoc(string extra) => System.Text.Json.JsonDocument.Parse("{\"features\":{\"agent\":true," + LiveFeatures + "},"
+            + ModelRead + ModelAction + LiveTools + EnhancedCoverage + extra + "}").RootElement;
+        string RiskChange(string risk, string signs = "[]") => LiveChange().Replace("\"widens_grant\":false}", "\"widens_grant\":false,\"risk\":" + risk + ",\"risk_signs\":" + signs + "}");
+        Assert(AssistantViewModel.ReadActionProposal(ProposalJson("live_run", RiskChange("\"destructive\"")), P('e'), "t", 15) is { Run: { Destructive: true, CanAllowForTask: false } }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", RiskChange("\"unclassified\"", "[\"SQL DELETE\"]")), P('e'), "t", 13) is { Run: { Destructive: true, CanAllowForTask: false } }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", RiskChange("\"catastrophic\"")), P('e'), "t", 15) is { Run: { Destructive: true, CanAllowForTask: false } }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", RiskChange("\"unclassified\"")), P('e'), "t", 13) is { Run: { Destructive: false, CanAllowForTask: true } }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange()), P('e'), "t", 13) is { Run: { Destructive: false } },
+            "A destructive, flagged or unknown risk is confirm-once even when decisions offer approve_session; unclassified and older cards keep their behavior.");
+
+        const string AutoCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + LiveFeatures + "},"
+            + ModelRead + ModelAction + LiveTools + EnhancedCoverage + AutoFacts + "}}";
+        var auto = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-live13", ThreadToolRevision = 13 }, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? AutoCapabilities : null,
+            respondFirst: (method, _) => method == "ddistro/action/decide" ? System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"approved\"}") : null);
+        string[] AutoBodies() { lock (auto.transport.Requests) return auto.transport.Bodies.ToArray(); }
+        void AutoNotify(string method, string json) => auto.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
+        bool AutoSaid(string text) => auto.vm.Transcript.Any(item => item.Text.Contains(text));
+        Assert(AutoBodies().Single(body => body.StartsWith("initialize ")).Contains("\"service_control\",\"live_run\",\"live_run_auto\"]"),
+            "A launcher on an automatic Core asks for live_run_auto beside live_run.");
+        auto.vm.InputText = "what is RECHAT_P?";
+        auto.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => AutoBodies().Any(body => body.StartsWith("turn/start")));
+        Assert(toolStore.Load() is { ThreadId: "thr-new", ThreadToolRevision: 15 } autoRef && autoRef.SupersededThreads!.Contains("thr-live13")
+               && AutoBodies().Single(body => body.StartsWith("thread/start")).Contains("Set risk on every run")
+               && TurnInput(AutoBodies().Single(body => body.StartsWith("turn/start")))[0].Contains(AssistantViewModel.AutoScopeReminder)
+               && AutoSaid("routine work runs automatically"),
+            "A revision 13 thread moves once to a revision 15 thread with the automatic rules.");
+        await WaitUntilAsync(() => auto.vm.State == AssistantState.Streaming);
+        AutoNotify("ddistro/run/started", "{\"threadId\":\"thr-new\",\"turnId\":\"turn-1\",\"jobId\":\"run_00000000000000bb\",\"approval\":\"automatic\",\"state\":\"starting\","
+            + "\"spec\":{\"interpreter\":\"psql\",\"account\":\"postgres\",\"network\":false,\"code\":\"SELECT 4;\"}}");
+        Assert(auto.vm.Transcript.Any(item => item.Role == AssistantViewModel.CommandRole && item.Text == "SELECT 4;") && AutoSaid("run automatically as routine")
+               && !auto.vm.IsActionProposed && auto.vm.HasRunningJobs && auto.vm.StopCommand.CanExecute(null),
+            "An automatic run has no card: the transcript shows its exact code, and Stop can cancel it.");
+        AutoNotify("ddistro/run/updated", "{\"threadId\":\"thr-new\",\"jobId\":\"run_00000000000000bb\",\"state\":\"exited\",\"exitCode\":0,\"durationMs\":40}");
+        AutoNotify("ddistro/action/proposed", "{\"proposalId\":\"" + P('d') + "\",\"threadId\":\"thr-new\",\"turnId\":\"turn-1\",\"action\":\"live_run\","
+            + "\"label\":\"Destructive: run on the live distro as postgres\",\"impact\":\"The assistant marked it destructive.\",\"reason\":\"Delete the fixture.\","
+            + "\"expiresAt\":\"2026-10-20T00:00:00Z\"," + RiskChange("\"destructive\"").Replace("\"approve\",\"approve_session\",\"cancel\"", "\"approve\",\"cancel\"") + "}");
+        Assert(auto.vm.IsActionProposed && auto.vm.IsDestructiveRunProposed && !auto.vm.CanAllowRunForTask && !auto.vm.ApproveRunForTaskCommand.CanExecute(null)
+               && auto.vm.ActionProposalTitle == "Confirm this destructive command?" && auto.vm.ApproveActionLabel == "Confirm and run"
+               && auto.vm.LiveRunCode == "SELECT 1;" && auto.vm.ActionProposalDetail.Contains("Delete the fixture.") && auto.vm.ActionProposalDetail.Contains("runs exactly this once and may not be undoable"),
+            "A destructive card shows the exact code with Confirm and run or Cancel only.");
+        var linesBeforeConfirm = auto.vm.Transcript.Count;
+        auto.vm.ApproveActionCommand.Execute(null);
+        await WaitUntilAsync(() => AutoBodies().Any(body => body.StartsWith("ddistro/action/decide ")) && auto.vm.Transcript.Count > linesBeforeConfirm);
+        Assert(AutoSaid("Confirmed once") && AutoBodies().Single(body => body.StartsWith("ddistro/action/decide ")) is var decided && decided.Contains("\"decision\":\"approve\"")
+               && decided.Contains("\"digest\":\"" + LiveDigest + "\"") && !auto.vm.IsActionProposed,
+            "Confirm and run sends approve once with the digest of the shown code.");
+        await auto.vm.ShutdownAsync();
         var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
         var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
         {

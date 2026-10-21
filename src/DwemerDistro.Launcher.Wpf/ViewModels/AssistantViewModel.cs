@@ -214,24 +214,27 @@ public sealed class AssistantViewModel : ObservableObject
     /// schema (operation performance, server-only product, log_source for apache/postgres logs); 9 and 10 are 7 and 8 with
     /// model settings (the action tool's configure_model operations plus the model_options and update_check reads); 11 and 12
     /// are 9 and 10 with the foundation bundle (<see cref="ExploreToolName"/>, <see cref="ExecToolName"/>, file and service
-    /// proposals); 13 and 14 are 11 and 12 with <see cref="RunToolName"/>, approved commands on the live distro. A Core
+    /// proposals); 13 and 14 are 11 and 12 with <see cref="RunToolName"/>, approved commands on the live distro; 15 and 16 are 13
+    /// and 14 with automatic routine runs (<see cref="RunAutoCapability"/>: the tool declares each run's risk, routine runs start
+    /// without a card and destructive ones always ask). A Core
     /// offering performance without the action tool stays at 3/4, and model settings count only on top of 7/8, so no
     /// revision ever implies a tool the session lacks. The broker declares tools only on thread/start, so a thread lacking
     /// something Core now offers is upgraded once to a new thread. Unknown revisions (from a newer launcher) count as the read
     /// tool alone, so an older thread is never treated as able to propose a restart or a model change.
     /// </summary>
     internal static int ToolRevisionFor(IReadOnlyCollection<string> tools, bool enhancedRead = false, bool performanceRead = false,
-        bool modelSettings = false) =>
+        bool modelSettings = false, bool automaticRun = false) =>
         ToolRevision(tools.Contains(ReadToolName), tools.Contains(MemoryToolName), enhancedRead, tools.Contains(ActionToolName), performanceRead,
-            modelSettings, tools.Contains(ExploreToolName) && tools.Contains(ExecToolName), tools.Contains(RunToolName));
+            modelSettings, tools.Contains(ExploreToolName) && tools.Contains(ExecToolName), tools.Contains(RunToolName), automaticRun);
 
     // 11 and 12 are 9 and 10 with the foundation bundle (ddistro_explore, ddistro_exec, file and service proposals); see
     // OffersFoundations. They count only on top of the full 9/10 shape, so a partial Core installation stays at 9/10 or lower.
-    // 13 and 14 add the live run tool, only on top of the full foundation shape.
+    // 13 and 14 add the live run tool, only on top of the full foundation shape; 15 and 16 add automatic routine runs on top of it.
     private static int ToolRevision(bool read, bool memory, bool enhancedRead, bool action = false, bool performanceRead = false,
-        bool modelSettings = false, bool foundations = false, bool liveRun = false)
+        bool modelSettings = false, bool foundations = false, bool liveRun = false, bool automaticRun = false)
     {
         if (!read) return 0;
+        if (action && enhancedRead && performanceRead && modelSettings && foundations && liveRun && automaticRun) return memory ? 16 : 15;
         if (action && enhancedRead && performanceRead && modelSettings && foundations && liveRun) return memory ? 14 : 13;
         if (action && enhancedRead && performanceRead && modelSettings && foundations) return memory ? 12 : 11;
         if (action && enhancedRead && performanceRead && modelSettings) return memory ? 10 : 9;
@@ -240,21 +243,27 @@ public sealed class AssistantViewModel : ObservableObject
         return (memory ? 2 : 1) + (enhancedRead ? 2 : 0);
     }
 
-    internal static bool HasMemoryTool(int toolRevision) => toolRevision is 2 or 4 or 6 or 8 or 10 or 12 or 14;
+    internal static bool HasMemoryTool(int toolRevision) => toolRevision is 2 or 4 or 6 or 8 or 10 or 12 or 14 or 16;
 
-    internal static bool HasEnhancedRead(int toolRevision) => toolRevision is >= 3 and <= 14;
+    internal static bool HasEnhancedRead(int toolRevision) => toolRevision is >= 3 and <= 16;
 
-    internal static bool HasActionTool(int toolRevision) => toolRevision is >= 5 and <= 14;
+    internal static bool HasActionTool(int toolRevision) => toolRevision is >= 5 and <= 16;
 
-    internal static bool HasPerformanceRead(int toolRevision) => toolRevision is >= 7 and <= 14;
+    internal static bool HasPerformanceRead(int toolRevision) => toolRevision is >= 7 and <= 16;
 
-    internal static bool HasModelSettings(int toolRevision) => toolRevision is >= 9 and <= 14;
+    internal static bool HasModelSettings(int toolRevision) => toolRevision is >= 9 and <= 16;
 
     /// <summary>The foundation bundle: explore, sandboxed exec over sanitized snapshots, and file and service proposals.</summary>
-    internal static bool HasFoundations(int toolRevision) => toolRevision is >= 11 and <= 14;
+    internal static bool HasFoundations(int toolRevision) => toolRevision is >= 11 and <= 16;
 
-    /// <summary>The live run tool: commands on the live distro, each approved by the user or covered by this session's task grant.</summary>
-    internal static bool HasLiveRun(int toolRevision) => toolRevision is 13 or 14;
+    /// <summary>The live run tool: commands on the live distro, each approved by the user, covered by a task grant, or automatic (15/16).</summary>
+    internal static bool HasLiveRun(int toolRevision) => toolRevision is >= 13 and <= 16;
+
+    /// <summary>
+    /// Automatic routine runs: the thread's run tool declares each run's risk; routine runs start without a card, while destructive,
+    /// undeclared and flagged runs always show the exact request for confirmation, and there is no Allow for this task.
+    /// </summary>
+    internal static bool HasAutoRun(int toolRevision) => toolRevision is 15 or 16;
 
     /// <summary>
     /// Core's broker-owned general tool: code the user approved (or this session's Allow for this task covers) runs on the LIVE
@@ -262,6 +271,8 @@ public sealed class AssistantViewModel : ObservableObject
     /// </summary>
     internal const string RunToolName = "ddistro_run";
     internal const string RunCapability = "live_run";
+    /// <summary>Asked for beside <see cref="RunCapability"/> only when Core's capabilities describe it (live_run.automatic).</summary>
+    internal const string RunAutoCapability = "live_run_auto";
 
     /// <summary>Core's structured, bounded exploration of the roots its code-owned policy supports: files, config and databases.</summary>
     internal const string ExploreToolName = "ddistro_explore";
@@ -577,12 +588,16 @@ public sealed class AssistantViewModel : ObservableObject
         { Kind: "file_change" } => "Apply these file changes?",
         { Kind: "file_undo" } => "Undo these file changes?",
         { Kind: "service" } proposal => $"{Capitalize(proposal.Verb)} {proposal.Target}?",
+        { Run.Destructive: true } => "Confirm this destructive command?",
         { Kind: RunCapability } => "Run this on the live distro?",
         { } proposal => $"Restart the {proposal.Label}?",
         _ => string.Empty
     };
     public string ActionProposalDetail => _actionProposal switch
     {
+        { Run: { Destructive: true } run } proposal => "Assistant's reason: " + proposal.Reason + "\n" + proposal.Impact
+            + "\nConfirm and run runs exactly this once and may not be undoable; nothing runs until you choose."
+            + (DescribeExpiry(run.ExpiresAt) is { Length: > 0 } expiry ? " Expires at " + expiry + "." : string.Empty),
         { Run: { } run } proposal => "Assistant's reason: " + proposal.Reason + "\n" + proposal.Impact + "\nNothing runs until you choose."
             + (run.CanAllowForTask ? (run.WidensGrant ? " Allow for this task adds one permission:" : " Allow for this task:")
                 + " later commands " + run.GrantAfter + ", then run without asking until Revoke or the session ends." : string.Empty)
@@ -596,6 +611,8 @@ public sealed class AssistantViewModel : ObservableObject
 
     /// <summary>A live run card: the request's exact code, shown whole and selectable, and its compact settings.</summary>
     public bool IsLiveRunProposed => _actionProposal?.Run is not null;
+    /// <summary>A destructive live run: confirmed once, never allowed for the task; the card shows it in the danger colour.</summary>
+    public bool IsDestructiveRunProposed => _actionProposal?.Run is { Destructive: true };
     public bool CanAllowRunForTask => _actionProposal?.Run is { CanAllowForTask: true };
     public string LiveRunCode => _actionProposal?.Run?.Code ?? string.Empty;
     public string LiveRunFlags => _actionProposal?.Run is { } run
@@ -637,7 +654,7 @@ public sealed class AssistantViewModel : ObservableObject
         "file_change" => "Apply files",
         "file_undo" => "Undo files",
         "service" => "Approve " + _actionProposal.Verb,
-        RunCapability => "Run once",
+        RunCapability => _actionProposal.Run is { Destructive: true } ? "Confirm and run" : "Run once",
         _ => "Approve restart"
     };
 
@@ -810,7 +827,8 @@ public sealed class AssistantViewModel : ObservableObject
         HasPerformanceRead(_threadToolRevision) && HasPerformanceRead(_toolRevision),
         HasModelSettings(_threadToolRevision) && HasModelSettings(_toolRevision),
         HasFoundations(_threadToolRevision) && HasFoundations(_toolRevision),
-        HasLiveRun(_threadToolRevision) && HasLiveRun(_toolRevision));
+        HasLiveRun(_threadToolRevision) && HasLiveRun(_toolRevision),
+        HasAutoRun(_threadToolRevision) && HasAutoRun(_toolRevision));
 
     internal static string Describe(AssistantState state) => state switch
     {
@@ -905,7 +923,7 @@ public sealed class AssistantViewModel : ObservableObject
             // Deleting a chat is offered only when Core says its broker forwards the task's own thread lifecycle, never by inference.
             CanDeleteChats = Prop(Prop(capabilities.Data, "features"), "thread_lifecycle").ValueKind == JsonValueKind.True;
             _toolRevision = ToolRevisionFor(ReadOfferedTools(capabilities.Data), OffersEnhancedRead(capabilities.Data),
-                OffersPerformanceRead(capabilities.Data), OffersModelSettings(capabilities.Data));
+                OffersPerformanceRead(capabilities.Data), OffersModelSettings(capabilities.Data), OffersAutomaticRun(capabilities.Data));
             // Memory is automatic. Core's broker declares the memory tool only while retrieval is on as the session starts, so
             // retrieval and learning are configured on here, once, before the broker starts; only then does a new thread get
             // the memory tool. If Core keeps retrieval off the session has no memory tool, and the reason stays shown.
@@ -914,7 +932,8 @@ public sealed class AssistantViewModel : ObservableObject
                 SetState(AssistantState.Checking, "Setting up automatic memory…");
                 if (!await Memory.EnsureAutomaticAsync())
                     _toolRevision = ToolRevision(true, false, HasEnhancedRead(_toolRevision), HasActionTool(_toolRevision),
-                        HasPerformanceRead(_toolRevision), HasModelSettings(_toolRevision), HasFoundations(_toolRevision), HasLiveRun(_toolRevision));
+                        HasPerformanceRead(_toolRevision), HasModelSettings(_toolRevision), HasFoundations(_toolRevision), HasLiveRun(_toolRevision),
+                        HasAutoRun(_toolRevision));
                 if (_isShutDown) return;
             }
 
@@ -998,6 +1017,19 @@ public sealed class AssistantViewModel : ObservableObject
         Prop(Prop(capabilities, "features"), "live_run").ValueKind == JsonValueKind.True
         && Prop(Prop(capabilities, "assistant_tools"), "tools") is { ValueKind: JsonValueKind.Array } tools
         && tools.EnumerateArray().Any(tool => AssistantCliService.GetString(tool, "name") == RunToolName);
+
+    /// <summary>
+    /// Core's broker can run routine live commands without a card: live_run.automatic names <see cref="RunAutoCapability"/> with exactly
+    /// the risks routine and destructive and no grants. An older Core refuses the capability name at initialize, so it is asked for only
+    /// then; any other shape keeps the approve-every-run revision.
+    /// </summary>
+    internal static bool OffersAutomaticRun(JsonElement capabilities) =>
+        Prop(Prop(capabilities, "live_run"), "automatic") is { ValueKind: JsonValueKind.Object } automatic
+        && AssistantCliService.GetString(automatic, "capability") == RunAutoCapability
+        && Prop(automatic, "grants").ValueKind == JsonValueKind.False
+        && Prop(automatic, "risk") is { ValueKind: JsonValueKind.Array } risks
+        && risks.EnumerateArray().Select(risk => risk.ValueKind == JsonValueKind.String ? risk.GetString() : null)
+            .SequenceEqual(["routine", "destructive"]);
 
     /// <summary>
     /// Core's read tool schema with 400-line logs, query and since filters, and per-call coverage, from <c>capabilities</c>.
@@ -1217,7 +1249,9 @@ public sealed class AssistantViewModel : ObservableObject
             if (HasActionTool(_toolRevision) && initialize["capabilities"] is JsonObject capabilities)
             {
                 // live_run is a broker-declared tool of its own (ddistro_run), asked for only by a launcher that shows its run card.
-                capabilities["ddistroActions"] = HasLiveRun(_toolRevision)
+                capabilities["ddistroActions"] = HasAutoRun(_toolRevision)
+                    ? new JsonArray("restart_service", "configure_model", "change_files", "service_control", RunCapability, RunAutoCapability)
+                    : HasLiveRun(_toolRevision)
                     ? new JsonArray("restart_service", "configure_model", "change_files", "service_control", RunCapability)
                     : HasFoundations(_toolRevision)
                     ? new JsonArray("restart_service", "configure_model", "change_files", "service_control")
@@ -1354,7 +1388,8 @@ public sealed class AssistantViewModel : ObservableObject
         _actionProposal = proposal;
         foreach (var name in new[] { nameof(IsActionProposed), nameof(ActionProposalTitle), nameof(ActionProposalDetail), nameof(ActionProposalDiff),
                      nameof(HasActionProposalDiff), nameof(ApproveActionLabel), nameof(IsRestartProposed), nameof(RestartProposalTitle),
-                     nameof(RestartProposalDetail), nameof(IsLiveRunProposed), nameof(CanAllowRunForTask), nameof(LiveRunCode), nameof(LiveRunFlags) })
+                     nameof(RestartProposalDetail), nameof(IsLiveRunProposed), nameof(IsDestructiveRunProposed), nameof(CanAllowRunForTask),
+                     nameof(LiveRunCode), nameof(LiveRunFlags) })
             OnPropertyChanged(name);
         ApproveActionCommand.RaiseCanExecuteChanged();
         CancelActionCommand.RaiseCanExecuteChanged();
@@ -1529,6 +1564,8 @@ public sealed class AssistantViewModel : ObservableObject
     {
         /// <summary>What Allow for this task adds: exactly this request's scope, next to (never merged with) the current grant's scopes.</summary>
         public string GrantAfter { get; init; } = string.Empty;
+        /// <summary>Core marked it destructive (declared or pattern-flagged), or sent a risk this launcher does not know.</summary>
+        public bool Destructive { get; init; }
     }
 
     /// <summary>
@@ -1564,6 +1601,14 @@ public sealed class AssistantViewModel : ObservableObject
                 && decisions.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.String && item.GetString() == "approve_session"),
             Prop(change, "widens_grant").ValueKind == JsonValueKind.True, AssistantCliService.GetString(parameters, "expiresAt"));
         var digest = RunDigest(request);
+        // Core's risk: absent (an older Core) or unclassified asks as before; destructive, flagged signs, or any risk this launcher
+        // does not know (a newer Core) is confirmed once and never offered for the task, whatever the decisions say.
+        var risk = Prop(change, "risk");
+        var signs = Prop(change, "risk_signs");
+        var destructive = risk.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)
+                && !(risk.ValueKind == JsonValueKind.String && risk.GetString() == "unclassified")
+            || signs.ValueKind == JsonValueKind.Array && signs.GetArrayLength() > 0;
+        if (destructive) request = request with { CanAllowForTask = false };
         // Core's approve_session adds exactly this request's scope {account, network} to the current scopes; it never merges them.
         var scope = Prop(change, "scope");
         var grant = Prop(change, "grant");
@@ -1576,7 +1621,7 @@ public sealed class AssistantViewModel : ObservableObject
         if (AssistantCliService.GetString(change, "digest") != digest
             || AssistantCliService.GetString(change, "code_sha256") != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(StrictUtf8.GetBytes(text))).ToLowerInvariant())
             return null;
-        return card with { Run = request with { Digest = digest, GrantAfter = after } };
+        return card with { Run = request with { Digest = digest, GrantAfter = after, Destructive = destructive } };
     }
 
     private static int Utf8Length(string text)
@@ -1722,6 +1767,7 @@ public sealed class AssistantViewModel : ObservableObject
             {
                 "approve_session" => "Allowed for this task: this command runs now, and later ones " + run.GrantAfter
                                      + ", run without asking until you revoke it or the session ends.",
+                "approve" when run.Destructive => "Confirmed once: DwemerDistro runs exactly this destructive command on the live distro now.",
                 "approve" => "Approved once: DwemerDistro runs exactly this code on the live distro now.",
                 _ => "Cancelled. Nothing was run."
             });
@@ -1770,12 +1816,15 @@ public sealed class AssistantViewModel : ObservableObject
         {
             "task_grant" => "covered by Allow for this task",
             "user_task_grant" => "allowed for this task",
+            "automatic" => "run automatically as routine",
             _ => "approved once"
         };
         AddActivity("Live command started" + (RunAccount.IsMatch(account) ? " as " + account : string.Empty)
                     + (Prop(spec, "network").ValueKind == JsonValueKind.True ? " with network" : string.Empty) + ", " + approval + " (" + jobId + ").");
-        // A run the grant covered had no card, so the code that ran is shown here instead; approved runs were shown on their card.
-        if (AssistantCliService.GetString(parameters, "approval") == "task_grant" && AssistantCliService.GetString(spec, "code") is { Length: > 0 } code)
+        // A run the grant covered, or a routine run that started automatically, had no card, so the code that ran is shown here
+        // instead; approved runs were shown on their card.
+        if (AssistantCliService.GetString(parameters, "approval") is "task_grant" or "automatic"
+            && AssistantCliService.GetString(spec, "code") is { Length: > 0 } code)
             AddItem(new AssistantTranscriptItem(CommandRole, code));
     }
 
@@ -1988,7 +2037,9 @@ public sealed class AssistantViewModel : ObservableObject
         await EnsureThreadAsync(client);
         SignInUrl = string.Empty;
         SignInCode = string.Empty;
-        SetState(AssistantState.Ready, HasLiveRun(ActiveToolRevision)
+        SetState(AssistantState.Ready, HasAutoRun(ActiveToolRevision)
+            ? "Ask about your DwemerDistro setup, or describe a fix. Routine checks and changes run automatically; anything destructive asks you first."
+            : HasLiveRun(ActiveToolRevision)
             ? "Ask about your DwemerDistro setup, or describe a fix. Nothing runs on the live distro until you approve it."
             : HasFoundations(ActiveToolRevision)
             ? "Ask about your DwemerDistro setup, or describe a fix. Changes stay proposals until you review and approve them."
@@ -2101,6 +2152,11 @@ public sealed class AssistantViewModel : ObservableObject
     internal static string InstructionsFor(int toolRevision)
     {
         if (toolRevision <= 0) return DeveloperInstructions;
+        // Automatic run threads: routine runs start at once, so typed proposals (which always ask) are no longer the way to make a
+        // requested change, and every run declares its risk.
+        if (HasAutoRun(toolRevision))
+            return AutoDeveloperInstructions + (HasMemoryTool(toolRevision) ? "\n" + MemoryInstructions : string.Empty)
+                + "\n" + AutoActionInstructions + "\n" + AutoRunInstructions + "\n" + PerformanceInstructions;
         // Live run threads replace the foundation base and change rules, whose "no commands on live roots" no longer holds.
         if (HasLiveRun(toolRevision))
             return LiveDeveloperInstructions + (HasMemoryTool(toolRevision) ? "\n" + MemoryInstructions : string.Empty)
@@ -2178,7 +2234,22 @@ public sealed class AssistantViewModel : ObservableObject
     /// the typed tools still read automatically, and <see cref="RunToolName"/> reaches everything else on the live distro once the
     /// user approves, so the model neither refuses supported work nor asks the user to paste what it can read.
     /// </summary>
-    internal const string LiveDeveloperInstructions =
+    internal const string LiveDeveloperInstructions = LiveIntroInstructions +
+        "- " + RunToolName + ": bash, python3, php or psql code on the LIVE distro (live files, services and databases) as dwemer, " +
+        "root, postgres or another account, on any Linux path and with any installed program, once the user approves it.\n" +
+        LiveBodyInstructions;
+
+    /// <summary>
+    /// The developer instructions of an automatic run thread (revision 15/16): <see cref="LiveDeveloperInstructions"/> with a run tool
+    /// that starts routine work at once and waits for the user only for destructive work.
+    /// </summary>
+    internal const string AutoDeveloperInstructions = LiveIntroInstructions +
+        "- " + RunToolName + ": bash, python3, php or psql code on the LIVE distro (live files, services and databases) as dwemer, " +
+        "root, postgres or another account, on any Linux path and with any installed program. Routine runs start at once; " +
+        "destructive runs wait for the user's confirmation.\n" +
+        LiveBodyInstructions;
+
+    private const string LiveIntroInstructions =
         "You are the DwemerDistro Assistant. You help the user set up, check, understand, troubleshoot and change their whole " +
         "DwemerDistro: its managed game servers, every component in its component catalog, registered custom mods, and the game data " +
         "they hold. You are not limited to CHIM or to any fixed list of servers, components, mods, files or settings.\n" +
@@ -2187,9 +2258,9 @@ public sealed class AssistantViewModel : ObservableObject
         "- " + ExploreToolName + ": structured, bounded, redacted reads of the roots its policy supports: files, configuration as it " +
         "projects it, database schemas and its structured queries. Its limits are its own; they do not limit " + RunToolName + ".\n" +
         "- " + ExecToolName + ": commands in your sandbox over sanitized snapshots, network off, not root, scratch-only writes. It is not " +
-        "the live distro.\n" +
-        "- " + RunToolName + ": bash, python3, php or psql code on the LIVE distro (live files, services and databases) as dwemer, " +
-        "root, postgres or another account, on any Linux path and with any installed program, once the user approves it.\n" +
+        "the live distro.\n";
+
+    private const string LiveBodyInstructions =
         "Your own shell and your edits in /work stay in your sandbox and never reach the live distro.\n" +
         "Use " + ReadToolName + " and " + ExploreToolName + " for what they cover; they run without asking the user. Use " + RunToolName +
         " for everything else: any configuration field or file they do not project (for example a CHIM profile setting such as " +
@@ -2226,6 +2297,49 @@ public sealed class AssistantViewModel : ObservableObject
         "Report each proposal's state exactly: refused, busy, cancelled, expired, conflict, stale and not_executed mean nothing changed; " +
         "failed means it ran but the fresh check did not pass; unknown means the outcome could not be confirmed, so read again first; " +
         "verified means only DwemerDistro's fresh check passed, not a full health check.";
+
+    /// <summary>
+    /// The typed proposals of an automatic run thread: they always wait for the user's card, so a requested change goes through
+    /// <see cref="RunToolName"/> instead, and the typed tools stay for a change the user wants to review first and for their undo.
+    /// </summary>
+    internal const string AutoActionInstructions =
+        "Typed proposals through " + ActionToolName + " (file changes and their undo, registered service operations, model assignment " +
+        "and its rollback, propose_restart) always wait for the user's card, so they are not the way to make a change the user asked " +
+        "for: use " + RunToolName + ", which runs routine changes at once. Use " + ActionToolName + " only when the user asks to review a " +
+        "change before it is made, or to undo a change " + ActionToolName + " applied in this chat (propose_file_undo, " +
+        "propose_model_rollback). You can only propose them; say why first and propose each at most once per turn. For a CHIM model " +
+        "assignment, read " + ReadToolName + " model_options first, never guess an id, and ask which profile and role when the request " +
+        "names more than one.\n" +
+        "Report each proposal's state exactly: refused, busy, cancelled, expired, conflict, stale and not_executed mean nothing changed; " +
+        "failed means it ran but the fresh check did not pass; unknown means the outcome could not be confirmed, so read again first; " +
+        "verified means only DwemerDistro's fresh check passed, not a full health check.";
+
+    /// <summary>How to use <see cref="RunToolName"/> on an automatic thread: risk, careful edits, verification, and honest outcomes.</summary>
+    internal const string AutoRunInstructions =
+        RunToolName + " rules. Set risk on every run. routine starts at once without asking: reads and inspection, configuration and " +
+        "database updates the user asked for, installing or updating packages and servers, and starting, stopping or restarting " +
+        "services, as dwemer, postgres or root and with network when the work needs it. destructive always waits for the user to " +
+        "confirm that exact request, every time: deleting data, rows or files (other than a temporary file your own run created), " +
+        "dropping, truncating or resetting a database, table, schema or settings, uninstalling or purging software, removing accounts, " +
+        "and overwriting data you have not backed up. When unsure, use destructive. Put each destructive step in its own run so the " +
+        "confirmation shows exactly it; never mark destructive work routine, and never split, encode or disguise it to avoid the " +
+        "confirmation. DwemerDistro also asks the user when the code shows a common destructive pattern even if you marked it routine; " +
+        "that is a backstop, not a guarantee. Do only what the user asked: routine is not permission for changes they did not request. " +
+        "Give a one-sentence reason that says what the run changes; for destructive, exactly what is deleted, reset or overwritten. Use " +
+        "account dwemer and network false unless more is needed; root is full trust over the distro.\n" +
+        "Before changing anything, inspect the actual current state: read the real file, or the real schema and current row (for a CHIM " +
+        "profile setting, the live profile row and the actual key and type in its JSON), never an assumed layout. Change only the " +
+        "targeted keys or lines and preserve everything else; never rewrite a whole file, JSON document or row to change one value. Back " +
+        "up a file before editing it (for example cp f f.bak) and note a database value's old value. Guard against concurrent writes: " +
+        "for SQL, update in a transaction with a WHERE that checks the old value and check the affected row count; for a file, check it " +
+        "did not change since you read it. Afterwards verify with a fresh, separate read and report what it shows: exit_code 0 only means " +
+        "the process exited 0, not that the change took effect. There is no universal undo; undoing is another run you write from the " +
+        "backup or the old value.\n" +
+        "A long job keeps running: call status with wait_seconds to wait, output to page older text and cancel to stop it; the user's " +
+        "Stop also stops it. A cancelled, timed_out, killed or unknown run may have changed things partway: check before anything else " +
+        "and never rerun a write automatically. A cancelled or expired confirmation, refused, not_started and busy mean nothing ran; " +
+        "do not retry a destructive run the user cancelled unless they ask. Output is redacted by DwemerDistro on a best-effort basis: " +
+        "never print credential files and never repeat a secret that appears.";
 
     /// <summary>How to use <see cref="RunToolName"/>: approval, careful edits, verification, and honest outcomes.</summary>
     internal const string LiveRunInstructions =
@@ -2318,7 +2432,8 @@ public sealed class AssistantViewModel : ObservableObject
         SaveReference();
         OnPropertyChanged(nameof(HasReadTools));
         AddActivity("Upgraded once: this task continues in a new conversation thread with DwemerDistro's " +
-                    (HasLiveRun(_toolRevision) ? "explore, reviewed change and approved live command tools"
+                    (HasAutoRun(_toolRevision) ? "explore and live command tools (routine work runs automatically; destructive work asks first)"
+                        : HasLiveRun(_toolRevision) ? "explore, reviewed change and approved live command tools"
                         : HasFoundations(_toolRevision) ? "explore, sandboxed exec and reviewed change tools" : "read tools") + ". The earlier " +
                     $"thread {Shorten(earlier, 12)} is kept in this task's references; the assistant gets a short summary of the recent messages, not the thread.");
         return UpgradeNote + (carried.Count > 0 ? "\n" + string.Join("\n\n", carried) : "\n(No earlier messages were shown.)");
@@ -2832,6 +2947,7 @@ public sealed class AssistantViewModel : ObservableObject
 
     private static string ScopeReminderFor(int toolRevision)
     {
+        if (HasAutoRun(toolRevision)) return AutoScopeReminder;
         if (HasLiveRun(toolRevision)) return LiveScopeReminder;
         return HasFoundations(toolRevision) ? FoundationScopeReminder : ToolScopeReminder;
     }
@@ -2847,6 +2963,20 @@ public sealed class AssistantViewModel : ObservableObject
         "verify with a fresh read: exit 0 is not verification and there is no universal undo. Never repeat secrets. CHIM's current " +
         "game state is the live public schema; stored profile schemas (even is_active) are backup snapshots. Presence is not runtime " +
         "health. Typed " + ActionToolName + " proposals stay preferred for what they cover.";
+
+    /// <summary>The current rules repeated on automatic run threads: routine runs start at once, destructive ones always ask.</summary>
+    internal const string AutoScopeReminder =
+        "Current rules: you are the DwemerDistro Assistant for the whole distro. Use " + ReadToolName + " and " + ExploreToolName +
+        " for what they cover, and " + RunToolName + " for anything else on the live distro: any file, configuration field, SQL, " +
+        "package, install, update or service control; never ask the user to paste what " + RunToolName + " can read. Set risk on every " +
+        "run: routine starts at once; destructive (deleting data, rows or files, dropping, truncating or resetting, uninstalling, " +
+        "removing accounts, overwriting without a backup) always waits for the user's confirmation. When unsure, destructive; never " +
+        "disguise or split destructive work, and do only what the user asked. Typed " + ActionToolName + " proposals always ask the " +
+        "user; use them only when the user wants to review a change first. If " + RunToolName + " is unavailable, refused or fails, " +
+        "report its actual error. Your sandbox shell and /work are not the live distro. Inspect the actual schema and current values " +
+        "first, change only the targeted keys, back up or note the old value, guard against concurrent writes, and verify with a fresh " +
+        "read: exit 0 is not verification and there is no universal undo. Never repeat secrets. CHIM's current game state is the live " +
+        "public schema; stored profile schemas (even is_active) are backup snapshots. Presence is not runtime health.";
 
     /// <summary>The current rules repeated on foundation threads, replacing the read-only and CHIM-only file limits of older ones.</summary>
     internal const string FoundationScopeReminder =

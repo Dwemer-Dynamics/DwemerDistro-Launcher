@@ -203,11 +203,25 @@
                             <!-- An action Core's broker proposed in the running turn, just above the composer: a live command, a restart, a model
                                  change or its undo, a file change or undo, or a registered service operation, with Core's exact code or lines. Nothing
                                  runs until Run once, Allow for this task, Approve restart, Apply change or Undo change; Cancel is the safe choice, no
-                                 button is a default and nothing takes focus. Stop, disconnect, a new chat or the broker's expiry also end it. -->
+                                 button is a default and nothing takes focus. Stop, disconnect, a new chat or the broker's expiry also end it.
+                                 A destructive live command (routine ones run without a card) has a danger border and only Confirm and run or Cancel. -->
                             <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
-                                    BorderBrush="{DynamicResource GameCenter.Gold}" Background="{DynamicResource GameCenter.GoldTint}"
-                                    BorderThickness="1" CornerRadius="4" Padding="10,8" Margin="0,0,0,6"
-                                    AutomationProperties.Name="Confirm the action the assistant proposed">
+                                    Background="{DynamicResource GameCenter.GoldTint}"
+                                    CornerRadius="4" Padding="10,8" Margin="0,0,0,6">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                                        <Setter Property="BorderThickness" Value="1" />
+                                        <Setter Property="AutomationProperties.Name" Value="Confirm the action the assistant proposed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsDestructiveRunProposed}" Value="True">
+                                                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                                                <Setter Property="BorderThickness" Value="2" />
+                                                <Setter Property="AutomationProperties.Name" Value="Confirm the destructive command the assistant proposed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
                                 <StackPanel>
                                     <TextBlock x:Name="RestartProposalTitle" Text="{Binding ActionProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap"
                                                Foreground="{DynamicResource GameCenter.Text}" AutomationProperties.LiveSetting="Polite" />
@@ -231,7 +245,7 @@
                                              AutomationProperties.Name="Exact change: lines starting with minus are now, lines starting with plus are after" />
                                     <WrapPanel>
                                         <Button x:Name="ApproveRestartButton" Content="{Binding ApproveActionLabel}" Command="{Binding ApproveActionCommand}" Style="{StaticResource Assistant.Action}"
-                                                IsDefault="False" AutomationProperties.HelpText="Run exactly this once now. A live command is not verified by its exit code." />
+                                                IsDefault="False" AutomationProperties.HelpText="Run exactly this once now. A live command is not verified by its exit code; a destructive one may not be undoable." />
                                         <Button x:Name="AllowRunForTaskButton" Content="Allow for this task" Command="{Binding ApproveRunForTaskCommand}" Style="{StaticResource Assistant.Action}"
                                                 IsDefault="False" Visibility="{Binding CanAllowRunForTask, Converter={StaticResource BoolToVisibility}}"
                                                 AutomationProperties.HelpText="Run this now, and let later live commands with the same account and network run without asking in this session, until you revoke it." />
