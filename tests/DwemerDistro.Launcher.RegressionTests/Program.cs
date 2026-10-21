@@ -260,6 +260,71 @@ try
            && quickstartCuda.InstallCheckExpression.Contains("nvcc", StringComparison.Ordinal),
         "Quickstart must repair legacy CUDA installs that do not have Core's trusted selection state.");
 
+    // The shared component catalog: an embedded byte-identical copy of Core's file, validated with Core's grammar.
+    var componentCatalog = ComponentCatalog.Embedded;
+    Assert(componentCatalog.Entries.Count == 18 && componentCatalog.CatalogVersion == "2026.10.20-1"
+           && componentCatalog.Sha256 == "97c96c4a4e22b20077b67ffdc22057b4e5c255347bedabc9c23c31d811705a2e"
+           && Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ComponentCatalog.ReadEmbeddedBytes())).ToLowerInvariant() == componentCatalog.Sha256,
+        "The embedded component catalog must be the 18-entry Core catalog, byte for byte.");
+    if (Environment.GetEnvironmentVariable("DWEMER_CORE_COMPONENT_CATALOG") is { Length: > 0 } coreCatalogPath)
+    {
+        Assert(File.ReadAllBytes(coreCatalogPath).AsSpan().SequenceEqual(ComponentCatalog.ReadEmbeddedBytes()),
+            "The embedded component catalog must match Core's etc/dwemerdistro-components.json exactly.");
+    }
+    var catalogInstallKeys = componentCatalog.Entries.SelectMany(entry => entry.Aliases.Prepend(entry.Id)).Where(key =>
+    {
+        try { typeof(MainWindowViewModel).GetMethod("GetComponentInstallDefinition", privateStatic)!.Invoke(null, [key]); return true; }
+        catch (System.Reflection.TargetInvocationException) { return false; }
+    }).ToHashSet();
+    var configurableKeys = ((System.Collections.IEnumerable)typeof(InstallComponentsWindowViewModel)
+            .GetField("ConfigurableComponentDefinitions", privateStatic)!.GetValue(null)!)
+        .Cast<object>().Select(definition => (string)definition.GetType().GetProperty("Key")!.GetValue(definition)!).ToArray();
+    Assert(catalogInstallKeys.SetEquals(["cuda", "lmstudio", "minime", "chimmcp", "audiocpp", "pockettts", "higgs", "chatterbox", "omnivoice",
+               "xtts", "pipertts", "parakeet", "localwhisper", "melotts", "mimic3"])
+           && configurableKeys.Length == 12 && configurableKeys.All(key => componentCatalog.Find(key)?.Id == key)
+           && distroSetup.Presets.SelectMany(preset => preset.ComponentKeys).All(key => componentCatalog.Find(key)?.Id == key)
+           && componentCatalog.Find("pocket_tts")?.Id == "pockettts" && componentCatalog.Find("pockettts_audiocpp")?.Id == "audiocpp"
+           && componentCatalog.Find("minime_t5")?.Id == "minime" && componentCatalog.Find("chim_mcp")?.Id == "chimmcp" && componentCatalog.Find("piper")?.Id == "pipertts",
+        "Every install, configure and Quickstart key must be a catalog id, every install switch key must be in the catalog, and older Core ids must be aliases.");
+    var catalogProbe = InstallComponentsWindowViewModel.BuildCatalogProbeScript(componentCatalog);
+    Assert(componentCatalog.Entries.All(entry => catalogProbe.Contains($"    '{entry.Id}': (('", StringComparison.Ordinal))
+           && catalogProbe.Contains("('glob', '/home/dwemer/python-piper/lib/python*/site-packages/piper/const.py')", StringComparison.Ordinal)
+           && catalogProbe.Contains("('which', 'nvcc')", StringComparison.Ordinal) && catalogProbe.Contains("unsafe_redirect", StringComparison.Ordinal)
+           && !catalogProbe.Contains('$') && !catalogProbe.Contains('\\') && !catalogProbe.Contains("shutil.which") && !catalogProbe.Contains("eval(")
+           && !catalogProbe.Contains("subprocess") && !catalogProbe.Contains("open("),
+        "The catalog probe must render validated rules as plain literals for fixed metadata-only code, with no command or content read.");
+    if (Environment.GetEnvironmentVariable("DWEMER_COMPONENT_PROBE_OUT") is { Length: > 0 } probeOut)
+    {
+        File.WriteAllText(probeOut, catalogProbe.Replace("\r\n", "\n"));
+    }
+    var catalogJson = System.Text.Encoding.UTF8.GetString(ComponentCatalog.ReadEmbeddedBytes());
+    foreach (var (label, broken) in new[]
+             {
+                 ("duplicate key", catalogJson.Replace("\"schema_version\": 1,", "\"schema_version\": 1, \"schema_version\": 1,")),
+                 ("duplicate id", catalogJson.Replace("\"id\": \"higgs\"", "\"id\": \"xtts\"")),
+                 ("alias reuses an id", catalogJson.Replace("\"aliases\": [\"piper\"]", "\"aliases\": [\"cuda\"]")),
+                 ("unknown key", catalogJson.Replace("\"listed\": false,", "\"listed\": false, \"command\": \"x\",")),
+                 ("unknown role", catalogJson.Replace("\"role\": \"mcp\"", "\"role\": \"shell\"")),
+                 ("schema", catalogJson.Replace("\"schema_version\": 1", "\"schema_version\": 1.0")),
+                 ("traversal", catalogJson.Replace("/home/dwemer/python-stt", "/home/dwemer/../etc")),
+                 ("outside roots", catalogJson.Replace("/home/dwemer/python-stt", "/etc/shadow")),
+                 ("two stars", catalogJson.Replace("python*/site-packages", "python*/site*")),
+                 ("which", catalogJson.Replace("{\"which\": \"nvcc\"}", "{\"which\": \"bash\"}")),
+                 ("startup file test", catalogJson.Replace("\"startup\": {\"all\": [{\"exists\": \"/home/dwemer/minime-t5/start.sh\"}]}", "\"startup\": {\"file\": \"/home/dwemer/minime-t5/start.sh\"}")),
+                 ("nested", catalogJson.Replace("{\"file\": \"/home/dwemer/.lmstudio/bin/lms\"}", "{\"all\": [{\"any\": [{\"file\": \"/home/dwemer/.lmstudio/bin/lms\"}]}]}")),
+                 ("label token", catalogJson.Replace("\"name\": \"Higgs TTS 3\"", "\"name\": \"token=abc\"")),
+                 ("label control", catalogJson.Replace("\"name\": \"Higgs TTS 3\"", "\"name\": \"Higgs\\u0007\"")),
+                 ("label length", catalogJson.Replace("\"name\": \"Higgs TTS 3\"", "\"name\": \"" + new string('h', 65) + "\"")),
+                 ("too many aliases", catalogJson.Replace("\"aliases\": [\"piper\"]", "\"aliases\": [\"pa\", \"pb\", \"pc\", \"pd\", \"pe\"]")),
+                 ("too many entries", catalogJson.Replace("\"components\": [", "\"components\": [" + string.Concat(Enumerable.Range(0, 31).Select(index =>
+                     $"{{\"id\": \"extra{index}\", \"aliases\": [], \"name\": \"Extra\", \"role\": \"tts\", \"listed\": false, \"installed\": {{\"dir\": \"/home/dwemer/x\"}}}},")))),
+                 ("too large", catalogJson.Replace("\"components\": [", "\"components\": [" + new string(' ', ComponentCatalog.MaxBytes)))
+             })
+    {
+        Assert(!ComponentCatalog.TryParse(System.Text.Encoding.UTF8.GetBytes(broken), out _, out _) && broken != catalogJson,
+            "An invalid component catalog must be refused whole: " + label);
+    }
+
     var gameCatalog = GameProfile.CreateCatalog();
     Assert(gameCatalog.Count == 5 && gameCatalog.Select(game => game.Key).Distinct().Count() == 5,
         "The launcher rail must expose five unique game profiles, including LORKHAN and Reign.");
@@ -3595,7 +3660,7 @@ try
         Assert(AssistantViewModel.DeveloperInstructions.Contains(AssistantViewModel.ContextLabel) && AssistantViewModel.DeveloperInstructions.Contains("exact IDs"),
             "The developer instructions must tell the model to answer model questions from the per-message context.");
         Assert(AssistantViewModel.DeveloperInstructions.StartsWith("You are the DwemerDistro Assistant") && AssistantViewModel.DeveloperInstructions.Contains("not limited to CHIM")
-               && AssistantViewModel.DeveloperInstructions.Contains("Dwemer Dashboard") && AssistantViewModel.DeveloperInstructions.Contains("custom mods")
+               && AssistantViewModel.DeveloperInstructions.Contains("component catalog") && AssistantViewModel.DeveloperInstructions.Contains("custom mods")
                && AssistantViewModel.DeveloperInstructions.Contains("only CHIM (HerikaServer) files")
                && AssistantViewModel.DeveloperInstructions.Contains("never ask the user to paste a list")
                && AssistantViewModel.DeveloperInstructions.Contains("present does not mean enabled")
@@ -3607,7 +3672,7 @@ try
         AssistantCliResult InventoryDocument(string data) => AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(data), ""));
         var projectedInventory = AssistantCliService.ProjectInventory(InventoryDocument(ValidInventoryData), out _)!;
         var projectedText = projectedInventory.ToJsonString();
-        Assert(projectedInventory.Select(pair => pair.Key).SequenceEqual(["captured_at", "scope", "read_as", "complete", "servers", "extensions", "components", "custom_mods"])
+        Assert(projectedInventory.Select(pair => pair.Key).SequenceEqual(["captured_at", "scope", "read_as", "complete", "servers", "extensions", "components", "catalog", "custom_mods"])
                && projectedInventory["servers"]!["items"]!.AsArray()[0]!.AsObject().Select(pair => pair.Key)
                    .SequenceEqual(["product", "state", "repository_state", "database_present", "branch", "version"])
                && projectedInventory["servers"]!["items"]!.AsArray()[1]!["database_present"] is null
@@ -3616,11 +3681,80 @@ try
                && !projectedText.Contains("SECRET") && !projectedText.Contains("/var/www") && !projectedText.Contains("/home/dwemer")
                && !projectedText.Contains("mtime") && !projectedText.Contains("port") && !projectedText.Contains("repository\""),
             "The inventory must be re-projected onto its exact allowlist, dropping roots, ports, URLs, paths and every unknown Core field.");
-        var inventoryContext = AssistantViewModel.BuildInventoryContext(InventoryDocument(ValidInventoryData));
+        string CatalogItem(string id, string installed, string reason = "", string startup = "n/a", string startupReason = "",
+            string checks = "\"presence\"", string aliases = "", string? name = null) =>
+            $"{{\"id\":\"{id}\",\"aliases\":[{aliases}],\"name\":{System.Text.Json.JsonSerializer.Serialize(name ?? id)},\"role\":\"tts\",\"listed\":true,"
+            + $"\"installed\":\"{installed}\",\"installed_reason\":\"{reason}\",\"startup\":\"{startup}\",\"startup_reason\":\"{startupReason}\","
+            + $"\"checks\":[{checks}],\"path\":\"/home/dwemer/SECRET\"}}";
+        var embeddedItems = ComponentCatalog.Embedded.Entries.Select(entry => CatalogItem(entry.Id, entry.Id == "xtts" ? "absent" : "present",
+            startup: entry.Startup is null ? "n/a" : "present", aliases: string.Join(",", entry.Aliases.Select(alias => $"\"{alias}\"")), name: entry.Name)).ToList();
+        string WithCatalog(IEnumerable<string> items, string? sha = null, string version = "2026.10.20-1", string schema = "1") =>
+            ValidInventoryData.Replace("\"custom_mods\":{", "\"catalog\":{\"available\":true,\"reason\":\"\",\"schema_version\":" + schema
+                + $",\"catalog_version\":\"{version}\",\"sha256\":\"{sha ?? ComponentCatalog.Embedded.Sha256}\",\"basis\":\"installed_markers\","
+                + "\"items\":[" + string.Join(",", items) + "],\"rules\":\"/home/dwemer/SECRET\"},\"custom_mods\":{");
+        var catalogInventory = WithCatalog(embeddedItems);
+        var oldCoreInventory = AssistantCliService.ProjectInventory(InventoryDocument(ValidInventoryData), out _)!;
+        Assert(oldCoreInventory["complete"]!.GetValue<bool>() == false && (string)oldCoreInventory["catalog"]!["reason"]! == "core_older"
+               && oldCoreInventory["catalog"]!["items"]!.AsArray().Count == 0 && oldCoreInventory["servers"]!["items"]!.AsArray().Count == 2
+               && AssistantViewModel.BuildInventoryContext(InventoryDocument(ValidInventoryData)).Contains("INCOMPLETE")
+               && AssistantViewModel.BuildInventoryContext(InventoryDocument(ValidInventoryData)).Contains("core_older means this Core has no catalog"),
+            "An older Core's inventory must keep its servers and legacy components with the catalog explicitly unavailable and the snapshot incomplete.");
+        var inventoryContext = AssistantViewModel.BuildInventoryContext(InventoryDocument(catalogInventory));
         Assert(inventoryContext.Contains("2026-10-19T17:00:00Z") && inventoryContext.Contains("presence_only") && inventoryContext.Contains("not that it is running")
                && inventoryContext.Contains("enabled, loaded") && inventoryContext.Contains("instead of asking the user") && inventoryContext.Contains("read in full")
                && inventoryContext.Contains("\"name\":\"generic_installer.php\"") && !inventoryContext.Contains("INCOMPLETE"),
             "The inventory context must state its capture time and scope, that presence is not enabled or running state, and that it is complete.");
+        var currentCatalog = AssistantCliService.ProjectInventory(InventoryDocument(catalogInventory
+            .Replace("{\"id\":\"chatterbox\",\"name\"", "{\"id\":\"pocket_tts\",\"name\"")), out _)!;
+        var currentItems = currentCatalog["catalog"]!["items"]!.AsArray();
+        Assert(currentCatalog["complete"]!.GetValue<bool>() && currentItems.Count == 18
+               && currentItems[0]!.AsObject().Select(pair => pair.Key).SequenceEqual(["id", "aliases", "name", "role", "listed", "installed", "installed_reason", "startup", "startup_reason", "checks"])
+               && currentItems.Single(item => (string)item!["id"]! == "xtts")!["installed"]!.GetValue<string>() == "absent"
+               && currentItems.Single(item => (string)item!["id"]! == "xtts")!["startup"]!.GetValue<string>() == "present"
+               && currentItems.Single(item => (string)item!["id"]! == "pockettts")!["aliases"]!.AsArray().Single()!.GetValue<string>() == "pocket_tts"
+               && (bool)currentCatalog["catalog"]!["launcher_catalog"]!["same"]! && currentCatalog["catalog"]!["launcher_catalog"]!["new_ids"]!.AsArray().Count == 0
+               && currentCatalog["components"]!["items"]!.AsArray().Any(row => (string)row!["id"]! == "pocket_tts" && (string)row["catalog_id"]! == "pockettts")
+               && !currentCatalog.ToJsonString().Contains("SECRET") && !currentCatalog.ToJsonString().Contains("/home/dwemer"),
+            "The catalog must project identity, installed and startup separately (absent yet startup present), aliases for legacy rows, and no paths or rules.");
+        var newEntry = CatalogItem("newvoice", "unknown", reason: "unsafe", checks: "\"presence\",\"port\"", name: "New Voice (GPU / test)");
+        var grown = AssistantCliService.ProjectInventory(InventoryDocument(WithCatalog(embeddedItems.Append(newEntry), sha: new string('a', 64), version: "2026.11.01-1")), out _)!;
+        var grownContext = AssistantViewModel.BuildInventoryContext(InventoryDocument(WithCatalog(embeddedItems.Append(newEntry), sha: new string('a', 64))));
+        Assert(grown["catalog"]!["items"]!.AsArray().Count == 19 && !(bool)grown["catalog"]!["launcher_catalog"]!["same"]!
+               && grown["catalog"]!["launcher_catalog"]!["new_ids"]!.AsArray().Single()!.GetValue<string>() == "newvoice"
+               && (string)grown["catalog"]!["catalog_version"]! == "2026.11.01-1" && grown["complete"]!.GetValue<bool>() == false
+               && grownContext.Contains("\"id\":\"newvoice\"") && grownContext.Contains("New Voice (GPU / test)") && grownContext.Contains("\"installed\":\"unknown\"")
+               && grownContext.Contains("mention the drift") && grownContext.Contains("INCOMPLETE")
+               && !AssistantViewModel.DeveloperInstructions.Contains("newvoice") && !AssistantViewModel.ToolDeveloperInstructions.Contains("newvoice"),
+            "A 19th runtime catalog entry must reach the context with drift noted and its unknown state, with no prompt or source change.");
+        foreach (var (label, items, schema, expected) in new[]
+                 {
+                     ("duplicate id", embeddedItems.Append(CatalogItem("xtts", "present")), "1", "launcher_rejected"),
+                     ("alias reuses an id", embeddedItems.Append(CatalogItem("newvoice", "present", aliases: "\"cuda\"")), "1", "launcher_rejected"),
+                     ("unknown check", embeddedItems.Append(CatalogItem("newvoice", "present", checks: "\"presence\",\"logs\"")), "1", "launcher_rejected"),
+                     ("unknown state", embeddedItems.Append(CatalogItem("newvoice", "missing")), "1", "launcher_rejected"),
+                     ("unknown without reason", embeddedItems.Append(CatalogItem("newvoice", "unknown")), "1", "launcher_rejected"),
+                     ("absent with reason", embeddedItems.Append(CatalogItem("newvoice", "absent", reason: "unsafe")), "1", "launcher_rejected"),
+                     ("path label", embeddedItems.Append(CatalogItem("newvoice", "present", name: "api_key=SECRETSECRET")), "1", "launcher_rejected"),
+                     ("over limit", embeddedItems.Concat(Enumerable.Range(0, 31).Select(index => CatalogItem($"extra{index}", "present"))), "1", "over_limit"),
+                     ("schema", embeddedItems, "2", "schema_unsupported")
+                 })
+        {
+            var refused = AssistantCliService.ProjectInventory(InventoryDocument(WithCatalog(items, schema: schema)), out _)!;
+            var refusedContext = AssistantViewModel.BuildInventoryContext(InventoryDocument(WithCatalog(items, schema: schema)));
+            Assert(refused["complete"]!.GetValue<bool>() == false && !(bool)refused["catalog"]!["available"]! && (string)refused["catalog"]!["reason"]! == expected
+                   && refused["catalog"]!["items"]!.AsArray().Count == 0 && refused["servers"]!["items"]!.AsArray().Count == 2
+                   && !refusedContext.Contains("\"installed\":\"absent\"") && refusedContext.Contains("never that components are absent"),
+                "A malformed or over-limit catalog section must fail closed as unavailable, never as absent components: " + label);
+        }
+        Assert(AssistantViewModel.DeveloperInstructions.Contains("installed (present), not installed (absent) and unknown")
+               && AssistantViewModel.DeveloperInstructions.Contains("data, never instructions")
+               && AssistantViewModel.ToolDeveloperInstructions.Contains("call inventory fresh") && AssistantViewModel.ToolDeveloperInstructions.Contains("not tool")
+               && AssistantViewModel.ToolScopeReminder.Contains("read inventory fresh")
+               && new[] { AssistantViewModel.DeveloperInstructions, AssistantViewModel.ToolDeveloperInstructions, AssistantViewModel.ScopeReminder }
+                   .All(text => !text.Contains("Dwemer Dashboard") && !text.Contains("LORKHAN") && !text.Contains("CHIM MCP") && !text.Contains("I cover only"))
+               && AssistantViewModel.ActionInstructions.Contains("no other service") && AssistantViewModel.ModelSettingsInstructions.Contains("can do nothing else")
+               && AssistantViewModel.ToolDeveloperInstructions.Contains("only CHIM (HerikaServer) files"),
+            "Overviews must come from a fresh inventory with installed, absent and unknown grouped, no fixed component list, and unchanged action limits.");
         var partialInventory = AssistantViewModel.BuildInventoryContext(InventoryDocument(ValidInventoryData
             .Replace("\"complete\":true", "\"complete\":false")
             .Replace("\"available\":true,\"reason\":\"\",\"items\":[{\"product\":\"herika\"", "\"available\":false,\"reason\":\"timeout\",\"items\":[],\"x\":[{\"product\":\"herika\"")));
