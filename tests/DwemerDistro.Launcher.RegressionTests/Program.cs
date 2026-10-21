@@ -4439,6 +4439,9 @@ try
                && !AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.FoundationActionInstructions)
                && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.FoundationActionInstructions)
                && AssistantViewModel.BuildToolTurnContext(11, null).Contains(AssistantViewModel.FoundationScopeReminder)
+               && new[] { AssistantViewModel.FoundationDeveloperInstructions, AssistantViewModel.FoundationScopeReminder }.All(text =>
+                   text.Contains("live public schema") && text.Contains("is_active") && text.Contains("backup snapshot")
+                   && !text.Contains("active playthrough"))
                && AssistantViewModel.BuildToolTurnContext(10, null).Contains("File editing works only for CHIM"),
             "Only the full foundation offer is 11/12, with capability-accurate rules; older and unknown revisions keep their CHIM-only limits.");
 
