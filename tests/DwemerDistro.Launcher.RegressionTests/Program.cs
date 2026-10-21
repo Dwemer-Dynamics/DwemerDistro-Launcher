@@ -4122,7 +4122,7 @@ try
                && Revision(Caps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool.Replace("[\"propose_restart\"]", "[\"propose_restart\",\"stop\"]"))) == 3
                && AssistantViewModel.ToolRevisionFor(["ddistro_read", "ddistro_action"]) == 1
                && Enumerable.Range(0, 5).All(revision => !AssistantViewModel.HasActionTool(revision))
-               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(11)
+               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(13)
                && AssistantViewModel.HasMemoryTool(6) && !AssistantViewModel.HasMemoryTool(5) && AssistantViewModel.HasEnhancedRead(5)
                && AssistantViewModel.InstructionsFor(5).Contains(AssistantViewModel.ActionInstructions)
                && AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.MemoryInstructions)
@@ -4144,14 +4144,14 @@ try
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"postgres\"", ""))) == 5
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"performance\"", ""))) == 5
                && PerfRevision(withAction) == 5
-               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(11)
+               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(13)
                && AssistantViewModel.HasActionTool(7) && AssistantViewModel.HasActionTool(8) && AssistantViewModel.HasEnhancedRead(8)
-               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(11)
+               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(13)
                && AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.PerformanceInstructions) && !AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.MemoryInstructions) && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.ActionInstructions),
+               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.PerformanceInstructions)
+               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.ActionInstructions),
             "Only the full performance read with the action tool is revision 7/8; partial or unknown offers get no performance rules, actions or memory.");
         var sourceCall = AssistantViewModel.DescribeToolCall(System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_read\",\"status\":\"completed\","
             + "\"arguments\":{\"operation\":\"logs\",\"log_source\":\"apache\",\"lines\":20}}").RootElement);
@@ -4264,7 +4264,7 @@ try
 
         // Model settings are revision 9/10: only on top of the full 7/8 shape and only with Core's exact configure_model operations,
         // the model_options and update_check reads and both features. Older or partial Cores stay at 7/8, and unknown revisions
-        // (11 and up) never get the model, action or performance rules.
+        // (13 and up) never get the model, action or performance rules.
         const string ModelRead = "\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false,\"max_log_lines\":400,\"log_filters\":[\"query\",\"since\"],"
             + "\"operations\":[\"inventory\",\"status\",\"models\",\"logs\",\"health\",\"performance\",\"model_options\",\"update_check\"],\"log_sources\":[\"apache\",\"postgres\"]}";
         const string ModelAction = ",{\"name\":\"ddistro_action\",\"mutates\":true,\"operations\":[\"propose_restart\"],\"capability_operations\":"
@@ -4282,17 +4282,17 @@ try
                && ModelRevision(PerfCaps(ModelFeatures, ActionTool, ModelRead)) == 7
                && ModelRevision(PerfCaps(ModelFeatures.Replace("\"assistant_actions\":true,", ""), ModelAction, ModelRead)) == 3
                && Enumerable.Range(0, 9).All(revision => !AssistantViewModel.HasModelSettings(revision))
-               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(11)
+               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(13)
                && AssistantViewModel.HasActionTool(9) && AssistantViewModel.HasPerformanceRead(10) && AssistantViewModel.HasEnhancedRead(10)
                && AssistantViewModel.HasMemoryTool(10) && !AssistantViewModel.HasMemoryTool(9)
-               && !AssistantViewModel.HasActionTool(11) && !AssistantViewModel.HasMemoryTool(11) && !AssistantViewModel.HasPerformanceRead(11)
+               && !AssistantViewModel.HasActionTool(13) && !AssistantViewModel.HasMemoryTool(13) && !AssistantViewModel.HasPerformanceRead(13)
                && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ModelSettingsInstructions)
                && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.PerformanceInstructions)
                && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.MemoryInstructions)
                && !AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ModelSettingsInstructions)
-               && !AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.ModelSettingsInstructions),
+               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.ModelSettingsInstructions),
             "Only Core's full model settings shape on top of 7/8 is revision 9/10; partial offers and unknown revisions never get model rules.");
 
         // A model proposal is shown only on a thread with model settings, with Core's exact three diff lines, never as a restart.
@@ -4303,7 +4303,7 @@ try
             "{\"action\":\"" + kind + "\",\"label\":\"CHIM model assignment\",\"impact\":\"i\",\"reason\":\"r\"," + change + "}").RootElement;
         Assert(AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 7) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_rollback"), P('e'), "t", 8) is null
-               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 13) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"b\"]}"), P('e'), "t", 9) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"\",\"c\"]}"), P('e'), "t", 9) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("stop_everything"), P('e'), "t", 10) is null
@@ -4414,6 +4414,161 @@ try
             "A restart on a model settings thread keeps its own card and wording.");
         await model.vm.ShutdownAsync();
         Assert(!model.vm.IsActionProposed && model.host.LiveChangeHolds == 0, "The session's end closes the card and holds nothing.");
+
+        // The foundation bundle is revision 11/12: only with features.assistant_foundations, both ddistro_explore and ddistro_exec
+        // advertised, and the full 9/10 shape under it. Anything partial stays at the lower revision and invents no tool.
+        const string FoundationTools = ",{\"name\":\"ddistro_explore\",\"mutates\":false},{\"name\":\"ddistro_exec\",\"mutates\":false}";
+        const string FoundationFeatures = ModelFeatures + ",\"assistant_foundations\":true";
+        Assert(ModelRevision(PerfCaps(FoundationFeatures, ModelAction + FoundationTools, ModelRead)) == 11
+               && ModelRevision(PerfCaps(FoundationFeatures + ",\"memory\":true", ",{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}"
+                   + ModelAction + FoundationTools, ModelRead)) == 12
+               && ModelRevision(PerfCaps(ModelFeatures, ModelAction + FoundationTools, ModelRead)) == 9
+               && ModelRevision(PerfCaps(FoundationFeatures, ModelAction + FoundationTools.Replace("ddistro_exec", "ddistro_other"), ModelRead)) == 9
+               && ModelRevision(PerfCaps(FoundationFeatures, ModelAction + FoundationTools, PerfRead)) == 7
+               && ModelRevision(PerfCaps(FoundationFeatures, ActionTool + FoundationTools, ModelRead)) == 7
+               && !AssistantViewModel.ReadOfferedTools(PerfCaps(ModelFeatures, ModelAction + FoundationTools, ModelRead)).Contains("ddistro_explore")
+               && Enumerable.Range(0, 11).All(revision => !AssistantViewModel.HasFoundations(revision)) && !AssistantViewModel.HasFoundations(13)
+               && AssistantViewModel.HasMemoryTool(12) && !AssistantViewModel.HasMemoryTool(11) && AssistantViewModel.HasModelSettings(11)
+               && AssistantViewModel.HasActionTool(12) && AssistantViewModel.HasPerformanceRead(11) && AssistantViewModel.HasEnhancedRead(12)
+               && AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.FoundationDeveloperInstructions)
+               && AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.FoundationActionInstructions)
+               && !AssistantViewModel.InstructionsFor(11).Contains("You cannot run commands on the live distro")
+               && !AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.ModelSettingsInstructions)
+               && AssistantViewModel.InstructionsFor(12).Contains(AssistantViewModel.MemoryInstructions)
+               && AssistantViewModel.InstructionsFor(10).Contains("You cannot run commands on the live distro")
+               && !AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.FoundationActionInstructions)
+               && !AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.FoundationActionInstructions)
+               && AssistantViewModel.BuildToolTurnContext(11, null).Contains(AssistantViewModel.FoundationScopeReminder)
+               && AssistantViewModel.BuildToolTurnContext(10, null).Contains("File editing works only for CHIM"),
+            "Only the full foundation offer is 11/12, with capability-accurate rules; older and unknown revisions keep their CHIM-only limits.");
+
+        // Foundation cards: complete bounded diffs are shown whole; partial, oversized or malformed ones are refused, never cut.
+        var manifest = new string('a', 64);
+        string FileChange(string lines, string extra = "") => "\"change\":{\"manifest_sha256\":\"" + manifest + "\",\"diff\":[" + lines + "]" + extra + "}";
+        const string FileLines = "\"--- herika:ext/mod/a.php\",\"+++ herika:ext/mod/a.php\",\"@@ -1,2 +1,2 @@\",\" keep\",\"\",\"-old\",\"+new\"";
+        string ManyLines(int count, string line) => string.Join(",", Enumerable.Repeat("\"" + line + "\"", count));
+        var wide = new string('w', AssistantViewModel.DiffLineMaxChars);
+        const string Service = "\"change\":{\"target\":\"herika\",\"verb\":\"update\",\"branch\":\"main\",\"diff\":[\"Update HerikaServer from origin/main\",\"Restarts Apache afterwards\"]}";
+        Assert(AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 11) is { Kind: "file_change" } fileCard
+               && fileCard.Diff.Split('\n').Length == 7 && fileCard.Diff.StartsWith("--- herika:ext/mod/a.php\n+++ herika:ext/mod/a.php") && fileCard.Manifest == manifest
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_undo", FileChange(FileLines)), P('e'), "t", 12) is { Kind: "file_undo" }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines + "," + ManyLines(3993, "+" + wide[1..]))), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines + "," + ManyLines(60, "+" + wide[1..]))), P('e'), "t", 11) is { } wideCard
+               && wideCard.Diff.Split('\n').Length == 67 && wideCard.Diff.Split('\n')[^1].Length == AssistantViewModel.DiffLineMaxChars
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines + "," + ManyLines(3993, "+x"))), P('e'), "t", 11) is not null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines + "," + ManyLines(3994, "+x"))), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines + ",\"+" + wide + "\"")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines, ",\"truncated\":true")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines + ",3")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines + ",\"+a\\u001b[2Kb\"")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange("\"@@ -1 +1 @@\",\"-old\",\"+new\"")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines).Replace(manifest, "ABC")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 10) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 13) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service), P('e'), "t", 11) is { Kind: "service", Target: "herika", Verb: "update" } serviceCard
+               && serviceCard.Diff == "Operation: update\nTarget: herika\nBranch: main\nUpdate HerikaServer from origin/main\nRestarts Apache afterwards"
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service.Replace("\"update\"", "\"exec\"")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service.Replace("\"target\":\"herika\",", "")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service.Replace(",\"diff\":[\"Update HerikaServer from origin/main\",\"Restarts Apache afterwards\"]", "")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service.Replace("\"branch\":\"main\"", "\"command\":\"rm -rf /\"")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service.Replace("\"main\"", "\"main; reboot\"")), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", "\"change\":{\"target\":\"herika\",\"verb\":\"stop\",\"diff\":[" + ManyLines(9, "x") + "]}"), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("service", "\"change\":{\"target\":\"herika\",\"verb\":\"stop\",\"diff\":[" + ManyLines(3, new string('s', 3000)) + "]}"), P('e'), "t", 11) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 11) is { Kind: "model_change" }
+               && AssistantViewModel.ReadActionProposal(ProposalJson("restart"), P('e'), "t", 12) is { Kind: "restart", Diff: "" },
+            "File and service cards need revision 11/12 and complete, bounded, well-formed lines; model and restart cards are unchanged.");
+        var exploreCall = System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_explore\",\"status\":\"completed\",\"arguments\":{\"operation\":\"query\",\"root\":\"herika\","
+            + "\"sql\":\"SELECT secret FROM conf\",\"path\":\"/var/www/conf.php\"}}").RootElement;
+        var execCall = System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_exec\",\"status\":\"inProgress\",\"arguments\":{\"command\":\"cat /run/secrets/key\"}}").RootElement;
+        Assert(AssistantViewModel.DescribeToolCall(exploreCall) == "DwemerDistro explore: query · herika · done"
+               && AssistantViewModel.DescribeToolCall(execCall) == "Sandboxed exec on snapshot …"
+               && AssistantViewModel.ReadCoverage(exploreCall) == "checked" && AssistantViewModel.ReadCoverage(execCall) == "checked",
+            "Explore and exec calls name only their operation and root, never SQL, paths or commands, and count toward the turn's coverage.");
+
+        // Through the view model: a revision 9 thread on a foundation Core opts in at initialize, moves once to a revision 11 thread,
+        // and shows each new card kind with the existing Approve/Cancel and live-change hold.
+        const string FoundationCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + FoundationFeatures + "},"
+            + ModelRead + ModelAction + FoundationTools + EnhancedCoverage + "}}";
+        System.Text.Json.Nodes.JsonNode? foundationAnswer = null;
+        var foundation = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-found", ThreadToolRevision = 9 }, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? FoundationCapabilities : null,
+            respondFirst: (method, _) => method == "ddistro/action/decide" ? foundationAnswer?.DeepClone() : null);
+        string[] FoundationBodies() { lock (foundation.transport.Requests) return foundation.transport.Bodies.ToArray(); }
+        string[] FoundationDecisions() => FoundationBodies().Where(body => body.StartsWith("ddistro/action/decide ")).ToArray();
+        void FoundationNotify(string method, string json) => foundation.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
+        void ProposeFoundation(string id, string kind, string change) => FoundationNotify("ddistro/action/proposed", "{\"proposalId\":\"" + id
+            + "\",\"threadId\":\"thr-new\",\"turnId\":\"turn-1\",\"action\":\"" + kind + "\",\"label\":\"l\",\"impact\":\"Only these files change.\","
+            + "\"reason\":\"You asked for it.\",\"expires_at\":\"2026-10-20T00:00:00Z\"," + change + "}");
+        void FoundationUpdated(string id, string kind, string state) => FoundationNotify("ddistro/action/updated", "{\"proposalId\":\"" + id
+            + "\",\"threadId\":\"thr-new\",\"action\":\"" + kind + "\",\"state\":\"" + state + "\",\"verified\":" + (state == "verified" ? "true" : "false") + "}");
+        async Task FoundationDecideAsync(AsyncRelayCommand command, int decisions)
+        {
+            var lines = foundation.vm.Transcript.Count;
+            command.Execute(null);
+            await WaitUntilAsync(() => FoundationDecisions().Length == decisions && foundation.vm.Transcript.Count > lines);
+        }
+        bool FoundationSaid(string text) => foundation.vm.Transcript.Any(item => item.Text.Contains(text));
+        Assert(FoundationBodies().Single(body => body.StartsWith("initialize ")).Contains(
+                   "\"ddistroActions\":[\"restart_service\",\"configure_model\",\"change_files\",\"service_control\"],\"ddistroTools\":[\"explore\",\"exec\"]")
+               && FoundationBodies().Count(body => body.StartsWith("thread/start")) == 0
+               && model.transport.Bodies.All(body => !body.Contains("ddistroTools")),
+            "Only a foundation Core gets ddistroTools and the file and service actions at initialize; the old thread resumes as it was.");
+        foundation.vm.InputText = "what NPC memories does my playthrough have?";
+        foundation.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => FoundationBodies().Any(body => body.StartsWith("turn/start")));
+        var foundationInput = TurnInput(FoundationBodies().Single(body => body.StartsWith("turn/start")));
+        Assert(FoundationBodies().Count(body => body.StartsWith("thread/start")) == 1
+               && FoundationBodies().Single(body => body.StartsWith("thread/start")).Contains("ddistro_explore")
+               && foundationInput[0].Contains(AssistantViewModel.UpgradeNote) && foundationInput[0].Contains(AssistantViewModel.FoundationScopeReminder)
+               && foundation.vm.Transcript.Count(item => item.Text.StartsWith("Upgraded once")) == 1 && FoundationSaid("explore, sandboxed exec and reviewed change tools")
+               && toolStore.Load() is { ThreadId: "thr-new", ThreadToolRevision: 11 } upgraded && upgraded.SupersededThreads!.Contains("thr-found")
+               && foundation.cli.Calls.All(call => !call.StartsWith("inventory") && !call.StartsWith("models")),
+            "A revision 9 thread moves once to a revision 11 thread with one chat line, keeping the earlier thread and reading no snapshots.");
+        await WaitUntilAsync(() => foundation.vm.State == AssistantState.Streaming);
+
+        ProposeFoundation(P('a'), "file_change", FileChange(FileLines));
+        Assert(foundation.vm.IsActionProposed && foundation.vm.ActionProposalTitle == "Apply these file changes?" && foundation.vm.ApproveActionLabel == "Apply files"
+               && foundation.vm.ActionProposalDiff.Contains("+++ herika:ext/mod/a.php") && foundation.vm.ActionProposalDetail.Contains(manifest)
+               && foundation.vm.ActionProposalDetail.Contains("Nothing changes unless you apply it"),
+            "The file card shows the complete diff with its root and path headers, the manifest, and Apply files.");
+        foundationAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"cancelled\"}");
+        await FoundationDecideAsync(foundation.vm.CancelActionCommand, 1);
+        Assert(FoundationDecisions()[0].Contains(P('a')) && FoundationDecisions()[0].Contains("\"decision\":\"cancel\"") && foundation.host.LiveChangeHolds == 0
+               && !foundation.vm.IsActionProposed && FoundationSaid("Cancelled. Nothing was changed."), "Cancelling a file change takes no hold.");
+
+        foundationAnswer = System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"approved\"}");
+        ProposeFoundation(P('b'), "file_change", FileChange(FileLines));
+        await FoundationDecideAsync(foundation.vm.ApproveActionCommand, 2);
+        Assert(FoundationDecisions()[1].Contains(P('b')) && FoundationDecisions()[1].Contains("\"decision\":\"approve\"") && foundation.host.LiveChangeHolds == 1
+               && FoundationSaid("File change approved"), "Apply files sends approve once and holds the live-change slot.");
+        FoundationUpdated(P('b'), "restart", "conflict");
+        Assert(foundation.host.LiveChangeHolds == 0 && FoundationSaid("The file change was not applied: something changed since the review"),
+            "The file change's own update ends the hold and is described as the file change, whatever action it names.");
+
+        ProposeFoundation(P('c'), "file_undo", FileChange(FileLines));
+        Assert(foundation.vm.ApproveActionLabel == "Undo files", "A file undo shows Undo files.");
+        await FoundationDecideAsync(foundation.vm.ApproveActionCommand, 3);
+        FoundationUpdated(P('c'), "file_undo", "verified");
+        Assert(foundation.host.LiveChangeHolds == 0 && FoundationSaid("The file undo is verified by DwemerDistro's fresh check"), "A verified undo ends the hold.");
+
+        ProposeFoundation(P('d'), "service", Service);
+        Assert(foundation.vm.ActionProposalTitle == "Update herika?" && foundation.vm.ApproveActionLabel == "Approve update"
+               && foundation.vm.ActionProposalDiff.StartsWith("Operation: update\nTarget: herika\nBranch: main")
+               && foundation.vm.ActionProposalDetail.Contains("Shared services") && foundation.vm.ActionProposalDetail.Contains("Nothing runs unless you approve"),
+            "The service card shows the full operation, target and branch, and that shared services can be affected.");
+        foundation.host.LiveChangeBusy = true;
+        var heldBefore = foundation.host.LiveChangeHolds;
+        await FoundationDecideAsync(foundation.vm.ApproveActionCommand, 4);
+        Assert(FoundationDecisions()[3].Contains("\"decision\":\"cancel\"") && foundation.host.LiveChangeHolds == heldBefore
+               && FoundationSaid("The service operation was not run: another server"), "A busy live-change slot cancels the service operation instead.");
+        foundation.host.LiveChangeBusy = false;
+        ProposeFoundation(P('f'), "service", Service);
+        await FoundationDecideAsync(foundation.vm.ApproveActionCommand, 5);
+        Assert(foundation.host.LiveChangeHolds == 1 && FoundationSaid("runs update for herika once"), "Approving a service operation holds the slot.");
+        await foundation.vm.ShutdownAsync();
+        FoundationUpdated(P('f'), "service", "verified");
+        Assert(foundation.host.LiveChangeHolds == 0 && !foundation.vm.IsActionProposed && FoundationDecisions().Length == 5,
+            "The session's end releases a running service operation's hold once; a late update releases nothing more.");
         var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
         var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
         {

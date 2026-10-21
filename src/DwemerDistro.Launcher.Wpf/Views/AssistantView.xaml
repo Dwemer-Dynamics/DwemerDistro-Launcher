@@ -137,8 +137,8 @@
                         </WrapPanel>
                     </Border>
 
-                    <!-- An action Core's broker proposed in the running turn: a restart, a model change or its undo, with Core's exact
-                         before/after lines for a model change. Nothing runs until Approve restart, Apply change or Undo change; Cancel
+                    <!-- An action Core's broker proposed in the running turn: a restart, a model change or its undo, a file change or
+                         undo, or a registered service operation, with Core's exact lines (before/after, full diff or operation summary). Nothing runs until Approve restart, Apply change or Undo change; Cancel
                          is the safe choice and neither button is a default. Stop, disconnect, a new chat or the broker's expiry also end it. -->
                     <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
                             BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
@@ -146,9 +146,12 @@
                         <StackPanel>
                             <TextBlock x:Name="RestartProposalTitle" Text="{Binding ActionProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
                             <TextBlock x:Name="RestartProposalDetail" Text="{Binding ActionProposalDetail}" TextWrapping="Wrap" Margin="0,2,0,6" />
-                            <TextBlock x:Name="ActionProposalDiff" Text="{Binding ActionProposalDiff}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
-                                       Margin="0,0,0,6" Visibility="{Binding HasActionProposalDiff, Converter={StaticResource BoolToVisibility}}"
-                                       AutomationProperties.Name="Exact change: the line starting with minus is now, the line starting with plus is after" />
+                            <!-- Read-only and selectable: a file change's complete diff can be long, so it scrolls instead of being cut. -->
+                            <TextBox x:Name="ActionProposalDiff" Text="{Binding ActionProposalDiff, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                     FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" MaxHeight="320"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                     Margin="0,0,0,6" Visibility="{Binding HasActionProposalDiff, Converter={StaticResource BoolToVisibility}}"
+                                     AutomationProperties.Name="Exact change: lines starting with minus are now, lines starting with plus are after" />
                             <WrapPanel>
                                 <Button x:Name="ApproveRestartButton" Content="{Binding ApproveActionLabel}" Command="{Binding ApproveActionCommand}" Style="{StaticResource Assistant.Action}"
                                         AutomationProperties.HelpText="Run exactly this once now, then check it fresh." />
