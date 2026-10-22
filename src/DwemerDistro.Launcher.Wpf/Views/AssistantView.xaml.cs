@@ -41,6 +41,9 @@ public partial class AssistantView : UserControl
     {
         InitializeComponent();
         DataContextChanged += AssistantView_DataContextChanged;
+        // Ctrl+V in the composer attaches a copied screenshot or copied files; text pastes as usual.
+        CommandManager.AddPreviewCanExecuteHandler(InputBox, InputBox_PreviewCanPaste);
+        CommandManager.AddPreviewExecutedHandler(InputBox, InputBox_PreviewPaste);
     }
 
     private AssistantViewModel? ViewModel => _viewModel;
@@ -331,6 +334,78 @@ public partial class AssistantView : UserControl
         {
             ViewModel.SendCommand.Execute(null);
         }
+    }
+
+    // --- Attachments: the clipboard and files are read only on the user's own paste, drop or Attach. ---
+
+    private static bool ClipboardHasAttachment()
+    {
+        try
+        {
+            return System.Windows.Clipboard.ContainsFileDropList() || System.Windows.Clipboard.ContainsImage() && !System.Windows.Clipboard.ContainsText();
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            return false;
+        }
+    }
+
+    private void InputBox_PreviewCanPaste(object sender, CanExecuteRoutedEventArgs e)
+    {
+        if (e.Command != ApplicationCommands.Paste || !ClipboardHasAttachment()) return;
+        e.CanExecute = true;
+        e.Handled = true;
+    }
+
+    private void InputBox_PreviewPaste(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (e.Command != ApplicationCommands.Paste || ViewModel is not { } viewModel || !ClipboardHasAttachment()) return;
+        e.Handled = true;
+        try
+        {
+            if (System.Windows.Clipboard.ContainsFileDropList())
+                viewModel.AttachFiles(System.Windows.Clipboard.GetFileDropList().Cast<string>().ToList());
+            else if (System.Windows.Clipboard.GetImage() is { } image)
+                viewModel.AttachImage(image);
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            // The clipboard was busy; the user can paste again.
+        }
+    }
+
+    private void InputBox_PreviewDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)) return;
+        e.Effects = System.Windows.DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    private void InputBox_PreviewDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (ViewModel is not { } viewModel || e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files) return;
+        e.Handled = true;
+        viewModel.AttachFiles(files);
+        InputBox.Focus();
+    }
+
+    private void AttachButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } viewModel) return;
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Attach to the next message",
+            Multiselect = true,
+            Filter = "Screenshots and text files|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.txt;*.log;*.md;*.json;*.yaml;*.yml;*.toml;*.ini;*.cfg;*.conf;*.xml;*.csv;*.py;*.php;*.js;*.cs;*.sh;*.ps1;*.sql;*.lua;*.psc|All files|*.*"
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true) viewModel.AttachFiles(dialog.FileNames);
+        InputBox.Focus();
+    }
+
+    private void RemoveAttachment_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } viewModel && (sender as FrameworkElement)?.DataContext is AssistantAttachment attachment) viewModel.RemoveAttachment(attachment);
+        InputBox.Focus();
     }
 
     // Keys only reach this handler while focus is inside the Assistant page; Esc anywhere on it stops a response.

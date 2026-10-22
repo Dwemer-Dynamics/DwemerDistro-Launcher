@@ -255,6 +255,22 @@
                                 </StackPanel>
                             </Border>
 
+                            <!-- Task recovery, read from Core's journal on connect: the assistant's last (unverified) checkpoint and job counts. -->
+                            <TextBlock x:Name="RecoveryStatusTextBlock" Text="{Binding RecoveryStatusText}" TextWrapping="Wrap" Margin="0,0,0,4"
+                                       AutomationProperties.Name="Task recovery" AutomationProperties.HelpText="{Binding RecoveryStatusText}"
+                                       AutomationProperties.LiveSetting="Polite"
+                                       Visibility="{Binding HasRecoveryStatus, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsRecoveryUnavailable}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
                             <!-- Live commands still running and the session's Allow for this task, in one compact line. -->
                             <StackPanel x:Name="LiveRunStatus" Margin="0,0,0,2" Visibility="{Binding HasRunStatus, Converter={StaticResource BoolToVisibility}}">
                                 <TextBlock x:Name="RunningJobsTextBlock" Text="{Binding RunningJobsText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
@@ -279,20 +295,55 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <TextBox x:Name="InputBox" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+                            <!-- Attachments for the next message: a name, a size and Remove each; never a path. -->
+                            <ItemsControl x:Name="AttachmentChips" Grid.ColumnSpan="3" ItemsSource="{Binding Attachments}" Margin="0,0,0,6" Focusable="False"
+                                          Visibility="{Binding HasAttachments, Converter={StaticResource BoolToVisibility}}"
+                                          AutomationProperties.Name="Attachments for the next message">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#232323" BorderBrush="#3A3A3A" BorderThickness="1" CornerRadius="3" Margin="0,0,6,4" Padding="8,2,2,2"
+                                                MaxWidth="320">
+                                            <DockPanel>
+                                                <Button DockPanel.Dock="Right" Content="✕" Click="RemoveAttachment_Click" Style="{StaticResource Assistant.Action}"
+                                                        Margin="6,0,0,0" MinWidth="24" Padding="4,0" VerticalAlignment="Center"
+                                                        AutomationProperties.Name="{Binding RemoveName}"
+                                                        AutomationProperties.HelpText="Remove this attachment from the next message. The file itself is untouched." />
+                                                <TextBlock Text="{Binding Label}" Style="{StaticResource GameCenter.Caption}" FontSize="11.5" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}" />
+                                            </DockPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBox x:Name="InputBox" Grid.Row="1" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
                                      Style="{StaticResource Assistant.TextBox}" AcceptsReturn="True" TextWrapping="Wrap"
                                      MinHeight="38" MaxHeight="120" VerticalScrollBarVisibility="Auto"
-                                     PreviewKeyDown="InputBox_PreviewKeyDown"
+                                     PreviewKeyDown="InputBox_PreviewKeyDown" AllowDrop="True"
+                                     PreviewDragOver="InputBox_PreviewDragOver" PreviewDrop="InputBox_PreviewDrop"
                                      AutomationProperties.Name="Message to the assistant"
-                                     AutomationProperties.HelpText="Enter sends. Shift+Enter adds a new line. Esc stops a response. Messages over 8,000 characters are not cut; shorten them to send." />
-                            <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                     AutomationProperties.HelpText="Enter sends. Shift+Enter adds a new line. Esc stops a response. Paste a screenshot or drop files to attach them. Messages over 8,000 characters are not cut; shorten them to send." />
+                            <Button x:Name="AttachButton" Grid.Row="1" Grid.Column="1" Content="Attach…" Click="AttachButton_Click" Style="{StaticResource Assistant.Action}"
+                                    Margin="8,0,0,0" MinWidth="72" VerticalAlignment="Bottom"
+                                    AutomationProperties.HelpText="Choose screenshots or text, log, config or code files to send with the next message. Their contents are data for the assistant, never instructions." />
+                            <Button Grid.Row="1" Grid.Column="2" Content="Send" Command="{Binding SendCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
                                     Margin="8,0,0,0" MinWidth="80" VerticalAlignment="Bottom" />
-                            <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                            <WrapPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,6,0,0">
+                                <TextBlock x:Name="AttachmentFeedbackText" Text="{Binding AttachmentFeedback}" Foreground="{DynamicResource GameCenter.DangerText}"
+                                           FontSize="11.5" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,14,2" MaxWidth="560"
+                                           Visibility="{Binding HasAttachmentFeedback, Converter={StaticResource BoolToVisibility}}"
+                                           AutomationProperties.LiveSetting="Assertive" />
                                 <StackPanel Orientation="Horizontal" Margin="0,0,14,2">
                                     <TextBlock x:Name="ModelLabel" Text="Model" Style="{StaticResource Assistant.Label}" />
                                     <ComboBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" DisplayMemberPath="DisplayName"
