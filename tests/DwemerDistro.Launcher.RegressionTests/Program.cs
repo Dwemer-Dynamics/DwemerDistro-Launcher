@@ -4859,13 +4859,33 @@ try
         var mixedLine = AssistantViewModel.DescribeRecovery(mixed);
         var mixedContext = AssistantViewModel.BuildRecoveryContext(mixed);
         Assert(mixed.Available && mixed.Jobs.Count == 5 && mixed.Count("interrupted") == 2 && mixed.Count("other_session_active") == 1
-               && mixedLine.Contains("assistant's note, not verified") && mixedLine.Contains("2 interrupted (outcome unknown)") && mixedLine.Contains("not controllable here")
-               && mixedLine.Contains("1 finished, not verified") && mixedLine.Contains("Nothing was rerun") && !mixedLine.Contains("running")
+               && mixed.NeedsAttention && !mixedLine.Contains("checkpoint") && !mixedLine.Contains("Step 1") && !mixedLine.Contains("a.bak")
+               && mixedLine.Contains("2 previous commands were interrupted, outcomes unknown") && mixedLine.Contains("can't be controlled here")
+               && !mixedLine.Contains("finished") && mixedLine.Contains("Nothing was rerun; ask the assistant to check before continuing") && !mixedLine.Contains("running")
                && mixedContext.StartsWith(AssistantViewModel.RecoveryContextLabel) && mixedContext.Contains("your claim, verified: false") && mixedContext.Contains("verification claimed: all good")
                && mixedContext.Contains("backup_refs: /tmp/ddistro-recovery-x/a.bak") && mixedContext.Contains("job_ids: run_00000000000000c1") && !mixedContext.Contains("not-a-job")
                && !mixedContext.Contains(AssistantViewModel.ContextLabel) && !mixedContext.Contains("run_00000000000000c5") && mixedContext.Contains("ended as exited with exit code 0; not verified")
                && mixedContext.Contains("not controllable from here") && !mixedContext.Contains("\"code\""),
             "Recovery reads strictly: checkpoints stay unverified claims with launcher labels defused, unknown states count as interrupted, and nothing is called running.");
+        // Routine recovery is quiet: checkpoints, finished-not-verified jobs (cancelled or killed too) and this session's running job show no
+        // line, yet still go to the assistant. Only an unknown outcome, another session's job or an unreadable journal shows one short line.
+        var checkpointOnly = View(Recovery(string.Empty, Claim));
+        var finishedWithCheckpoint = View(Recovery(string.Join(",", RecoveryJob("run_00000000000000e1", "verify_before_continuing", "exited", ",\"exit_code\":0"),
+            RecoveryJob("run_00000000000000e2", "verify_before_continuing", "cancelled"), RecoveryJob("run_00000000000000e3", "verify_before_continuing", "killed")), Claim));
+        var runningOnly = View(Recovery(RecoveryJob("run_00000000000000e4", "live_this_session", "running"), string.Empty));
+        var unknownValue = View(Recovery(RecoveryJob("run_00000000000000e5", "reattach_me", "exited"), string.Empty));
+        var oneInterrupted = View(Recovery(RecoveryJob("run_00000000000000e6", "interrupted", "unknown"), Claim));
+        var otherOwner = View(Recovery(RecoveryJob("run_00000000000000e7", "other_session_active", "running"), string.Empty));
+        Assert(new[] { checkpointOnly, finishedWithCheckpoint, runningOnly }.All(quiet => !quiet.IsEmpty && !quiet.NeedsAttention && AssistantViewModel.DescribeRecovery(quiet).Length == 0)
+               && AssistantViewModel.BuildRecoveryContext(checkpointOnly).Contains("Step 1 of 2") && AssistantViewModel.BuildRecoveryContext(checkpointOnly).Contains("backup_refs: /tmp/ddistro-recovery-x/a.bak")
+               && AssistantViewModel.BuildRecoveryContext(finishedWithCheckpoint).Contains("ended as cancelled; not verified")
+               && AssistantViewModel.BuildRecoveryContext(finishedWithCheckpoint).Contains("ended as killed; not verified")
+               && AssistantViewModel.BuildRecoveryContext(runningOnly).Contains("still running in this session")
+               && unknownValue.NeedsAttention && AssistantViewModel.DescribeRecovery(unknownValue).StartsWith("A previous command was interrupted, outcome unknown")
+               && oneInterrupted.NeedsAttention && AssistantViewModel.DescribeRecovery(oneInterrupted) == "A previous command was interrupted, outcome unknown. Nothing was rerun; ask the assistant to check before continuing."
+               && otherOwner.NeedsAttention && AssistantViewModel.DescribeRecovery(otherOwner).StartsWith("A command belongs to another open session and can't be controlled here")
+               && !AssistantViewModel.DescribeRecovery(otherOwner).Contains("running"),
+            "Routine checkpoints, finished, cancelled and running jobs show no line but stay in the assistant's context; unknown outcomes and other owners show one plain line.");
         var unavailable = View("{\"recovery_version\":1,\"available\":false,\"reason\":\"journal_untrusted\",\"replay\":false,\"rollback\":false}");
         var many = View(Recovery(string.Join(",", Enumerable.Range(0, 40).Select(n => RecoveryJob("run_" + n.ToString("x16"), "interrupted"))),
             string.Join(",", Enumerable.Range(0, 32).Select(n => Claim.Replace("cp_1", "cp_" + n).Replace("09:05", "09:" + n.ToString("00")).Replace("Step 1", "Step " + n + " " + new string('x', 200))))));
@@ -4876,12 +4896,16 @@ try
                && View(Recovery(string.Empty, string.Empty)).IsEmpty && View(Recovery(RecoveryJob("run_00000000000000c5", "none", "refused"), string.Empty)).IsEmpty
                && manyMerged.Checkpoints.Count == AssistantViewModel.MaxRecoveryCheckpoints && manyMerged.Jobs.Count == 40 && manyMerged.Checkpoints[^1].Id == "cp_31"
                && AssistantViewModel.BuildRecoveryContext(manyMerged).Length <= AssistantViewModel.MaxRecoveryContextChars + 64
-               && AssistantViewModel.BuildRecoveryContext(manyMerged).Contains("Older jobs omitted") && AssistantViewModel.DescribeRecovery(manyMerged).Contains("1 earlier thread(s) unreadable"),
+               && AssistantViewModel.BuildRecoveryContext(manyMerged).Contains("Older jobs omitted") && AssistantViewModel.DescribeRecovery(manyMerged).Contains("An earlier part of this chat's record couldn't be read")
+               && AssistantViewModel.MergeRecovery([checkpointOnly], earlierUnavailable: 2) is { NeedsAttention: true } earlierOnly
+               && AssistantViewModel.DescribeRecovery(earlierOnly).StartsWith("2 earlier parts of this chat's record couldn't be read") && unavailable.NeedsAttention,
             "A failed read is unavailable with its reason, never empty; merged threads keep the newest three checkpoints, list each job once, and stay bounded.");
         var droppedTwice = View(Recovery(RecoveryJob("run_00000000000000c1", "interrupted"), string.Empty).Replace("\"dropped_incomplete\":0", "\"dropped_incomplete\":2"));
         var droppedMerged = AssistantViewModel.MergeRecovery([droppedTwice, droppedTwice, View(Recovery(string.Empty, string.Empty))]);
         Assert(droppedTwice.DroppedIncomplete == 2 && droppedMerged.DroppedIncomplete == 2 && AssistantViewModel.MergeRecovery([]).DroppedIncomplete == 0
-               && AssistantViewModel.DescribeRecovery(droppedMerged).Contains("2 unfinished dropped from the journal"),
+               && AssistantViewModel.DescribeRecovery(droppedMerged).Contains("2 unfinished commands were dropped from the record, outcomes unknown")
+               && AssistantViewModel.MergeRecovery([View(Recovery(string.Empty, string.Empty).Replace("\"dropped_incomplete\":0", "\"dropped_incomplete\":1"))]) is { NeedsAttention: true } droppedOnly
+               && AssistantViewModel.DescribeRecovery(droppedOnly).StartsWith("An unfinished command was dropped from the record"),
             "Core's dropped_incomplete is task-wide, so merging thread views counts it once, not once per thread.");
 
         const string RecoveryCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + LiveFeatures + "},"
@@ -4897,7 +4921,7 @@ try
         Assert(RecoveryBodies().Single(body => body.StartsWith("initialize ")).Contains("\"live_run\",\"live_run_auto\",\"task_recovery\"]")
                && RecoveryBodies().Single(body => body.StartsWith("ddistro/task/recovery ")).Contains("\"threadId\":\"thr-live15\"")
                && recovering.vm.State == AssistantState.Ready && recovering.vm.HasRecoveryStatus && !recovering.vm.IsRecoveryUnavailable
-               && recovering.vm.RecoveryStatusText.Contains("1 interrupted (outcome unknown)") && recovering.vm.RecoveryStatusText.Contains("not verified")
+               && recovering.vm.RecoveryStatusText.StartsWith("A previous command was interrupted, outcome unknown") && !recovering.vm.RecoveryStatusText.Contains("Step 1")
                && !recovering.vm.HasRunningJobs && !recovering.vm.StopCommand.CanExecute(null) && recovering.vm.NewTaskCommand.CanExecute(null),
             "On connect the launcher asks for task_recovery, reads the chat's journal, and an interrupted job from an old session is shown, never controllable.");
         recovering.vm.InputText = "continue where you left off";
@@ -4949,6 +4973,24 @@ try
                && TurnInput(UnreadableBodies().Single(body => body.StartsWith("turn/start")))[0].Contains("Recovery is unavailable (journal_invalid)"),
             "A revision 17 thread resumes as it is, and its next message says recovery is unavailable.");
         await unreadable.vm.ShutdownAsync();
+
+        // A checkpoint with a cancelled job is routine: no line, but the next message still carries it and nothing is replayed.
+        recoveryAnswer = Recovery(RecoveryJob("run_00000000000000c1", "verify_before_continuing", "cancelled"), Claim);
+        var quiet = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-live15", ThreadToolRevision = 17 }, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? RecoveryCapabilities.Replace("@FACTS@", recoveryFacts) : null,
+            respondFirst: (method, parameters) => method == "ddistro/task/recovery" ? System.Text.Json.Nodes.JsonNode.Parse(recoveryAnswer!) : null);
+        string[] QuietBodies() { lock (quiet.transport.Requests) return quiet.transport.Bodies.ToArray(); }
+        await WaitUntilAsync(() => QuietBodies().Any(body => body.StartsWith("ddistro/task/recovery ")));
+        Assert(quiet.vm.State == AssistantState.Ready && !quiet.vm.HasRecoveryStatus && quiet.vm.RecoveryStatusText.Length == 0 && !quiet.vm.IsRecoveryUnavailable,
+            "A routine checkpoint and a cancelled job show no recovery line.");
+        quiet.vm.InputText = "continue";
+        quiet.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => QuietBodies().Any(body => body.StartsWith("turn/start")));
+        var quietInput = TurnInput(QuietBodies().Single(body => body.StartsWith("turn/start")))[0];
+        Assert(quietInput.Contains(AssistantViewModel.RecoveryContextLabel) && quietInput.Contains("Step 1 of 2") && quietInput.Contains("ended as cancelled; not verified")
+               && !QuietBodies().Any(body => body.StartsWith("ddistro/run/") || body.StartsWith("ddistro/action/decide")),
+            "The hidden checkpoint still goes with the next message automatically, and nothing is replayed.");
+        await quiet.vm.ShutdownAsync();
         var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
         var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
         {

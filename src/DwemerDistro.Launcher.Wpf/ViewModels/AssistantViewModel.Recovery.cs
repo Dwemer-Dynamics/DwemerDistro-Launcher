@@ -6,9 +6,9 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 /// <summary>
 /// Task recovery (revision 17/18): when a chat connects, the launcher reads Core's per-task journal for the chat's thread and its few
-/// earlier threads through <see cref="RecoveryMethod"/>, shows one compact line, and hands the assistant a bounded summary with its next
-/// message. Job states are the broker's records; checkpoints are the assistant's own unverified notes. Nothing is replayed, reattached
-/// or offered as a rerun, and a job of another session is never shown as controllable here.
+/// earlier threads through <see cref="RecoveryMethod"/>, hands the assistant a bounded summary with its next message, and shows one compact
+/// line only when something needs the user's attention. Job states are the broker's records; checkpoints are the assistant's own
+/// unverified notes. Nothing is replayed, reattached or offered as a rerun, and a job of another session is never shown as controllable.
 /// </summary>
 public sealed partial class AssistantViewModel
 {
@@ -37,8 +37,13 @@ public sealed partial class AssistantViewModel
         IReadOnlyList<RecoveryJob> Jobs, int EarlierUnavailable = 0, int DroppedIncomplete = 0)
     {
         public int Count(string recovery) => Jobs.Count(job => job.Recovery == recovery);
+        // IsEmpty decides whether the assistant gets a summary; routine checkpoints and finished jobs still go with the next message.
         public bool IsEmpty => Available && Checkpoints.Count == 0 && Jobs.All(job => job.Recovery == "none") && EarlierUnavailable == 0
                                && DroppedIncomplete == 0;
+        // NeedsAttention decides whether the user sees a line: only an unknown outcome, another session's job, or an unreadable journal.
+        // Checkpoints, finished-not-verified jobs (cancelled included) and this session's running jobs stay quiet.
+        public bool NeedsAttention => !Available || Count("interrupted") > 0 || Count("other_session_active") > 0 || EarlierUnavailable > 0
+                                      || DroppedIncomplete > 0;
         internal static RecoverySnapshot Unavailable(string reason) => new(false, reason, [], []);
     }
 
@@ -49,10 +54,10 @@ public sealed partial class AssistantViewModel
     private bool _recoveryContextPending;
     private int _recoveryGeneration;
 
-    /// <summary>Shown only for a chat whose session negotiated task recovery and whose journal holds something, or could not be read.</summary>
-    public bool HasRecoveryStatus => _recovery is { IsEmpty: false };
+    /// <summary>Shown only for a chat whose session negotiated task recovery and whose journal needs attention, or could not be read.</summary>
+    public bool HasRecoveryStatus => _recovery is { NeedsAttention: true };
     public bool IsRecoveryUnavailable => _recovery is { Available: false };
-    public string RecoveryStatusText => _recovery is { IsEmpty: false } recovery ? DescribeRecovery(recovery) : string.Empty;
+    public string RecoveryStatusText => _recovery is { NeedsAttention: true } recovery ? DescribeRecovery(recovery) : string.Empty;
 
     private void SetRecovery(RecoverySnapshot? recovery, bool supplyContext)
     {
@@ -150,24 +155,26 @@ public sealed partial class AssistantViewModel
         earlierUnavailable, parts.Count == 0 ? 0 : parts.Max(part => part.DroppedIncomplete));
 
     /// <summary>
-    /// The compact line: the assistant's last checkpoint, always labeled as its own unverified note, then the broker's counts. A job
-    /// owned by another live session is never called running here, and a job from an earlier session is never controllable.
+    /// The compact line, in plain words, for attention cases only: interrupted jobs, another session's job, dropped records, unreadable
+    /// threads, or an unavailable journal. Checkpoints and finished jobs are left to the assistant's context. A job owned by another live
+    /// session is never called running here, and a job from an earlier session is never controllable. Empty when nothing needs attention.
     /// </summary>
     internal static string DescribeRecovery(RecoverySnapshot recovery)
     {
-        if (!recovery.Available) return "Recovery unavailable: " + recovery.Reason.Replace('_', ' ') + ". Ask the assistant to inspect the current state before continuing.";
-        var parts = new List<string>();
-        if (recovery.Checkpoints.LastOrDefault() is { } last)
-            parts.Add("Last checkpoint (assistant's note, not verified" + (last.RecordedAt.Length > 0 ? ", " + last.RecordedAt : string.Empty) + "): "
-                      + Shorten(last.Progress, 140) + (last.NextStep.Length > 0 ? " Next: " + Shorten(last.NextStep, 100) : string.Empty));
-        var counts = new List<string>();
-        if (recovery.Count("interrupted") is > 0 and var interrupted) counts.Add($"{interrupted} interrupted (outcome unknown)");
-        if (recovery.Count("other_session_active") is > 0 and var elsewhere) counts.Add($"{elsewhere} owned by another session (not controllable here)");
-        if (recovery.Count("verify_before_continuing") is > 0 and var ended) counts.Add($"{ended} finished, not verified");
-        if (recovery.DroppedIncomplete > 0) counts.Add($"{recovery.DroppedIncomplete} unfinished dropped from the journal");
-        if (recovery.EarlierUnavailable > 0) counts.Add($"{recovery.EarlierUnavailable} earlier thread(s) unreadable");
-        if (counts.Count > 0) parts.Add("Jobs: " + string.Join(", ", counts) + ". Nothing was rerun.");
-        return string.Join(" ", parts);
+        if (!recovery.Available) return "Recovery unavailable: " + recovery.Reason.Replace('_', ' ') + ". Ask the assistant to check the current state before continuing.";
+        var issues = new List<string>();
+        if (recovery.Count("interrupted") is > 0 and var interrupted)
+            issues.Add(interrupted == 1 ? "A previous command was interrupted, outcome unknown" : $"{interrupted} previous commands were interrupted, outcomes unknown");
+        if (recovery.Count("other_session_active") is > 0 and var elsewhere)
+            issues.Add(elsewhere == 1 ? "A command belongs to another open session and can't be controlled here"
+                : $"{elsewhere} commands belong to another open session and can't be controlled here");
+        if (recovery.DroppedIncomplete > 0)
+            issues.Add(recovery.DroppedIncomplete == 1 ? "An unfinished command was dropped from the record, outcome unknown"
+                : $"{recovery.DroppedIncomplete} unfinished commands were dropped from the record, outcomes unknown");
+        if (recovery.EarlierUnavailable > 0)
+            issues.Add(recovery.EarlierUnavailable == 1 ? "An earlier part of this chat's record couldn't be read"
+                : $"{recovery.EarlierUnavailable} earlier parts of this chat's record couldn't be read");
+        return issues.Count == 0 ? string.Empty : string.Join(". ", issues) + ". Nothing was rerun; ask the assistant to check before continuing.";
     }
 
     /// <summary>

@@ -255,7 +255,7 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Task recovery, read from Core's journal on connect: the assistant's last (unverified) checkpoint and job counts. -->
+                            <!-- Task recovery, read from Core's journal on connect: shown only when a job's outcome is unknown, another session owns one, or the journal is unreadable. -->
                             <TextBlock x:Name="RecoveryStatusTextBlock" Text="{Binding RecoveryStatusText}" TextWrapping="Wrap" Margin="0,0,0,4"
                                        AutomationProperties.Name="Task recovery" AutomationProperties.HelpText="{Binding RecoveryStatusText}"
                                        AutomationProperties.LiveSetting="Polite"
