@@ -4122,7 +4122,7 @@ try
                && Revision(Caps("\"assistant_tools\":true,\"assistant_actions\":true", ActionTool.Replace("[\"propose_restart\"]", "[\"propose_restart\",\"stop\"]"))) == 3
                && AssistantViewModel.ToolRevisionFor(["ddistro_read", "ddistro_action"]) == 1
                && Enumerable.Range(0, 5).All(revision => !AssistantViewModel.HasActionTool(revision))
-               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(19)
+               && AssistantViewModel.HasActionTool(5) && AssistantViewModel.HasActionTool(6) && !AssistantViewModel.HasActionTool(21)
                && AssistantViewModel.HasMemoryTool(6) && !AssistantViewModel.HasMemoryTool(5) && AssistantViewModel.HasEnhancedRead(5)
                && AssistantViewModel.InstructionsFor(5).Contains(AssistantViewModel.ActionInstructions)
                && AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.MemoryInstructions)
@@ -4144,14 +4144,14 @@ try
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"postgres\"", ""))) == 5
                && PerfRevision(PerfCaps(AllFeatures, ActionTool, PerfRead.Replace(",\"performance\"", ""))) == 5
                && PerfRevision(withAction) == 5
-               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(19)
+               && Enumerable.Range(0, 7).All(revision => !AssistantViewModel.HasPerformanceRead(revision)) && !AssistantViewModel.HasPerformanceRead(21)
                && AssistantViewModel.HasActionTool(7) && AssistantViewModel.HasActionTool(8) && AssistantViewModel.HasEnhancedRead(8)
-               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(19)
+               && !AssistantViewModel.HasMemoryTool(7) && AssistantViewModel.HasMemoryTool(8) && !AssistantViewModel.HasEnhancedRead(21)
                && AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.PerformanceInstructions) && !AssistantViewModel.InstructionsFor(7).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.MemoryInstructions) && AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(6).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(19).Contains(AssistantViewModel.PerformanceInstructions)
-               && !AssistantViewModel.InstructionsFor(19).Contains(AssistantViewModel.ActionInstructions),
+               && !AssistantViewModel.InstructionsFor(21).Contains(AssistantViewModel.PerformanceInstructions)
+               && !AssistantViewModel.InstructionsFor(21).Contains(AssistantViewModel.ActionInstructions),
             "Only the full performance read with the action tool is revision 7/8; partial or unknown offers get no performance rules, actions or memory.");
         var sourceCall = AssistantViewModel.DescribeToolCall(System.Text.Json.JsonDocument.Parse("{\"tool\":\"ddistro_read\",\"status\":\"completed\","
             + "\"arguments\":{\"operation\":\"logs\",\"log_source\":\"apache\",\"lines\":20}}").RootElement);
@@ -4282,17 +4282,17 @@ try
                && ModelRevision(PerfCaps(ModelFeatures, ActionTool, ModelRead)) == 7
                && ModelRevision(PerfCaps(ModelFeatures.Replace("\"assistant_actions\":true,", ""), ModelAction, ModelRead)) == 3
                && Enumerable.Range(0, 9).All(revision => !AssistantViewModel.HasModelSettings(revision))
-               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(19)
+               && AssistantViewModel.HasModelSettings(9) && AssistantViewModel.HasModelSettings(10) && !AssistantViewModel.HasModelSettings(21)
                && AssistantViewModel.HasActionTool(9) && AssistantViewModel.HasPerformanceRead(10) && AssistantViewModel.HasEnhancedRead(10)
                && AssistantViewModel.HasMemoryTool(10) && !AssistantViewModel.HasMemoryTool(9)
-               && !AssistantViewModel.HasActionTool(19) && !AssistantViewModel.HasMemoryTool(19) && !AssistantViewModel.HasPerformanceRead(19)
+               && !AssistantViewModel.HasActionTool(21) && !AssistantViewModel.HasMemoryTool(21) && !AssistantViewModel.HasPerformanceRead(21)
                && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ModelSettingsInstructions)
                && AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.PerformanceInstructions)
                && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.ActionInstructions)
                && !AssistantViewModel.InstructionsFor(9).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.MemoryInstructions)
                && !AssistantViewModel.InstructionsFor(8).Contains(AssistantViewModel.ModelSettingsInstructions)
-               && !AssistantViewModel.InstructionsFor(19).Contains(AssistantViewModel.ModelSettingsInstructions),
+               && !AssistantViewModel.InstructionsFor(21).Contains(AssistantViewModel.ModelSettingsInstructions),
             "Only Core's full model settings shape on top of 7/8 is revision 9/10; partial offers and unknown revisions never get model rules.");
 
         // A model proposal is shown only on a thread with model settings, with Core's exact three diff lines, never as a restart.
@@ -4303,7 +4303,7 @@ try
             "{\"action\":\"" + kind + "\",\"label\":\"CHIM model assignment\",\"impact\":\"i\",\"reason\":\"r\"," + change + "}").RootElement;
         Assert(AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 7) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_rollback"), P('e'), "t", 8) is null
-               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 19) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("model_change"), P('e'), "t", 21) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"b\"]}"), P('e'), "t", 9) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("model_change", "\"change\":{\"diff\":[\"a\",\"\",\"c\"]}"), P('e'), "t", 9) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("stop_everything"), P('e'), "t", 10) is null
@@ -4427,7 +4427,7 @@ try
                && ModelRevision(PerfCaps(FoundationFeatures, ModelAction + FoundationTools, PerfRead)) == 7
                && ModelRevision(PerfCaps(FoundationFeatures, ActionTool + FoundationTools, ModelRead)) == 7
                && !AssistantViewModel.ReadOfferedTools(PerfCaps(ModelFeatures, ModelAction + FoundationTools, ModelRead)).Contains("ddistro_explore")
-               && Enumerable.Range(0, 11).All(revision => !AssistantViewModel.HasFoundations(revision)) && !AssistantViewModel.HasFoundations(19)
+               && Enumerable.Range(0, 11).All(revision => !AssistantViewModel.HasFoundations(revision)) && !AssistantViewModel.HasFoundations(21)
                && AssistantViewModel.HasMemoryTool(12) && !AssistantViewModel.HasMemoryTool(11) && AssistantViewModel.HasModelSettings(11)
                && AssistantViewModel.HasActionTool(12) && AssistantViewModel.HasPerformanceRead(11) && AssistantViewModel.HasEnhancedRead(12)
                && AssistantViewModel.InstructionsFor(11).Contains(AssistantViewModel.FoundationDeveloperInstructions)
@@ -4437,7 +4437,7 @@ try
                && AssistantViewModel.InstructionsFor(12).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.InstructionsFor(10).Contains("You cannot run commands on the live distro")
                && !AssistantViewModel.InstructionsFor(10).Contains(AssistantViewModel.FoundationActionInstructions)
-               && !AssistantViewModel.InstructionsFor(19).Contains(AssistantViewModel.FoundationActionInstructions)
+               && !AssistantViewModel.InstructionsFor(21).Contains(AssistantViewModel.FoundationActionInstructions)
                && AssistantViewModel.BuildToolTurnContext(11, null).Contains(AssistantViewModel.FoundationScopeReminder)
                && new[] { AssistantViewModel.FoundationDeveloperInstructions, AssistantViewModel.FoundationScopeReminder }.All(text =>
                    text.Contains("live public schema") && text.Contains("is_active") && text.Contains("backup snapshot")
@@ -4467,7 +4467,7 @@ try
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange("\"@@ -1 +1 @@\",\"-old\",\"+new\"")), P('e'), "t", 11) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines).Replace(manifest, "ABC")), P('e'), "t", 11) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 10) is null
-               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 19) is null
+               && AssistantViewModel.ReadActionProposal(ProposalJson("file_change", FileChange(FileLines)), P('e'), "t", 21) is null
                && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service), P('e'), "t", 11) is { Kind: "service", Target: "herika", Verb: "update" } serviceCard
                && serviceCard.Diff == "Operation: update\nTarget: herika\nBranch: main\nUpdate HerikaServer from origin/main\nRestarts Apache afterwards"
                && AssistantViewModel.ReadActionProposal(ProposalJson("service", Service.Replace("\"update\"", "\"exec\"")), P('e'), "t", 11) is null
@@ -4582,7 +4582,7 @@ try
                && ModelRevision(PerfCaps(FoundationFeatures, ModelAction + LiveTools, ModelRead)) == 11
                && ModelRevision(PerfCaps(LiveFeatures, ModelAction + FoundationTools, ModelRead)) == 11
                && ModelRevision(PerfCaps(ModelFeatures + ",\"live_run\":true", ModelAction + LiveTools, ModelRead)) == 9
-               && AssistantViewModel.HasLiveRun(13) && AssistantViewModel.HasLiveRun(14) && !AssistantViewModel.HasLiveRun(12) && !AssistantViewModel.HasLiveRun(19)
+               && AssistantViewModel.HasLiveRun(13) && AssistantViewModel.HasLiveRun(14) && !AssistantViewModel.HasLiveRun(12) && !AssistantViewModel.HasLiveRun(21)
                && AssistantViewModel.HasFoundations(13) && AssistantViewModel.HasModelSettings(14) && AssistantViewModel.HasMemoryTool(14) && !AssistantViewModel.HasMemoryTool(13)
                && AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.LiveRunInstructions)
                && AssistantViewModel.InstructionsFor(13).Contains(AssistantViewModel.LiveActionInstructions)
@@ -4758,8 +4758,8 @@ try
         Assert(AutoRevision(LiveDoc(AutoFacts)) == 15 && AutoRevision(LiveDoc(string.Empty)) == 13
                && !AssistantViewModel.OffersAutomaticRun(LiveDoc(AutoFacts.Replace("\"grants\":false", "\"grants\":true")))
                && !AssistantViewModel.OffersAutomaticRun(LiveDoc(AutoFacts.Replace("\"routine\",\"destructive\"", "\"routine\",\"destructive\",\"low\"")))
-               && AssistantViewModel.HasAutoRun(15) && AssistantViewModel.HasAutoRun(16) && !AssistantViewModel.HasAutoRun(14) && !AssistantViewModel.HasAutoRun(19)
-               && AssistantViewModel.HasLiveRun(15) && AssistantViewModel.HasMemoryTool(16) && !AssistantViewModel.HasMemoryTool(15) && !AssistantViewModel.HasLiveRun(19)
+               && AssistantViewModel.HasAutoRun(15) && AssistantViewModel.HasAutoRun(16) && !AssistantViewModel.HasAutoRun(14) && !AssistantViewModel.HasAutoRun(21)
+               && AssistantViewModel.HasLiveRun(15) && AssistantViewModel.HasMemoryTool(16) && !AssistantViewModel.HasMemoryTool(15) && !AssistantViewModel.HasLiveRun(21)
                && AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.AutoRunInstructions) && AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.AutoActionInstructions)
                && AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.AutoDeveloperInstructions) && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.LiveRunInstructions)
                && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.LiveActionInstructions) && !AssistantViewModel.InstructionsFor(15).Contains("once the user approves it")
@@ -4833,12 +4833,12 @@ try
                && RecoveryRevision(LiveDoc(recoveryFacts.Replace("\"verified\":false", "\"verified\":true"))) == 15
                && RecoveryRevision(LiveDoc(recoveryFacts.Replace("\"checkpoint\"]", "\"checkpoint\",\"rollback\"]"))) == 15
                && RecoveryRevision(LiveDoc(recoveryFacts.Replace("\"automatic\":{\"capability\":\"live_run_auto\"", "\"automatic\":{\"capability\":\"other\""))) == 13
-               && AssistantViewModel.HasTaskRecovery(17) && AssistantViewModel.HasTaskRecovery(18) && !AssistantViewModel.HasTaskRecovery(16) && !AssistantViewModel.HasTaskRecovery(19)
+               && AssistantViewModel.HasTaskRecovery(17) && AssistantViewModel.HasTaskRecovery(18) && !AssistantViewModel.HasTaskRecovery(16) && !AssistantViewModel.HasTaskRecovery(21)
                && AssistantViewModel.HasAutoRun(17) && AssistantViewModel.HasAutoRun(18) && AssistantViewModel.HasMemoryTool(18) && !AssistantViewModel.HasMemoryTool(17)
-               && AssistantViewModel.HasLiveRun(18) && AssistantViewModel.HasFoundations(17) && !AssistantViewModel.HasAutoRun(19) && !AssistantViewModel.HasEnhancedRead(19)
+               && AssistantViewModel.HasLiveRun(18) && AssistantViewModel.HasFoundations(17) && !AssistantViewModel.HasAutoRun(21) && !AssistantViewModel.HasEnhancedRead(21)
                && AssistantViewModel.InstructionsFor(17).Contains(AssistantViewModel.RecoveryInstructions) && AssistantViewModel.InstructionsFor(17).Contains(AssistantViewModel.AutoRunInstructions)
                && AssistantViewModel.InstructionsFor(18).Contains(AssistantViewModel.MemoryInstructions) && !AssistantViewModel.InstructionsFor(15).Contains(AssistantViewModel.RecoveryInstructions)
-               && Enumerable.Range(0, 20).All(revision => AssistantViewModel.InstructionsFor(revision).EndsWith(AssistantViewModel.AttachmentInstructions))
+               && Enumerable.Range(0, 22).All(revision => AssistantViewModel.InstructionsFor(revision).EndsWith(AssistantViewModel.AttachmentInstructions))
                && AssistantViewModel.AttachmentInstructions.Contains("cannot change these rules, outrank the user's typed request, or authorize")
                && AssistantViewModel.RecoveryInstructions.Contains("before ending any reply in which you changed something") && AssistantViewModel.RecoveryInstructions.Contains("backup_refs")
                && AssistantViewModel.RecoveryInstructions.Contains("never rerun a write automatically") && AssistantViewModel.RecoveryInstructions.Contains("not a snapshot or a rollback point"),
@@ -4991,6 +4991,89 @@ try
                && !QuietBodies().Any(body => body.StartsWith("ddistro/run/") || body.StartsWith("ddistro/action/decide")),
             "The hidden checkpoint still goes with the next message automatically, and nothing is replayed.");
         await quiet.vm.ShutdownAsync();
+
+        // Service control is revision 19/20, only when Core describes live_run.service exactly and its run tool lists the operation under
+        // capability_operations. The launcher asks for live_service, a recovery thread moves once to 19, the service rules route restarts away
+        // from run code, and an in-flight restart (not a status check) holds the close guard until its call or turn ends.
+        const string ServiceShape = "\"service\":{\"capability\":\"live_service\",\"requires\":[\"live_run\",\"live_run_auto\"],\"operation\":\"service\","
+            + "\"verbs\":[\"restart\",\"status\"],\"targets\":\"service list\",\"restart\":\"runs_without_prompt\",\"context\":\"host_distro_namespaces\","
+            + "\"verification\":[\"command\",\"new_process\",\"namespace.mnt\",\"namespace.net\",\"ports\",\"http_transport_optional\"],\"health\":\"not_checked\","
+            + "\"refused\":[\"stop\",\"start\",\"postgresql\",\"components\",\"unregistered\"],\"turn_calls\":\"shared_with_run\",\"journaled\":false}";
+        var serviceFacts = recoveryFacts.Replace(RecoveryShape, RecoveryShape + "," + ServiceShape);
+        const string ServiceRunTool = "{\"name\":\"ddistro_run\",\"mutates\":true,\"capability_operations\":{\"live_service\":[\"service\"]}}";
+        var serviceTools = LiveTools.Replace("{\"name\":\"ddistro_run\",\"mutates\":true}", ServiceRunTool);
+        System.Text.Json.JsonElement ServiceDoc(string facts, string tools) => System.Text.Json.JsonDocument.Parse("{\"features\":{\"agent\":true," + LiveFeatures + "},"
+            + ModelRead + ModelAction + tools + EnhancedCoverage + facts + "}").RootElement;
+        int ServiceRevision(System.Text.Json.JsonElement caps) => AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(caps),
+            AssistantViewModel.OffersEnhancedRead(caps), AssistantViewModel.OffersPerformanceRead(caps), AssistantViewModel.OffersModelSettings(caps),
+            AssistantViewModel.OffersAutomaticRun(caps), AssistantViewModel.OffersTaskRecovery(caps), AssistantViewModel.OffersLiveService(caps));
+        Assert(ServiceRevision(ServiceDoc(serviceFacts, serviceTools)) == 19 && ServiceRevision(ServiceDoc(recoveryFacts, serviceTools)) == 17
+               && ServiceRevision(ServiceDoc(serviceFacts, LiveTools)) == 17
+               && ServiceRevision(ServiceDoc(serviceFacts, serviceTools.Replace("[\"service\"]}}", "[\"service\",\"stop\"]}}"))) == 17
+               && ServiceRevision(ServiceDoc(serviceFacts.Replace("\"verbs\":[\"restart\",\"status\"]", "\"verbs\":[\"restart\",\"status\",\"start\"]"), serviceTools)) == 17
+               && ServiceRevision(ServiceDoc(serviceFacts.Replace(",\"unregistered\"]", "]"), serviceTools)) == 17
+               && ServiceRevision(ServiceDoc(serviceFacts.Replace("\"context\":\"host_distro_namespaces\"", "\"context\":\"run_view\""), serviceTools)) == 17
+               && ServiceRevision(ServiceDoc(serviceFacts.Replace("\"requires\":[\"live_run\",\"live_run_auto\"]", "\"requires\":[\"live_run\"]"), serviceTools)) == 17
+               && ServiceRevision(ServiceDoc(serviceFacts.Replace("\"namespace.net\",", string.Empty), serviceTools)) == 17
+               && ServiceRevision(ServiceDoc(serviceFacts.Replace(RecoveryShape + ",", string.Empty), serviceTools)) == 15
+               && AssistantViewModel.HasLiveService(19) && AssistantViewModel.HasLiveService(20) && !AssistantViewModel.HasLiveService(18) && !AssistantViewModel.HasLiveService(21)
+               && AssistantViewModel.HasTaskRecovery(20) && AssistantViewModel.HasAutoRun(19) && AssistantViewModel.HasEnhancedRead(20) && AssistantViewModel.HasModelSettings(19)
+               && AssistantViewModel.HasMemoryTool(20) && !AssistantViewModel.HasMemoryTool(19) && !AssistantViewModel.HasTaskRecovery(21) && !AssistantViewModel.HasEnhancedRead(21)
+               && AssistantViewModel.InstructionsFor(19).Contains(AssistantViewModel.ServiceInstructions) && AssistantViewModel.InstructionsFor(19).Contains(AssistantViewModel.RecoveryInstructions)
+               && AssistantViewModel.InstructionsFor(20).Contains(AssistantViewModel.MemoryInstructions) && !AssistantViewModel.InstructionsFor(17).Contains(AssistantViewModel.ServiceInstructions)
+               && AssistantViewModel.BuildToolTurnContext(19, null).Contains(AssistantViewModel.ServiceScopeReminder)
+               && !AssistantViewModel.BuildToolTurnContext(17, null).Contains(AssistantViewModel.ServiceScopeReminder)
+               && AssistantViewModel.ServiceInstructions.Contains("never fall back to starting the service from run code")
+               && AssistantViewModel.ServiceInstructions.Contains("root registers a trusted service wrapper")
+               && AssistantViewModel.ServiceInstructions.Contains("read and fix its configuration and logs") && AssistantViewModel.ServiceInstructions.Contains("not application health"),
+            "Only Core's exact service offer is 19/20, on top of task recovery, with the service rules; unregistered services still get configuration and log help.");
+
+        var serviceCapabilities = RecoveryCapabilities.Replace(LiveTools, serviceTools).Replace("@FACTS@", serviceFacts);
+        var servicing = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-live17", ThreadToolRevision = 17 }, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? serviceCapabilities : null,
+            respondFirst: (method, _) => method == "ddistro/task/recovery" ? System.Text.Json.Nodes.JsonNode.Parse(Recovery(string.Empty, string.Empty)) : null);
+        string[] ServiceBodies() { lock (servicing.transport.Requests) return servicing.transport.Bodies.ToArray(); }
+        void ServiceNotify(string method, string json) => servicing.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
+        Assert(ServiceBodies().Single(body => body.StartsWith("initialize ")).Contains("\"live_run\",\"live_run_auto\",\"task_recovery\",\"live_service\"]")
+               && ServiceBodies().Count(body => body.StartsWith("thread/start")) == 0,
+            "A launcher on a service Core asks for live_service, and a revision 17 thread resumes as it is until its next message.");
+        servicing.vm.InputText = "restart apache please";
+        servicing.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => ServiceBodies().Any(body => body.StartsWith("turn/start")));
+        Assert(toolStore.Load() is { ThreadId: "thr-new", ThreadToolRevision: 19 } serviceRef && serviceRef.SupersededThreads!.Contains("thr-live17")
+               && ServiceBodies().Single(body => body.StartsWith("thread/start")).Contains("Services. This replaces")
+               && TurnInput(ServiceBodies().Single(body => body.StartsWith("turn/start")))[0].Contains(AssistantViewModel.ServiceScopeReminder),
+            "A revision 17 thread moves once to 19 with the service rules, and revision 19 is what the task reference keeps.");
+        await WaitUntilAsync(() => servicing.vm.State == AssistantState.Streaming);
+        string ServiceCall(string id, string verb, string status) => "{\"threadId\":\"thr-new\",\"turnId\":\"turn-1\",\"item\":{\"type\":\"dynamicToolCall\",\"id\":\"" + id
+            + "\",\"tool\":\"ddistro_run\",\"status\":\"" + status + "\",\"arguments\":{\"operation\":\"service\",\"verb\":\"" + verb + "\",\"target\":\"apache\",\"reason\":\"r\"}}}";
+        ServiceNotify("item/started", ServiceCall("svc-status", "status", "inProgress"));
+        var statusBlocks = servicing.vm.BlocksSessionEnd;
+        ServiceNotify("item/started", ServiceCall("svc-1", "restart", "inProgress"));
+        servicing.vm.ShowCloseBlockedByJobs();
+        Assert(!statusBlocks && servicing.vm.BlocksSessionEnd && !servicing.vm.HasRunningJobs
+               && servicing.vm.StatusDetail.StartsWith("A service restart is still running") && !servicing.vm.StatusDetail.Contains("Stop"),
+            "A service status check never holds the launcher open; an in-flight restart does, with its own line that offers no Stop.");
+        ServiceNotify("item/completed", ServiceCall("svc-1", "restart", "completed"));
+        var completedReleases = !servicing.vm.BlocksSessionEnd;
+        ServiceNotify("item/started", ServiceCall("svc-2", "restart", "inProgress"));
+        var restartedBlocks = servicing.vm.BlocksSessionEnd;
+        ServiceNotify("turn/completed", "{\"threadId\":\"thr-new\",\"turn\":{\"id\":\"turn-1\",\"status\":\"completed\"}}");
+        Assert(completedReleases && restartedBlocks && !servicing.vm.BlocksSessionEnd,
+            "The restart's completion releases the guard, and the end of its turn releases one whose completion never arrived.");
+        await servicing.vm.ShutdownAsync();
+        var reopened = await ConnectAssistantAsync(toolStore, toolStore.Load()!, toolInstallation, oldThread.TaskId,
+            script: command => command == "capabilities" ? serviceCapabilities : null,
+            respondFirst: (method, _) => method == "ddistro/task/recovery" ? System.Text.Json.Nodes.JsonNode.Parse(Recovery(string.Empty, string.Empty)) : null);
+        string[] ReopenedBodies() { lock (reopened.transport.Requests) return reopened.transport.Bodies.ToArray(); }
+        reopened.vm.InputText = "is it up?";
+        reopened.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => ReopenedBodies().Any(body => body.StartsWith("turn/start")));
+        Assert(ReopenedBodies().Count(body => body.StartsWith("thread/start")) == 0 && ReopenedBodies().Single(body => body.StartsWith("thread/resume")).Contains("thr-new")
+               && toolStore.Load() is { ThreadToolRevision: 19 }
+               && TurnInput(ReopenedBodies().Single(body => body.StartsWith("turn/start")))[0].Contains(AssistantViewModel.ServiceScopeReminder),
+            "A saved revision 19 thread reopens and resumes as it is, keeping the service rules.");
+        await reopened.vm.ShutdownAsync();
         var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
         var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
         {

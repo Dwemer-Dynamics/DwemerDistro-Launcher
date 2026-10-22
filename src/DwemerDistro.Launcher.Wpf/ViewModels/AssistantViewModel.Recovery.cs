@@ -5,7 +5,7 @@ using DwemerDistro.Launcher.Wpf.Services;
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 /// <summary>
-/// Task recovery (revision 17/18): when a chat connects, the launcher reads Core's per-task journal for the chat's thread and its few
+/// Task recovery (revisions 17 to 20): when a chat connects, the launcher reads Core's per-task journal for the chat's thread and its few
 /// earlier threads through <see cref="RecoveryMethod"/>, hands the assistant a bounded summary with its next message, and shows one compact
 /// line only when something needs the user's attention. Job states are the broker's records; checkpoints are the assistant's own
 /// unverified notes. Nothing is replayed, reattached or offered as a rerun, and a job of another session is never shown as controllable.
