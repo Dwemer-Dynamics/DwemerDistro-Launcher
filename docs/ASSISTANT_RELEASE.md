@@ -17,6 +17,9 @@ does not provision existing distros or refresh the installer image.
   account controls, approvals, saved memory or another client's conversation.
 - A fresh chat does not require an installed game server. File selection still
   requires the corresponding installed server and existing ownership checks.
+- Isolation attestations are bound to the installed filesystem and kernel.
+  Compatible Core advertises a guarded automatic recheck on first connection
+  after import or a stale binding. A failed check leaves Assistant off.
 
 ## Build and validate
 

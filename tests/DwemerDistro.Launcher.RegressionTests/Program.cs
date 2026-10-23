@@ -3450,6 +3450,34 @@ try
         Assert(drain.vm.ConnectCommand.CanExecute(null), "An extra resume must not unbalance the hold.");
         await drain.vm.ShutdownAsync();
 
+        var automaticStatusReads = 0;
+        var automaticProbe = await ConnectAssistantAsync(stateStore, savedReference, installationId,
+            statusTask: savedReference.TaskId, script: command => command switch
+            {
+                "capabilities" => ModelsDocumentText("{\"assistant_api\":{\"version\":1,\"automatic_probe\":true},\"features\":{\"agent\":true}}"),
+                "agent status" when ++automaticStatusReads == 1 => ModelsDocumentText("{\"installed\":true,\"probe_passed\":false,\"reason\":\"probe_stale\"}"),
+                "agent probe" => ModelsDocumentText("{\"passed\":true,\"probe_passed\":true,\"checks\":[{\"name\":\"platform\",\"passed\":true}]}"),
+                _ => null
+            });
+        Assert(automaticProbe.vm.State == AssistantState.Ready
+               && automaticProbe.cli.Calls.Count(call => call == "agent probe") == 1,
+            "A compatible Core refreshes an imported or stale attestation once, then connects.");
+        await automaticProbe.vm.ShutdownAsync();
+
+        var failedAutomaticProbe = await ConnectAssistantAsync(stateStore, savedReference, installationId,
+            statusTask: savedReference.TaskId, script: command => command switch
+            {
+                "capabilities" => ModelsDocumentText("{\"assistant_api\":{\"version\":1,\"automatic_probe\":true},\"features\":{\"agent\":true}}"),
+                "agent status" => ModelsDocumentText("{\"installed\":true,\"probe_passed\":false,\"reason\":\"probe_required\"}"),
+                "agent probe" => ModelsDocumentText("{\"passed\":false,\"probe_passed\":false,\"checks\":[{\"name\":\"provider_network\",\"passed\":false}]}"),
+                _ => null
+            });
+        Assert(failedAutomaticProbe.vm.State == AssistantState.IsolationFailed
+               && failedAutomaticProbe.cli.ServedTask is null
+               && failedAutomaticProbe.cli.Calls.Count(call => call == "agent probe") == 1,
+            "A failed automatic setup stays off without opening a session or retry loop.");
+        await failedAutomaticProbe.vm.ShutdownAsync();
+
         foreach (var (name, script, expected) in new (string, Func<string, string?>, AssistantState)[]
                  {
                      ("Core without an API", command => command == "capabilities"

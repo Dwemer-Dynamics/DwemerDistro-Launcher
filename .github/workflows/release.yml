@@ -36,8 +36,8 @@ jobs:
 
     env:
       INSTALLER_SOURCE_REPOSITORY: Dwemer-Dynamics/DwemerDistro-Installer
-      INSTALLER_SOURCE_COMMIT: aebe166151d08c3374da197da5488ec06ce61c21
-      EXPECTED_CORE_COMMIT: e1550b7e4631235f5e5496fe855633e8ac54edec
+      INSTALLER_SOURCE_COMMIT: 121670404529a14a353172e4abd525936ffee9a8
+      EXPECTED_CORE_COMMIT: fff92888211a043b54988c2b9cfe5288fbdc488d
       BASE_PAYLOAD_URL: ${{ inputs.payload_url || 'https://github.com/Dwemer-Dynamics/DwemerDistro-Installer/releases/download/v3.3.28/distro-payload-full.tar.gz' }}
       BASE_PAYLOAD_SHA256: ${{ inputs.payload_sha256 || '403b77c8e4a46aba7bdb305be17f6beddb4a3303b1baf5b800145fd43047ca97' }}
       DISTRO_TAR_SHA256: ${{ inputs.distro_tar_sha256 || '63d237ad0871cc544007a3009abd70580956285ec849f25bf1c4acc839639619' }}
