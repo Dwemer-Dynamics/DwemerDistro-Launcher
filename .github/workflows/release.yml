@@ -14,6 +14,18 @@ on:
         description: "Also upload DwemerDistroInstaller.exe (large) as a validation artifact"
         type: boolean
         default: false
+      payload_url:
+        description: "Validation only: HTTPS URL of the reviewed distro payload bundle"
+        type: string
+        required: false
+      payload_sha256:
+        description: "Validation only: SHA-256 of that payload bundle"
+        type: string
+        required: false
+      distro_tar_sha256:
+        description: "Validation only: SHA-256 of the distro tar inside that bundle"
+        type: string
+        required: false
 
 permissions:
   contents: write
@@ -24,10 +36,11 @@ jobs:
 
     env:
       INSTALLER_SOURCE_REPOSITORY: Dwemer-Dynamics/DwemerDistro-Installer
-      INSTALLER_SOURCE_COMMIT: 145c8aec3dd9faf27f94ec3be25daa5c613d4b9b
-      BASE_PAYLOAD_URL: https://github.com/Dwemer-Dynamics/DwemerDistro-Installer/releases/download/v3.3.28/distro-payload-full.tar.gz
-      BASE_PAYLOAD_SHA256: 403b77c8e4a46aba7bdb305be17f6beddb4a3303b1baf5b800145fd43047ca97
-      DISTRO_TAR_SHA256: 63d237ad0871cc544007a3009abd70580956285ec849f25bf1c4acc839639619
+      INSTALLER_SOURCE_COMMIT: aebe166151d08c3374da197da5488ec06ce61c21
+      EXPECTED_CORE_COMMIT: e1550b7e4631235f5e5496fe855633e8ac54edec
+      BASE_PAYLOAD_URL: ${{ inputs.payload_url || 'https://github.com/Dwemer-Dynamics/DwemerDistro-Installer/releases/download/v3.3.28/distro-payload-full.tar.gz' }}
+      BASE_PAYLOAD_SHA256: ${{ inputs.payload_sha256 || '403b77c8e4a46aba7bdb305be17f6beddb4a3303b1baf5b800145fd43047ca97' }}
+      DISTRO_TAR_SHA256: ${{ inputs.distro_tar_sha256 || '63d237ad0871cc544007a3009abd70580956285ec849f25bf1c4acc839639619' }}
 
     steps:
       - name: Checkout
@@ -306,6 +319,14 @@ jobs:
           }
 
           $tarPath = Join-Path $payloadDir 'DwemerAI4Skyrim3.tar'
+          $manifest = Get-Content -Raw -LiteralPath "$tarPath.manifest.json" | ConvertFrom-Json
+          if ($manifest.distro_core.commit -ne $env:EXPECTED_CORE_COMMIT -or
+              $manifest.distro_core.dirty -ne $false -or
+              $manifest.assistant_runtime.api_version -ne 1 -or
+              $manifest.assistant_runtime.probe_passed -ne $true -or
+              $manifest.assistant_runtime.state_empty -ne $true) {
+            throw 'The pinned payload is not this reviewed Assistant Core build. Validate the new payload first, then promote its immutable URL and hashes before tagging a release.'
+          }
           $tarHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tarPath).Hash.ToLowerInvariant()
           if ($tarHash -ne $env:DISTRO_TAR_SHA256) {
             throw "Distro tar SHA-256 mismatch: expected $env:DISTRO_TAR_SHA256, got $tarHash."
