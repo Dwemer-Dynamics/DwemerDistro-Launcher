@@ -41,19 +41,11 @@ does not provision existing distros or refresh the installer image.
 
 ## Publication gate
 
-Installer source and payload releases are private. Configure the Launcher Actions
-secret `INSTALLER_READ_TOKEN` with read-only Contents access to
-`Dwemer-Dynamics/DwemerDistro-Installer`. Do not copy a developer's broad personal
-token into CI. Checkout disables persisted credentials; payload download accepts
-only that repository's fixed release-asset path.
+Release CI has been removed. Build and validate candidates locally using the
+steps above; no Actions secret is required. Retain the exact source commits,
+artifact checksums and validation report with each candidate.
 
-Manual workflow runs build validation artifacts and never publish releases.
-`payload_url`, `payload_sha256` and `distro_tar_sha256` allow a reviewed payload to
-be validated without changing the stable download. The workflow requires its
-manifest to match `EXPECTED_CORE_COMMIT` and the Assistant contract.
-
-Before a production tag, approve and merge the dependency PRs, choose fresh
-Launcher and Core release versions, promote the verified payload's immutable URL
-and both hashes, and revalidate that exact source. The retained older payload
-defaults intentionally fail the new contract until that promotion is complete.
+Publication requires separate approval. Before publishing, review and merge the
+dependency PRs, choose fresh Launcher and Core release versions, rebuild and
+revalidate those exact sources, and manually upload the approved release assets.
 Do not tag or publish the existing-version local candidate.
