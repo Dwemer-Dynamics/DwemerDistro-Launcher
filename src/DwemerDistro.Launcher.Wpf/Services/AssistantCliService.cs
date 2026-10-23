@@ -53,7 +53,7 @@ public interface IAssistantCli
 
     Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken);
 
-    /// <summary>Starts <c>ddistro agent serve</c>: a raw Codex App Server JSONL stream for one task.</summary>
+    /// <summary>Attaches this UI to Core's authenticated Assistant API through its root-local relay.</summary>
     Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken);
 }
 
@@ -292,7 +292,7 @@ public sealed partial class AssistantCliService : IAssistantCli
     public Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken)
     {
         var pidFile = NewPidFile();
-        string[] cli = [AssistantCliCommands.CliPath, "agent", "serve", "--task",
+        string[] cli = ["/usr/local/bin/ddistro_api", "bridge", "--task",
             AssistantCliCommands.IsValidTaskId(taskId) ? taskId : throw new ArgumentException("Invalid assistant task id.", nameof(taskId))];
         cancellationToken.ThrowIfCancellationRequested();
         LauncherLogService.Operation("Assistant session START");
