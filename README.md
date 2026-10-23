@@ -120,19 +120,15 @@ Published output:
 
 ## Release Updates
 
-Push a git tag like `v2.5.3` (it must match the project and `LauncherConstants` version).
+Release CI has been removed. Build and validate candidates locally; see
+[Assistant release preparation](docs/ASSISTANT_RELEASE.md) and
+[Launcher updates](docs/UPDATES.md).
 
-The GitHub Actions workflow in `.github/workflows/release.yml` will:
+After separate release approval, synchronize the release version, publish the
+launcher and updater locally, package the exact output as
+`DwemerDistro-win-x64.zip`, build the installer from that ZIP and the verified
+clean distro payload, and record `SHA256SUMS`. Create the approved tag and upload
+the installer, ZIP and checksums to GitHub Releases manually.
 
-1. run the launcher regression tests
-2. publish the launcher and the updater helper
-3. zip both executables into `DwemerDistro-win-x64.zip` (the launcher update payload, unchanged in format)
-4. build `DwemerDistroInstaller.exe` from that exact ZIP plus the pinned base distro payload (see `docs/UPDATES.md`)
-5. write `SHA256SUMS` for the installer and ZIP
-6. publish a GitHub release containing all three files
-
-Any failed check stops the run before anything is published.
-
-Installed launchers then detect updates from that repo in the bottom `Launcher` section of the app.
-
-To validate a release build from a branch without publishing, run the workflow manually (**Actions > Release Launcher > Run workflow**) with the source version. Manual runs never create a release; they upload `SHA256SUMS` and the ZIP (plus the installer if requested) as short-lived workflow artifacts.
+Installed launchers detect newer releases in the bottom `Launcher` section.
+Local candidates do not create releases or update users automatically.

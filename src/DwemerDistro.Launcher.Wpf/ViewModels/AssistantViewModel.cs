@@ -1075,6 +1075,14 @@ public sealed partial class AssistantViewModel : ObservableObject
                 return;
             }
 
+            var api = Prop(capabilities.Data, "assistant_api");
+            var apiVersion = Prop(api, "version");
+            if (apiVersion.ValueKind != JsonValueKind.Number || !apiVersion.TryGetInt32(out var apiProtocolVersion) || apiProtocolVersion != 1)
+            {
+                SetState(AssistantState.RuntimeAbsent, "Update Distro to connect this version of Assistant, then try again.");
+                return;
+            }
+
             // Deleting a chat is offered only when Core says its broker forwards the task's own thread lifecycle, never by inference.
             CanDeleteChats = Prop(Prop(capabilities.Data, "features"), "thread_lifecycle").ValueKind == JsonValueKind.True;
             _toolRevision = ToolRevisionFor(ReadOfferedTools(capabilities.Data), OffersEnhancedRead(capabilities.Data),
@@ -1098,6 +1106,33 @@ public sealed partial class AssistantViewModel : ObservableObject
             {
                 FailCli(agent);
                 return;
+            }
+            // Imported images and kernel changes invalidate the bound attestation.
+            // New Core can drain idle workers safely; busy work is left untouched.
+            var probeReason = AssistantCliService.GetString(agent.Data, "reason");
+            if (AssistantCliService.GetBool(api, "automatic_probe")
+                && AssistantCliService.GetBool(agent.Data, "installed")
+                && !AssistantCliService.GetBool(agent.Data, "probe_passed")
+                && probeReason is "probe_stale" or "probe_required")
+            {
+                SetState(AssistantState.Checking, "Checking Assistant setup…");
+                var probe = await RunCliAsync(AssistantCliCommands.AgentProbe(), PrepareTimeout, _lifetime.Token);
+                if (!probe.Ok)
+                {
+                    FailCli(probe);
+                    return;
+                }
+                if (!ReadProbe(probe.Data, out var probeDetail))
+                {
+                    SetState(AssistantState.IsolationFailed, "Assistant setup did not pass its isolation check. " + probeDetail);
+                    return;
+                }
+                agent = await RunCliAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, _lifetime.Token);
+                if (!agent.Ok)
+                {
+                    FailCli(agent);
+                    return;
+                }
             }
             var provider = AssistantCliService.GetString(agent.Data, "provider");
             var version = AssistantCliService.GetString(agent.Data, "version");
