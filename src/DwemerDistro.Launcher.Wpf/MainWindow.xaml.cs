@@ -100,6 +100,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Closing ends the assistant session, which stops its live commands; it waits until they end or the user presses Stop.
+        if (_viewModel.IsAssistantLiveCommandRunning)
+        {
+            e.Cancel = true;
+            AssistantNavButton.IsChecked = true;
+            _viewModel.Assistant.ShowCloseBlockedByJobs();
+            _ = Dispatcher.BeginInvoke(AssistantLandmark.RevealStatus, System.Windows.Threading.DispatcherPriority.Loaded);
+            return;
+        }
+
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
         await _viewModel.ShutdownAsync();
     }

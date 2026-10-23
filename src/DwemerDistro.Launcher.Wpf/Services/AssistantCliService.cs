@@ -616,15 +616,21 @@ public sealed partial class AssistantCliService : IAssistantCli
 
         var components = InventoryObject(data, "components");
         if (InventoryString(components, "basis") != "startup_markers") throw BadInventory();
+        var catalog = ProjectInventoryCatalog(data, out var catalogIds);
         var componentItems = new System.Text.Json.Nodes.JsonArray();
         foreach (var component in InventoryArray(components, "items", 32))
-            componentItems.Add(new System.Text.Json.Nodes.JsonObject
+        {
+            var row = new System.Text.Json.Nodes.JsonObject
             {
                 ["id"] = InventoryToken(component, "id"),
                 ["name"] = InventoryString(component, "name"),
                 ["role"] = InventoryToken(component, "role"),
                 ["state"] = InventoryToken(component, "state")
-            });
+            };
+            // Newer Cores key these startup rows by older ids; naming the catalog entry keeps them from being counted twice.
+            if (catalogIds.TryGetValue((string)row["id"]!, out var catalogId)) row["catalog_id"] = catalogId;
+            componentItems.Add(row);
+        }
 
         var mods = InventoryObject(data, "custom_mods");
         var modItems = new System.Text.Json.Nodes.JsonArray();
@@ -651,7 +657,8 @@ public sealed partial class AssistantCliService : IAssistantCli
             && (bool)serverSection["available"]! && (bool)modSection["available"]! && !(bool)modSection["truncated"]!
             && extensionItems.All(item => (string)item!["state"]! is "listed" or "absent" or "product_absent"
                                           && !(bool)item["truncated"]! && (int)item["skipped"]! == 0)
-            && componentItems.All(item => (string)item!["state"]! is "present" or "absent");
+            && componentItems.All(item => (string)item!["state"]! is "present" or "absent")
+            && (bool)catalog["available"]! && catalog["items"]!.AsArray().All(item => (string)item!["installed"]! != "unknown");
 
         return new System.Text.Json.Nodes.JsonObject
         {
@@ -662,9 +669,129 @@ public sealed partial class AssistantCliService : IAssistantCli
             ["servers"] = serverSection,
             ["extensions"] = new System.Text.Json.Nodes.JsonObject { ["items"] = extensionItems, ["no_known_root"] = noKnownRoot },
             ["components"] = new System.Text.Json.Nodes.JsonObject { ["basis"] = "startup_markers", ["items"] = componentItems },
+            ["catalog"] = catalog,
             ["custom_mods"] = modSection
         };
     }
+
+    internal const int MaxCatalogEntries = ComponentCatalog.MaxEntries;
+    private static readonly string[] CatalogInstalledStates = ["present", "absent", "unknown"];
+    private static readonly string[] CatalogStartupStates = ["present", "absent", "unknown", "n/a"];
+    private static readonly string[] CatalogChecks = ["presence", "port", "http"];
+
+    /// <summary>
+    /// Core's component catalog section: every catalog component's identity, installed and startup state, and the checks
+    /// Core's code owns for it. Core's runtime catalog decides which components exist, so an entry this launcher does not
+    /// embed still appears; drift from the embedded copy is reported, never hidden. An older Core without the section, and
+    /// a section that is malformed or over its limits, become an unavailable catalog (never "absent" components) while
+    /// the rest of the inventory is kept. ids maps every id and alias to its catalog id.
+    /// </summary>
+    private static System.Text.Json.Nodes.JsonObject ProjectInventoryCatalog(JsonElement data, out Dictionary<string, string> ids)
+    {
+        ids = new Dictionary<string, string>(StringComparer.Ordinal);
+        var embedded = ComponentCatalog.Embedded;
+        System.Text.Json.Nodes.JsonObject Unavailable(string reason) => new()
+        {
+            ["available"] = false, ["reason"] = reason, ["schema_version"] = null, ["catalog_version"] = "", ["sha256"] = "",
+            ["basis"] = "installed_markers",
+            ["launcher_catalog"] = new System.Text.Json.Nodes.JsonObject { ["catalog_version"] = embedded.CatalogVersion, ["sha256"] = embedded.Sha256 },
+            ["items"] = new System.Text.Json.Nodes.JsonArray()
+        };
+
+        if (!data.TryGetProperty("catalog", out var section)) return Unavailable("core_older");
+        try
+        {
+            if (section.ValueKind != JsonValueKind.Object || InventoryString(section, "basis") != "installed_markers") throw BadInventory();
+            var available = InventoryBool(section, "available");
+            var reason = InventoryString(section, "reason");
+            if (!available)
+            {
+                if (reason.Length == 0 || !InventoryTokenRegex().IsMatch(reason) || InventoryArray(section, "items", 0).Any()) throw BadInventory();
+                return Unavailable(reason);
+            }
+
+            var schema = Prop(section, "schema_version");
+            if (schema.ValueKind != JsonValueKind.Number || schema.GetRawText() != ComponentCatalog.SchemaVersion.ToString())
+                return Unavailable("schema_unsupported");
+            var version = InventoryString(section, "catalog_version");
+            var sha256 = InventoryString(section, "sha256");
+            if (reason.Length > 0 || !CatalogVersionRegex().IsMatch(version) || !Sha256Regex().IsMatch(sha256)) throw BadInventory();
+            if (Prop(section, "items") is { ValueKind: JsonValueKind.Array } raw && raw.GetArrayLength() > MaxCatalogEntries)
+                return Unavailable("over_limit");
+
+            var items = new System.Text.Json.Nodes.JsonArray();
+            var newIds = new System.Text.Json.Nodes.JsonArray();
+            foreach (var item in InventoryArray(section, "items", MaxCatalogEntries))
+            {
+                var id = InventoryString(item, "id");
+                var aliases = new System.Text.Json.Nodes.JsonArray();
+                foreach (var alias in InventoryArray(item, "aliases", ComponentCatalog.MaxAliases).Select(alias =>
+                             alias.ValueKind == JsonValueKind.String ? alias.GetString()! : throw BadInventory()).Prepend(id))
+                {
+                    if (!ComponentCatalog.IsId(alias) || !ids.TryAdd(alias, id)) throw BadInventory();
+                    if (alias != id) aliases.Add(alias);
+                }
+
+                var name = InventoryString(item, "name");
+                var installed = InventoryString(item, "installed");
+                var installedReason = InventoryString(item, "installed_reason");
+                var startup = InventoryString(item, "startup");
+                var startupReason = InventoryString(item, "startup_reason");
+                var checks = InventoryArray(item, "checks", CatalogChecks.Length)
+                    .Select(check => check.ValueKind == JsonValueKind.String ? check.GetString()! : throw BadInventory()).ToArray();
+                if (!ComponentCatalog.IsLabel(name) || !CatalogInstalledStates.Contains(installed) || !CatalogStartupStates.Contains(startup)
+                    || !ReasonMatches(installed, installedReason) || !ReasonMatches(startup, startupReason)
+                    || checks.FirstOrDefault() != "presence" || checks.Distinct().Count() != checks.Length || !checks.All(CatalogChecks.Contains))
+                {
+                    throw BadInventory();
+                }
+
+                if (embedded.Find(id) is null) newIds.Add(id);
+                items.Add(new System.Text.Json.Nodes.JsonObject
+                {
+                    ["id"] = id,
+                    ["aliases"] = aliases,
+                    ["name"] = name,
+                    ["role"] = InventoryToken(item, "role"),
+                    ["listed"] = InventoryBool(item, "listed"),
+                    ["installed"] = installed,
+                    ["installed_reason"] = installedReason,
+                    ["startup"] = startup,
+                    ["startup_reason"] = startupReason,
+                    ["checks"] = new System.Text.Json.Nodes.JsonArray(checks.Select(check => (System.Text.Json.Nodes.JsonNode?)check).ToArray())
+                });
+            }
+
+            if (items.Count == 0) throw BadInventory();
+            return new System.Text.Json.Nodes.JsonObject
+            {
+                ["available"] = true, ["reason"] = "", ["schema_version"] = ComponentCatalog.SchemaVersion, ["catalog_version"] = version,
+                ["sha256"] = sha256, ["basis"] = "installed_markers",
+                // Core's runtime catalog is the authority; the launcher's embedded copy is only compared with it.
+                ["launcher_catalog"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["catalog_version"] = embedded.CatalogVersion, ["sha256"] = embedded.Sha256,
+                    ["same"] = sha256 == embedded.Sha256, ["new_ids"] = newIds
+                },
+                ["items"] = items
+            };
+        }
+        catch (InvalidDataException)
+        {
+            ids.Clear();
+            return Unavailable("launcher_rejected");
+        }
+    }
+
+    // Unknown carries a reason token; every other state has none.
+    private static bool ReasonMatches(string state, string reason) =>
+        state == "unknown" ? reason.Length > 0 && InventoryTokenRegex().IsMatch(reason) : reason.Length == 0;
+
+    [GeneratedRegex(@"^[0-9A-Za-z][0-9A-Za-z._-]{0,31}\z")]
+    private static partial Regex CatalogVersionRegex();
+
+    [GeneratedRegex(@"^[0-9a-f]{64}\z")]
+    private static partial Regex Sha256Regex();
 
     /// <summary>An available flag, a reason token (empty when available) and its items; unavailable sections hold none.</summary>
     private static System.Text.Json.Nodes.JsonObject InventorySection(JsonElement section, System.Text.Json.Nodes.JsonArray items, bool withTruncated = false)

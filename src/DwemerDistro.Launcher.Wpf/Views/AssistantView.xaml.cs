@@ -15,6 +15,8 @@ public partial class AssistantView : UserControl
 {
     // Below this width the task and review column moves under the conversation.
     private const double NarrowWidth = 860;
+    private const double NarrowChatHeight = 380;
+    private const double NarrowChatWithCardHeight = 700;
     private AssistantViewModel? _viewModel;
     private bool? _isNarrow;
     // Below this width the review column is not offered wider.
@@ -39,6 +41,9 @@ public partial class AssistantView : UserControl
     {
         InitializeComponent();
         DataContextChanged += AssistantView_DataContextChanged;
+        // Ctrl+V in the composer attaches a copied screenshot or copied files; text pastes as usual.
+        CommandManager.AddPreviewCanExecuteHandler(InputBox, InputBox_PreviewCanPaste);
+        CommandManager.AddPreviewExecutedHandler(InputBox, InputBox_PreviewPaste);
     }
 
     private AssistantViewModel? ViewModel => _viewModel;
@@ -78,10 +83,15 @@ public partial class AssistantView : UserControl
             _isNarrow = null;
             ApplyLayout(ActualWidth);
         }
-        else if (e.PropertyName == nameof(AssistantViewModel.HasFileRequest) && _viewModel?.HasFileRequest == true)
+        else if (e.PropertyName == nameof(AssistantViewModel.IsActionProposed))
         {
-            AccessCard.BringIntoView();
-            RaiseLiveRegion(AccessCard);
+            // The card sits above the composer; it is announced and given room, but never focused, so typing elsewhere is not interrupted.
+            // A transcript followed to its end stays there once the card takes its space.
+            var follow = IsFollowingTranscript();
+            _isNarrow = null;
+            ApplyLayout(ActualWidth);
+            if (follow) Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () => TranscriptBox.ScrollToEnd());
+            if (_viewModel?.IsActionProposed == true) RaiseLiveRegion(RestartProposalTitle);
         }
     }
 
@@ -138,6 +148,21 @@ public partial class AssistantView : UserControl
             block.Margin = new Thickness(0, 0, 0, 6);
             block.Blocks.Add(line);
             _transcriptRuns[item] = new TranscriptEntry(block, activity);
+            return block;
+        }
+
+        if (item.Role is AssistantViewModel.OutputRole or AssistantViewModel.CommandRole)
+        {
+            // A live command's code or redacted output: monospace, selectable with the rest, and output is appended in place as it streams.
+            var label = new Run(item.Role) { FontWeight = FontWeights.SemiBold, FontSize = 11 };
+            label.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
+            block.Blocks.Add(new Paragraph(label) { Margin = new Thickness(0) });
+            var output = new Run(item.Text);
+            block.Blocks.Add(new Paragraph(output)
+            {
+                Margin = new Thickness(0, 2, 0, 0), FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 12
+            });
+            _transcriptRuns[item] = new TranscriptEntry(block, output);
             return block;
         }
 
@@ -311,10 +336,82 @@ public partial class AssistantView : UserControl
         }
     }
 
+    // --- Attachments: the clipboard and files are read only on the user's own paste, drop or Attach. ---
+
+    private static bool ClipboardHasAttachment()
+    {
+        try
+        {
+            return System.Windows.Clipboard.ContainsFileDropList() || System.Windows.Clipboard.ContainsImage() && !System.Windows.Clipboard.ContainsText();
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            return false;
+        }
+    }
+
+    private void InputBox_PreviewCanPaste(object sender, CanExecuteRoutedEventArgs e)
+    {
+        if (e.Command != ApplicationCommands.Paste || !ClipboardHasAttachment()) return;
+        e.CanExecute = true;
+        e.Handled = true;
+    }
+
+    private void InputBox_PreviewPaste(object sender, ExecutedRoutedEventArgs e)
+    {
+        if (e.Command != ApplicationCommands.Paste || ViewModel is not { } viewModel || !ClipboardHasAttachment()) return;
+        e.Handled = true;
+        try
+        {
+            if (System.Windows.Clipboard.ContainsFileDropList())
+                viewModel.AttachFiles(System.Windows.Clipboard.GetFileDropList().Cast<string>().ToList());
+            else if (System.Windows.Clipboard.GetImage() is { } image)
+                viewModel.AttachImage(image);
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            // The clipboard was busy; the user can paste again.
+        }
+    }
+
+    private void InputBox_PreviewDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop)) return;
+        e.Effects = System.Windows.DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    private void InputBox_PreviewDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (ViewModel is not { } viewModel || e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] files) return;
+        e.Handled = true;
+        viewModel.AttachFiles(files);
+        InputBox.Focus();
+    }
+
+    private void AttachButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } viewModel) return;
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Attach to the next message",
+            Multiselect = true,
+            Filter = "Screenshots and text files|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.txt;*.log;*.md;*.json;*.yaml;*.yml;*.toml;*.ini;*.cfg;*.conf;*.xml;*.csv;*.py;*.php;*.js;*.cs;*.sh;*.ps1;*.sql;*.lua;*.psc|All files|*.*"
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true) viewModel.AttachFiles(dialog.FileNames);
+        InputBox.Focus();
+    }
+
+    private void RemoveAttachment_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } viewModel && (sender as FrameworkElement)?.DataContext is AssistantAttachment attachment) viewModel.RemoveAttachment(attachment);
+        InputBox.Focus();
+    }
+
     // Keys only reach this handler while focus is inside the Assistant page; Esc anywhere on it stops a response.
     private void AssistantView_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key != Key.Escape || ViewModel is not { State: AssistantState.Streaming } viewModel)
+        if (e.Key != Key.Escape || ViewModel is not { } viewModel || !viewModel.StopCommand.CanExecute(null))
         {
             return;
         }
@@ -372,7 +469,8 @@ public partial class AssistantView : UserControl
         SidePanel.Margin = narrow ? new Thickness(0, 10, 0, 0) : new Thickness(10, 0, 0, 0);
         SidePanel.VerticalScrollBarVisibility = narrow ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         ChatRow.Height = narrow ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
-        ChatCard.Height = narrow ? 380 : double.NaN;
+        // A proposal card sits inside the conversation card, so in one column the card grows instead of squeezing the transcript.
+        ChatCard.Height = narrow ? (_viewModel?.IsActionProposed == true ? NarrowChatWithCardHeight : NarrowChatHeight) : double.NaN;
         SessionActions.HorizontalAlignment = narrow ? System.Windows.HorizontalAlignment.Left : System.Windows.HorizontalAlignment.Right;
         Grid.SetColumn(SessionActions, narrow ? 0 : 1);
         Grid.SetColumnSpan(SessionActions, narrow ? 2 : 1);
