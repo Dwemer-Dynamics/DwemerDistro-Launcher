@@ -1075,6 +1075,14 @@ public sealed partial class AssistantViewModel : ObservableObject
                 return;
             }
 
+            var api = Prop(capabilities.Data, "assistant_api");
+            var apiVersion = Prop(api, "version");
+            if (apiVersion.ValueKind != JsonValueKind.Number || !apiVersion.TryGetInt32(out var apiProtocolVersion) || apiProtocolVersion != 1)
+            {
+                SetState(AssistantState.RuntimeAbsent, "Update Distro to connect this version of Assistant, then try again.");
+                return;
+            }
+
             // Deleting a chat is offered only when Core says its broker forwards the task's own thread lifecycle, never by inference.
             CanDeleteChats = Prop(Prop(capabilities.Data, "features"), "thread_lifecycle").ValueKind == JsonValueKind.True;
             _toolRevision = ToolRevisionFor(ReadOfferedTools(capabilities.Data), OffersEnhancedRead(capabilities.Data),

@@ -2663,7 +2663,7 @@ try
         var install = Guid.NewGuid().ToString();
         string Ok(string data) => "{\"schema_version\":1,\"ok\":true,\"data\":" + data + "}";
         string Fail(string code, string message) => "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"" + code + "\",\"message\":\"" + message + "\"}}";
-        var lifecycleCaps = Ok("{\"features\":{\"agent\":true,\"thread_lifecycle\":true}}");
+        var lifecycleCaps = Ok("{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true,\"thread_lifecycle\":true}}");
         AssistantTaskReference Ref(string task, string? thread) => new(AssistantTaskReference.CurrentVersion, install, LauncherConstants.DistroName, "codex", "herika", task, thread);
         var resumed = new System.Text.Json.Nodes.JsonArray(System.Text.Json.Nodes.JsonNode.Parse(
             "{\"id\":\"turn-0\",\"itemsView\":\"full\",\"items\":[{\"type\":\"userMessage\",\"id\":\"u0\",\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]},"
@@ -2684,7 +2684,7 @@ try
             var catalog = new AssistantCatalogStore(Path.Combine(actionsRoot, "no-lifecycle"));
             var store = new AssistantStateStore(Path.Combine(actionsRoot, "no-lifecycle"));
             var (vm, _, _, _) = await ConnectAssistantAsync(store, Ref("task-nolc", "thr-nolc"), install, "task-nolc", catalog: catalog,
-                script: command => command == "capabilities" ? Ok("{\"features\":{\"agent\":true,\"memory\":true}}") : null);
+                script: command => command == "capabilities" ? Ok("{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true,\"memory\":true}}") : null);
             vm.OpenHistory();
             vm.SelectedHistory = vm.HistoryItems.Single(item => item.IsCurrent);
             Assert(vm.State == AssistantState.Ready && !vm.CanDeleteChats && !vm.DeleteChatCommand.CanExecute(null) && vm.DeleteHint.Length == 0,
@@ -2979,7 +2979,7 @@ try
                 retrieval = learning = true;
                 return Ok("{\"settings\":" + Settings() + "}");
             }
-            var memoryCaps = Ok("{\"features\":{\"agent\":true,\"assistant_tools\":true,\"memory\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false},"
+            var memoryCaps = Ok("{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true,\"assistant_tools\":true,\"memory\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false},"
                 + "{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}]}}");
             const string configure = "memory configure --retrieval on --auto-learning on";
             var (vm, cli, chatTransport, _) = await ConnectAssistantAsync(store, Ref("task-mem", null), install, "task-mem",
@@ -3452,6 +3452,12 @@ try
 
         foreach (var (name, script, expected) in new (string, Func<string, string?>, AssistantState)[]
                  {
+                     ("Core without an API", command => command == "capabilities"
+                         ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true}}}" : null,
+                         AssistantState.RuntimeAbsent),
+                     ("incompatible Core API", command => command == "capabilities"
+                         ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":2},\"features\":{\"agent\":true}}}" : null,
+                         AssistantState.RuntimeAbsent),
                      ("missing runtime", command => command == "agent status"
                          ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"installed\":false,\"probe_passed\":false,\"provider\":\"codex\",\"reason\":\"not_installed\"}}" : null,
                          AssistantState.RuntimeAbsent),
@@ -3908,7 +3914,7 @@ try
 
     // Core's typed read tool: opted into only when capabilities offer it, never declared by the launcher, and an old thread
     // moves once to a new thread of the same task with a bounded summary, keeping the old thread's id.
-    const string ToolCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true,\"assistant_tools\":true},"
+    const string ToolCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true,\"assistant_tools\":true},"
         + "\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false}]}}}";
     Assert(AssistantViewModel.ReadOfferedTools(System.Text.Json.JsonDocument.Parse("{\"features\":{\"assistant_tools\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":true}]}}").RootElement).Count == 0
            && AssistantViewModel.ReadOfferedTools(System.Text.Json.JsonDocument.Parse("{\"features\":{\"assistant_tools\":false},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false}]}}").RootElement).Count == 0
@@ -4170,7 +4176,7 @@ try
 
         // The approval card through the view model: the host's live-change slot is held from Approve until the broker's update
         // for that proposal or the session's end, and ended exactly once; a busy host cancels instead, so nothing runs.
-        const string ActionCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true,\"assistant_tools\":true,"
+        const string ActionCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true,\"assistant_tools\":true,"
             + "\"assistant_actions\":true}," + EnhancedTools + ActionTool + EnhancedCoverage + "}}";
         System.Text.Json.Nodes.JsonNode? decideAnswer = null;
         var action = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-act", ThreadToolRevision = 5 }, toolInstallation, oldThread.TaskId,
@@ -4342,7 +4348,7 @@ try
 
         // Through the view model on a revision 9 thread: initialize opts into configure_model, the card shows the exact diff and
         // Apply change or Undo change, approval holds the live-change slot until the proposal's own update, and a restart still works.
-        const string ModelCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + ModelFeatures + "},"
+        const string ModelCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true," + ModelFeatures + "},"
             + ModelRead + ModelAction + EnhancedCoverage + "}}";
         System.Text.Json.Nodes.JsonNode? modelAnswer = null;
         var model = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-model", ThreadToolRevision = 9 }, toolInstallation, oldThread.TaskId,
@@ -4490,7 +4496,7 @@ try
 
         // Through the view model: a revision 9 thread on a foundation Core opts in at initialize, moves once to a revision 11 thread,
         // and shows each new card kind with the existing Approve/Cancel and live-change hold.
-        const string FoundationCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + FoundationFeatures + "},"
+        const string FoundationCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true," + FoundationFeatures + "},"
             + ModelRead + ModelAction + FoundationTools + EnhancedCoverage + "}}";
         System.Text.Json.Nodes.JsonNode? foundationAnswer = null;
         var foundation = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-found", ThreadToolRevision = 9 }, toolInstallation, oldThread.TaskId,
@@ -4628,7 +4634,7 @@ try
 
         // Through the view model: a foundation thread on a live Core opts into live_run, moves once to a revision 13 thread, and the run
         // card sends exactly its digest; Allow for this task shows a grant line with Revoke; output streams in place; Stop cancels the job.
-        const string LiveCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + LiveFeatures + "},"
+        const string LiveCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true," + LiveFeatures + "},"
             + ModelRead + ModelAction + LiveTools + EnhancedCoverage + "}}";
         System.Text.Json.Nodes.JsonNode? liveAnswer = null;
         var live = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-live11", ThreadToolRevision = 11 }, toolInstallation, oldThread.TaskId,
@@ -4767,7 +4773,7 @@ try
                && AssistantViewModel.InstructionsFor(16).Contains(AssistantViewModel.MemoryInstructions)
                && AssistantViewModel.BuildToolTurnContext(15, null).Contains(AssistantViewModel.AutoScopeReminder) && AssistantViewModel.BuildToolTurnContext(13, null).Contains(AssistantViewModel.LiveScopeReminder),
             "Only Core's exact automatic offer is 15/16 with the automatic rules; 13/14 keep approving every run.");
-        System.Text.Json.JsonElement LiveDoc(string extra) => System.Text.Json.JsonDocument.Parse("{\"features\":{\"agent\":true," + LiveFeatures + "},"
+        System.Text.Json.JsonElement LiveDoc(string extra) => System.Text.Json.JsonDocument.Parse("{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true," + LiveFeatures + "},"
             + ModelRead + ModelAction + LiveTools + EnhancedCoverage + extra + "}").RootElement;
         string RiskChange(string risk, string signs = "[]") => LiveChange().Replace("\"widens_grant\":false}", "\"widens_grant\":false,\"risk\":" + risk + ",\"risk_signs\":" + signs + "}");
         Assert(AssistantViewModel.ReadActionProposal(ProposalJson("live_run", RiskChange("\"destructive\"")), P('e'), "t", 15) is { Run: { Destructive: true, CanAllowForTask: false } }
@@ -4777,7 +4783,7 @@ try
                && AssistantViewModel.ReadActionProposal(ProposalJson("live_run", LiveChange()), P('e'), "t", 13) is { Run: { Destructive: false } },
             "A destructive, flagged or unknown risk is confirm-once even when decisions offer approve_session; unclassified and older cards keep their behavior.");
 
-        const string AutoCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + LiveFeatures + "},"
+        const string AutoCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true," + LiveFeatures + "},"
             + ModelRead + ModelAction + LiveTools + EnhancedCoverage + AutoFacts + "}}";
         var auto = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-live13", ThreadToolRevision = 13 }, toolInstallation, oldThread.TaskId,
             script: command => command == "capabilities" ? AutoCapabilities : null,
@@ -4908,7 +4914,7 @@ try
                && AssistantViewModel.DescribeRecovery(droppedOnly).StartsWith("An unfinished command was dropped from the record"),
             "Core's dropped_incomplete is task-wide, so merging thread views counts it once, not once per thread.");
 
-        const string RecoveryCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true," + LiveFeatures + "},"
+        const string RecoveryCapabilities = "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true," + LiveFeatures + "},"
             + ModelRead + ModelAction + LiveTools + EnhancedCoverage + "@FACTS@}}";
         string? recoveryAnswer = Recovery(RecoveryJob("run_00000000000000c1", "interrupted"), Claim);
         var recovering = await ConnectAssistantAsync(toolStore, oldThread with { ThreadId = "thr-live15", ThreadToolRevision = 15 }, toolInstallation, oldThread.TaskId,
@@ -5002,7 +5008,7 @@ try
         var serviceFacts = recoveryFacts.Replace(RecoveryShape, RecoveryShape + "," + ServiceShape);
         const string ServiceRunTool = "{\"name\":\"ddistro_run\",\"mutates\":true,\"capability_operations\":{\"live_service\":[\"service\"]}}";
         var serviceTools = LiveTools.Replace("{\"name\":\"ddistro_run\",\"mutates\":true}", ServiceRunTool);
-        System.Text.Json.JsonElement ServiceDoc(string facts, string tools) => System.Text.Json.JsonDocument.Parse("{\"features\":{\"agent\":true," + LiveFeatures + "},"
+        System.Text.Json.JsonElement ServiceDoc(string facts, string tools) => System.Text.Json.JsonDocument.Parse("{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true," + LiveFeatures + "},"
             + ModelRead + ModelAction + tools + EnhancedCoverage + facts + "}").RootElement;
         int ServiceRevision(System.Text.Json.JsonElement caps) => AssistantViewModel.ToolRevisionFor(AssistantViewModel.ReadOfferedTools(caps),
             AssistantViewModel.OffersEnhancedRead(caps), AssistantViewModel.OffersPerformanceRead(caps), AssistantViewModel.OffersModelSettings(caps),
@@ -5077,7 +5083,7 @@ try
         var memoryThread = oldThread with { ThreadId = "thr-mem2", ThreadToolRevision = 2 };
         var enhanced = await ConnectAssistantAsync(toolStore, memoryThread, toolInstallation, oldThread.TaskId, script: command => command switch
         {
-            "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true,\"assistant_tools\":true,\"memory\":true}," + EnhancedTools
+            "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true,\"assistant_tools\":true,\"memory\":true}," + EnhancedTools
                 + ",{\"name\":\"ddistro_memory\",\"mutates\":true,\"operations\":[\"search\",\"remember\"]}" + EnhancedCoverage + "}}",
             "memory status" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"present\":true,\"settings\":{\"retrieval\":true,\"auto_learning\":true},\"notes\":0}}",
             _ => null
@@ -5624,7 +5630,7 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
         if (command == "capabilities" && CapabilitiesGate is { } capabilitiesGate) await capabilitiesGate.Task.WaitAsync(cancellationToken);
         var document = Script?.Invoke(command) ?? command switch
         {
-            "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true}}}",
+            "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true}}}",
             "agent status" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"installed\":true,\"probe_passed\":true,\"provider\":\"codex\"}}",
             _ when command.StartsWith("changes status") && statusTask is not null =>
                 $"{{\"schema_version\":1,\"ok\":true,\"data\":{{\"task_id\":\"{statusTask}\",\"product\":\"herika\",\"state\":\"working\"}}}}",
