@@ -173,12 +173,23 @@ jobs:
           [IO.File]::WriteAllText((Join-Path $releaseDir 'SHA256SUMS'), "$hash  $name`n")
           Get-Content -LiteralPath (Join-Path $releaseDir 'SHA256SUMS')
 
+      - name: Verify private installer access
+        if: github.event_name == 'push' || inputs.include_installer
+        shell: pwsh
+        env:
+          INSTALLER_READ_TOKEN: ${{ secrets.INSTALLER_READ_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:INSTALLER_READ_TOKEN)) {
+            throw 'Installer packaging requires INSTALLER_READ_TOKEN with read-only Contents access to Dwemer-Dynamics/DwemerDistro-Installer. Configure it in Launcher Actions secrets before release.'
+          }
+
       - name: Checkout installer source
         if: github.event_name == 'push' || inputs.include_installer
         uses: actions/checkout@v4
         with:
           repository: ${{ env.INSTALLER_SOURCE_REPOSITORY }}
           ref: ${{ env.INSTALLER_SOURCE_COMMIT }}
+          token: ${{ secrets.INSTALLER_READ_TOKEN }}
           path: artifacts/installer-source
           persist-credentials: false
 
@@ -220,6 +231,8 @@ jobs:
         id: payload
         if: github.event_name == 'push' || inputs.include_installer
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.INSTALLER_READ_TOKEN }}
         run: |
           $expected = ([string]$env:BASE_PAYLOAD_SHA256).ToLowerInvariant()
           if ($expected -notmatch '^[0-9a-f]{64}$') {
@@ -227,7 +240,15 @@ jobs:
           }
 
           $archive = Join-Path $env:RUNNER_TEMP 'distro-payload.tar.gz'
-          & curl.exe --fail --location --silent --show-error --retry 3 --output $archive $env:BASE_PAYLOAD_URL
+          # Authenticate only to the fixed private repository, never a supplied host.
+          $payloadUri = [uri]$env:BASE_PAYLOAD_URL
+          if ($payloadUri.Scheme -ne 'https' -or $payloadUri.Host -ne 'github.com' -or
+              $payloadUri.Query -or $payloadUri.UserInfo -or
+              $payloadUri.AbsolutePath -notmatch '^/Dwemer-Dynamics/DwemerDistro-Installer/releases/download/([A-Za-z0-9._-]+)/distro-payload-full\.tar\.gz$') {
+            throw 'Payload URL must name distro-payload-full.tar.gz in a Dwemer-Dynamics/DwemerDistro-Installer GitHub release.'
+          }
+          $payloadTag = $Matches[1]
+          & gh release download $payloadTag --repo $env:INSTALLER_SOURCE_REPOSITORY --pattern distro-payload-full.tar.gz --output $archive --clobber
           if ($LASTEXITCODE -ne 0) {
             throw "Base payload download failed: $env:BASE_PAYLOAD_URL"
           }

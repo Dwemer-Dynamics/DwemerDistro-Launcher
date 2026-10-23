@@ -41,6 +41,12 @@ does not provision existing distros or refresh the installer image.
 
 ## Publication gate
 
+Installer source and payload releases are private. Configure the Launcher Actions
+secret `INSTALLER_READ_TOKEN` with read-only Contents access to
+`Dwemer-Dynamics/DwemerDistro-Installer`. Do not copy a developer's broad personal
+token into CI. Checkout disables persisted credentials; payload download accepts
+only that repository's fixed release-asset path.
+
 Manual workflow runs build validation artifacts and never publish releases.
 `payload_url`, `payload_sha256` and `distro_tar_sha256` allow a reviewed payload to
 be validated without changing the stable download. The workflow requires its
