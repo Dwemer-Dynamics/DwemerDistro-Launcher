@@ -319,10 +319,13 @@ public sealed partial class AssistantCliService : IAssistantCli
             for (FileSystemInfo? entry = new FileInfo(path); entry is not null;
                  entry = entry is FileInfo file ? file.Directory : ((DirectoryInfo)entry).Parent)
                 if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) return;
-            using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             if (source.Length is <= 0 or > 65536) return;
             using var reader = new StreamReader(source, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
-            var text = await reader.ReadToEndAsync(timeout.Token).ConfigureAwait(false);
+            var buffer = new char[65537];
+            var count = await reader.ReadBlockAsync(buffer.AsMemory(), timeout.Token).ConfigureAwait(false);
+            if (count is <= 0 or > 65536) return;
+            var text = new string(buffer, 0, count);
             using var document = JsonDocument.Parse(text);
             if (!IsReusableCodexAuth(document.RootElement)) return;
             // Credentials travel only through stdin. Do not log input, output, paths, or exception messages.
