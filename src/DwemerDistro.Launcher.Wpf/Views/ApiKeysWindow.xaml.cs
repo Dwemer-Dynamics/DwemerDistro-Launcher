@@ -41,7 +41,8 @@ public partial class ApiKeysWindow : Window
             var targets = new List<ApiKeyTarget> { new("", "Shared default", true, "", []) };
             targets.AddRange(result.Targets ?? []);
             Target.ItemsSource = targets;
-            Provider.SelectedItem = result.Providers?.FirstOrDefault(p => p.Id == provider) ?? result.Providers?.FirstOrDefault();
+            Provider.SelectedItem = result.Providers?.FirstOrDefault(p => p.Id == provider)
+                ?? result.Providers?.FirstOrDefault(p => p.Id == "openrouter") ?? result.Providers?.FirstOrDefault();
             Target.SelectedItem = targets.FirstOrDefault(t => t.Id == target) ?? targets[0];
             Status.Text = "Ready. Shared defaults apply to empty keys and mods already using a shared key.";
         }

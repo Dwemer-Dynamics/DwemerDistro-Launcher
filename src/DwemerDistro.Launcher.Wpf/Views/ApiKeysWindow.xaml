@@ -5,6 +5,7 @@
         Background="#202020" Foreground="White" WindowStartupLocation="CenterOwner"
         Loaded="Window_Loaded" Closing="Window_Closing">
     <Window.Resources>
+        <DataTemplate x:Key="ApiKeys.PickerLabel"><TextBlock Text="{Binding Label}" Foreground="Black"/></DataTemplate>
         <Style TargetType="TextBlock"><Setter Property="Foreground" Value="White"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
         <Style TargetType="Button" BasedOn="{StaticResource GameCenter.Button}"><Setter Property="Padding" Value="12,7"/><Setter Property="Margin" Value="0,0,8,8"/></Style>
         <Style TargetType="ComboBox"><Setter Property="Foreground" Value="Black"/><Setter Property="Background" Value="White"/><Setter Property="MinHeight" Value="32"/><Setter Property="Margin" Value="0,4,0,12"/></Style>
@@ -16,9 +17,9 @@
                        Text="Save provider keys once for compatible mods. Existing mod keys stay separate until you choose Use shared key. Saved keys are never displayed."/>
             <StackPanel x:Name="Editor">
                 <Label Content="_Provider" Target="{Binding ElementName=Provider}" Foreground="White" Padding="0"/>
-                <ComboBox x:Name="Provider" DisplayMemberPath="Label" SelectionChanged="Selection_Changed" AutomationProperties.Name="Provider"/>
+                <ComboBox x:Name="Provider" ItemTemplate="{StaticResource ApiKeys.PickerLabel}" SelectionChanged="Selection_Changed" AutomationProperties.Name="Provider"/>
                 <Label Content="_Applies to" Target="{Binding ElementName=Target}" Foreground="White" Padding="0"/>
-                <ComboBox x:Name="Target" DisplayMemberPath="Label" SelectionChanged="Selection_Changed" AutomationProperties.Name="Shared default or mod"/>
+                <ComboBox x:Name="Target" ItemTemplate="{StaticResource ApiKeys.PickerLabel}" SelectionChanged="Selection_Changed" AutomationProperties.Name="Shared default or mod"/>
                 <TextBlock x:Name="CurrentStatus" Margin="0,0,0,12" Foreground="#FFCA55"/>
                 <Label Content="_New key" Target="{Binding ElementName=NewKey}" Foreground="White" Padding="0"/>
                 <PasswordBox x:Name="NewKey" MaxLength="4096" MinHeight="32" Margin="0,4,0,12" Background="#303030" Foreground="White" CaretBrush="White"
