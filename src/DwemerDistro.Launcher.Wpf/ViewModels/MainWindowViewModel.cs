@@ -314,6 +314,7 @@ echo "CHIM-MCP installed and enabled."
         DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
         CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanStartExclusiveDistroOperation);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
+        OpenApiKeysCommand = new RelayCommand(OpenApiKeysWindow, CanAccessDistro);
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
         CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
         GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
@@ -852,6 +853,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand DistroDoctorCommand { get; }
     public AsyncRelayCommand CompactDistroCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
+    public RelayCommand OpenApiKeysCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
     public AsyncRelayCommand CleanLogsCommand { get; }
     public AsyncRelayCommand GenerateDiagnosticsCommand { get; }
@@ -2084,6 +2086,7 @@ echo "CHIM-MCP installed and enabled."
         ViewApacheLogsCommand?.RaiseCanExecuteChanged();
         DistroDoctorCommand?.RaiseCanExecuteChanged();
         OpenCudaConfigCommand?.RaiseCanExecuteChanged();
+        OpenApiKeysCommand?.RaiseCanExecuteChanged();
         UpdateLauncherCommand?.RaiseCanExecuteChanged();
         CleanLogsCommand?.RaiseCanExecuteChanged();
         GenerateDiagnosticsCommand?.RaiseCanExecuteChanged();
@@ -5665,6 +5668,17 @@ fi
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
+    }
+
+    private void OpenApiKeysWindow()
+    {
+        if (!TryBeginPassiveDistroActivity()) return;
+        try
+        {
+            var window = new ApiKeysWindow(new ApiKeysService(_wsl)) { Owner = Application.Current.MainWindow };
+            window.ShowDialog();
+        }
+        finally { EndPassiveDistroActivity(); }
     }
 
     private async Task OpenCudaConfigWindowAsync()

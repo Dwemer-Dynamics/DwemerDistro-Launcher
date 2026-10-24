@@ -1,0 +1,42 @@
+<Window x:Class="DwemerDistro.Launcher.Wpf.Views.ApiKeysWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="API Keys" Width="680" Height="550" MinWidth="440" MinHeight="440"
+        Background="#202020" Foreground="White" WindowStartupLocation="CenterOwner"
+        Loaded="Window_Loaded" Closing="Window_Closing">
+    <Window.Resources>
+        <Style TargetType="TextBlock"><Setter Property="Foreground" Value="White"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
+        <Style TargetType="Button" BasedOn="{StaticResource GameCenter.Button}"><Setter Property="Padding" Value="12,7"/><Setter Property="Margin" Value="0,0,8,8"/></Style>
+        <Style TargetType="ComboBox"><Setter Property="Foreground" Value="Black"/><Setter Property="Background" Value="White"/><Setter Property="MinHeight" Value="32"/><Setter Property="Margin" Value="0,4,0,12"/></Style>
+    </Window.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="20">
+            <TextBlock Text="API Keys" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock Margin="0,6,0,16" Foreground="#C8C8C8"
+                       Text="Save provider keys once for compatible mods. Existing mod keys stay separate until you choose Use shared key. Saved keys are never displayed."/>
+            <StackPanel x:Name="Editor">
+                <Label Content="_Provider" Target="{Binding ElementName=Provider}" Foreground="White" Padding="0"/>
+                <ComboBox x:Name="Provider" DisplayMemberPath="Label" SelectionChanged="Selection_Changed" AutomationProperties.Name="Provider"/>
+                <Label Content="_Applies to" Target="{Binding ElementName=Target}" Foreground="White" Padding="0"/>
+                <ComboBox x:Name="Target" DisplayMemberPath="Label" SelectionChanged="Selection_Changed" AutomationProperties.Name="Shared default or mod"/>
+                <TextBlock x:Name="CurrentStatus" Margin="0,0,0,12" Foreground="#FFCA55"/>
+                <Label Content="_New key" Target="{Binding ElementName=NewKey}" Foreground="White" Padding="0"/>
+                <PasswordBox x:Name="NewKey" MaxLength="4096" MinHeight="32" Margin="0,4,0,12" Background="#303030" Foreground="White" CaretBrush="White"
+                             PasswordChanged="Key_Changed" AutomationProperties.Name="New API key"/>
+                <WrapPanel>
+                    <Button x:Name="SaveKey" Content="Save key" Click="Save_Click"/>
+                    <Button x:Name="UseShared" Content="Use shared key" Click="UseShared_Click"/>
+                    <Button x:Name="RemoveShared" Content="Remove shared key" Click="Remove_Click"/>
+                </WrapPanel>
+            </StackPanel>
+            <Border x:Name="Confirmation" Visibility="Collapsed" BorderBrush="#FFCA55" BorderThickness="1" Padding="12" Margin="0,4,0,12">
+                <StackPanel>
+                    <TextBlock x:Name="ConfirmationText" Margin="0,0,0,10"/>
+                    <WrapPanel><Button Content="Yes, continue" Click="Confirm_Click"/><Button Content="Cancel" Click="Cancel_Click"/></WrapPanel>
+                </StackPanel>
+            </Border>
+            <TextBlock x:Name="Status" Margin="0,4,0,12" AutomationProperties.LiveSetting="Polite"/>
+            <WrapPanel><Button x:Name="Refresh" Content="Refresh" Click="Refresh_Click"/><Button Content="Close" Click="Close_Click"/></WrapPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Window>

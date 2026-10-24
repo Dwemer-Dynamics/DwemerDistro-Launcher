@@ -1207,6 +1207,18 @@
                             </Grid>
                         </Border>
 
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="API Keys" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Manage shared provider keys and per-mod overrides. Saved keys stay hidden."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Manage" Command="{Binding OpenApiKeysCommand}"
+                                        Style="{StaticResource GameCenter.SettingRowButton}" AutomationProperties.Name="Manage API keys" />
+                            </Grid>
+                        </Border>
                         <TextBlock Text="DIAGNOSTICS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
                         <Border Style="{StaticResource GameCenter.SettingRow}">
                             <Grid>
