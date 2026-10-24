@@ -14,6 +14,17 @@ Directory.CreateDirectory(logDirectory);
 
 try
 {
+    // Credential eligibility is local-only: absent, expired, malformed and API-key caches retain normal sign-in.
+    using (var validAuth = System.Text.Json.JsonDocument.Parse("""
+        {"tokens":{"access_token":"h.eyJleHAiOjQxMDI0NDQ4MDB9.s","refresh_token":"refresh","id_token":"id","account_id":"account"}}
+        """))
+        Assert(AssistantCliService.IsReusableCodexAuth(validAuth.RootElement), "Unexpired ChatGPT cache can be reused.");
+    foreach (var auth in new[] { "{}", "null", "{\"OPENAI_API_KEY\":\"key\"}",
+        "{\"tokens\":{\"access_token\":\"h.eyJleHAiOjF9.s\",\"refresh_token\":\"r\",\"id_token\":\"i\",\"account_id\":\"a\"}}" })
+    {
+        using var invalidAuth = System.Text.Json.JsonDocument.Parse(auth);
+        Assert(!AssistantCliService.IsReusableCodexAuth(invalidAuth.RootElement), "Unusable auth must retain normal sign-in.");
+    }
     var collection = new DiagnosticEvidenceService.CollectionSummary();
     var serverEvidence = new List<string>();
     DiagnosticEvidenceService.AppendServerLog(serverEvidence, collection, "server", "123 1700000000\nold\n[error] historical game failure\nlatest\n", false, 2);

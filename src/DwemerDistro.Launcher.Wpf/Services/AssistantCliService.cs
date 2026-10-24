@@ -289,8 +289,10 @@ public sealed partial class AssistantCliService : IAssistantCli
         return parsed;
     }
 
-    public Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken)
+    public async Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken)
     {
+        if (!AssistantCliCommands.IsValidTaskId(taskId)) throw new ArgumentException("Invalid assistant task id.", nameof(taskId));
+        await TryReuseCodexSignInAsync(cancellationToken).ConfigureAwait(false);
         var pidFile = NewPidFile();
         string[] cli = ["/usr/local/bin/ddistro_api", "bridge", "--task",
             AssistantCliCommands.IsValidTaskId(taskId) ? taskId : throw new ArgumentException("Invalid assistant task id.", nameof(taskId))];
@@ -299,7 +301,60 @@ public sealed partial class AssistantCliService : IAssistantCli
         var process = _processRunner.StartHiddenDuplexProcess("wsl.exe", ExecArguments("root", BuildSupervisor(pidFile, cli)));
         var transport = new SupervisedTransport(process, _processRunner, () => StopGroupAsync(pidFile, true));
         transport.StartStderrDrain();
-        return Task.FromResult<IAssistantTransport>(transport);
+        return transport;
+    }
+
+    // Seed only an empty distro account before its server starts. Older Core simply keeps normal sign-in.
+    private async Task TryReuseCodexSignInAsync(CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        try
+        {
+            var home = Environment.GetEnvironmentVariable("CODEX_HOME");
+            if (string.IsNullOrWhiteSpace(home))
+                home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
+            var path = Path.GetFullPath(Path.Combine(home, "auth.json"));
+            // Refuse junctions/symlinks rather than importing credentials from an unexpected location.
+            for (FileSystemInfo? entry = new FileInfo(path); entry is not null;
+                 entry = entry is FileInfo file ? file.Directory : ((DirectoryInfo)entry).Parent)
+                if ((entry.Attributes & FileAttributes.ReparsePoint) != 0) return;
+            using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (source.Length is <= 0 or > 65536) return;
+            using var reader = new StreamReader(source, Encoding.UTF8, detectEncodingFromByteOrderMarks: false);
+            var text = await reader.ReadToEndAsync(timeout.Token).ConfigureAwait(false);
+            using var document = JsonDocument.Parse(text);
+            if (!IsReusableCodexAuth(document.RootElement)) return;
+            // Credentials travel only through stdin. Do not log input, output, paths, or exception messages.
+            await _wsl.RunWslWithInputAsync(ExecArguments("root", ["/usr/local/bin/ddistro_agent", "auth-import"]),
+                text, cancellationToken: timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+                                   or ArgumentException or NotSupportedException or System.ComponentModel.Win32Exception) { }
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    internal static bool IsReusableCodexAuth(JsonElement document)
+    {
+        if (document.ValueKind != JsonValueKind.Object
+            || document.TryGetProperty("OPENAI_API_KEY", out var key) && key.ValueKind is not JsonValueKind.Null
+            || document.TryGetProperty("auth_mode", out var mode) && (mode.ValueKind != JsonValueKind.String || mode.GetString() != "chatgpt")
+            || !document.TryGetProperty("tokens", out var tokens) || tokens.ValueKind != JsonValueKind.Object) return false;
+        if (!new[] { "access_token", "refresh_token", "id_token", "account_id" }.All(name =>
+            tokens.TryGetProperty(name, out var token) && token.ValueKind == JsonValueKind.String
+            && token.GetString() is { Length: > 0 and <= 32768 })) return false;
+        try
+        {
+            var parts = tokens.GetProperty("access_token").GetString()!.Split('.');
+            if (parts.Length != 3) return false;
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            using var claims = JsonDocument.Parse(Convert.FromBase64String(payload.PadRight((payload.Length + 3) / 4 * 4, '=')));
+            return claims.RootElement.ValueKind == JsonValueKind.Object
+                && claims.RootElement.TryGetProperty("exp", out var expires) && expires.TryGetInt64(out var seconds)
+                && seconds > DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 60;
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or InvalidOperationException) { return false; }
     }
 
     /// <summary>
