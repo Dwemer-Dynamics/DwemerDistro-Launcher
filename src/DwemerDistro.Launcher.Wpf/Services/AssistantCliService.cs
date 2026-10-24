@@ -308,7 +308,7 @@ public sealed partial class AssistantCliService : IAssistantCli
     private async Task TryReuseCodexSignInAsync(CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
         try
         {
             var home = Environment.GetEnvironmentVariable("CODEX_HOME");
@@ -329,12 +329,28 @@ public sealed partial class AssistantCliService : IAssistantCli
             using var document = JsonDocument.Parse(text);
             if (!IsReusableCodexAuth(document.RootElement)) return;
             // Credentials travel only through stdin. Do not log input, output, paths, or exception messages.
-            await _wsl.RunWslWithInputAsync(ExecArguments("root", ["/usr/local/bin/ddistro_agent", "auth-import"]),
-                text, cancellationToken: timeout.Token).ConfigureAwait(false);
+            var check = await _wsl.RunWslAsync(ExecArguments("root", ["/usr/local/bin/ddistro_agent", "auth-import", "--check"]),
+                cancellationToken: timeout.Token).ConfigureAwait(false);
+            if (!check.Succeeded) return;
+            using var state = JsonDocument.Parse(check.StandardOutput);
+            if (state.RootElement.ValueKind != JsonValueKind.Object
+                || !state.RootElement.TryGetProperty("state", out var value) || value.GetString() != "empty") return;
+            // The existing maintenance gate drains an idle API and refuses queued/running work before importing.
+            var pidFile = NewPidFile();
+            try
+            {
+                await _wsl.RunWslWithInputAsync(ExecArguments("root", BuildSupervisor(pidFile,
+                    ["/usr/local/bin/ddistro_api", "maintenance", "/usr/local/bin/ddistro_agent", "auth-import"])),
+                    text, cancellationToken: timeout.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                await StopGroupAsync(pidFile, timeout.IsCancellationRequested).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
-                                   or ArgumentException or NotSupportedException or System.ComponentModel.Win32Exception) { }
+                                   or ArgumentException or InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception) { }
         cancellationToken.ThrowIfCancellationRequested();
     }
 
