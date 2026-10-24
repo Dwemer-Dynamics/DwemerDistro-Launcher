@@ -1,44 +1,50 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
 
-public sealed record ApiKeyProvider(string Id, string Label, bool Configured, string Source = "none");
-public sealed record ApiKeyTarget(string Id, string Label, bool Available, string Reason, List<ApiKeyProvider> Providers);
-public sealed record ApiKeysResult(bool Ok, string? Error, List<ApiKeyProvider>? Providers,
-    List<ApiKeyTarget>? Targets, List<string>? Warnings);
+public sealed record SharedKey([property: JsonPropertyName("key_id")] string Id, string Provider, string Label,
+    string Origin, long Revision, List<KeyUsage>? Usage)
+{
+    public string Display => $"{Label} · {Provider} · {Id[..Math.Min(8, Id.Length)]}";
+}
+public sealed record KeyUsage([property: JsonPropertyName("connection_id")] long Id, string Label, string Status);
+public sealed record KeyConnection([property: JsonPropertyName("connection_id")] long Id, string Label, string Kind,
+    long Revision, [property: JsonPropertyName("api_key_id")] string? KeyId,
+    [property: JsonPropertyName("credential_source")] string CredentialSource)
+{
+    public string Display => $"{Label} · {Kind} · {CredentialSource}";
+}
+public sealed record SharedKeysData(List<SharedKey>? Keys, List<KeyConnection>? Connections, List<string>? Warnings);
+public sealed record KeyValidationError(string Key, string Reason);
+public sealed record ApiKeysResult(bool Ok, string? Error, string? Outcome, JsonElement? Data, List<KeyValidationError>? Errors = null)
+{
+    public SharedKeysData? Snapshot => Outcome == "listed" && Data.HasValue ? Data.Value.Deserialize<SharedKeysData>(ApiKeysService.JsonOptions) : null;
+}
 
-/// <summary>Root-local credential management. Saved secrets never come back to the launcher.</summary>
+/// <summary>Fixed local operations over CHIM 4's shared-key service. Secrets travel on stdin only.</summary>
 public sealed class ApiKeysService(WslService wsl)
 {
-    public async Task<ApiKeysResult> RunAsync(string operation, string? provider = null, string? target = null, string? key = null)
+    internal static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    public async Task<ApiKeysResult> RunAsync(string operation, object? payload = null)
     {
-        if (operation is not ("status" or "set-shared" or "set-override" or "use-shared" or "remove-shared"))
+        if (operation is not ("status" or "create" or "edit" or "test" or "delete" or "bind" or "import-environment"))
             throw new ArgumentException("Unknown API key operation.", nameof(operation));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         try
         {
-            Models.CommandResult result;
             string[] args = ["/usr/local/bin/ddistro_keys", operation];
-            if (operation == "status")
-                result = await wsl.RunDistroAsUserAsync("root", args, cancellationToken: timeout.Token);
-            else
-            {
-                var payload = new Dictionary<string, string?> { ["provider"] = provider };
-                if (target is not null) payload["target"] = target;
-                if (key is not null) payload["key"] = key;
-                result = await wsl.RunDistroAsUserWithInputAsync("root", args, JsonSerializer.Serialize(payload), cancellationToken: timeout.Token);
-            }
+            var result = operation == "status"
+                ? await wsl.RunDistroAsUserAsync("root", args, cancellationToken: timeout.Token)
+                : await wsl.RunDistroAsUserWithInputAsync("root", args, JsonSerializer.Serialize(payload ?? new { }), cancellationToken: timeout.Token);
             if (result.StandardOutput.Length > 262144) return Unavailable();
-            var parsed = JsonSerializer.Deserialize<ApiKeysResult>(result.StandardOutput, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            return parsed ?? Unavailable();
+            return JsonSerializer.Deserialize<ApiKeysResult>(result.StandardOutput, JsonOptions) ?? Unavailable();
         }
         catch (Exception ex) when (ex is OperationCanceledException or JsonException or System.ComponentModel.Win32Exception or System.IO.IOException)
         {
-            // Raw command/parser diagnostics can contain input. Return only our own generic message.
             return Unavailable();
         }
     }
-
     private static ApiKeysResult Unavailable() => new(false,
-        "API Keys is unavailable. Update Core or check that the distro is running, then refresh.", null, null, null);
+        "Shared API Keys is unavailable. Reload before retrying; a write may have completed. Existing assignments are preserved.", "unavailable", null);
 }
