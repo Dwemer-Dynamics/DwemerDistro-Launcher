@@ -5670,6 +5670,8 @@ fi
         }
     }
 
+    internal ApiKeysService CreateApiKeysService() => new(_wsl, TryBeginPassiveDistroActivity, EndPassiveDistroActivity);
+
     private void OpenApiKeysWindow()
     {
         if (!TryBeginPassiveDistroActivity()) return;

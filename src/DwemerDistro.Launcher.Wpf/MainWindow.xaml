@@ -64,7 +64,7 @@
     <Grid x:Name="ShellGrid" Background="{DynamicResource GameCenter.Window}">
         <Grid.RowDefinitions>
             <RowDefinition Height="36" />
-            <RowDefinition Height="62" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition x:Name="ConsoleRow" Height="38" />
         </Grid.RowDefinitions>
@@ -286,11 +286,12 @@
         <Border Grid.Row="1" Grid.Column="1" Background="{DynamicResource GameCenter.Panel}"
                 BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="0,0,0,1">
             <Grid Margin="18,0">
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel x:Name="NavigationLandmark" Orientation="Horizontal" VerticalAlignment="Stretch">
+                <WrapPanel x:Name="NavigationLandmark" Grid.ColumnSpan="2" VerticalAlignment="Stretch">
                     <RadioButton x:Name="LibraryNavButton" GroupName="Destination" Content="_MODS" IsChecked="True"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="0" Checked="DestinationNav_Checked" />
                     <RadioButton x:Name="SetupNavButton" GroupName="Destination" Content="_COMPONENTS"
@@ -299,10 +300,13 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="2" Checked="DestinationNav_Checked" />
                     <RadioButton x:Name="LogsNavButton" GroupName="Destination" Content="LO_GS"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
+                    <RadioButton x:Name="ApiKeysNavButton" GroupName="Destination" Content="API _KEYS"
+                                 Style="{StaticResource GameCenter.NavButton}" Tag="5" Checked="DestinationNav_Checked"
+                                 AutomationProperties.Name="API Keys" />
                     <RadioButton x:Name="AssistantNavButton" GroupName="Destination" Content="_ASSISTANT"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="4" Checked="DestinationNav_Checked" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                </WrapPanel>
+                <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,0,8">
                     <!-- The one Update Distro action in the normal launcher. The widest state is reserved
                          by this outer slot rather than by the coloured frame, so Start, Stop, and Force
                          Stop never move while the visible button sizes itself to whatever it is currently
@@ -1207,18 +1211,6 @@
                             </Grid>
                         </Border>
 
-                        <Border Style="{StaticResource GameCenter.SettingRow}">
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel Margin="0,0,16,0">
-                                    <TextBlock Text="API Keys" Style="{StaticResource GameCenter.SettingRowTitle}" />
-                                    <TextBlock Text="Manage shared provider keys and per-mod overrides. Saved keys stay hidden."
-                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
-                                </StackPanel>
-                                <Button Grid.Column="1" Content="Manage" Command="{Binding OpenApiKeysCommand}"
-                                        Style="{StaticResource GameCenter.SettingRowButton}" AutomationProperties.Name="Manage API keys" />
-                            </Grid>
-                        </Border>
                         <TextBlock Text="DIAGNOSTICS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,12,0,10" />
                         <Border Style="{StaticResource GameCenter.SettingRow}">
                             <Grid>
@@ -1483,6 +1475,9 @@
             <TabItem Header="Assistant">
                 <!-- The view model is created on first binding and runs nothing until Connect. -->
                 <views:AssistantView x:Name="AssistantLandmark" DataContext="{Binding Assistant}" />
+            </TabItem>
+            <TabItem Header="API Keys">
+                <ContentControl x:Name="ApiKeysHost" KeyboardNavigation.TabNavigation="Continue" />
             </TabItem>
         </TabControl>
 

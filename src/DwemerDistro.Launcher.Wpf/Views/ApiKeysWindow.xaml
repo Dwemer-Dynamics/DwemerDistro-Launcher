@@ -1,39 +1,6 @@
 <Window x:Class="DwemerDistro.Launcher.Wpf.Views.ApiKeysWindow"
  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="Shared API Keys" Width="720" Height="760" MinWidth="440" MinHeight="440" Background="#202020" Foreground="White"
- WindowStartupLocation="CenterOwner" Loaded="Window_Loaded" Closing="Window_Closing">
- <Window.Resources>
-  <Style TargetType="TextBlock"><Setter Property="Foreground" Value="White"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
-  <Style TargetType="Button" BasedOn="{StaticResource GameCenter.Button}"><Setter Property="Padding" Value="12,7"/><Setter Property="Margin" Value="0,4,8,8"/></Style>
-  <Style TargetType="ComboBox"><Setter Property="Foreground" Value="Black"/><Setter Property="Background" Value="White"/><Setter Property="MinHeight" Value="32"/><Setter Property="Margin" Value="0,4,0,10"/></Style>
-  <Style TargetType="TextBox"><Setter Property="Background" Value="#303030"/><Setter Property="Foreground" Value="White"/><Setter Property="MinHeight" Value="32"/><Setter Property="Margin" Value="0,4,0,10"/></Style>
- </Window.Resources>
- <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="20">
-  <TextBlock Text="Shared API Keys" FontSize="22" FontWeight="SemiBold"/>
-  <TextBlock Text="Save a labelled key, then select it for a CHIM 4 connection. Keys stay encrypted in the shared store; saved secrets are never displayed." Margin="0,8,0,12"/>
-  <StackPanel x:Name="Editor">
-   <Label Content="_Saved key" Target="{Binding ElementName=SavedKey}" Foreground="White"/>
-   <ComboBox x:Name="SavedKey"  SelectionChanged="Saved_Changed" AutomationProperties.Name="Saved key"><ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Display}" Foreground="Black"/></DataTemplate></ComboBox.ItemTemplate></ComboBox>
-   <Button Content="Add another key" Click="New_Click" HorizontalAlignment="Left"/>
-   <Label Content="_Provider" Target="{Binding ElementName=Provider}" Foreground="White"/>
-   <ComboBox x:Name="Provider" SelectionChanged="Provider_Changed" AutomationProperties.Name="Provider"><ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Foreground="Black"/></DataTemplate></ComboBox.ItemTemplate></ComboBox>
-   <Label Content="_Label" Target="{Binding ElementName=KeyLabel}" Foreground="White"/>
-   <TextBox x:Name="KeyLabel" MaxLength="64" TextChanged="Input_Changed" AutomationProperties.Name="Key label"/>
-   <Label Content="_Origin (custom provider only)" Target="{Binding ElementName=Origin}" Foreground="White"/>
-   <TextBox x:Name="Origin" MaxLength="300" AutomationProperties.Name="Custom provider origin"/>
-   <Label Content="_Secret (leave blank to keep an existing key)" Target="{Binding ElementName=NewKey}" Foreground="White"/>
-   <PasswordBox x:Name="NewKey" MaxLength="4096" MinHeight="32" Margin="0,4,0,10" Background="#303030" Foreground="White" PasswordChanged="Secret_Changed" AutomationProperties.Name="New API key secret"/>
-   <WrapPanel><Button x:Name="SaveKey" Content="Save" Click="Save_Click"/><Button x:Name="TestKey" Content="Test key" Click="Test_Click"/><Button x:Name="DeleteKey" Content="Delete key" Click="Delete_Click"/></WrapPanel>
-   <TextBlock Text="CHIM 4 connection" FontSize="17" Margin="0,12,0,4"/>
-   <ComboBox x:Name="Connection"  SelectionChanged="Connection_Changed" AutomationProperties.Name="Connection to configure"><ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Display}" Foreground="Black"/></DataTemplate></ComboBox.ItemTemplate></ComboBox>
-   <TextBlock x:Name="Assignment" Margin="0,0,0,8" Foreground="#FFCA55"/>
-   <WrapPanel><Button x:Name="BindKey" Content="Use selected key" Click="Bind_Click"/><Button x:Name="DetachKey" Content="Use no key" Click="Detach_Click"/><Button x:Name="ImportKey" Content="Import existing connection key" Click="Import_Click"/></WrapPanel>
-  </StackPanel>
-  <Border x:Name="Confirmation" Visibility="Collapsed" BorderBrush="#FFCA55" BorderThickness="1" Padding="12" Margin="0,8"><StackPanel>
-   <TextBlock x:Name="ConfirmationText"/><WrapPanel><Button Content="Yes, continue" Click="Confirm_Click"/><Button Content="Cancel" Click="Cancel_Click"/></WrapPanel>
-  </StackPanel></Border>
-  <TextBlock x:Name="Status" Margin="0,8" AutomationProperties.LiveSetting="Polite"/>
-  <TextBlock x:Name="LegacyNotice" Foreground="#C8C8C8" Margin="0,8"/>
-  <WrapPanel><Button x:Name="Refresh" Content="Reload" Click="Refresh_Click"/><Button Content="Close" Click="Close_Click"/></WrapPanel>
- </StackPanel></ScrollViewer>
+ Title="Shared API Keys" Width="720" Height="760" MinWidth="440" MinHeight="440" Background="#202020"
+ WindowStartupLocation="CenterOwner" Closing="Window_Closing">
+ <ContentControl x:Name="EditorHost"/>
 </Window>

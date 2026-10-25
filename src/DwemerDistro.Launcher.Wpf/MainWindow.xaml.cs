@@ -68,6 +68,13 @@ public partial class MainWindow : Window
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (ApiKeysHost.Content is ApiKeysView { IsBusy: true } keys)
+        {
+            e.Cancel = true;
+            ApiKeysNavButton.IsChecked = true;
+            keys.ShowCloseBlocked();
+            return;
+        }
         if (_viewModel.IsCriticalMaintenanceInProgress)
         {
             e.Cancel = true;
@@ -181,6 +188,8 @@ public partial class MainWindow : Window
         }
 
         UpdateComponentsPageLifetime();
+        if (MainTabs.SelectedIndex == 5 && ApiKeysHost.Content is null)
+            ApiKeysHost.Content = new ApiKeysView(_viewModel.CreateApiKeysService());
         if (MainTabs.SelectedIndex == 3)
         {
             _viewModel.RefreshConnectionDetailsCommand.Execute(null);
@@ -507,6 +516,7 @@ public partial class MainWindow : Window
             2 => SettingsLandmark,
             3 => LogsLandmark,
             4 => AssistantLandmark,
+            5 => ApiKeysHost,
             _ => LibraryLandmark
         };
         // Visual order: the sidebar's game list and utilities, then the header, page and console.
