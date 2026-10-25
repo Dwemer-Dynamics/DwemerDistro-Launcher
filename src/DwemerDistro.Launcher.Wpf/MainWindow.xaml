@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:views="clr-namespace:DwemerDistro.Launcher.Wpf.Views"
         mc:Ignorable="d"
         Title="DWEMER DISTRO"
         Icon="Assets/DwemerDistro.ico"
@@ -185,6 +186,18 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
                         <StackPanel Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}">
+                            <RadioButton Content="Browse mods" GroupName="CustomModNavigation" Margin="0,0,0,10"
+                                         Style="{StaticResource GameCenter.NavButton}"
+                                         IsChecked="{Binding IsBrowsingCustomMods, Mode=TwoWay}"
+                                         Command="{Binding BrowseCommunityModsCommand}"
+                                         AutomationProperties.Name="Browse mods"
+                                         AutomationProperties.HelpText="Browse published custom mods in the main panel." />
+                            <RadioButton Content="Installed mods" GroupName="CustomModNavigation" Margin="0,0,0,10"
+                                         Style="{StaticResource GameCenter.NavButton}"
+                                         IsChecked="{Binding IsShowingInstalledCustomMod, Mode=OneWay}"
+                                         Command="{Binding ShowInstalledCustomModsCommand}"
+                                         AutomationProperties.Name="Installed custom mods"
+                                         AutomationProperties.HelpText="Read the installed mod list from the distro." />
                             <ListBox x:Name="CustomModRail" ItemsSource="{Binding CustomMods}" SelectedItem="{Binding SelectedCustomMod}"
                                      ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0" Padding="0"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
@@ -218,7 +231,6 @@
                             </ListBox>
                             <TextBlock Text="No custom mods yet." Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="11" Margin="5,2,0,6"
                                        Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}" />
-                            <Button Content="Browse community mods" Command="{Binding BrowseCommunityModsCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,0,6" />
                             <Button Content="Add custom mod" Command="{Binding AddCustomModCommand}" Style="{StaticResource GameCenter.Button}"
                                     Margin="0,6,0,0" Height="32"
                                     AutomationProperties.Name="Add custom mod"
@@ -977,11 +989,15 @@
                     </Border>
                 </Grid>
 
+                <!-- The catalog is the default custom-mod page; cards open the existing release preview. -->
+                <views:CommunityModsBrowser x:Name="CustomModBrowser" Margin="18,16,18,12"
+                                            Visibility="{Binding IsShowingCustomModBrowser, Converter={StaticResource BoolToVisibility}}"
+                                            RepositoryRequested="CommunityMod_Requested" />
                 <!-- Custom mods detail. Same two cards as the official view: the mod's installed banner, else
                      artwork from its public repository (generic placeholder otherwise) with name and description on the left,
                      status and actions on the right. Everything else comes from ddistro_custom_mod status. -->
                 <Grid x:Name="CustomModsLandmark" Margin="18,16,18,12"
-                      Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}">
+                      Visibility="{Binding IsShowingInstalledCustomMod, Converter={StaticResource BoolToVisibility}}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2.15*" />
                         <ColumnDefinition Width="14" />
