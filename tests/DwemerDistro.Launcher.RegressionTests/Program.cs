@@ -45,14 +45,14 @@ if (args.Length == 2 && args[0] == "--render-community")
         {
             var app = new DwemerDistro.Launcher.Wpf.App();
             app.InitializeComponent();
-            var window = new DwemerDistro.Launcher.Wpf.Views.CommunityModsWindow(
-                new CommunityModService(new WslService(new ProcessRunner())), () => false, () => { });
+            using var window = new DwemerDistro.Launcher.Wpf.Views.CommunityModDetails(
+                new CommunityModService(new WslService(new ProcessRunner())), () => false, () => { }, () => Task.CompletedTask,
+                (_, _) => Task.FromResult(false));
             ((System.Windows.Controls.TextBlock)window.FindName("ModTitle")).Text = "Publishing Proof";
             ((System.Windows.Controls.TextBlock)window.FindName("DescriptionText")).Text = "One repository. Independently packaged game client and server, with exclusions applied before download.";
-            ((System.Windows.Controls.TextBlock)window.FindName("ReleaseText")).Text = "Example Game · v1.1.0 · 1234567\nAuthor-tested build: declared by the author\nLoader: native mod menu";
-            ((System.Windows.Controls.TextBlock)window.FindName("InstallPlanText")).Text = "Client: mods/publishing-proof. Server: /var/www/html/PublishingProofServer. Existing private data is kept.";
-            ((System.Windows.Controls.ListBox)window.FindName("Repositories")).ItemsSource = new[] { new CommunityRepository("Example/Publishing-Proof", "https://github.com/Example/Publishing-Proof", "A monorepo release with a native game client and its own server.") };
-            ((System.Windows.Controls.TextBlock)window.FindName("StatusText")).Text = "Server installed; client installation pending. Retry this release to finish pairing.";
+            ((System.Windows.Controls.TextBlock)window.FindName("ReleaseText")).Text = "Example Game · v1.1.0";
+            ((System.Windows.Controls.TextBlock)window.FindName("CompatibilityText")).Text = "Author-tested build: declared by the author\nLoader: native mod menu";
+            ((System.Windows.Controls.TextBlock)window.FindName("StatusText")).Text = "Server installed.";
             var content = (System.Windows.Controls.Grid)window.Content;
             content.Background = window.Background;
             foreach (var width in new[] { 1040, 780 })
@@ -100,6 +100,91 @@ try
         using var invalidAuth = System.Text.Json.JsonDocument.Parse(auth);
         Assert(!AssistantCliService.IsReusableCodexAuth(invalidAuth.RootElement), "Unusable auth must retain normal sign-in.");
     }
+    // Verify the server-only command contract without WSL or client downloads.
+    var serverRelease = new CommunityRelease(new JsonObject
+    {
+        ["repository"] = "https://github.com/Example/Server-Mod", ["version"] = "v1.0.0", ["commit"] = new string('a', 40),
+        ["manifest"] = new JsonObject { ["id"] = "server-mod", ["server_folder"] = "ServerModServer" },
+        ["packages"] = new JsonObject { ["client"] = new JsonObject { ["asset"] = "server-mod-client.zip" } }
+    }, new string('b', 64));
+    JsonObject? serverEntry = null;
+    var serverCalls = new List<string[]>();
+    var changedServerPreview = false;
+    var failServerInstall = false;
+    var incompleteServerInstall = false;
+    Task<CommandResult> ServerCore(string user, IEnumerable<string> arguments, CancellationToken cancellation)
+    {
+        var argv = arguments.ToArray(); serverCalls.Add(argv);
+        var verb = argv[0];
+        Assert(user == (verb is "release-install" or "release-update" ? "root" : LauncherConstants.DistroUser), "Server command uses its required account.");
+        if (verb == "status") return Task.FromResult(new CommandResult(0,
+            new JsonObject { ["schema_version"] = 1, ["mods"] = serverEntry is null ? new JsonArray() : new JsonArray(serverEntry.DeepClone()) }.ToJsonString(), ""));
+        if (verb == "release-check") return Task.FromResult(new CommandResult(0, new JsonObject
+        {
+            ["release_hash"] = changedServerPreview ? new string('c', 64) : serverRelease.DescriptorHash,
+            ["release"] = new JsonObject { ["commit"] = serverRelease.Commit }
+        }.ToJsonString(), ""));
+        Assert(verb is "release-install" or "release-update", "Server-only setup never invokes pairing or client commands.");
+        Assert(argv.Contains(serverRelease.Commit) && argv.Contains(serverRelease.DescriptorHash) && argv.Contains(serverRelease.Version), "Server installation retains preview pins.");
+        if (failServerInstall) return Task.FromResult(new CommandResult(1, "", "Fixture installation failed"));
+        serverEntry = new JsonObject
+        {
+            ["id"] = serverRelease.Id, ["repository"] = serverRelease.Repository, ["install_mode"] = "release",
+            ["state"] = incompleteServerInstall ? "failed" : "ready", ["commit"] = serverRelease.Commit,
+            ["server_folder"] = "ServerModServer", ["release"] = new JsonObject
+            { ["tag"] = serverRelease.Version, ["descriptor_sha256"] = serverRelease.DescriptorHash }
+        };
+        return Task.FromResult(new CommandResult(0, "Installed", ""));
+    }
+    using (var serverService = new CommunityModService(new WslService(new ProcessRunner()),
+        new HttpClient(new CommunityGithubFixture("no-client-download-fixture")), Path.Combine(root, "server-only-state"), "unused", ServerCore))
+    {
+        Assert(!await serverService.IsServerInstalledAsync(serverRelease), "Absent server does not expose a client download.");
+        await serverService.InstallServerAsync(serverRelease);
+        Assert(await serverService.IsServerInstalledAsync(serverRelease) && serverCalls.Count(c => c[0] == "release-install") == 1, "Successful server installation is confirmed in Core state.");
+        var beforeReady = serverCalls.Count;
+        await serverService.InstallServerAsync(serverRelease);
+        Assert(serverCalls.Skip(beforeReady).All(c => c[0] is not ("release-install" or "release-update")), "A matching ready server is not installed twice.");
+        foreach (var state in new[] { "failed", "installing", "updating", "unregistered" })
+        {
+            serverEntry!["state"] = state;
+            Assert(!await serverService.IsServerInstalledAsync(serverRelease), "Only ready server state exposes a download: " + state);
+        }
+        serverEntry!["state"] = "ready"; serverEntry["commit"] = new string('d', 40);
+        Assert(!await serverService.IsServerInstalledAsync(serverRelease), "Old server version cannot expose a different client release.");
+        await serverService.InstallServerAsync(serverRelease);
+        Assert(serverCalls.Any(c => c[0] == "release-update"), "Existing server updates use Core's update path.");
+        serverEntry!["release"]!["descriptor_sha256"] = new string('e', 64);
+        Assert(!await serverService.IsServerInstalledAsync(serverRelease), "A changed release descriptor cannot expose the client download.");
+        serverEntry["release"]!["descriptor_sha256"] = serverRelease.DescriptorHash;
+        serverEntry["pending_release"] = new JsonObject { ["tag"] = "v2.0.0" };
+        Assert(!await serverService.IsServerInstalledAsync(serverRelease), "A pending server update cannot expose a ready client download.");
+        foreach (var failure in new[] { "changed-preview", "conflicting-owner", "failed-install", "incomplete-install" })
+        {
+            changedServerPreview = failure == "changed-preview";
+            failServerInstall = failure == "failed-install";
+            incompleteServerInstall = failure == "incomplete-install";
+            serverEntry = failure == "conflicting-owner" ? new JsonObject { ["id"] = serverRelease.Id, ["repository"] = "https://github.com/Other/Mod", ["install_mode"] = "release" } : null;
+            var beforeFailure = serverCalls.Count;
+            var rejected = false;
+            try { await serverService.InstallServerAsync(serverRelease); } catch (IOException) { rejected = true; }
+            Assert(rejected, "Server setup rejects " + failure);
+            if (failure is "changed-preview" or "conflicting-owner")
+                Assert(serverCalls.Skip(beforeFailure).All(c => c[0] is not ("release-install" or "release-update")), "Rejected identity or preview never mutates a server.");
+        }
+        using (var heldClientLock = new FileStream(Path.Combine(root, "server-only-state", serverRelease.Id + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+        {
+            var beforeLock = serverCalls.Count;
+            var rejected = false;
+            try { await serverService.InstallServerAsync(serverRelease); } catch (IOException) { rejected = true; }
+            Assert(rejected && beforeLock == serverCalls.Count, "Server-only setup shares the combined installer's operation lock.");
+        }
+        Assert(Directory.EnumerateFiles(Path.Combine(root, "server-only-state")).All(p => p.EndsWith(".lock")) &&
+            !Directory.EnumerateDirectories(Path.Combine(root, "server-only-state")).Any(), "Server-only setup creates only its operation lock, no client files or receipts.");
+        Assert(CommunityModService.ClientReleaseUrl(serverRelease) == "https://github.com/Example/Server-Mod/releases/download/v1.0.0/server-mod-client.zip", "Download points to the matching published client asset.");
+    }
+    Console.WriteLine("Community server-only setup: ready state, pins, ownership, retries and client-release URL: OK");
+
     var collection = new DiagnosticEvidenceService.CollectionSummary();
     var serverEvidence = new List<string>();
     DiagnosticEvidenceService.AppendServerLog(serverEvidence, collection, "server", "123 1700000000\nold\n[error] historical game failure\nlatest\n", false, 2);

@@ -66,6 +66,18 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void CommunityMod_Requested(object? sender, string repository)
+    {
+        try
+        {
+            await _viewModel.BrowseCommunityModsAsync(repository);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, error.Message, "Community mods", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (ApiKeysHost.Content is ApiKeysView { IsBusy: true } keys)
@@ -118,6 +130,7 @@ public partial class MainWindow : Window
         }
 
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
+        _viewModel.CloseCommunityModDetails();
         await _viewModel.ShutdownAsync();
     }
 
