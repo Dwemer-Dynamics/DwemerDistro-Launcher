@@ -2271,6 +2271,12 @@ try
            && AssistantCliService.Parse(new CommandResult(0, "{\"schema_version\":2,\"ok\":true}", "")).ErrorCode == AssistantCliResult.Protocol
            && AssistantCliService.Parse(new CommandResult(1, "", "execvpe(/usr/local/bin/ddistro) failed: No such file or directory")).ErrorCode == AssistantCliResult.CliMissing,
         "Assistant CLI failures must keep Core codes and distinguish a missing CLI from an unsupported response.");
+    Assert(AssistantViewModel.DescribeApply(AssistantCliResult.Failure(AssistantCliResult.Timeout, "t"), 1, out var timeoutRollback, out var timeoutCheck).StartsWith("Outcome unknown")
+           && !timeoutRollback && timeoutCheck
+           && AssistantViewModel.DescribeApply(AssistantCliService.Parse(new CommandResult(11, "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"conflict\",\"message\":\"m\"}}", "")), 1, out _, out _).StartsWith("Not applied")
+           && AssistantViewModel.DescribeApply(AssistantCliService.Parse(new CommandResult(0, "{\"schema_version\":1,\"ok\":true,\"data\":{\"state\":\"applied\",\"receipt\":\"rc1\"}}", "")), 2, out var appliedRollback, out _).Contains("rc1")
+           && appliedRollback,
+        "Apply outcomes must report unknown, stale, and applied results honestly.");
     var transport = new FakeAssistantTransport();
     var client = new CodexAppServerClient(transport);
     var notifications = new List<string>();
@@ -2303,6 +2309,145 @@ try
     Assert(failedProcessSuccess.ErrorCode == AssistantCliResult.Protocol
            && AssistantCliService.Parse(new CommandResult(0, "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"conflict\",\"message\":\"m\"}}", "")).ErrorCode == AssistantCliResult.Protocol,
         "A failed ddistro process must never read as a success, nor a clean exit as a Core failure.");
+    Assert(AssistantViewModel.DescribeApply(failedProcessSuccess, 1, out _, out var contradictedCheck).StartsWith("Outcome unknown") && contradictedCheck,
+        "A contradicted apply must read as an unknown outcome to check, never as applied.");
+
+    // Core StageB: only a complete stage of this task is reviewable.
+    AssistantCliResult CoreDocument(int exitCode, string json) => AssistantCliService.Parse(new CommandResult(exitCode, json, ""));
+    string StageDocument(string truncated, string state = "staged") =>
+        "{\"schema_version\":1,\"ok\":true,\"data\":{\"task_id\":\"t\",\"state\":\"" + state + "\",\"manifest_sha256\":\"" + new string('c', 64)
+        + "\",\"diff\":\"+x\\n\",\"files\":[\"a.php\"]" + truncated + "},\"error\":null,\"warnings\":[]}";
+    Assert(AssistantViewModel.ReadStage(CoreDocument(0, StageDocument(",\"diff_truncated\":false")), "t", out _) is { Files.Count: 1, WarningTotal: 0 }
+           && AssistantViewModel.ReadStage(CoreDocument(0, StageDocument(",\"diff_truncated\":true")), "t", out var truncatedProblem) is null
+           && truncatedProblem.Contains("incomplete")
+           && AssistantViewModel.ReadStage(CoreDocument(0, StageDocument("")), "t", out _) is null
+           && AssistantViewModel.ReadStage(CoreDocument(0, StageDocument(",\"diff_truncated\":\"false\"")), "t", out _) is null
+           && AssistantViewModel.ReadStage(CoreDocument(0, StageDocument(",\"diff_truncated\":false", "prepared")), "t", out _) is null
+           && AssistantViewModel.ReadStage(CoreDocument(0, StageDocument(",\"diff_truncated\":false")), "other-task", out _) is null,
+        "A truncated, unflagged, unstaged or foreign stage must never become a reviewable batch.");
+
+    // Apply and rollback are classified by Core's state and per-file outcomes, never by ok alone.
+    const string mixedFiles = "[{\"path\":\"a.php\",\"action\":\"modify\",\"state\":\"written\"},{\"path\":\"b.php\",\"action\":\"modify\",\"state\":\"failed\"},"
+                              + "{\"path\":\"c.php\",\"action\":\"create\",\"state\":\"pending\"}]";
+    string ReplayDocument(string state, string files) =>
+        "{\"schema_version\":1,\"ok\":true,\"data\":{\"task_id\":\"t\",\"state\":\"" + state + "\",\"receipt\":{\"state\":\"" + state + "\"},\"files\":"
+        + files + ",\"replayed\":true},\"error\":null,\"warnings\":[]}";
+    var replayedPartial = AssistantViewModel.DescribeApply(CoreDocument(0, ReplayDocument("partial", mixedFiles)), 3, out var partialRollback, out var partialCheck);
+    var replayedFailed = AssistantViewModel.DescribeApply(CoreDocument(0, ReplayDocument("failed", "[{\"path\":\"a.php\",\"action\":\"modify\",\"state\":\"failed\"}]")), 1,
+        out var failedRollback, out _);
+    var contradictedApplied = AssistantViewModel.DescribeApply(CoreDocument(0, ReplayDocument("applied", mixedFiles)), 3, out _, out var contradictedAppliedCheck);
+    var interruptedApply = AssistantViewModel.DescribeApply(CoreDocument(10,
+        "{\"schema_version\":1,\"ok\":false,\"data\":null,\"error\":{\"code\":\"partial\",\"message\":\"An earlier apply was interrupted.\","
+        + "\"details\":{\"task_id\":\"t\",\"state\":\"interrupted\",\"files\":[{\"path\":\"a.php\",\"state\":\"unknown\"}]}}}"), 1, out var interruptedRollback, out var interruptedCheck);
+    var replayedRollback = AssistantViewModel.DescribeRollback(CoreDocument(0, ReplayDocument("rollback_partial", mixedFiles)), out _, out var rollbackCheck);
+    Assert(replayedPartial.StartsWith("Partially applied") && replayedPartial.Contains("1 written") && replayedPartial.Contains("b.php (modify, failed)")
+           && partialRollback && partialCheck
+           && replayedFailed.StartsWith("Not applied") && !failedRollback
+           && contradictedApplied.StartsWith("Outcome unknown") && contradictedAppliedCheck
+           && interruptedApply.StartsWith("Outcome unknown") && interruptedApply.Contains("a.php (unknown)") && !interruptedRollback && interruptedCheck
+           && replayedRollback.StartsWith("Rollback incomplete") && rollbackCheck,
+        "A replayed or failed apply must report Core's partial, failed or interrupted state, never a blanket success.");
+
+    // ddistro agent probe: the wrapper's check list, the bare helper's map, and nothing malformed reads as passed.
+    System.Text.Json.JsonElement ProbeData(string json) => System.Text.Json.JsonDocument.Parse(json).RootElement.Clone();
+    var wrapperPass = AssistantViewModel.ReadProbe(ProbeData("{\"passed\":true,\"checks\":[{\"name\":\"platform\",\"passed\":true}],\"diagnostics\":{},"
+        + "\"installed\":true,\"probe_passed\":true,\"provider\":\"codex\",\"version\":\"0.163.0\",\"reason\":\"ready\"}"), out var wrapperPassDetail);
+    var wrapperFail = AssistantViewModel.ReadProbe(ProbeData("{\"passed\":false,\"checks\":[{\"name\":\"outer_sandbox_isolated\",\"passed\":false},"
+        + "{\"name\":\"platform\",\"passed\":true}],\"diagnostics\":{\"outer\":{\"exit\":1,\"stderr\":[\"bwrap: setting up uid map: Permission denied\"]}},"
+        + "\"installed\":true,\"probe_passed\":false,\"provider\":\"codex\",\"version\":\"0.163.0\",\"reason\":\"probe_required\"}"), out var wrapperFailDetail);
+    Assert(wrapperPass && wrapperPassDetail == "Passed: platform"
+           && !wrapperFail && wrapperFailDetail.StartsWith("Failed: outer_sandbox_isolated\nPassed: platform")
+           && wrapperFailDetail.Contains("Diagnostics outer: exit 1; bwrap: setting up uid map: Permission denied")
+           && AssistantViewModel.ReadProbe(ProbeData("{\"passed\":true,\"checks\":{\"platform\":true},\"diagnostics\":{}}"), out _),
+        "The probe's check list and the bare helper's check map must both read, failed checks first with Core's diagnostics.");
+    foreach (var malformed in new[]
+    {
+        "{\"passed\":true,\"checks\":[]}", "{\"passed\":true,\"checks\":{}}", "{\"passed\":true}", "{\"passed\":\"true\",\"checks\":[{\"name\":\"a\",\"passed\":true}]}",
+        "{\"passed\":true,\"checks\":[{\"name\":\"a\",\"passed\":1}]}", "{\"passed\":true,\"checks\":[{\"passed\":true}]}", "{\"passed\":true,\"checks\":[\"a\"]}",
+        "{\"passed\":true,\"checks\":[{\"name\":\"a\",\"passed\":false}]}", "{\"passed\":true,\"checks\":[{\"name\":\"a\",\"passed\":true}],\"probe_passed\":false}"
+    })
+    {
+        Assert(!AssistantViewModel.ReadProbe(ProbeData(malformed), out var malformedDetail) && malformedDetail.Length > 0,
+            $"An incomplete or contradictory probe result must never read as passed: {malformed}");
+    }
+    Assert(AssistantViewModel.DescribeAgentReason("bwrap_unsupported").Contains("--bind-fd") && !AssistantViewModel.DescribeAgentReason("bwrap_unsupported").Contains("0.")
+           && AssistantViewModel.DescribeAgentReason("bwrap_missing").Contains("--install-prerequisites"),
+        "Bubblewrap reasons must name the required features and the installer action, not a blanket version.");
+
+    // Assistant task references survive a restart only for the same installation, provider and live task.
+    var assistantStateRoot = Path.Combine(Path.GetTempPath(), "dwemerdistro-assistant-state-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var installationId = "{" + Guid.NewGuid() + "}";
+        var savedReference = new AssistantTaskReference(AssistantTaskReference.CurrentVersion, installationId, LauncherConstants.DistroName,
+            "codex", "herika", "11111111-2222-3333-4444-555555555555", "thr-saved");
+        var stateStore = new AssistantStateStore(assistantStateRoot);
+        stateStore.Save(savedReference);
+        Assert(stateStore.Load() == savedReference, "A valid assistant task reference must round-trip.");
+        File.WriteAllText(stateStore.StatePath, System.Text.Json.JsonSerializer.Serialize(savedReference with { Product = "stobe" }));
+        Assert(stateStore.Load() is null, "A saved reference for another product must be ignored.");
+
+        var foreign = await ConnectAssistantAsync(stateStore, savedReference with { InstallationId = "{" + Guid.NewGuid() + "}" }, installationId, statusTask: null);
+        Assert(foreign.vm.State == AssistantState.Error && foreign.vm.StatusDetail.Contains("New task") && foreign.cli.Calls.Count == 2 && foreign.cli.ServedTask is null
+               && stateStore.Load() is not null,
+            "A task saved on another distro installation must not be checked, reused, or replaced by a silently prepared task.");
+        var otherDistro = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            distroName: "DwemerDistro-Assistant-Test-20261019");
+        Assert(otherDistro.vm.State == AssistantState.Error && otherDistro.cli.ServedTask is null
+               && !otherDistro.cli.Calls.Any(call => call.StartsWith("changes ")),
+            "A task saved for another distro must not be checked or reused through the isolated-distro seam.");
+        var stale = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: null);
+        Assert(stale.vm.State == AssistantState.Error && stale.vm.StatusDetail.Contains("no longer available") && stale.cli.ServedTask is null
+               && !stale.cli.Calls.Any(call => call.StartsWith("changes prepare")),
+            "A task Core no longer knows must show the new-task path without preparing or serving anything.");
+        var reopened = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        Assert(reopened.vm.State == AssistantState.Ready && reopened.cli.ServedTask == savedReference.TaskId
+               && reopened.transport.Requests.Contains("thread/resume:thr-saved") && !reopened.transport.Requests.Any(r => r.StartsWith("thread/start"))
+               && stateStore.Load() == savedReference,
+            "A live saved task must reopen and resume its own conversation thread.");
+
+        // Core's broker and the rust-v0.163.0 schema: threads and turns state never and /work, and never override the sandbox.
+        reopened.vm.InputText = "hello";
+        reopened.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => { lock (reopened.transport.Requests) return reopened.transport.Bodies.Any(body => body.StartsWith("turn/start")); });
+        string[] confinedBodies;
+        lock (reopened.transport.Requests) confinedBodies = reopened.transport.Bodies.Where(body => body.StartsWith("thread/") || body.StartsWith("turn/start")).ToArray();
+        Assert(confinedBodies.Length == 2 && confinedBodies.All(body => body.Contains("\"approvalPolicy\":\"never\"") && body.Contains("\"cwd\":\"/work\"")
+               && !body.Contains("sandbox") && !body.Contains("permissions")),
+            "Thread and turn requests must pin approval policy never and cwd /work, and never send a sandbox or permissions override.");
+        await reopened.vm.ShutdownAsync();
+        var unconfined = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, confined: false);
+        Assert(unconfined.vm.State == AssistantState.Error && unconfined.vm.StatusDetail.Contains("confined"),
+            "A thread that does not report approval policy never and cwd /work must end the session, not reach Ready.");
+
+        // Stage warnings show before approval; a failed re-stage leaves nothing approvable.
+        var stagedReview = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        var stagedDocument = "{\"schema_version\":1,\"ok\":true,\"data\":{\"task_id\":\"" + savedReference.TaskId + "\",\"state\":\"staged\",\"manifest_sha256\":\""
+            + new string('b', 64) + "\",\"diff\":\"+x\\n\",\"diff_truncated\":false,\"files\":[{\"path\":\"ext/a.php\",\"action\":\"modify\"}],\"warnings\":[]},"
+            + "\"error\":null,\"warnings\":[\"PHP syntax was not checked for ext/a.php: php or the nobody account is missing.\"]}";
+        stagedReview.cli.Script = command => command.StartsWith("changes stage") ? stagedDocument : null;
+        stagedReview.vm.ReviewCommand.Execute(null);
+        await WaitUntilAsync(() => stagedReview.vm.State == AssistantState.Review);
+        Assert(stagedReview.vm.IsReviewVisible && stagedReview.vm.ApproveCommand.CanExecute(null) && stagedReview.vm.HasReviewWarnings
+               && stagedReview.vm.ReviewValidationText.Contains("PHP syntax was not checked for ext/a.php") && !stagedReview.vm.ReviewValidationText.Contains("no syntax errors"),
+            "Stage warnings must be visible before approval, and an unchecked PHP file must never read as passed.");
+        stagedReview.vm.StopCommand.Execute(null);
+        await WaitUntilAsync(() => stagedReview.vm.State == AssistantState.Disconnected);
+        stagedReview.cli.Script = command => command.StartsWith("changes stage")
+            ? "{\"schema_version\":1,\"ok\":false,\"data\":null,\"error\":{\"code\":\"failed\",\"message\":\"Validation failed; nothing was staged.\","
+              + "\"details\":{\"reason\":\"validation\",\"errors\":[{\"path\":\"ext/a.php\",\"message\":\"PHP Parse error\"}]}}}"
+            : null;
+        stagedReview.vm.ReviewCommand.Execute(null);
+        await WaitUntilAsync(() => stagedReview.vm.StatusDetail.StartsWith("Could not prepare"));
+        Assert(!stagedReview.vm.IsReviewVisible && stagedReview.vm.ReviewDiff.Length == 0 && !stagedReview.vm.HasReviewWarnings && !stagedReview.vm.ApproveCommand.CanExecute(null)
+               && stagedReview.vm.StatusDetail.Contains("ext/a.php: PHP Parse error"),
+            "A failed re-stage must clear the earlier reviewed batch, so nothing stale can be approved.");
+        await stagedReview.vm.ShutdownAsync();
+    }
+    finally
+    {
+        if (Directory.Exists(assistantStateRoot)) Directory.Delete(assistantStateRoot, recursive: true);
+    }
 
     // Stop before turn/start answers: interrupt exactly that turn once its id is known, never a later one.
     var turnTransport = new FakeAssistantTransport();
@@ -2397,6 +2542,43 @@ static ServerStatusResult StatusFor(ServerProduct product, ServerInstallState st
         }));
 }
 
+static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTransport transport)> ConnectAssistantAsync(
+    AssistantStateStore store, AssistantTaskReference saved, string installationId, string? statusTask, bool confined = true,
+    string distroName = LauncherConstants.DistroName)
+{
+    store.Save(saved);
+    // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work.
+    System.Text.Json.Nodes.JsonObject Thread(string id) => new()
+    {
+        ["thread"] = new System.Text.Json.Nodes.JsonObject { ["id"] = id },
+        ["approvalPolicy"] = confined ? "never" : "on-request",
+        ["cwd"] = "/work"
+    };
+    var transport = new FakeAssistantTransport
+    {
+        Respond = (method, parameters) => method switch
+        {
+            "initialize" => new System.Text.Json.Nodes.JsonObject(),
+            "account/read" => System.Text.Json.Nodes.JsonNode.Parse("{\"account\":{\"type\":\"apiKey\"},\"requiresOpenaiAuth\":false}"),
+            "model/list" => System.Text.Json.Nodes.JsonNode.Parse("{\"data\":[{\"id\":\"m\",\"displayName\":\"M\",\"isDefault\":true}],\"nextCursor\":null}"),
+            "thread/resume" => Thread(parameters["threadId"]!.GetValue<string>()),
+            "thread/start" => Thread("thr-new"),
+            "turn/start" => System.Text.Json.Nodes.JsonNode.Parse("{\"turn\":{\"id\":\"turn-1\",\"items\":[],\"status\":\"inProgress\"}}"),
+            _ => null
+        }
+    };
+    var cli = new FakeAssistantCli(transport, statusTask) { DistroName = distroName };
+    var vm = new AssistantViewModel(cli, new FakeAssistantHost(installationId), store);
+    await vm.ConnectAsync();
+    return (vm, cli, transport);
+}
+
+static async Task WaitUntilAsync(Func<bool> condition)
+{
+    var deadline = DateTime.UtcNow.AddSeconds(10);
+    while (!condition() && DateTime.UtcNow < deadline) await Task.Delay(10);
+}
+
 static void Assert(bool condition, string message)
 {
     if (!condition)
@@ -2449,4 +2631,46 @@ sealed class FakeAssistantTransport : IAssistantTransport
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}
+
+sealed class FakeAssistantHost(string installationId) : IAssistantHost
+{
+    public bool TryBeginDistroActivity() => true;
+    public void EndDistroActivity() { }
+    public bool TryBeginLiveChange() => true;
+    public void EndLiveChange() { }
+    public void OpenUrl(string url) { }
+    public string? GetDistroInstallationId() => installationId;
+}
+
+/// <summary>Core documents for Connect; status names <paramref name="statusTask"/>, or not_found when null.</summary>
+sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTask) : IAssistantCli
+{
+    public List<string> Calls { get; } = [];
+    public string? ServedTask { get; private set; }
+    public string DistroName { get; init; } = LauncherConstants.DistroName;
+
+    /// <summary>Optional scripted document for a command; null falls back to the defaults below.</summary>
+    public Func<string, string?>? Script { get; set; }
+
+    public Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var command = string.Join(" ", arguments);
+        Calls.Add(command);
+        var document = Script?.Invoke(command) ?? command switch
+        {
+            "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true}}}",
+            "agent status" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"installed\":true,\"probe_passed\":true,\"provider\":\"codex\"}}",
+            _ when command.StartsWith("changes status") && statusTask is not null =>
+                $"{{\"schema_version\":1,\"ok\":true,\"data\":{{\"task_id\":\"{statusTask}\",\"product\":\"herika\",\"state\":\"working\"}}}}",
+            _ => "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"not_found\",\"message\":\"No such task.\"}}"
+        };
+        return Task.FromResult(AssistantCliService.Parse(new CommandResult(document.Contains("\"ok\":true") ? 0 : 66, document, "")));
+    }
+
+    public Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken)
+    {
+        ServedTask = taskId;
+        return Task.FromResult<IAssistantTransport>(transport);
+    }
 }
