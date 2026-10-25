@@ -29,6 +29,8 @@ public sealed partial class MainWindowViewModel : IAssistantHost
     }
 
     public bool IsAssistantLiveChangeInProgress => _isAssistantLiveChangeInProgress;
+    /// <summary>Closing now would end the assistant session and stop a live command the user has not stopped.</summary>
+    public bool IsAssistantLiveCommandRunning => _assistant?.BlocksSessionEnd == true;
 
     /// <summary>Custom mod mutations and assistant applies both change live files, so they share one gate.</summary>
     private bool IsLiveFileMutationInProgress => _isCustomModMutationInProgress || _isAssistantLiveChangeInProgress;

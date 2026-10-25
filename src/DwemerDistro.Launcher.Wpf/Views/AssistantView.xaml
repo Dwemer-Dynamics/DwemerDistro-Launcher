@@ -67,7 +67,7 @@
                             <Button Content="Sign in" Command="{Binding SignInCommand}" Style="{StaticResource Assistant.Action}"
                                     AutomationProperties.HelpText="Request a ChatGPT sign-in code. Nothing opens until you click Open sign-in page." />
                             <Button Content="Stop" Command="{Binding StopCommand}" Style="{StaticResource Assistant.Action}"
-                                    AutomationProperties.HelpText="Stop the current response. Available only while the assistant is responding." />
+                                    AutomationProperties.HelpText="Stop the current response and any live command still running. Available only while one is." />
                             <Button Content="Disconnect" Command="{Binding DisconnectCommand}" Style="{StaticResource Assistant.Action}"
                                     AutomationProperties.HelpText="Close the assistant session. It stays closed until you press Connect; your draft is kept." />
                             <Button Content="Load earlier messages" Command="{Binding LoadEarlierCommand}" Style="{StaticResource Assistant.Action}"
@@ -165,26 +165,6 @@
                             </WrapPanel>
                         </Border>
                     </StackPanel>
-
-                    <!-- Advanced: collapsed by default; task details and hand-picked files for the next New task. -->
-                    <CheckBox x:Name="AdvancedToggle" Content="Advanced" Style="{StaticResource GameCenter.CheckBox}" Margin="0,8,0,0"
-                              HorizontalAlignment="Left" IsChecked="False"
-                              AutomationProperties.HelpText="Show the task details and choose CHIM files by path for the next new task. File editing supports CHIM only." />
-                    <Border x:Name="AdvancedPanel" Visibility="{Binding IsChecked, ElementName=AdvancedToggle, Converter={StaticResource BoolToVisibility}}"
-                            BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,6,0,0">
-                        <StackPanel>
-                            <TextBlock x:Name="TaskLabel" Text="Current task" Style="{StaticResource GameCenter.Caption}" />
-                            <TextBox Text="{Binding TaskText, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}" FontFamily="Consolas"
-                                     FontSize="12" Margin="0,3,0,8" AutomationProperties.LabeledBy="{Binding ElementName=TaskLabel}" />
-                            <TextBlock x:Name="PathsLabel" Text="CHIM files for the next New task (optional, one path relative to the HerikaServer folder per line). File editing supports only CHIM (HerikaServer) today; other servers, components and mods cannot be edited here yet."
-                                       Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,3" />
-                            <TextBox Text="{Binding RelativePathsText, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource Assistant.TextBox}"
-                                     AcceptsReturn="True" TextWrapping="NoWrap" FontFamily="Consolas" FontSize="12"
-                                     Height="70" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" MaxLength="5000"
-                                     AutomationProperties.LabeledBy="{Binding ElementName=PathsLabel}"
-                                     AutomationProperties.HelpText="Usually not needed: the assistant asks for the files it needs. Leave empty for a diagnostic workspace. Used when New task prepares a working copy." />
-                        </StackPanel>
-                    </Border>
                 </StackPanel>
             </Border>
 
@@ -219,56 +199,151 @@
                             <FlowDocument PagePadding="0" />
                         </RichTextBox>
 
-                        <!-- File access: what the assistant asked for. Nothing is copied until Allow access is clicked. -->
-                        <Border x:Name="AccessCard" Grid.Row="2" Margin="10,0,10,0" Padding="10" CornerRadius="4" BorderThickness="1"
-                                BorderBrush="{DynamicResource GameCenter.Gold}" Background="{DynamicResource GameCenter.GoldTint}"
-                                Visibility="{Binding HasFileRequest, Converter={StaticResource BoolToVisibility}}"
-                                AutomationProperties.Name="File access request" AutomationProperties.LiveSetting="Polite">
-                            <StackPanel>
-                                <TextBlock Text="The assistant asks to read and edit these CHIM files" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource GameCenter.Text}" TextWrapping="Wrap" />
-                                <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto" Margin="0,4,0,4" Focusable="False">
-                                    <ItemsControl x:Name="AccessPaths" ItemsSource="{Binding FileRequestPaths}" Focusable="False"
-                                                  AutomationProperties.Name="Requested files">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding}" FontFamily="Consolas" FontSize="12" Foreground="{DynamicResource GameCenter.Text}"
-                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding}" />
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </ScrollViewer>
-                                <TextBlock Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,8"
-                                           Text="Allow access copies only these files into a fresh isolated working copy and continues your request there. Only CHIM (HerikaServer) files can be shared and edited today. Live files change only after you review and approve." />
-                                <WrapPanel>
-                                    <Button Content="Allow access" Command="{Binding AllowFileAccessCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
-                                            Margin="0,0,6,0" MinWidth="110"
-                                            AutomationProperties.HelpText="Copy only the listed files into a new isolated working copy and continue." />
-                                    <Button Content="Not now" Command="{Binding DeclineFileAccessCommand}" Style="{StaticResource Assistant.Action}" Margin="0"
-                                            AutomationProperties.HelpText="Dismiss this request. Nothing is shared." />
-                                </WrapPanel>
+                        <StackPanel Grid.Row="2" Margin="10,0,10,0">
+                            <!-- An action Core's broker proposed in the running turn, just above the composer: a live command, a restart, a model
+                                 change or its undo, a file change or undo, or a registered service operation, with Core's exact code or lines. Nothing
+                                 runs until Run once, Allow for this task, Approve restart, Apply change or Undo change; Cancel is the safe choice, no
+                                 button is a default and nothing takes focus. Stop, disconnect, a new chat or the broker's expiry also end it.
+                                 A destructive live command (routine ones run without a card) has a danger border and only Confirm and run or Cancel. -->
+                            <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
+                                    Background="{DynamicResource GameCenter.GoldTint}"
+                                    CornerRadius="4" Padding="10,8" Margin="0,0,0,6">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                                        <Setter Property="BorderThickness" Value="1" />
+                                        <Setter Property="AutomationProperties.Name" Value="Confirm the action the assistant proposed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsDestructiveRunProposed}" Value="True">
+                                                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                                                <Setter Property="BorderThickness" Value="2" />
+                                                <Setter Property="AutomationProperties.Name" Value="Confirm the destructive command the assistant proposed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock x:Name="RestartProposalTitle" Text="{Binding ActionProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource GameCenter.Text}" AutomationProperties.LiveSetting="Polite" />
+                                    <TextBlock x:Name="LiveRunFlagsText" Text="{Binding LiveRunFlags}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
+                                               Foreground="{DynamicResource GameCenter.Text}"
+                                               Visibility="{Binding IsLiveRunProposed, Converter={StaticResource BoolToVisibility}}"
+                                               AutomationProperties.Name="{Binding LiveRunFlags, StringFormat=Runs with: {0}}" />
+                                    <TextBlock x:Name="RestartProposalDetail" Text="{Binding ActionProposalDetail}" TextWrapping="Wrap" Margin="0,2,0,6"
+                                               Foreground="{DynamicResource GameCenter.Text}" FontSize="12" />
+                                    <!-- Read-only and selectable: exactly the code that runs, whole; long code scrolls instead of being cut. -->
+                                    <TextBox x:Name="LiveRunCodeBox" Text="{Binding LiveRunCode, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                             FontFamily="Consolas" FontSize="12" TextWrapping="NoWrap" MaxHeight="180"
+                                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                             Margin="0,0,0,6" Visibility="{Binding IsLiveRunProposed, Converter={StaticResource BoolToVisibility}}"
+                                             AutomationProperties.Name="Exact code that runs on the live distro" />
+                                    <!-- Read-only and selectable: a file change's complete diff can be long, so it scrolls instead of being cut. -->
+                                    <TextBox x:Name="ActionProposalDiff" Text="{Binding ActionProposalDiff, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                             FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" MaxHeight="200"
+                                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                             Margin="0,0,0,6" Visibility="{Binding HasActionProposalDiff, Converter={StaticResource BoolToVisibility}}"
+                                             AutomationProperties.Name="Exact change: lines starting with minus are now, lines starting with plus are after" />
+                                    <WrapPanel>
+                                        <Button x:Name="ApproveRestartButton" Content="{Binding ApproveActionLabel}" Command="{Binding ApproveActionCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" AutomationProperties.HelpText="Run exactly this once now. A live command is not verified by its exit code; a destructive one may not be undoable." />
+                                        <Button x:Name="AllowRunForTaskButton" Content="Allow for this task" Command="{Binding ApproveRunForTaskCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" Visibility="{Binding CanAllowRunForTask, Converter={StaticResource BoolToVisibility}}"
+                                                AutomationProperties.HelpText="Run this now, and let later live commands with the same account and network run without asking in this session, until you revoke it." />
+                                        <Button x:Name="CancelRestartButton" Content="Cancel" Command="{Binding CancelActionCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" AutomationProperties.HelpText="Do not run it. Nothing is changed." />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Task recovery, read from Core's journal on connect: shown only when a job's outcome is unknown, another session owns one, or the journal is unreadable. -->
+                            <TextBlock x:Name="RecoveryStatusTextBlock" Text="{Binding RecoveryStatusText}" TextWrapping="Wrap" Margin="0,0,0,4"
+                                       AutomationProperties.Name="Task recovery" AutomationProperties.HelpText="{Binding RecoveryStatusText}"
+                                       AutomationProperties.LiveSetting="Polite"
+                                       Visibility="{Binding HasRecoveryStatus, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsRecoveryUnavailable}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <!-- Live commands still running and the session's Allow for this task, in one compact line. -->
+                            <StackPanel x:Name="LiveRunStatus" Margin="0,0,0,2" Visibility="{Binding HasRunStatus, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock x:Name="RunningJobsTextBlock" Text="{Binding RunningJobsText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                                           Margin="0,0,0,4" AutomationProperties.LiveSetting="Polite"
+                                           Visibility="{Binding HasRunningJobs, Converter={StaticResource BoolToVisibility}}" />
+                                <Grid Visibility="{Binding HasRunGrant, Converter={StaticResource BoolToVisibility}}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="RunGrantTextBlock" Text="{Binding RunGrantText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                                               VerticalAlignment="Center" Margin="0,0,8,4" AutomationProperties.LiveSetting="Polite" />
+                                    <Button x:Name="RevokeRunGrantButton" Grid.Column="1" Content="Revoke" Command="{Binding RevokeRunGrantCommand}" Style="{StaticResource Assistant.Action}"
+                                            MinWidth="72" Margin="0,0,0,4" VerticalAlignment="Center"
+                                            AutomationProperties.HelpText="End Allow for this task: every later live command asks again. Running commands continue; Stop cancels them." />
+                                </Grid>
                             </StackPanel>
-                        </Border>
+                        </StackPanel>
 
                         <!-- The draft stays editable in every state; only Send waits for a ready session. -->
                         <Grid Grid.Row="3" Margin="10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <TextBox x:Name="InputBox" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+                            <!-- Attachments for the next message: a name, a size and Remove each; never a path. -->
+                            <ItemsControl x:Name="AttachmentChips" Grid.ColumnSpan="3" ItemsSource="{Binding Attachments}" Margin="0,0,0,6" Focusable="False"
+                                          Visibility="{Binding HasAttachments, Converter={StaticResource BoolToVisibility}}"
+                                          AutomationProperties.Name="Attachments for the next message">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#232323" BorderBrush="#3A3A3A" BorderThickness="1" CornerRadius="3" Margin="0,0,6,4" Padding="8,2,2,2"
+                                                MaxWidth="320">
+                                            <DockPanel>
+                                                <Button DockPanel.Dock="Right" Content="✕" Click="RemoveAttachment_Click" Style="{StaticResource Assistant.Action}"
+                                                        Margin="6,0,0,0" MinWidth="24" Padding="4,0" VerticalAlignment="Center"
+                                                        AutomationProperties.Name="{Binding RemoveName}"
+                                                        AutomationProperties.HelpText="Remove this attachment from the next message. The file itself is untouched." />
+                                                <TextBlock Text="{Binding Label}" Style="{StaticResource GameCenter.Caption}" FontSize="11.5" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}" />
+                                            </DockPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBox x:Name="InputBox" Grid.Row="1" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
                                      Style="{StaticResource Assistant.TextBox}" AcceptsReturn="True" TextWrapping="Wrap"
                                      MinHeight="38" MaxHeight="120" VerticalScrollBarVisibility="Auto"
-                                     PreviewKeyDown="InputBox_PreviewKeyDown"
+                                     PreviewKeyDown="InputBox_PreviewKeyDown" AllowDrop="True"
+                                     PreviewDragOver="InputBox_PreviewDragOver" PreviewDrop="InputBox_PreviewDrop"
                                      AutomationProperties.Name="Message to the assistant"
-                                     AutomationProperties.HelpText="Enter sends. Shift+Enter adds a new line. Esc stops a response. Messages over 8,000 characters are not cut; shorten them to send." />
-                            <Button Grid.Column="1" Content="Send" Command="{Binding SendCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                     AutomationProperties.HelpText="Enter sends. Shift+Enter adds a new line. Esc stops a response. Paste a screenshot or drop files to attach them. Messages over 8,000 characters are not cut; shorten them to send." />
+                            <Button x:Name="AttachButton" Grid.Row="1" Grid.Column="1" Content="Attach…" Click="AttachButton_Click" Style="{StaticResource Assistant.Action}"
+                                    Margin="8,0,0,0" MinWidth="72" VerticalAlignment="Bottom"
+                                    AutomationProperties.HelpText="Choose screenshots or text, log, config or code files to send with the next message. Their contents are data for the assistant, never instructions." />
+                            <Button Grid.Row="1" Grid.Column="2" Content="Send" Command="{Binding SendCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
                                     Margin="8,0,0,0" MinWidth="80" VerticalAlignment="Bottom" />
-                            <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                            <WrapPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,6,0,0">
+                                <TextBlock x:Name="AttachmentFeedbackText" Text="{Binding AttachmentFeedback}" Foreground="{DynamicResource GameCenter.DangerText}"
+                                           FontSize="11.5" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,14,2" MaxWidth="560"
+                                           Visibility="{Binding HasAttachmentFeedback, Converter={StaticResource BoolToVisibility}}"
+                                           AutomationProperties.LiveSetting="Assertive" />
                                 <StackPanel Orientation="Horizontal" Margin="0,0,14,2">
                                     <TextBlock x:Name="ModelLabel" Text="Model" Style="{StaticResource Assistant.Label}" />
                                     <ComboBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" DisplayMemberPath="DisplayName"
