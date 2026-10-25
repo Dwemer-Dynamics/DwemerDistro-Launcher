@@ -227,12 +227,12 @@
                             <TextBlock Text="No custom mods yet." Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="11" Margin="5,2,0,6"
                                        Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}" />
                             <Button Command="{Binding OpenCustomModCreationGuideCommand}" Style="{StaticResource GameCenter.UtilityButton}"
-                                    Margin="0,6,0,0" AutomationProperties.Name="Creation guide"
+                                    Margin="0,6,0,0" AutomationProperties.Name="Build a Mod!"
                                     AutomationProperties.HelpText="Open the KAGRENAC repository in your browser."
                                     ToolTip="Open the KAGRENAC repository in your browser.">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                                    <AccessText Text="Creation _guide" />
+                                    <AccessText Text="_Build a Mod!" />
                                 </StackPanel>
                             </Button>
                         </StackPanel>
