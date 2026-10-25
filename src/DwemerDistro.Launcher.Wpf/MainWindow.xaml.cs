@@ -103,6 +103,7 @@ public partial class MainWindow : Window
         }
 
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
+        _viewModel.CloseCommunityModDetails();
         await _viewModel.ShutdownAsync();
     }
 

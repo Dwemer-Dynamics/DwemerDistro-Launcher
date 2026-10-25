@@ -44,13 +44,13 @@ if (args.Length == 2 && args[0] == "--render-community")
         {
             var app = new DwemerDistro.Launcher.Wpf.App();
             app.InitializeComponent();
-            var window = new DwemerDistro.Launcher.Wpf.Views.CommunityModsWindow(
-                new CommunityModService(new WslService(new ProcessRunner())), () => false, () => { });
+            using var window = new DwemerDistro.Launcher.Wpf.Views.CommunityModDetails(
+                new CommunityModService(new WslService(new ProcessRunner())), () => false, () => { }, () => Task.CompletedTask);
             ((System.Windows.Controls.TextBlock)window.FindName("ModTitle")).Text = "Publishing Proof";
             ((System.Windows.Controls.TextBlock)window.FindName("DescriptionText")).Text = "One repository. Independently packaged game client and server, with exclusions applied before download.";
-            ((System.Windows.Controls.TextBlock)window.FindName("ReleaseText")).Text = "Example Game · v1.1.0 · 1234567\nAuthor-tested build: declared by the author\nLoader: native mod menu";
+            ((System.Windows.Controls.TextBlock)window.FindName("ReleaseText")).Text = "Example Game · v1.1.0";
+            ((System.Windows.Controls.TextBlock)window.FindName("CompatibilityText")).Text = "Author-tested build: declared by the author\nLoader: native mod menu";
             ((System.Windows.Controls.TextBlock)window.FindName("InstallPlanText")).Text = "Client: mods/publishing-proof. Server: /var/www/html/PublishingProofServer. Existing private data is kept.";
-            ((System.Windows.Controls.ListBox)window.FindName("Repositories")).ItemsSource = new[] { new CommunityRepository("Example/Publishing-Proof", "https://github.com/Example/Publishing-Proof", "A monorepo release with a native game client and its own server.") };
             ((System.Windows.Controls.TextBlock)window.FindName("StatusText")).Text = "Server installed; client installation pending. Retry this release to finish pairing.";
             var content = (System.Windows.Controls.Grid)window.Content;
             content.Background = window.Background;

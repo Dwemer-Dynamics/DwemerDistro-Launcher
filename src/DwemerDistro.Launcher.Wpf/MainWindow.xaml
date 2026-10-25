@@ -185,7 +185,8 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <StackPanel Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}"
+                                    IsEnabled="{Binding IsComponentInteractionEnabled}">
                             <RadioButton Content="Browse mods" GroupName="CustomModNavigation" Margin="0,0,0,10"
                                          Style="{StaticResource GameCenter.NavButton}"
                                          IsChecked="{Binding IsBrowsingCustomMods, Mode=TwoWay}"
@@ -231,10 +232,10 @@
                             </ListBox>
                             <TextBlock Text="No custom mods yet." Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="11" Margin="5,2,0,6"
                                        Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}" />
-                            <Button Content="Add custom mod" Command="{Binding AddCustomModCommand}" Style="{StaticResource GameCenter.Button}"
+                            <Button Content="Add by URL" Command="{Binding AddCommunityModCommand}" Style="{StaticResource GameCenter.Button}"
                                     Margin="0,6,0,0" Height="32"
-                                    AutomationProperties.Name="Add custom mod"
-                                    AutomationProperties.HelpText="Check a public repository and install it as a custom mod after you confirm you trust it." />
+                                    AutomationProperties.Name="Add published mod by URL"
+                                    AutomationProperties.HelpText="Preview a published mod inside the launcher." />
                             <Button Command="{Binding OpenCustomModCreationGuideCommand}" Style="{StaticResource GameCenter.UtilityButton}"
                                     Margin="0,6,0,0" AutomationProperties.Name="Creation guide"
                                     AutomationProperties.HelpText="Open the custom mod creation guide in your browser."
@@ -244,6 +245,9 @@
                                     <AccessText Text="Creation _guide" />
                                 </StackPanel>
                             </Button>
+                            <Button Content="Legacy server setup" Command="{Binding AddCustomModCommand}"
+                                    Style="{StaticResource GameCenter.UtilityButton}" Margin="0,6,0,0"
+                                    AutomationProperties.HelpText="Open the existing setup for older server-only repositories." />
                         </StackPanel>
                         <StackPanel x:Name="UtilityLandmark" Margin="0,14,0,0" KeyboardNavigation.TabNavigation="Local">
                             <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
@@ -989,10 +993,14 @@
                     </Border>
                 </Grid>
 
-                <!-- The catalog is the default custom-mod page; cards open the existing release preview. -->
+                <!-- The catalog and release details share this center panel; neither opens a window. -->
                 <views:CommunityModsBrowser x:Name="CustomModBrowser" Margin="18,16,18,12"
                                             Visibility="{Binding IsShowingCustomModBrowser, Converter={StaticResource BoolToVisibility}}"
                                             RepositoryRequested="CommunityMod_Requested" />
+                <ContentControl x:Name="CommunityModDetailsHost" Margin="18,16,18,12"
+                                Content="{Binding CommunityDetails}"
+                                Visibility="{Binding IsShowingCommunityModDetails, Converter={StaticResource BoolToVisibility}}"
+                                HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
                 <!-- Custom mods detail. Same two cards as the official view: the mod's installed banner, else
                      artwork from its public repository (generic placeholder otherwise) with name and description on the left,
                      status and actions on the right. Everything else comes from ddistro_custom_mod status. -->

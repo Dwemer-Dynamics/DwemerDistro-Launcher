@@ -20,6 +20,7 @@ public sealed partial class MainWindowViewModel
     private CustomModService _customModService = null!;
     private bool _isCustomModsView;
     private bool _isBrowsingCustomMods = true;
+    private CommunityModDetails? _communityDetails;
     private bool _isCustomModBusy;
     private bool _isCustomModMutationInProgress;
     private bool _isCustomModListLoaded;
@@ -48,6 +49,7 @@ public sealed partial class MainWindowViewModel
 
             OnPropertyChanged(nameof(IsOfficialModsView));
             OnPropertyChanged(nameof(IsShowingCustomModBrowser));
+            OnPropertyChanged(nameof(IsShowingCommunityModDetails));
             OnPropertyChanged(nameof(IsShowingInstalledCustomMod));
             if (value)
             {
@@ -63,14 +65,29 @@ public sealed partial class MainWindowViewModel
         get => _isBrowsingCustomMods;
         set
         {
+            if (CommunityDetails?.IsInstalling == true) return;
+            CloseCommunityModDetails();
             if (!SetProperty(ref _isBrowsingCustomMods, value)) return;
             if (value) SelectedCustomMod = null;
             OnPropertyChanged(nameof(IsShowingCustomModBrowser));
+            OnPropertyChanged(nameof(IsShowingCommunityModDetails));
             OnPropertyChanged(nameof(IsShowingInstalledCustomMod));
         }
     }
 
-    public bool IsShowingCustomModBrowser => IsCustomModsView && IsBrowsingCustomMods;
+    public CommunityModDetails? CommunityDetails
+    {
+        get => _communityDetails;
+        private set
+        {
+            if (!SetProperty(ref _communityDetails, value)) return;
+            OnPropertyChanged(nameof(IsShowingCustomModBrowser));
+            OnPropertyChanged(nameof(IsShowingCommunityModDetails));
+        }
+    }
+
+    public bool IsShowingCustomModBrowser => IsCustomModsView && IsBrowsingCustomMods && CommunityDetails is null;
+    public bool IsShowingCommunityModDetails => IsCustomModsView && IsBrowsingCustomMods && CommunityDetails is not null;
     public bool IsShowingInstalledCustomMod => IsCustomModsView && !IsBrowsingCustomMods;
 
     /// <summary>Second radio button of the Official/Custom switch.</summary>
@@ -91,6 +108,7 @@ public sealed partial class MainWindowViewModel
         get => _selectedCustomMod;
         set
         {
+            if (CommunityDetails?.IsInstalling == true) return;
             if (!SetProperty(ref _selectedCustomMod, value))
             {
                 return;
@@ -203,6 +221,7 @@ public sealed partial class MainWindowViewModel
     public AsyncRelayCommand AddCustomModCommand { get; private set; } = null!;
     public AsyncRelayCommand BrowseCommunityModsCommand { get; private set; } = null!;
     public AsyncRelayCommand ShowInstalledCustomModsCommand { get; private set; } = null!;
+    public AsyncRelayCommand AddCommunityModCommand { get; private set; } = null!;
 
     public AsyncRelayCommand CheckCustomModHealthCommand { get; private set; } = null!;
 
@@ -225,6 +244,7 @@ public sealed partial class MainWindowViewModel
         _customModService = new CustomModService(_wsl);
         CustomMods.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoCustomMods));
         AddCustomModCommand = new AsyncRelayCommand(AddCustomModAsync, CanStartCustomModOperation);
+        AddCommunityModCommand = new AsyncRelayCommand(() => BrowseCommunityModsAsync(), () => !IsCustomModBusy);
         BrowseCommunityModsCommand = new AsyncRelayCommand(() =>
         {
             IsBrowsingCustomMods = true;
@@ -268,6 +288,7 @@ public sealed partial class MainWindowViewModel
         AddCustomModCommand?.RaiseCanExecuteChanged();
         BrowseCommunityModsCommand?.RaiseCanExecuteChanged();
         ShowInstalledCustomModsCommand?.RaiseCanExecuteChanged();
+        AddCommunityModCommand?.RaiseCanExecuteChanged();
         CheckCustomModHealthCommand?.RaiseCanExecuteChanged();
         OpenCustomModDashboardCommand?.RaiseCanExecuteChanged();
         OpenCustomModRepositoryCommand?.RaiseCanExecuteChanged();
@@ -672,14 +693,29 @@ public sealed partial class MainWindowViewModel
 
     public async Task BrowseCommunityModsAsync(string? repository = null)
     {
-        // Browse never starts WSL. Register distro activity only when Install is chosen.
-        using var service = new CommunityModService(_wsl);
-        var dialog = new CommunityModsWindow(service,
-            () => CanAccessDistro() && TryBeginCustomModMutation(), EndCustomModMutation)
-        { Owner = Application.Current?.MainWindow };
-        if (repository is not null) dialog.SetRepository(repository);
-        dialog.ShowDialog();
-        if (dialog.InstallAttempted) await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
+        if (_isCustomModMutationInProgress) return;
+        IsBrowsingCustomMods = true;
+        var details = new CommunityModDetails(new CommunityModService(_wsl), () =>
+        {
+            if (IsCustomModBusy || !CanAccessDistro() || !TryBeginCustomModMutation()) return false;
+            IsCustomModBusy = true;
+            return true;
+        }, () =>
+        {
+            IsCustomModBusy = false;
+            EndCustomModMutation();
+        }, () => RefreshCustomModsAsync(checkHealth: false));
+        details.BackRequested += (_, _) => IsBrowsingCustomMods = true;
+        CommunityDetails = details;
+        await details.OpenAsync(repository);
+    }
+
+    // The inline view owns its preview requests and transport until it is left or the launcher closes.
+    public void CloseCommunityModDetails()
+    {
+        if (CommunityDetails?.IsInstalling == true) return;
+        CommunityDetails?.Dispose();
+        CommunityDetails = null;
     }
 
     private async Task RunSelectedCustomModOperationAsync(
