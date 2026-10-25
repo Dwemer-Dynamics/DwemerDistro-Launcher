@@ -56,7 +56,7 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
         _search = search;
         _loaded = false;
         LoadingProgress.Visibility = Visibility.Visible;
-        StatusText.Text = "Loading published mods…";
+        StatusText.Text = "Loading mods…";
         using var service = new CommunityModService(new WslService(new ProcessRunner()));
         try
         {
@@ -87,7 +87,7 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
                     search.Token.ThrowIfCancellationRequested();
                     if (!string.IsNullOrWhiteSpace(release.Name) && release.Name.Length <= 60) card.Title = release.Name;
                     ImageSource? artwork = null;
-                    foreach (var kind in new[] { "banner", "icon" })
+                    foreach (var kind in new[] { "icon", "banner" })
                     {
                         try
                         {
@@ -103,7 +103,7 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
                             bitmap.CacheOption = BitmapCacheOption.OnLoad;
                             bitmap.StreamSource = stream;
                             var frame = decoder.Frames[0];
-                            var scale = Math.Min(1, Math.Min(444d / frame.PixelWidth, 250d / frame.PixelHeight));
+                            var scale = Math.Min(1, Math.Min(512d / frame.PixelWidth, 512d / frame.PixelHeight));
                             bitmap.DecodePixelWidth = Math.Max(1, (int)(frame.PixelWidth * scale));
                             bitmap.DecodePixelHeight = Math.Max(1, (int)(frame.PixelHeight * scale));
                             bitmap.EndInit();
@@ -114,7 +114,7 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
                         catch (Exception error) when (error is HttpRequestException or IOException or NotSupportedException
                             or FormatException or ArgumentException or InvalidOperationException)
                         {
-                            // A missing or invalid banner still permits the author's icon.
+                            // A missing or invalid icon still permits the author's banner.
                         }
                     }
                     search.Token.ThrowIfCancellationRequested();

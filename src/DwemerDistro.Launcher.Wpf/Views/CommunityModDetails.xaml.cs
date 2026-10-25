@@ -53,7 +53,6 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
         RepositoryBox.IsReadOnly = _busy;
         UpdateActions();
         SourceButton.IsEnabled = NotesButton.IsEnabled = !_busy && _release is not null;
-        EvidenceButton.IsEnabled = !_busy && _release?.Manifest["testing"]?["evidence_path"] is not null;
         BusyProgress.IsIndeterminate = _busy;
         BusyProgress.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
         StatusText.Text = message;
@@ -65,6 +64,9 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
         InstallButton.Visibility = _serverInstalled ? Visibility.Collapsed : Visibility.Visible;
         DownloadButton.Visibility = _serverInstalled ? Visibility.Visible : Visibility.Collapsed;
         InstallButton.IsEnabled = DownloadButton.IsEnabled = !_busy && _release is not null;
+        SetupText.Text = _serverInstalled
+            ? "Your server is installed. Download the mod and add it to your game."
+            : "Install the server here, then download the mod and add it to your game.";
     }
 
     private async void Repository_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -84,7 +86,7 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
     private async Task CheckAsync()
     {
         if (_busy || _disposed) return;
-        SetBusy(true, "Checking the latest installable release…");
+        SetBusy(true, "Loading mod…");
         try
         {
             _release = await _service.CheckAsync(RepositoryBox.Text.Trim(), _cancellation.Token);
@@ -92,13 +94,9 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
             ModTitle.Text = _release.Name;
             AuthorText.Text = "By " + new Uri(_release.Repository).AbsolutePath.Trim('/').Split('/')[0];
             DescriptionText.Text = CommunityModService.Text(_release.Manifest, "description");
-            ReleaseText.Text = CommunityModService.Text(_release.Game, "name") + " · " + _release.Version;
-            CompatibilityText.Text = "Declared game build: " + CommunityModService.Text(_release.Game, "version") +
-                "\nLoader: " + CommunityModService.Text(_release.Game, "loader") +
-                "\nSource commit: " + _release.Commit +
-                "\nAuthor-reported testing: " + (_release.Manifest["testing"]?["summary"]?.GetValue<string>() ?? "Not provided.") +
-                "\n" + CommunityModService.Text(_release.Game, "enable_in_game");
-            BannerImage.Source = IconImage.Source = null;
+            ReleaseText.Text = CommunityModService.Text(_release.Game, "name");
+            CompatibilityText.Text = CommunityModService.Text(_release.Game, "enable_in_game");
+            BannerImage.Source = null;
             foreach (var kind in new[] { "icon", "banner" })
             {
                 try
@@ -113,11 +111,12 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
                     var image = new BitmapImage();
                     image.BeginInit(); image.CacheOption = BitmapCacheOption.OnLoad; image.StreamSource = stream;
                     var frame = decoder.Frames[0];
-                    var scale = Math.Min(1, Math.Min((kind == "icon" ? 64d : 900d) / frame.PixelWidth, (kind == "icon" ? 64d : 360d) / frame.PixelHeight));
+                    var scale = Math.Min(1, Math.Min(512d / frame.PixelWidth, 512d / frame.PixelHeight));
                     image.DecodePixelWidth = Math.Max(1, (int)(frame.PixelWidth * scale));
                     image.DecodePixelHeight = Math.Max(1, (int)(frame.PixelHeight * scale));
                     image.EndInit(); image.Freeze();
-                    if (kind == "icon") IconImage.Source = image; else BannerImage.Source = image;
+                    BannerImage.Source = image;
+                    break;
                 }
                 catch (Exception error) when (error is IOException or System.Net.Http.HttpRequestException or NotSupportedException or FormatException or ArgumentException or InvalidOperationException) { /* Optional artwork keeps its placeholder. */ }
             }
@@ -134,7 +133,6 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
     }
     private void Source_Click(object sender, RoutedEventArgs e) => OpenSource(string.Empty);
     private void Notes_Click(object sender, RoutedEventArgs e) => OpenSource("/releases/tag/" + _release!.Version);
-    private void Evidence_Click(object sender, RoutedEventArgs e) => OpenSource("/blob/" + _release!.Commit + "/" + CommunityModService.Relative(_release.Manifest["testing"]!["evidence_path"]!.GetValue<string>()));
 
     private async void Install_Click(object sender, RoutedEventArgs e)
     {

@@ -51,7 +51,7 @@
         </Grid>
         <StackPanel Grid.Row="2" Margin="0,0,0,12">
             <ProgressBar x:Name="LoadingProgress" Height="3" Visibility="Collapsed" IsIndeterminate="True" Margin="0,0,0,8" />
-            <TextBlock x:Name="StatusText" Text="Find a mod, then select it to review its release."
+            <TextBlock x:Name="StatusText" Text="Choose a mod to get started."
                        Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
                        AutomationProperties.Name="Mod catalog status" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>
@@ -62,10 +62,21 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
                         <Button Style="{StaticResource ModTile}" Click="Mod_Click" ToolTip="{Binding Description}"
-                                AutomationProperties.Name="{Binding Title}" AutomationProperties.HelpText="Review this mod's release and install plan.">
+                                AutomationProperties.Name="{Binding Title}" AutomationProperties.HelpText="View this mod and how to install it.">
                             <StackPanel>
-                                <Grid Height="125" Background="#121212" ClipToBounds="True">
-                                    <Image Source="../Assets/DwemerDistro.png" Width="48" Height="48" Opacity="0.25" />
+                                <Grid Height="220" Background="#121212" ClipToBounds="True">
+                                    <Image Source="../Assets/DwemerDistro.png" Width="96" Height="96" Opacity="0.25">
+                                        <Image.Style>
+                                            <Style TargetType="Image">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Artwork}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Image.Style>
+                                    </Image>
                                     <Image Source="{Binding Artwork}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
                                 </Grid>
                                 <TextBlock Text="{Binding Title}" Foreground="{DynamicResource GameCenter.Text}"

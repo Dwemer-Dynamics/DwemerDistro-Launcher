@@ -38,33 +38,45 @@
         <Grid Grid.Row="2">
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
                 <StackPanel>
-                    <Border Background="{DynamicResource GameCenter.Panel}" Height="180" ClipToBounds="True">
-                        <Grid>
-                            <Image Source="../Assets/DwemerDistro.png" Width="56" Height="56" Opacity="0.2" />
-                            <Image x:Name="BannerImage" Stretch="Uniform" AutomationProperties.Name="Mod banner" />
-                        </Grid>
-                    </Border>
-                    <Grid Margin="0,16,0,6">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <Image x:Name="IconImage" Width="32" Height="32" Stretch="Uniform" Margin="0,0,10,0" AutomationProperties.Name="Mod icon" />
-                        <TextBlock x:Name="ModTitle" Grid.Column="1" Text="Add a mod" FontSize="23" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <Grid Margin="0,0,0,20">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="256" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border Background="{DynamicResource GameCenter.Panel}" Width="256" Height="256" ClipToBounds="True" VerticalAlignment="Top">
+                            <Grid>
+                                <Image Source="../Assets/DwemerDistro.png" Width="96" Height="96" Opacity="0.25">
+                                    <Image.Style>
+                                        <Style TargetType="Image">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Source, ElementName=BannerImage}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Image.Style>
+                                </Image>
+                                <Image x:Name="BannerImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Mod image" />
+                            </Grid>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="20,0,0,0">
+                            <TextBlock x:Name="ModTitle" Text="Choose a mod" FontSize="23" FontWeight="SemiBold" />
+                            <TextBlock x:Name="AuthorText" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" Margin="0,6,0,0" />
+                            <TextBlock x:Name="ReleaseText" Margin="0,6,0,0" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" />
+                            <TextBlock x:Name="DescriptionText" Text="Select a mod to see what it adds to your game." Margin="0,16,0,20" FontSize="14" />
+                            <WrapPanel>
+                                <Button x:Name="InstallButton" Content="Install server" Style="{StaticResource GameCenter.PrimaryButton}"
+                                        IsEnabled="False" Click="Install_Click" Height="40" MinWidth="160" />
+                                <Button x:Name="DownloadButton" Content="Download mod release" Style="{StaticResource GameCenter.PrimaryButton}"
+                                        Visibility="Collapsed" Click="Download_Click" Height="40" MinWidth="180" />
+                            </WrapPanel>
+                        </StackPanel>
                     </Grid>
-                    <TextBlock x:Name="AuthorText" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" />
-                    <TextBlock x:Name="DescriptionText" Text="Paste a repository URL to preview its published mod." Margin="0,16,0,12" FontSize="14" />
-                    <TextBlock x:Name="ReleaseText" Margin="0,0,0,16" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" />
-                    <WrapPanel>
-                        <Button x:Name="InstallButton" Content="Install server" Style="{StaticResource GameCenter.PrimaryButton}"
-                                IsEnabled="False" Click="Install_Click" Height="40" MinWidth="160" />
-                        <Button x:Name="DownloadButton" Content="Download mod release" Style="{StaticResource GameCenter.PrimaryButton}"
-                                Visibility="Collapsed" Click="Download_Click" Height="40" MinWidth="180" />
-                    </WrapPanel>
-                    <StackPanel Margin="0,16,0,12">
-                        <TextBlock Text="Details" FontWeight="SemiBold" Margin="0,0,0,10" />
-                        <TextBlock x:Name="CompatibilityText" FontSize="12" Foreground="{DynamicResource GameCenter.TextMuted}" />
-                        <WrapPanel Margin="0,10,0,0">
-                            <Button x:Name="SourceButton" Content="Repository" IsEnabled="False" Margin="0,0,6,6" Click="Source_Click" />
-                            <Button x:Name="NotesButton" Content="Release notes" IsEnabled="False" Margin="0,0,6,6" Click="Notes_Click" />
-                            <Button x:Name="EvidenceButton" Content="Test evidence" IsEnabled="False" Margin="0,0,0,6" Click="Evidence_Click" />
+                    <StackPanel Margin="0,0,0,12">
+                        <TextBlock Text="Setup" FontWeight="SemiBold" Margin="0,0,0,10" />
+                        <TextBlock x:Name="SetupText" Text="Install the server here, then download the mod and add it to your game." FontSize="13" />
+                        <TextBlock x:Name="CompatibilityText" FontSize="13" Margin="0,8,0,0" />
+                        <WrapPanel Margin="0,16,0,0">
+                            <Button x:Name="SourceButton" Content="Mod page" IsEnabled="False" Margin="0,0,6,6" Click="Source_Click" />
+                            <Button x:Name="NotesButton" Content="What's new" IsEnabled="False" Margin="0,0,6,6" Click="Notes_Click" />
                         </WrapPanel>
                     </StackPanel>
                 </StackPanel>
