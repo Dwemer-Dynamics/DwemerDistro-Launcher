@@ -6,6 +6,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Threading;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using UserControl = System.Windows.Controls.UserControl;
 
@@ -22,6 +23,8 @@ public partial class AssistantView : UserControl
     private const double ReviewWidth = 320;
     // What is shown for each transcript item; every key is subscribed to PropertyChanged.
     private readonly Dictionary<AssistantTranscriptItem, TranscriptEntry> _transcriptRuns = new();
+    // The pending check that a Find match is still in view once layout settles.
+    private DispatcherOperation? _findReveal;
 
     /// <summary>
     /// One item's blocks. Plain items (the user's own text, launcher notes, activity) keep one run that streaming appends to;
@@ -187,6 +190,8 @@ public partial class AssistantView : UserControl
             return;
         }
 
+        // A count is only true for the messages it was taken over.
+        if (FindStatusText.Text.Length > 0) FindStatusText.Text = "The messages shown changed. Press Next to search them again.";
         var follow = IsFollowingTranscript();
         var pinned = PinSelection();
         var blocks = TranscriptBox.Document.Blocks;
@@ -291,8 +296,9 @@ public partial class AssistantView : UserControl
         return atBottom && (TranscriptBox.Selection.IsEmpty || !IsTranscriptInUse());
     }
 
+    // A match Find selected counts as in use while Find is open, so streaming does not scroll it away.
     private bool IsTranscriptInUse() =>
-        TranscriptBox.IsKeyboardFocusWithin || TranscriptBox.IsMouseCaptureWithin
+        TranscriptBox.IsKeyboardFocusWithin || TranscriptBox.IsMouseCaptureWithin || FindBar.Visibility == Visibility.Visible
         || Keyboard.FocusedElement is FrameworkElement focused
         && (focused as System.Windows.Controls.ContextMenu ?? focused.Parent as System.Windows.Controls.ContextMenu)?.PlacementTarget == TranscriptBox;
 
@@ -311,9 +317,24 @@ public partial class AssistantView : UserControl
         }
     }
 
-    // Esc only reaches this handler while focus is inside the Assistant page.
+    // Keys only reach this handler while focus is inside the Assistant page. Ctrl+F opens Find; Esc in Find closes Find and
+    // never stops a response, and anywhere else on the page it keeps stopping one.
     private void AssistantView_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            e.Handled = true;
+            OpenFind();
+            return;
+        }
+
+        if (e.Key == Key.Escape && FindBar.IsKeyboardFocusWithin)
+        {
+            e.Handled = true;
+            CloseFind();
+            return;
+        }
+
         if (e.Key != Key.Escape || ViewModel is not { State: AssistantState.Streaming } viewModel)
         {
             return;
@@ -321,6 +342,119 @@ public partial class AssistantView : UserControl
 
         e.Handled = true;
         _ = viewModel.InterruptAsync();
+    }
+
+    // --- Find in the messages shown ---------------------------------------------------------------
+
+    private void OpenFind_Click(object sender, RoutedEventArgs e) => OpenFind();
+    private void FindNext_Click(object sender, RoutedEventArgs e) => FindNext(forward: true);
+    private void FindPrevious_Click(object sender, RoutedEventArgs e) => FindNext(forward: false);
+    private void FindClose_Click(object sender, RoutedEventArgs e) => CloseFind();
+
+    internal void OpenFind()
+    {
+        FindBar.Visibility = Visibility.Visible;
+        FindBox.Focus();
+        FindBox.SelectAll();
+        if (FindBox.Text.Length > 0) FindNext(forward: true, fromCurrent: true);
+    }
+
+    /// <summary>Hides Find; the last match stays selected in the transcript, which takes focus back.</summary>
+    internal void CloseFind()
+    {
+        FindBar.Visibility = Visibility.Collapsed;
+        FindStatusText.Text = string.Empty;
+        TranscriptBox.Focus();
+    }
+
+    private void FindBox_TextChanged(object sender, TextChangedEventArgs e) => FindNext(forward: true, fromCurrent: true);
+
+    // Enter finds the next match and Shift+Enter the previous; nothing is typed or sent anywhere else.
+    private void FindBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Enter or Key.F3)) return;
+        e.Handled = true;
+        FindNext(forward: (Keyboard.Modifiers & ModifierKeys.Shift) == 0);
+    }
+
+    /// <summary>
+    /// Selects the next (or previous) exact match after the current selection, wrapping around, with the selection's own
+    /// TextRange; the count and the label say it covers only the messages loaded here.
+    /// </summary>
+    internal void FindNext(bool forward, bool fromCurrent = false)
+    {
+        var query = FindBox.Text;
+        var shown = _viewModel?.Transcript.Count ?? 0;
+        var window = _viewModel?.IsBrowsingHistory == true ? $"the {shown} earlier message(s) loaded here" : $"the {shown} message(s) loaded here";
+        if (query.Length == 0)
+        {
+            FindStatusText.Text = $"Type to search {window}.";
+            return;
+        }
+
+        var matches = TranscriptFind.Matches(TranscriptBox.Document, query);
+        if (matches.Count == 0)
+        {
+            FindStatusText.Text = $"Not found in {window}." + (_viewModel?.HasEarlierHistory == true ? " Load earlier messages to search further back." : string.Empty);
+            return;
+        }
+
+        var anchor = TranscriptBox.Selection.Start;
+        int index;
+        if (forward)
+        {
+            index = matches.FindIndex(match => fromCurrent ? match.Start.CompareTo(anchor) >= 0 : match.Start.CompareTo(anchor) > 0);
+            if (index < 0) index = 0;
+        }
+        else
+        {
+            index = matches.FindLastIndex(match => match.Start.CompareTo(anchor) < 0);
+            if (index < 0) index = matches.Count - 1;
+        }
+
+        var found = matches[index];
+        TranscriptBox.Selection.Select(found.Start, found.End);
+        RevealMatch(found);
+        var count = matches.Count >= TranscriptFind.MaxMatches ? $"{TranscriptFind.MaxMatches}+" : matches.Count.ToString();
+        FindStatusText.Text = $"{index + 1} of {count} in {window}. Export chat saves the whole conversation.";
+    }
+
+    /// <summary>
+    /// Scrolls the selected match into the transcript's viewport without moving focus: once now, after any queued scroll to
+    /// the end and pending layout are applied, and again once layout settles, while the selection is still that match.
+    /// </summary>
+    private void RevealMatch(TextRange found)
+    {
+        _findReveal?.Abort();
+        ScrollMatchIntoView(found);
+        var attempts = 0;
+        void Recheck()
+        {
+            _findReveal = null;
+            // A newer search, or the reader's own selection, wins.
+            if (TranscriptBox.Selection.Start.CompareTo(found.Start) != 0 || TranscriptBox.Selection.End.CompareTo(found.End) != 0) return;
+            if (!ScrollMatchIntoView(found) && ++attempts < 10)
+                _findReveal = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(Recheck));
+        }
+        _findReveal = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(Recheck));
+    }
+
+    // True once the match's first character lies inside the viewport; false while the document is not laid out there yet.
+    private bool ScrollMatchIntoView(TextRange found)
+    {
+        TranscriptBox.UpdateLayout();
+        if (TranscriptBox.Template?.FindName("PART_ContentHost", TranscriptBox) is not ScrollViewer viewer || viewer.ViewportHeight <= 0) return false;
+        for (var pass = 0; pass < 2; pass++)
+        {
+            var rect = found.Start.GetCharacterRect(LogicalDirection.Forward);
+            if (rect.IsEmpty) return false;
+            var top = TranscriptBox.TranslatePoint(rect.TopLeft, viewer).Y;
+            if (top >= 0 && top + rect.Height <= viewer.ViewportHeight) return true;
+            if (pass == 1) return false;
+            viewer.ScrollToVerticalOffset(Math.Clamp(viewer.VerticalOffset + top - viewer.ViewportHeight / 3, 0, viewer.ScrollableHeight));
+            TranscriptBox.UpdateLayout();
+        }
+        return false;
     }
 
     private void CopySignInCode_Click(object sender, RoutedEventArgs e)
@@ -370,7 +504,13 @@ public partial class AssistantView : UserControl
     private void AssistantView_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         ApplyLayout(e.NewSize.Width);
+        FitPanels(e.NewSize.Height);
     }
+
+    // Wide: open History and Memory share at most about a third of the page and scroll, so the conversation stays usable.
+    // Narrow: the page itself scrolls, so the panels show in full.
+    internal void FitPanels(double height) =>
+        PanelScroll.MaxHeight = _isNarrow == true || height <= 0 ? double.PositiveInfinity : Math.Max(180, height * 0.35);
 
     internal void ApplyLayout(double width)
     {

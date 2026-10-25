@@ -5,7 +5,9 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 /// <summary>
 /// One conversation in the launcher's history list: local metadata and the ids needed to reopen it. Codex's own sessions
-/// stay canonical for the messages; nothing here holds transcript text, prompts, credentials or account details.
+/// stay canonical for the messages. The title is the user's own text: a short single-line excerpt of the chat's first
+/// message (at most <see cref="MaxTitleChars"/> characters), or a name the user gave it. No transcript, reply, launcher
+/// context, credential or account detail is stored here.
 /// </summary>
 public sealed record AssistantCatalogEntry(
     string InstallationId, string Distro, string Provider, string TaskId, string? ThreadId, string Title,
@@ -22,6 +24,11 @@ public sealed record AssistantCatalogEntry(
     public bool Archived { get; init; }
     /// <summary>The user named it; automatic titles never replace a user's.</summary>
     public bool Renamed { get; init; }
+    /// <summary>
+    /// The user deleted this chat's conversation from Codex. Unlike Archived it cannot be undone; the entry stays only so the
+    /// task's live-change receipt or earlier threads remain reachable.
+    /// </summary>
+    public bool ChatDeleted { get; init; }
 
     public bool IsValid() =>
         Guid.TryParse(InstallationId, out _) && Distro is { Length: > 0 and <= 64 } &&
@@ -192,4 +199,23 @@ public sealed class AssistantCatalogStore : IAssistantCatalogStore
     }
 
     private static string Short(string taskId) => taskId.Length > 8 ? taskId[..8] : taskId;
+
+    /// <summary>
+    /// Keeps at most <see cref="AssistantCatalog.MaxEntries"/> entries by removing the oldest first, but never the current
+    /// task, and entries with a recorded live change only once nothing else is left. Returns how many were removed, so the
+    /// caller reports it instead of the store dropping them silently.
+    /// </summary>
+    internal static int Prune(List<AssistantCatalogEntry> entries, string? currentTaskId)
+    {
+        var removed = 0;
+        while (entries.Count > AssistantCatalog.MaxEntries)
+        {
+            var candidates = entries.Where(entry => entry.TaskId != currentTaskId).ToList();
+            var oldest = candidates.Where(entry => !entry.LiveChange).MinBy(entry => entry.UpdatedAt) ?? candidates.MinBy(entry => entry.UpdatedAt);
+            if (oldest is null) break;
+            entries.Remove(oldest);
+            removed++;
+        }
+        return removed;
+    }
 }
