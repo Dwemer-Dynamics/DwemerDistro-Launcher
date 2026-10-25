@@ -1,0 +1,466 @@
+<UserControl x:Class="DwemerDistro.Launcher.Wpf.Views.AssistantView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             PreviewKeyDown="AssistantView_PreviewKeyDown"
+             SizeChanged="AssistantView_SizeChanged">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <Style x:Key="Assistant.TextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#191919" />
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style x:Key="Assistant.Action" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="MinWidth" Value="96" />
+        </Style>
+        <Style x:Key="Assistant.Label" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer x:Name="PageScroll" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+        <Grid x:Name="PageGrid" Margin="18,16,18,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Margin="0,0,0,10">
+                <TextBlock Text="ASSISTANT" Style="{StaticResource GameCenter.Heading}" />
+                <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                           Text="Ask about your DwemerDistro setup: installed servers, mods and components. Get help with setup steps and problems." />
+            </StackPanel>
+
+            <!-- Header: what is connected, as whom, and the session actions. -->
+            <Border Grid.Row="1" Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Margin="0,0,12,0">
+                            <TextBlock x:Name="StatusTextBlock" Text="{Binding StatusText}" Style="{StaticResource GameCenter.SectionHeading}"
+                                       AutomationProperties.Name="{Binding StatusText, StringFormat=Assistant status: {0}}"
+                                       AutomationProperties.HelpText="{Binding StatusDetail}"
+                                       AutomationProperties.LiveSetting="Polite" />
+                            <ScrollViewer MaxHeight="96" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                          Focusable="False" Margin="0,3,0,0">
+                                <TextBlock x:Name="StatusDetailText" Text="{Binding StatusDetail}" Style="{StaticResource GameCenter.Caption}"
+                                           TextWrapping="Wrap" />
+                            </ScrollViewer>
+                        </StackPanel>
+                        <WrapPanel x:Name="SessionActions" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" MaxWidth="440">
+                            <Button Content="Connect" Command="{Binding ConnectCommand}" Style="{StaticResource GameCenter.PrimaryButton}" Margin="0,0,6,6" MinWidth="96"
+                                    AutomationProperties.HelpText="Check DwemerDistro and start the assistant for the current task." />
+                            <Button Content="Sign in" Command="{Binding SignInCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Request a ChatGPT sign-in code. Nothing opens until you click Open sign-in page." />
+                            <Button Content="Stop" Command="{Binding StopCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Stop the current response and any live command still running. Available only while one is." />
+                            <Button Content="Disconnect" Command="{Binding DisconnectCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Close the assistant session. It stays closed until you press Connect; your draft is kept." />
+                            <Button Content="Load earlier messages" Command="{Binding LoadEarlierCommand}" Style="{StaticResource Assistant.Action}"
+                                    Visibility="{Binding HasEarlierHistory, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.HelpText="Show older messages of this conversation above the ones shown. Nothing is sent." />
+                            <Button Content="Newer messages" Command="{Binding LoadNewerCommand}" Style="{StaticResource Assistant.Action}"
+                                    Visibility="{Binding IsBrowsingHistory, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.HelpText="Show the messages after the earlier ones shown, then the latest. Nothing is sent." />
+                            <Button Content="Back to latest" Command="{Binding BackToLatestCommand}" Style="{StaticResource Assistant.Action}"
+                                    Visibility="{Binding IsBrowsingHistory, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.HelpText="Return to the newest messages of this conversation. Your draft is kept." />
+                            <Button Content="New chat" Command="{Binding NewTaskCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Start a new chat with a fresh working copy. The current chat is kept; nothing is deleted." />
+                            <Button x:Name="ClearMemoryButton" Content="Clear memory" Command="{Binding Memory.ResetCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Forget every note the assistant learned on this installation, after you confirm. Chats, settings and sign-in are kept." />
+                            <Button Content="Run isolation check" Command="{Binding RunProbeCommand}" Style="{StaticResource Assistant.Action}"
+                                    Visibility="{Binding IsProbeVisible, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.HelpText="Run DwemerDistro's assistant isolation check again." />
+                        </WrapPanel>
+                    </Grid>
+
+                    <WrapPanel Margin="0,6,0,0">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,18,2">
+                            <TextBlock x:Name="ProviderLabel" Text="Provider" Style="{StaticResource Assistant.Label}" />
+                            <TextBlock Text="{Binding ProviderText}" Style="{StaticResource GameCenter.Caption}" VerticalAlignment="Center"
+                                       AutomationProperties.LabeledBy="{Binding ElementName=ProviderLabel}" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                            <TextBlock x:Name="AccountLabel" Text="Account" Style="{StaticResource Assistant.Label}" />
+                            <TextBlock Text="{Binding AccountText}" Style="{StaticResource GameCenter.Caption}" VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" MaxWidth="260" ToolTip="{Binding AccountText}"
+                                       AutomationProperties.LabeledBy="{Binding ElementName=AccountLabel}" />
+                        </StackPanel>
+                    </WrapPanel>
+
+                    <!-- Sign-in: the supported URL and code are shown here; the browser opens only on click. -->
+                    <Border Visibility="{Binding IsSignInVisible, Converter={StaticResource BoolToVisibility}}"
+                            BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,8,0,0">
+                        <StackPanel>
+                            <TextBlock x:Name="SignInUrlLabel" Text="Sign-in page" Style="{StaticResource GameCenter.Caption}" />
+                            <TextBox Text="{Binding SignInUrl, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}" FontFamily="Consolas"
+                                     Margin="0,3,0,6" AutomationProperties.LabeledBy="{Binding ElementName=SignInUrlLabel}" />
+                            <StackPanel Orientation="Horizontal" Visibility="{Binding HasSignInCode, Converter={StaticResource BoolToVisibility}}" Margin="0,0,0,6">
+                                <TextBlock x:Name="SignInCodeLabel" Text="Code" Style="{StaticResource Assistant.Label}" />
+                                <TextBox Text="{Binding SignInCode, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                         FontFamily="Consolas" FontSize="18" FontWeight="Bold" MinWidth="160"
+                                         AutomationProperties.LabeledBy="{Binding ElementName=SignInCodeLabel}" />
+                                <Button Content="Copy code" Click="CopySignInCode_Click" Style="{StaticResource Assistant.Action}" Margin="6,0,0,0" />
+                            </StackPanel>
+                            <Button Content="Open sign-in page" Command="{Binding OpenSignInUrlCommand}" Style="{StaticResource Assistant.Action}"
+                                    HorizontalAlignment="Left" AutomationProperties.HelpText="Open the sign-in page in your browser." />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Only for the broker's account_home_unmanaged_config refusal when Core's dry run found the one file it can repair.
+                         The status above explains it; nothing changes until Repair here, and Cancel changes nothing. -->
+                    <Border x:Name="HomeConfigRepairCard" Visibility="{Binding IsHomeConfigRepairOffered, Converter={StaticResource BoolToVisibility}}"
+                            BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
+                            AutomationProperties.Name="Confirm repairing the assistant's account settings file">
+                        <WrapPanel>
+                            <TextBlock x:Name="HomeConfigRepairText" Text="Move config.toml into quarantine and reconnect?" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,6" />
+                            <Button x:Name="RepairHomeConfigButton" Content="Repair" Command="{Binding RepairHomeConfigCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Move the file, unchanged, into DwemerDistro's private quarantine with a receipt, then reconnect. Sign-in and chats are kept." />
+                            <Button x:Name="CancelHomeConfigRepairButton" Content="Cancel" Command="{Binding CancelHomeConfigRepairCommand}" Style="{StaticResource Assistant.Action}"
+                                    AutomationProperties.HelpText="Leave the file where it is. Nothing is changed; the assistant stays off." />
+                        </WrapPanel>
+                    </Border>
+
+                    <!-- Memory is automatic. Only its problems or the last Clear memory outcome are shown, plus the confirmation. -->
+                    <StackPanel DataContext="{Binding Memory}">
+                        <TextBlock x:Name="MemoryStatusText" Text="{Binding StatusText}" TextWrapping="Wrap" Margin="0,8,0,0"
+                                   AutomationProperties.LiveSetting="Polite">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding StatusText}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <!-- Nothing is sent until Clear memory here; Cancel changes nothing. -->
+                        <Border x:Name="ClearMemoryConfirmCard" Visibility="{Binding ConfirmingReset, Converter={StaticResource BoolToVisibility}}"
+                                BorderBrush="{DynamicResource GameCenter.Danger}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
+                                AutomationProperties.Name="Confirm clearing all Assistant memories">
+                            <WrapPanel>
+                                <TextBlock x:Name="ClearMemoryConfirmText" Text="Clear all Assistant memories?" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource GameCenter.DangerText}" VerticalAlignment="Center" Margin="0,0,12,6" />
+                                <Button x:Name="ConfirmClearMemoryButton" Content="Clear memory" Command="{Binding ConfirmResetCommand}" Style="{StaticResource Assistant.Action}"
+                                        AutomationProperties.HelpText="Forget every learned note now. Chats, task receipts, settings and sign-in are kept. This cannot be undone." />
+                                <Button x:Name="CancelClearMemoryButton" Content="Cancel" Command="{Binding CancelResetCommand}" Style="{StaticResource Assistant.Action}"
+                                        AutomationProperties.HelpText="Keep every note. Nothing is changed." />
+                            </WrapPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Grid x:Name="BodyGrid" Grid.Row="2" MinHeight="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition x:Name="SideColumn" Width="0" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="ChatRow" Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- Conversation -->
+                <Border x:Name="ChatCard" Style="{StaticResource GameCenter.Card}" Padding="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <!-- One read-only document, so a selection, Ctrl+A and Copy can span the whole conversation.
+                             Code-behind keeps its blocks in step with Transcript. -->
+                        <RichTextBox x:Name="TranscriptBox" Grid.Row="1" IsReadOnly="True" IsReadOnlyCaretVisible="True" IsUndoEnabled="False"
+                                     IsInactiveSelectionHighlightEnabled="True"
+                                     Background="Transparent" BorderThickness="0" Padding="10,10" FontSize="13"
+                                     Foreground="{DynamicResource GameCenter.Text}" CaretBrush="{DynamicResource GameCenter.Text}"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                     AutomationProperties.Name="Assistant conversation"
+                                     AutomationProperties.HelpText="Read-only. Ctrl+A selects the whole conversation and Ctrl+C copies the selection.">
+                            <FlowDocument PagePadding="0" />
+                        </RichTextBox>
+
+                        <StackPanel Grid.Row="2" Margin="10,0,10,0">
+                            <!-- An action Core's broker proposed in the running turn, just above the composer: a live command, a restart, a model
+                                 change or its undo, a file change or undo, or a registered service operation, with Core's exact code or lines. Nothing
+                                 runs until Run once, Allow for this task, Approve restart, Apply change or Undo change; Cancel is the safe choice, no
+                                 button is a default and nothing takes focus. Stop, disconnect, a new chat or the broker's expiry also end it.
+                                 A destructive live command (routine ones run without a card) has a danger border and only Confirm and run or Cancel. -->
+                            <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
+                                    Background="{DynamicResource GameCenter.GoldTint}"
+                                    CornerRadius="4" Padding="10,8" Margin="0,0,0,6">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                                        <Setter Property="BorderThickness" Value="1" />
+                                        <Setter Property="AutomationProperties.Name" Value="Confirm the action the assistant proposed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsDestructiveRunProposed}" Value="True">
+                                                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                                                <Setter Property="BorderThickness" Value="2" />
+                                                <Setter Property="AutomationProperties.Name" Value="Confirm the destructive command the assistant proposed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock x:Name="RestartProposalTitle" Text="{Binding ActionProposalTitle}" FontWeight="SemiBold" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource GameCenter.Text}" AutomationProperties.LiveSetting="Polite" />
+                                    <TextBlock x:Name="LiveRunFlagsText" Text="{Binding LiveRunFlags}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
+                                               Foreground="{DynamicResource GameCenter.Text}"
+                                               Visibility="{Binding IsLiveRunProposed, Converter={StaticResource BoolToVisibility}}"
+                                               AutomationProperties.Name="{Binding LiveRunFlags, StringFormat=Runs with: {0}}" />
+                                    <TextBlock x:Name="RestartProposalDetail" Text="{Binding ActionProposalDetail}" TextWrapping="Wrap" Margin="0,2,0,6"
+                                               Foreground="{DynamicResource GameCenter.Text}" FontSize="12" />
+                                    <!-- Read-only and selectable: exactly the code that runs, whole; long code scrolls instead of being cut. -->
+                                    <TextBox x:Name="LiveRunCodeBox" Text="{Binding LiveRunCode, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                             FontFamily="Consolas" FontSize="12" TextWrapping="NoWrap" MaxHeight="180"
+                                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                             Margin="0,0,0,6" Visibility="{Binding IsLiveRunProposed, Converter={StaticResource BoolToVisibility}}"
+                                             AutomationProperties.Name="Exact code that runs on the live distro" />
+                                    <!-- Read-only and selectable: a file change's complete diff can be long, so it scrolls instead of being cut. -->
+                                    <TextBox x:Name="ActionProposalDiff" Text="{Binding ActionProposalDiff, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                             FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" MaxHeight="200"
+                                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                             Margin="0,0,0,6" Visibility="{Binding HasActionProposalDiff, Converter={StaticResource BoolToVisibility}}"
+                                             AutomationProperties.Name="Exact change: lines starting with minus are now, lines starting with plus are after" />
+                                    <WrapPanel>
+                                        <Button x:Name="ApproveRestartButton" Content="{Binding ApproveActionLabel}" Command="{Binding ApproveActionCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" AutomationProperties.HelpText="Run exactly this once now. A live command is not verified by its exit code; a destructive one may not be undoable." />
+                                        <Button x:Name="AllowRunForTaskButton" Content="Allow for this task" Command="{Binding ApproveRunForTaskCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" Visibility="{Binding CanAllowRunForTask, Converter={StaticResource BoolToVisibility}}"
+                                                AutomationProperties.HelpText="Run this now, and let later live commands with the same account and network run without asking in this session, until you revoke it." />
+                                        <Button x:Name="CancelRestartButton" Content="Cancel" Command="{Binding CancelActionCommand}" Style="{StaticResource Assistant.Action}"
+                                                IsDefault="False" AutomationProperties.HelpText="Do not run it. Nothing is changed." />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Task recovery, read from Core's journal on connect: shown only when a job's outcome is unknown, another session owns one, or the journal is unreadable. -->
+                            <TextBlock x:Name="RecoveryStatusTextBlock" Text="{Binding RecoveryStatusText}" TextWrapping="Wrap" Margin="0,0,0,4"
+                                       AutomationProperties.Name="Task recovery" AutomationProperties.HelpText="{Binding RecoveryStatusText}"
+                                       AutomationProperties.LiveSetting="Polite"
+                                       Visibility="{Binding HasRecoveryStatus, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsRecoveryUnavailable}" Value="True">
+                                                <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <!-- Live commands still running and the session's Allow for this task, in one compact line. -->
+                            <StackPanel x:Name="LiveRunStatus" Margin="0,0,0,2" Visibility="{Binding HasRunStatus, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock x:Name="RunningJobsTextBlock" Text="{Binding RunningJobsText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                                           Margin="0,0,0,4" AutomationProperties.LiveSetting="Polite"
+                                           Visibility="{Binding HasRunningJobs, Converter={StaticResource BoolToVisibility}}" />
+                                <Grid Visibility="{Binding HasRunGrant, Converter={StaticResource BoolToVisibility}}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="RunGrantTextBlock" Text="{Binding RunGrantText}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                                               VerticalAlignment="Center" Margin="0,0,8,4" AutomationProperties.LiveSetting="Polite" />
+                                    <Button x:Name="RevokeRunGrantButton" Grid.Column="1" Content="Revoke" Command="{Binding RevokeRunGrantCommand}" Style="{StaticResource Assistant.Action}"
+                                            MinWidth="72" Margin="0,0,0,4" VerticalAlignment="Center"
+                                            AutomationProperties.HelpText="End Allow for this task: every later live command asks again. Running commands continue; Stop cancels them." />
+                                </Grid>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- The draft stays editable in every state; only Send waits for a ready session. -->
+                        <Grid Grid.Row="3" Margin="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <!-- Attachments for the next message: a name, a size and Remove each; never a path. -->
+                            <ItemsControl x:Name="AttachmentChips" Grid.ColumnSpan="3" ItemsSource="{Binding Attachments}" Margin="0,0,0,6" Focusable="False"
+                                          Visibility="{Binding HasAttachments, Converter={StaticResource BoolToVisibility}}"
+                                          AutomationProperties.Name="Attachments for the next message">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#232323" BorderBrush="#3A3A3A" BorderThickness="1" CornerRadius="3" Margin="0,0,6,4" Padding="8,2,2,2"
+                                                MaxWidth="320">
+                                            <DockPanel>
+                                                <Button DockPanel.Dock="Right" Content="✕" Click="RemoveAttachment_Click" Style="{StaticResource Assistant.Action}"
+                                                        Margin="6,0,0,0" MinWidth="24" Padding="4,0" VerticalAlignment="Center"
+                                                        AutomationProperties.Name="{Binding RemoveName}"
+                                                        AutomationProperties.HelpText="Remove this attachment from the next message. The file itself is untouched." />
+                                                <TextBlock Text="{Binding Label}" Style="{StaticResource GameCenter.Caption}" FontSize="11.5" VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}" />
+                                            </DockPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBox x:Name="InputBox" Grid.Row="1" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource Assistant.TextBox}" AcceptsReturn="True" TextWrapping="Wrap"
+                                     MinHeight="38" MaxHeight="120" VerticalScrollBarVisibility="Auto"
+                                     PreviewKeyDown="InputBox_PreviewKeyDown" AllowDrop="True"
+                                     PreviewDragOver="InputBox_PreviewDragOver" PreviewDrop="InputBox_PreviewDrop"
+                                     AutomationProperties.Name="Message to the assistant"
+                                     AutomationProperties.HelpText="Enter sends. Shift+Enter adds a new line. Esc stops a response. Paste a screenshot or drop files to attach them. Messages over 8,000 characters are not cut; shorten them to send." />
+                            <Button x:Name="AttachButton" Grid.Row="1" Grid.Column="1" Content="Attach…" Click="AttachButton_Click" Style="{StaticResource Assistant.Action}"
+                                    Margin="8,0,0,0" MinWidth="72" VerticalAlignment="Bottom"
+                                    AutomationProperties.HelpText="Choose screenshots or text, log, config or code files to send with the next message. Their contents are data for the assistant, never instructions." />
+                            <Button Grid.Row="1" Grid.Column="2" Content="Send" Command="{Binding SendCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                    Margin="8,0,0,0" MinWidth="80" VerticalAlignment="Bottom" />
+                            <WrapPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,6,0,0">
+                                <TextBlock x:Name="AttachmentFeedbackText" Text="{Binding AttachmentFeedback}" Foreground="{DynamicResource GameCenter.DangerText}"
+                                           FontSize="11.5" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,14,2" MaxWidth="560"
+                                           Visibility="{Binding HasAttachmentFeedback, Converter={StaticResource BoolToVisibility}}"
+                                           AutomationProperties.LiveSetting="Assertive" />
+                                <StackPanel Orientation="Horizontal" Margin="0,0,14,2">
+                                    <TextBlock x:Name="ModelLabel" Text="Model" Style="{StaticResource Assistant.Label}" />
+                                    <ComboBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" DisplayMemberPath="DisplayName"
+                                              Style="{StaticResource GameCenter.ComboBox}" MinWidth="150" MaxWidth="240"
+                                              AutomationProperties.LabeledBy="{Binding ElementName=ModelLabel}"
+                                              AutomationProperties.HelpText="Models offered by the assistant for this account. Used from the next message." />
+                                </StackPanel>
+                                <TextBlock x:Name="InputLengthText" Text="{Binding InputLengthText}" VerticalAlignment="Center" Margin="0,0,14,2"
+                                           FontSize="11.5" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsInputTooLong}" Value="True">
+                                                    <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock x:Name="UsageTextBlock" Text="{Binding UsageText}" Style="{StaticResource GameCenter.Caption}"
+                                           VerticalAlignment="Center" FontSize="11.5" Margin="0,0,0,2"
+                                           AutomationProperties.Name="{Binding UsageText, StringFormat=Conversation usage: {0}}" />
+                            </WrapPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- Review and live-change controls; this column is shown only while one of its cards is. -->
+                <ScrollViewer x:Name="SidePanel" Grid.Column="1" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto" Focusable="False"
+                              Visibility="{Binding IsSidePanelVisible, Converter={StaticResource BoolToVisibility}}">
+                    <StackPanel>
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.Gold}"
+                                Visibility="{Binding IsChangesVisible, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel>
+                                <TextBlock Text="CHANGES READY" Style="{StaticResource GameCenter.SectionHeading}" />
+                                <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,8" TextWrapping="Wrap"
+                                           Text="The assistant edited files in its isolated copy. Nothing is live yet." />
+                                <Button Content="Review changes" Command="{Binding ReviewCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                        HorizontalAlignment="Left" MinWidth="96"
+                                        AutomationProperties.HelpText="Freeze the assistant's current changes into one exact batch and show its diff." />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.Gold}"
+                                Visibility="{Binding IsReviewVisible, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel>
+                                <DockPanel>
+                                    <CheckBox x:Name="WiderReviewToggle" DockPanel.Dock="Right" Content="Wider" Style="{StaticResource GameCenter.CheckBox}"
+                                              VerticalAlignment="Center" Checked="WiderReviewToggle_Changed" Unchecked="WiderReviewToggle_Changed"
+                                              AutomationProperties.HelpText="Give the review more width on wide windows." />
+                                    <TextBlock Text="REVIEW" Style="{StaticResource GameCenter.SectionHeading}" />
+                                </DockPanel>
+                                <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                              Focusable="False" Margin="0,4,0,6">
+                                    <TextBlock x:Name="ReviewSummaryText" Text="{Binding ReviewSummary}" Style="{StaticResource GameCenter.Caption}"
+                                               TextWrapping="Wrap" />
+                                </ScrollViewer>
+                                <!-- Validation sits above Approve; a check DwemerDistro could not run is a warning, never shown as passed. -->
+                                <Border x:Name="ReviewValidation" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,0,0,8">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasReviewWarnings}" Value="True">
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <ScrollViewer MaxHeight="110" VerticalScrollBarVisibility="Auto" Focusable="False">
+                                        <TextBlock x:Name="ReviewValidationText" Text="{Binding ReviewValidationText}" TextWrapping="Wrap" FontSize="12"
+                                                   AutomationProperties.Name="{Binding ReviewValidationText}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasReviewWarnings}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </ScrollViewer>
+                                </Border>
+                                <WrapPanel Margin="0,0,0,2">
+                                    <Button Content="Approve and apply" Command="{Binding ApproveCommand}" Style="{StaticResource GameCenter.SuccessButton}"
+                                            Margin="0,0,6,6" IsDefault="False"
+                                            AutomationProperties.HelpText="Apply exactly this reviewed batch to the live CHIM files, once." />
+                                    <Button Content="Reject" Command="{Binding RejectCommand}" Style="{StaticResource Assistant.Action}"
+                                            AutomationProperties.HelpText="Clear this review. Nothing is applied." />
+                                </WrapPanel>
+                                <TextBox x:Name="DiffBox" Text="{Binding ReviewDiff, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}"
+                                         FontFamily="Consolas" FontSize="11" TextWrapping="NoWrap" Height="200"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                         AutomationProperties.Name="Diff of the reviewed batch" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12"
+                                Visibility="{Binding HasOutcome, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel>
+                                <TextBlock Text="LAST LIVE CHANGE" Style="{StaticResource GameCenter.SectionHeading}" />
+                                <TextBlock x:Name="OutcomeTextBlock" Text="{Binding OutcomeText}" Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,8"
+                                           TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" />
+                                <WrapPanel>
+                                    <Button Content="Check status" Command="{Binding CheckOutcomeCommand}" Style="{StaticResource Assistant.Action}"
+                                            AutomationProperties.HelpText="Ask DwemerDistro what this task's live change state is." />
+                                    <Button Content="Roll back" Command="{Binding RollbackCommand}" Style="{StaticResource Assistant.Action}"
+                                            AutomationProperties.HelpText="Restore the live files recorded by this task's apply receipt." />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

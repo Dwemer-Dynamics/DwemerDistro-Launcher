@@ -66,8 +66,27 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void CommunityMod_Requested(object? sender, string repository)
+    {
+        try
+        {
+            await _viewModel.BrowseCommunityModsAsync(repository);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, error.Message, "Community mods", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (ApiKeysHost.Content is ApiKeysView { IsBusy: true } keys)
+        {
+            e.Cancel = true;
+            ApiKeysNavButton.IsChecked = true;
+            keys.ShowCloseBlocked();
+            return;
+        }
         if (_viewModel.IsCriticalMaintenanceInProgress)
         {
             e.Cancel = true;
@@ -90,7 +109,28 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_viewModel.IsAssistantLiveChangeInProgress)
+        {
+            e.Cancel = true;
+            // Explain inline on the Assistant page; the apply or rollback keeps running.
+            AssistantNavButton.IsChecked = true;
+            _viewModel.Assistant.ShowCloseBlocked();
+            _ = Dispatcher.BeginInvoke(AssistantLandmark.RevealStatus, System.Windows.Threading.DispatcherPriority.Loaded);
+            return;
+        }
+
+        // Closing ends the assistant session, which stops its live commands; it waits until they end or the user presses Stop.
+        if (_viewModel.IsAssistantLiveCommandRunning)
+        {
+            e.Cancel = true;
+            AssistantNavButton.IsChecked = true;
+            _viewModel.Assistant.ShowCloseBlockedByJobs();
+            _ = Dispatcher.BeginInvoke(AssistantLandmark.RevealStatus, System.Windows.Threading.DispatcherPriority.Loaded);
+            return;
+        }
+
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
+        _viewModel.CloseCommunityModDetails();
         await _viewModel.ShutdownAsync();
     }
 
@@ -161,6 +201,8 @@ public partial class MainWindow : Window
         }
 
         UpdateComponentsPageLifetime();
+        if (MainTabs.SelectedIndex == 5 && ApiKeysHost.Content is null)
+            ApiKeysHost.Content = new ApiKeysView(_viewModel.CreateApiKeysService());
         if (MainTabs.SelectedIndex == 3)
         {
             _viewModel.RefreshConnectionDetailsCommand.Execute(null);
@@ -468,6 +510,9 @@ public partial class MainWindow : Window
             case Key.G:
                 LogsNavButton.IsChecked = true;
                 return true;
+            case Key.A:
+                AssistantNavButton.IsChecked = true;
+                return true;
             case Key.Space:
                 SystemCommands.ShowSystemMenu(this, PointToScreen(new System.Windows.Point(8, 36)));
                 return true;
@@ -483,6 +528,8 @@ public partial class MainWindow : Window
             1 => (FrameworkElement)SetupLandmark,
             2 => SettingsLandmark,
             3 => LogsLandmark,
+            4 => AssistantLandmark,
+            5 => ApiKeysHost,
             _ => LibraryLandmark
         };
         // Visual order: the sidebar's game list and utilities, then the header, page and console.

@@ -1,0 +1,93 @@
+<UserControl x:Class="DwemerDistro.Launcher.Wpf.Views.CommunityModsBrowser"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             IsVisibleChanged="Browser_VisibilityChanged" Unloaded="Browser_Unloaded">
+    <UserControl.Resources>
+        <Style x:Key="ModTile" TargetType="Button">
+            <Setter Property="Width" Value="222" />
+            <Setter Property="Margin" Value="0,0,12,12" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="#191919" />
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Frame" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.AccentBorder}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Frame" Property="Opacity" Value="0.75" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" /><RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="Browse mods" Style="{StaticResource GameCenter.Heading}" Margin="0,0,0,12" />
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <TextBox x:Name="SearchBox" MaxLength="80" Padding="10,8" KeyDown="Search_KeyDown"
+                     Background="{DynamicResource GameCenter.Panel}" Foreground="{DynamicResource GameCenter.Text}"
+                     CaretBrush="{DynamicResource GameCenter.Text}" BorderBrush="{DynamicResource GameCenter.Border}"
+                     AutomationProperties.Name="Search custom mods or games" ToolTip="Search by mod or game name" />
+            <Button Grid.Column="1" Content="Search" Style="{StaticResource GameCenter.Button}"
+                    Margin="8,0,0,0" Padding="18,6" Click="Search_Click" />
+        </Grid>
+        <StackPanel Grid.Row="2" Margin="0,0,0,12">
+            <ProgressBar x:Name="LoadingProgress" Height="3" Visibility="Collapsed" IsIndeterminate="True" Margin="0,0,0,8" />
+            <TextBlock x:Name="StatusText" Text="Choose a mod to get started."
+                       Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
+                       AutomationProperties.Name="Mod catalog status" AutomationProperties.LiveSetting="Polite" />
+        </StackPanel>
+        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Focusable="False" CanContentScroll="False">
+            <ItemsControl x:Name="ModCards" HorizontalAlignment="Stretch" AutomationProperties.Name="Available custom mods">
+                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Style="{StaticResource ModTile}" Click="Mod_Click" ToolTip="{Binding Description}"
+                                AutomationProperties.Name="{Binding Title}" AutomationProperties.HelpText="View this mod and how to install it.">
+                            <StackPanel>
+                                <Grid Height="220" Background="#121212" ClipToBounds="True">
+                                    <Image Source="../Assets/DwemerDistro.png" Width="96" Height="96" Opacity="0.25">
+                                        <Image.Style>
+                                            <Style TargetType="Image">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Artwork}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Image.Style>
+                                    </Image>
+                                    <Image Source="{Binding Artwork}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
+                                </Grid>
+                                <TextBlock Text="{Binding Title}" Foreground="{DynamicResource GameCenter.Text}"
+                                           FontSize="14" FontWeight="SemiBold" Margin="12,10,12,3" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Author}" Foreground="{DynamicResource GameCenter.TextMuted}"
+                                           FontSize="11" Margin="12,0,12,11" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

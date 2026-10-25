@@ -259,8 +259,8 @@ echo "CHIM-MCP installed and enabled."
         _selectedGame = GameProfiles[0];
 
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsCriticalMaintenanceInProgress && !IsServerRunning && !IsServerStarting);
-        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress && (IsServerRunning || IsServerStarting));
-        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress);
+        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress && (IsServerRunning || IsServerStarting));
+        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
         // Update Distro is also the recovery action, so it stays available whether the distro
         // reports itself as current, out of date, or not at all.
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
@@ -296,8 +296,8 @@ echo "CHIM-MCP installed and enabled."
 
         OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"), CanAccessDistro);
         ViewMemoryUsageCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- htop"), CanAccessDistro);
-        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync, CanRunExclusiveDistroOperation);
-        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync, CanRunExclusiveDistroOperation);
+        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync, CanStartExclusiveDistroOperation);
+        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync, CanStartExclusiveDistroOperation);
         OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
         OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
         OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
@@ -310,11 +310,12 @@ echo "CHIM-MCP installed and enabled."
         ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"), CanAccessDistro);
         ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"), CanAccessDistro);
         ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"), CanAccessDistro);
-        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanRunExclusiveDistroOperation);
+        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanStartExclusiveDistroOperation);
         DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
-        CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanRunExclusiveDistroOperation);
+        CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanStartExclusiveDistroOperation);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
-        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !_isCustomModMutationInProgress);
+        OpenApiKeysCommand = new RelayCommand(OpenApiKeysWindow, CanAccessDistro);
+        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
         CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
         GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
         RefreshConnectionDetailsCommand = new AsyncRelayCommand(RefreshConnectionDetailsAsync);
@@ -852,6 +853,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand DistroDoctorCommand { get; }
     public AsyncRelayCommand CompactDistroCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
+    public RelayCommand OpenApiKeysCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
     public AsyncRelayCommand CleanLogsCommand { get; }
     public AsyncRelayCommand GenerateDiagnosticsCommand { get; }
@@ -979,6 +981,8 @@ echo "CHIM-MCP installed and enabled."
 
     public async Task ShutdownAsync()
     {
+        // Stops only the assistant's own Linux process group; nothing else in the distro.
+        if (_assistant is { } assistant) await assistant.ShutdownAsync().ConfigureAwait(true);
         _shutdownCts.Cancel();
         if (_distroUpdateTask is { } updateTask)
         {
@@ -1077,13 +1081,24 @@ echo "CHIM-MCP installed and enabled."
 
     /// <summary>
     /// Runs the automatic launcher-version system sync on the shared background-task path, so a slow
-    /// or failing update is logged rather than blocking startup.
+    /// or failing update is logged rather than blocking startup. The assistant connects only after it
+    /// settles, so the session never starts while the sync is updating DwemerDistro.
     /// </summary>
     private void QueueLauncherVersionSync()
     {
         QueueBackgroundTask(
             "Launcher version sync",
-            cancellationToken => SyncLauncherVersionAsync(cancellationToken),
+            async cancellationToken =>
+            {
+                try
+                {
+                    await SyncLauncherVersionAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    QueueAssistantStartupConnect();
+                }
+            },
             LauncherVersionSyncTimeout,
             accessesDistro: true);
     }
@@ -2071,6 +2086,7 @@ echo "CHIM-MCP installed and enabled."
         ViewApacheLogsCommand?.RaiseCanExecuteChanged();
         DistroDoctorCommand?.RaiseCanExecuteChanged();
         OpenCudaConfigCommand?.RaiseCanExecuteChanged();
+        OpenApiKeysCommand?.RaiseCanExecuteChanged();
         UpdateLauncherCommand?.RaiseCanExecuteChanged();
         CleanLogsCommand?.RaiseCanExecuteChanged();
         GenerateDiagnosticsCommand?.RaiseCanExecuteChanged();
@@ -2305,7 +2321,7 @@ echo "CHIM-MCP installed and enabled."
             _isComponentsOperationInProgress,
             _isExclusiveDistroOperationInProgress,
             ServerManagers.Select(manager => manager.IsBusy),
-            _isCustomModMutationInProgress);
+            IsLiveFileMutationInProgress);
     }
 
     internal static bool CanRunUpdateOperation(
@@ -2322,7 +2338,14 @@ echo "CHIM-MCP installed and enabled."
                !serverBusyStates.Any(isBusy => isBusy);
     }
 
-    private bool CanRunExclusiveDistroOperation()
+    /// <summary>
+    /// Whether Compact, Export, Import or DNS repair can be offered. An idle assistant session is the one passive
+    /// lease looked past here: the operation closes it before claiming the slot, which still counts every lease.
+    /// </summary>
+    private bool CanStartExclusiveDistroOperation() =>
+        CanRunExclusiveDistroOperation(YieldablePassiveDistroActivityCount());
+
+    private bool CanRunExclusiveDistroOperation(int yieldablePassiveActivities = 0)
     {
         lock (_distroOperationGate)
         {
@@ -2331,10 +2354,10 @@ echo "CHIM-MCP installed and enabled."
                 _isComponentsOperationInProgress,
                 _isExclusiveDistroOperationInProgress,
                 _quickstartDistroActivityCount > 0,
-                _passiveDistroActivityCount > 0,
+                _passiveDistroActivityCount - yieldablePassiveActivities > 0,
                 IsServerStarting,
                 ServerManagers.Select(manager => manager.IsBusy),
-                _isCustomModMutationInProgress);
+                IsLiveFileMutationInProgress);
         }
     }
 
@@ -3011,12 +3034,19 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
+        if (!await PauseAssistantForMaintenanceAsync("Fix WSL DNS").ConfigureAwait(true))
+        {
+            return;
+        }
+
         if (!TryBeginExclusiveDistroOperation())
         {
+            ResumeAssistantAfterMaintenance(reconnect: true);
             ReportExclusiveDistroOperationBusy("Fix WSL DNS");
             return;
         }
 
+        var completed = false;
         try
         {
             AppendLog("Starting WSL DNS repair..." + Environment.NewLine);
@@ -3036,6 +3066,7 @@ echo "CHIM-MCP installed and enabled."
             AppendLog("Restarting WSL to apply DNS settings..." + Environment.NewLine);
             await _wsl.RunWslAsync(new[] { "--shutdown" }).ConfigureAwait(false);
             var verify = await _wsl.RunBashAsync("getent hosts github.com | head -n 1").ConfigureAwait(false);
+            completed = true;
             if (verify.Succeeded && !string.IsNullOrWhiteSpace(verify.StandardOutput))
             {
                 AppendLog("WSL DNS repair completed successfully." + Environment.NewLine, "green");
@@ -3049,6 +3080,7 @@ echo "CHIM-MCP installed and enabled."
         finally
         {
             SetExclusiveDistroOperationInProgress(false);
+            ResumeAssistantAfterMaintenance(completed);
         }
     }
 
@@ -4146,7 +4178,7 @@ fi
 
     private async Task CompactDistroAsync()
     {
-        if (!CanRunExclusiveDistroOperation())
+        if (!CanStartExclusiveDistroOperation())
         {
             ReportExclusiveDistroOperationBusy(CompactDistroSettingName);
             return;
@@ -4182,8 +4214,15 @@ fi
 
         var serverStopWasAttempted = false;
         var serverWasStopped = false;
+        if (!await PauseAssistantForMaintenanceAsync(CompactDistroSettingName).ConfigureAwait(true))
+        {
+            SetCompactDistroStatus(AssistantBusyForMaintenanceMessage, CompactDistroWarningColor);
+            return;
+        }
+
         if (!TryBeginExclusiveDistroOperation())
         {
+            ResumeAssistantAfterMaintenance(reconnect: true);
             SetCompactDistroStatus(ExclusiveDistroOperationBusyMessage, CompactDistroWarningColor);
             ReportExclusiveDistroOperationBusy(CompactDistroSettingName);
             return;
@@ -4192,6 +4231,7 @@ fi
         // The row says it is working before the first WSL round trip, so an earlier run's terminal
         // status can never be mistaken for this one's result.
         SetCompactDistroStatus(CompactDistroPreparingStatus, CompactDistroBusyColor);
+        var endedSafely = true;
         try
         {
             var vhdxPath = NormalizeDistroVhdxPath(_wsl.GetDistroVhdxPath());
@@ -4361,6 +4401,7 @@ fi
         }
         catch (Exception ex)
         {
+            endedSafely = false;
             AppendLog($"Compact Distro error: {ex.Message}{Environment.NewLine}", "red");
             SetCompactDistroStatus(
                 serverWasStopped
@@ -4386,6 +4427,7 @@ fi
             // Passive checks were held off for the whole run. Restarting the timer lets an unknown
             // status be re-read on its own schedule instead of forcing the distro back open here.
             QueueServerStatusRefresh();
+            ResumeAssistantAfterMaintenance(endedSafely);
         }
     }
 
@@ -4502,12 +4544,19 @@ fi
             return;
         }
 
+        if (!await PauseAssistantForMaintenanceAsync("Export Full Distro").ConfigureAwait(true))
+        {
+            return;
+        }
+
         if (!TryBeginExclusiveDistroOperation())
         {
+            ResumeAssistantAfterMaintenance(reconnect: true);
             ReportExclusiveDistroOperationBusy("Export Full Distro");
             return;
         }
 
+        var endedSafely = true;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
@@ -4542,6 +4591,7 @@ fi
         }
         catch (Exception ex)
         {
+            endedSafely = false;
             AppendLog($"Full distro export error: {ex.Message}{Environment.NewLine}", "red");
             MessageBox.Show(
                 $"Full distro export failed.\n\n{ex.Message}",
@@ -4553,6 +4603,7 @@ fi
         {
             SetExclusiveDistroOperationInProgress(false);
             QueueServerStatusRefresh(immediate: true);
+            ResumeAssistantAfterMaintenance(endedSafely);
         }
     }
 
@@ -4678,8 +4729,14 @@ fi
             }
         }
 
+        if (!await PauseAssistantForMaintenanceAsync("Import Full Distro").ConfigureAwait(true))
+        {
+            return;
+        }
+
         if (!TryBeginExclusiveDistroOperation())
         {
+            ResumeAssistantAfterMaintenance(reconnect: true);
             ReportExclusiveDistroOperationBusy("Import Full Distro");
             return;
         }
@@ -4776,6 +4833,8 @@ fi
         {
             SetExclusiveDistroOperationInProgress(false);
             QueueServerStatusRefresh(immediate: true);
+            // An import can replace the distro the assistant's task lived in, so it waits for Connect.
+            ResumeAssistantAfterMaintenance(reconnect: false);
         }
     }
 
@@ -5609,6 +5668,19 @@ fi
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
+    }
+
+    internal ApiKeysService CreateApiKeysService() => new(_wsl, TryBeginPassiveDistroActivity, EndPassiveDistroActivity);
+
+    private void OpenApiKeysWindow()
+    {
+        if (!TryBeginPassiveDistroActivity()) return;
+        try
+        {
+            var window = new ApiKeysWindow(new ApiKeysService(_wsl)) { Owner = Application.Current.MainWindow };
+            window.ShowDialog();
+        }
+        finally { EndPassiveDistroActivity(); }
     }
 
     private async Task OpenCudaConfigWindowAsync()
