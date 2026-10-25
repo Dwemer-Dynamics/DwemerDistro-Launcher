@@ -6,9 +6,10 @@ using DwemerDistro.Launcher.Wpf.Services;
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 /// <summary>
-/// The Memory panel: Core's installation-local assistant notes through <c>ddistro memory</c>. Every call goes through the
-/// assistant's gated command runner, every answer is projected field by field, and nothing here reaches the model.
-/// Settings change only from the user's own clicks; reset needs a second, explicit confirmation.
+/// Core's installation-local assistant notes through <c>ddistro memory</c>. Every call goes through the assistant's gated
+/// command runner, every answer is projected field by field, and nothing here reaches the model. Memory is automatic:
+/// Connect turns retrieval and learning on once through <see cref="EnsureAutomaticAsync"/>, and the page offers only
+/// Clear memory, which needs a second, explicit confirmation. The note and settings helpers below stay for older callers.
 /// </summary>
 public sealed class AssistantMemoryViewModel : ObservableObject
 {
@@ -17,12 +18,15 @@ public sealed class AssistantMemoryViewModel : ObservableObject
     private readonly Func<IReadOnlyList<string>, TimeSpan, Task<AssistantCliResult>> _run;
     private readonly IAssistantHost _host;
     private readonly Func<(string? TaskId, string? ThreadId)> _source;
+    private readonly Func<bool> _canClear;
     private bool _isAvailable;
     private bool _isBusy;
     private bool _retrieval = true;
     private bool _autoLearning;
     private bool _settingsKnown;
-    private string _statusText = "Memory has not been read yet. Open this panel while DwemerDistro is available.";
+    private string _statusText = string.Empty;
+    // The problem the last EnsureAutomaticAsync showed; the next one replaces it, other outcomes stay.
+    private string? _ensureProblem;
     private string _searchText = string.Empty;
     private string _draftText = string.Empty;
     private string _draftKind = "note";
@@ -33,11 +37,12 @@ public sealed class AssistantMemoryViewModel : ObservableObject
     private int? _nextOffset;
 
     public AssistantMemoryViewModel(Func<IReadOnlyList<string>, TimeSpan, Task<AssistantCliResult>> run, IAssistantHost host,
-        Func<(string? TaskId, string? ThreadId)> source)
+        Func<(string? TaskId, string? ThreadId)> source, Func<bool>? canClear = null)
     {
         _run = run;
         _host = host;
         _source = source;
+        _canClear = canClear ?? (() => true);
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(), () => !IsBusy);
         MoreCommand = new AsyncRelayCommand(() => RefreshAsync(_nextOffset ?? 0), () => !IsBusy && _nextOffset is not null);
         SearchCommand = new AsyncRelayCommand(SearchAsync, () => !IsBusy && AssistantCliCommands.IsValidMemoryValue(SearchText, AssistantCliCommands.MaxMemoryQuery));
@@ -46,8 +51,9 @@ public sealed class AssistantMemoryViewModel : ObservableObject
         CancelEditCommand = new RelayCommand(ClearDraft, () => DraftText.Length > 0 || _editingId is not null);
         ForgetCommand = new AsyncRelayCommand(ForgetAsync, () => !IsBusy && Selected is not null);
         ExportCommand = new AsyncRelayCommand(ExportAsync, () => !IsBusy && IsAvailable);
-        ResetCommand = new RelayCommand(() => ConfirmingReset = true, () => !IsBusy && IsAvailable && !ConfirmingReset);
-        ConfirmResetCommand = new AsyncRelayCommand(ResetAsync, () => !IsBusy && ConfirmingReset);
+        // Clear memory waits for the assistant's own work (a response, connect, review, export, maintenance) to end.
+        ResetCommand = new RelayCommand(() => ConfirmingReset = true, () => !IsBusy && IsAvailable && !ConfirmingReset && _canClear());
+        ConfirmResetCommand = new AsyncRelayCommand(ResetAsync, () => !IsBusy && ConfirmingReset && _canClear());
         CancelResetCommand = new RelayCommand(() => ConfirmingReset = false, () => ConfirmingReset);
     }
 
@@ -74,6 +80,7 @@ public sealed class AssistantMemoryViewModel : ObservableObject
 
     public bool IsAvailable { get => _isAvailable; private set { if (SetProperty(ref _isAvailable, value)) Raise(); } }
     public bool IsBusy { get => _isBusy; private set { if (SetProperty(ref _isBusy, value)) Raise(); } }
+    /// <summary>The last memory outcome or problem; empty while memory simply works.</summary>
     public string StatusText { get => _statusText; private set => SetProperty(ref _statusText, value); }
     public bool SettingsKnown { get => _settingsKnown; private set => SetProperty(ref _settingsKnown, value); }
 
@@ -84,7 +91,7 @@ public sealed class AssistantMemoryViewModel : ObservableObject
         set { if (value != _retrieval && SettingsKnown && !IsBusy) _ = ConfigureAsync(value, null); }
     }
 
-    /// <summary>Whether the assistant may store preferences and decisions itself. Off by default in Core.</summary>
+    /// <summary>Whether the assistant may store preferences and decisions itself; Connect keeps it on.</summary>
     public bool AutoLearning
     {
         get => _autoLearning;
@@ -133,6 +140,46 @@ public sealed class AssistantMemoryViewModel : ObservableObject
         StatusText = trimmed.Length > AssistantCliCommands.MaxMemoryText
             ? $"The selection was longer than {AssistantCliCommands.MaxMemoryText:N0} characters and was cut; edit it before saving."
             : "Edit the note, then press Remember. Nothing is stored until you do.";
+    }
+
+    /// <summary>
+    /// Connect's one memory step, before the broker starts and declares its tools: memory is automatic, so retrieval or
+    /// learning that Core reports off (an older default or an earlier manual choice) is configured on here. Nothing is
+    /// written when both are already on. Returns whether retrieval is on, which decides whether the session gets the memory
+    /// tool; a failure is shown and the session continues with what Core holds.
+    /// </summary>
+    internal async Task<bool> EnsureAutomaticAsync()
+    {
+        // Only the problem an earlier Connect showed is replaced; a Clear memory outcome stays until the next one.
+        if (_ensureProblem is { } shown && StatusText == shown) StatusText = string.Empty;
+        _ensureProblem = null;
+        var status = await _run(AssistantCliCommands.MemoryStatus(), Timeout);
+        if (!status.Ok || AssistantCliService.ProjectMemorySettings(status.Data) is not { } settings)
+        {
+            if (status.Ok)
+            {
+                IsAvailable = false;
+                StatusText = "DwemerDistro returned memory status in an unexpected shape, so the assistant has no memory this session.";
+            }
+            else Fail("Assistant memory is unavailable", status);
+            _ensureProblem = StatusText;
+            return false;
+        }
+        IsAvailable = true;
+        ApplySettings(settings);
+        if (settings is { Retrieval: true, AutoLearning: true }) return true;
+        var configured = await _run(AssistantCliCommands.MemoryConfigure(true, true), Timeout);
+        if (configured.Ok && AssistantCliService.ProjectMemorySettings(configured.Data) is { } applied)
+        {
+            ApplySettings(applied);
+            settings = applied;
+            if (applied is { Retrieval: true, AutoLearning: true }) return true;
+            StatusText = "Assistant memory: DwemerDistro kept part of automatic memory off; the assistant uses only what it allows.";
+        }
+        else if (configured.Ok) StatusText = "Assistant memory: DwemerDistro did not confirm automatic memory; this session keeps its earlier settings.";
+        else Fail("Assistant memory could not be made automatic; this session keeps its earlier settings", configured);
+        _ensureProblem = StatusText;
+        return settings.Retrieval;
     }
 
     internal async Task RefreshAsync(int offset = 0)
@@ -312,11 +359,11 @@ public sealed class AssistantMemoryViewModel : ObservableObject
             var result = await _run(AssistantCliCommands.MemoryReset(), Timeout);
             if (!result.Ok)
             {
-                Fail("Memory was not reset", result);
+                Fail("Assistant memory was not cleared", result);
                 return;
             }
             Notes.Clear();
-            StatusText = "Every memory note was forgotten. Your settings were kept. Chats, task receipts and sign-in are unchanged.";
+            StatusText = "Assistant memory cleared: every learned note was forgotten. Your settings were kept. Chats, task receipts and sign-in are unchanged.";
         }
         finally
         {
@@ -389,7 +436,7 @@ public sealed class AssistantMemoryViewModel : ObservableObject
         };
     }
 
-    private void Raise()
+    internal void Raise()
     {
         foreach (var command in new System.Windows.Input.ICommand[]
                  { RefreshCommand, MoreCommand, SearchCommand, SaveCommand, EditCommand, CancelEditCommand, ForgetCommand, ExportCommand, ResetCommand, ConfirmResetCommand, CancelResetCommand })
