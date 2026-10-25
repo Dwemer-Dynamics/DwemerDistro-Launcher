@@ -1,6 +1,7 @@
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using DwemerDistro.Launcher.Wpf.Models;
+using static ModelsFixture;
 using System.Net;
 
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
@@ -2400,13 +2401,65 @@ try
         Assert(stale.vm.State == AssistantState.Error && stale.vm.StatusDetail.Contains("no longer available") && stale.cli.ServedTask is null
                && !stale.cli.Calls.Any(call => call.StartsWith("changes prepare")),
             "A task Core no longer knows must show the new-task path without preparing or serving anything.");
-        var reopened = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        // rust-v0.163.0 thread/resume history: turns[].items[] as ThreadItems; a userMessage keeps each text input as its own
+        // UserInput entry, so the launcher's labeled context is a separate entry ahead of the user's text.
+        System.Text.Json.Nodes.JsonObject UserItem(string id, params string[] texts) => new()
+        {
+            ["type"] = "userMessage", ["id"] = id, ["clientId"] = null,
+            ["content"] = new System.Text.Json.Nodes.JsonArray(texts.Select(text => (System.Text.Json.Nodes.JsonNode)new System.Text.Json.Nodes.JsonObject
+                { ["type"] = "text", ["text"] = text, ["text_elements"] = new System.Text.Json.Nodes.JsonArray() }).ToArray())
+        };
+        System.Text.Json.Nodes.JsonObject AgentItem(string id, string text) => new() { ["type"] = "agentMessage", ["id"] = id, ["text"] = text, ["phase"] = "final_answer" };
+        System.Text.Json.Nodes.JsonObject TurnOf(string id, params System.Text.Json.Nodes.JsonNode[] items) => new()
+            { ["id"] = id, ["status"] = "completed", ["itemsView"] = "full", ["items"] = new System.Text.Json.Nodes.JsonArray(items) };
+        var hiddenContext = AssistantViewModel.BuildTurnContext(
+            AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(ValidInventoryData), "")),
+            AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(ValidModelsData), "")));
+        var history = new System.Text.Json.Nodes.JsonArray(
+            TurnOf("turn-old-1",
+                UserItem("item-u1", hiddenContext, "Which extensions\r\nare installed?\n\n  Thanks."),
+                new System.Text.Json.Nodes.JsonObject { ["type"] = "reasoning", ["id"] = "item-r1", ["summary"] = new System.Text.Json.Nodes.JsonArray("HIDDEN-REASONING"), ["content"] = new System.Text.Json.Nodes.JsonArray() },
+                new System.Text.Json.Nodes.JsonObject { ["type"] = "commandExecution", ["id"] = "item-c1", ["command"] = "cat HIDDEN-COMMAND", ["commandActions"] = new System.Text.Json.Nodes.JsonArray(),
+                    ["cwd"] = "/work", ["status"] = "completed", ["aggregatedOutput"] = "HIDDEN-OUTPUT" },
+                AgentItem("item-a1", "You have relationship_system.\n\nCaptured 17:00 UTC.")),
+            // A thread from an older launcher: no context entry, and a file request the user never answered.
+            TurnOf("turn-old-2",
+                UserItem("item-u2", "  fix it  "),
+                AgentItem("item-a2", "I need the plugin file.\n```" + AssistantViewModel.FileRequestTag + "\next/a.php\n```"),
+                new System.Text.Json.Nodes.JsonObject { ["type"] = "hookPrompt", ["id"] = "item-h2", ["fragments"] = new System.Text.Json.Nodes.JsonArray() }),
+            // The label inside an entry cannot be separated safely, so the whole message stays hidden.
+            TurnOf("turn-old-3",
+                UserItem("item-u3", "pasted " + hiddenContext),
+                AgentItem("item-a3", "Done.")));
+        string[] expectedHistory = ["You|Which extensions\r\nare installed?\n\n  Thanks.", "Codex|You have relationship_system.\n\nCaptured 17:00 UTC.",
+            "You|  fix it  ", "Codex|I need the plugin file.", "Codex|Done.", "DwemerDistro|1 earlier message(s) in this conversation could not be shown here."];
+        bool ShowsHistory(AssistantViewModel model, int extra = 0) =>
+            model.Transcript.Count == expectedHistory.Length + extra
+            && model.Transcript.Take(expectedHistory.Length).Select(item => item.Role + "|" + item.Text).SequenceEqual(expectedHistory)
+            && !model.Transcript.Any(item => item.Text.Contains(AssistantViewModel.ContextLabel) || item.Text.Contains(AssistantViewModel.ScopeReminder)
+                || item.Text.Contains("inventory") || item.Text.Contains("gpt-test-model") || item.Text.Contains("HIDDEN") || item.Text.Contains("SECRET")
+                || item.Text.Contains(AssistantViewModel.FileRequestTag))
+            && !model.HasFileRequest;
+
+        var reopened = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, resumedTurns: history);
         Assert(reopened.vm.State == AssistantState.Ready && reopened.cli.ServedTask == savedReference.TaskId
                && reopened.transport.Requests.Contains("thread/resume:thr-saved") && !reopened.transport.Requests.Any(r => r.StartsWith("thread/start"))
                && stateStore.Load() == savedReference,
             "A live saved task must reopen and resume its own conversation thread.");
+        Assert(ShowsHistory(reopened.vm) && !reopened.transport.Requests.Any(r => r.StartsWith("turn/")) && !reopened.vm.AllowFileAccessCommand.CanExecute(null)
+               && !reopened.cli.Calls.Any(call => call.StartsWith("changes prepare") || call.StartsWith("changes apply") || call.StartsWith("changes stage")),
+            "A resumed thread must show its earlier user and assistant messages exactly and in order, without the launcher's context, " +
+            "reasoning, tools or an old file request, and without sending, offering or applying anything.");
 
         // Core's broker and the rust-v0.163.0 schema: threads and turns state never and /work, and never override the sandbox.
+        Assert(!reopened.cli.Calls.Contains("models herika") && !reopened.cli.Calls.Contains("inventory"),
+            "Connect must not read the inventory or CHIM's model settings; only an outgoing message does.");
+        reopened.cli.Script = command => command switch
+        {
+            "models herika" => ModelsDocumentText(ValidModelsData),
+            "inventory" => ModelsDocumentText(ValidInventoryData),
+            _ => null
+        };
         reopened.vm.InputText = "hello";
         reopened.vm.SendCommand.Execute(null);
         await WaitUntilAsync(() => { lock (reopened.transport.Requests) return reopened.transport.Bodies.Any(body => body.StartsWith("turn/start")); });
@@ -2415,7 +2468,177 @@ try
         Assert(confinedBodies.Length == 2 && confinedBodies.All(body => body.Contains("\"approvalPolicy\":\"never\"") && body.Contains("\"cwd\":\"/work\"")
                && !body.Contains("sandbox") && !body.Contains("permissions")),
             "Thread and turn requests must pin approval policy never and cwd /work, and never send a sandbox or permissions override.");
+        var sentInput = TurnInput(confinedBodies.Single(body => body.StartsWith("turn/start")));
+        Assert(reopened.cli.Calls.Count(call => call == "models herika") == 1 && reopened.cli.Calls.Count(call => call == "inventory") == 1
+               && sentInput.Length == 2 && sentInput[0].StartsWith(AssistantViewModel.ContextLabel)
+               && sentInput[0].Contains("\"model\":\"gpt-test-model\"") && sentInput[0].Contains("\"name\":\"relationship_system\"")
+               && !sentInput[0].Contains("SECRET") && !sentInput[0].Contains("/var/www") && !sentInput[0].Contains("/home/dwemer") && sentInput[1] == "hello"
+               && ShowsHistory(reopened.vm, extra: 1) && reopened.vm.Transcript[^1].Text == "hello"
+               && confinedBodies.Single(body => body.StartsWith("thread/resume")).Contains(AssistantViewModel.ContextLabel),
+            "Each message must carry a fresh, projected inventory and model snapshot as a separate labeled input, with the visible transcript unchanged.");
+        Assert(sentInput[0].Contains(AssistantViewModel.ScopeReminder) && sentInput[0].IndexOf(AssistantViewModel.ScopeReminder, StringComparison.Ordinal)
+                   < sentInput[0].IndexOf("DwemerDistro inventory", StringComparison.Ordinal)
+               && confinedBodies.Single(body => body.StartsWith("thread/resume")).Contains("not limited to CHIM"),
+            "A resumed thread must get the distro-wide instructions on resume and the scope restated in every turn's context.");
         await reopened.vm.ShutdownAsync();
+
+        // Startup's automatic Connect: once per launch, readiness reads only, and never a turn, sign-in, probe or prepare.
+        bool StartupQuiet(FakeAssistantCli cli, FakeAssistantTransport transport)
+        {
+            lock (transport.Requests)
+                return !cli.Calls.Any(call => call.StartsWith("agent probe") || call.StartsWith("agent install") || call.StartsWith("changes prepare")
+                           || call.StartsWith("changes stage") || call.StartsWith("changes apply") || call == "models herika" || call == "inventory")
+                       && !transport.Requests.Any(request => request.StartsWith("turn/") || request.StartsWith("account/login"));
+        }
+        var startup = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connect: vm => vm.ConnectOnStartupAsync(), resumedTurns: history);
+        var startupCalls = startup.cli.Calls.Count;
+        int StartupRequests() { lock (startup.transport.Requests) return startup.transport.Requests.Count; }
+        var startupRequests = StartupRequests();
+        await startup.vm.ConnectOnStartupAsync();
+        Assert(startup.vm.State == AssistantState.Ready && startup.cli.ServedTask == savedReference.TaskId
+               && startup.transport.Requests.Contains("thread/resume:thr-saved") && !startup.transport.Requests.Any(r => r.StartsWith("thread/start"))
+               && ShowsHistory(startup.vm) && StartupQuiet(startup.cli, startup.transport) && stateStore.Load() == savedReference
+               && startup.cli.Calls.Count == startupCalls && StartupRequests() == startupRequests,
+            "Startup must reopen the saved task and resume its thread once, without a turn, sign-in, probe or prepare, and never connect again.");
+        startup.vm.StopCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Disconnected);
+        await startup.vm.ConnectOnStartupAsync();
+        Assert(startup.vm.State == AssistantState.Disconnected && startup.cli.Calls.Count == startupCalls,
+            "After the user disconnects, a repeated startup call must not reconnect.");
+        startup.vm.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Ready);
+        Assert(startup.vm.State == AssistantState.Ready && startup.transport.Requests.Count(r => r == "thread/resume:thr-saved") == 2
+               && ShowsHistory(startup.vm) && StartupQuiet(startup.cli, startup.transport),
+            "Connecting again to the same conversation must not show its earlier messages twice.");
+        startup.vm.NewTaskCommand.Execute(null);
+        await WaitUntilAsync(() => startup.vm.State == AssistantState.Error);
+        Assert(startup.vm.Transcript.Count == 0 && startup.vm.TaskText == "No task yet",
+            "A new task must not keep the earlier task's restored conversation.");
+        await startup.vm.ShutdownAsync();
+
+        // A resumed thread longer than the transcript keeps only its newest messages, still in order.
+        var longHistory = new System.Text.Json.Nodes.JsonArray(Enumerable.Range(1, 150).Select(turn => (System.Text.Json.Nodes.JsonNode)TurnOf($"turn-long-{turn}",
+            UserItem($"item-lu{turn}", hiddenContext, $"question {turn}"), AgentItem($"item-la{turn}", $"answer {turn}"))).ToArray());
+        var longResume = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, resumedTurns: longHistory);
+        Assert(longResume.vm.Transcript.Count == AssistantViewModel.MaxTranscriptItems && longResume.vm.Transcript[0].Text == "question 51"
+               && longResume.vm.Transcript[^1].Text == "answer 150" && longResume.vm.Transcript[^1].Role == "Codex"
+               && !longResume.vm.Transcript.Any(item => item.Text.Contains(AssistantViewModel.ContextLabel)),
+            "Restored history must respect the transcript cap and keep the newest messages in order.");
+        await longResume.vm.ShutdownAsync();
+        var emptyResume = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            resumedTurns: new System.Text.Json.Nodes.JsonArray());
+        Assert(emptyResume.vm.State == AssistantState.Ready && emptyResume.vm.Transcript.Count == 0,
+            "A resumed thread with no turns is valid and shows nothing.");
+        await emptyResume.vm.ShutdownAsync();
+
+        var signedOut = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            signedOut: true, connect: vm => vm.ConnectOnStartupAsync());
+        Assert(signedOut.vm.State == AssistantState.SignedOut && signedOut.vm.IsSignInVisible && signedOut.vm.SignInCommand.CanExecute(null)
+               && signedOut.vm.SignInUrl.Length == 0 && StartupQuiet(signedOut.cli, signedOut.transport),
+            "A signed-out startup must show the inline sign-in with Sign in available, without starting a login or opening a page.");
+        await signedOut.vm.ShutdownAsync();
+
+        foreach (var (name, script, expected) in new (string, Func<string, string?>, AssistantState)[]
+                 {
+                     ("missing runtime", command => command == "agent status"
+                         ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"installed\":false,\"probe_passed\":false,\"provider\":\"codex\",\"reason\":\"not_installed\"}}" : null,
+                         AssistantState.RuntimeAbsent),
+                     ("isolation check required", command => command == "agent status"
+                         ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"installed\":true,\"probe_passed\":false,\"provider\":\"codex\",\"reason\":\"probe_required\"}}" : null,
+                         AssistantState.IsolationFailed),
+                     ("busy Core", command => command == "capabilities"
+                         ? "{\"schema_version\":1,\"ok\":false,\"data\":null,\"error\":{\"code\":\"busy\",\"message\":\"Another operation is running.\"}}" : null,
+                         AssistantState.Error)
+                 })
+        {
+            var blocked = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+                script: script, connect: vm => vm.ConnectOnStartupAsync());
+            Assert(blocked.vm.State == expected && blocked.cli.ServedTask is null && StartupQuiet(blocked.cli, blocked.transport)
+                   && blocked.vm.ConnectCommand.CanExecute(null) && stateStore.Load() == savedReference,
+                $"A startup that finds {name} must stay inline with Connect available and run nothing else.");
+            blocked.cli.Script = null;
+            blocked.vm.ConnectCommand.Execute(null);
+            await WaitUntilAsync(() => blocked.vm.State == AssistantState.Ready);
+            Assert(blocked.vm.State == AssistantState.Ready && blocked.cli.ServedTask == savedReference.TaskId,
+                $"Connect must still work after a startup that found {name}.");
+            await blocked.vm.ShutdownAsync();
+        }
+
+        var maintenance = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            distroBusy: true, connect: vm => vm.ConnectOnStartupAsync());
+        Assert(maintenance.vm.State == AssistantState.Error && maintenance.cli.Calls.Count == 0 && maintenance.vm.ConnectCommand.CanExecute(null),
+            "A startup during distro maintenance must say so inline and run nothing.");
+        await maintenance.vm.ShutdownAsync();
+
+        var manualFirst = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connect: vm => Task.WhenAll(vm.ConnectAsync(), vm.ConnectOnStartupAsync()));
+        Assert(manualFirst.vm.State == AssistantState.Ready && manualFirst.cli.Calls.Count(call => call == "capabilities") == 1
+               && manualFirst.transport.Requests.Count(r => r.StartsWith("initialize")) == 1,
+            "A startup call while the user's Connect runs must not start a second connection.");
+        await manualFirst.vm.ShutdownAsync();
+
+        var capabilitiesGate = new TaskCompletionSource();
+        Task? closingStartup = null;
+        var closing = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            capabilitiesGate: capabilitiesGate, connect: vm => { closingStartup = vm.ConnectOnStartupAsync(); return Task.CompletedTask; });
+        await WaitUntilAsync(() => closing.cli.Calls.Contains("capabilities"));
+        await closing.vm.ShutdownAsync();
+        await closingStartup!.WaitAsync(TimeSpan.FromSeconds(10));
+        capabilitiesGate.TrySetResult();
+        Assert(closing.cli.Calls.SequenceEqual(["capabilities"]) && closing.cli.ServedTask is null && closing.transport.Requests.Count == 0,
+            "Closing the launcher during startup's Connect must stop it before anything else runs or starts.");
+        var afterClose = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connect: async vm => { await vm.ShutdownAsync(); await vm.ConnectOnStartupAsync(); });
+        Assert(afterClose.cli.Calls.Count == 0 && afterClose.cli.ServedTask is null,
+            "A startup call after the launcher began closing must run nothing.");
+        var prepareGate = new TaskCompletionSource();
+        Task? preparingStartup = null;
+        var preparing = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, prepareGate: prepareGate,
+            connect: vm => { stateStore.Clear(); preparingStartup = vm.ConnectOnStartupAsync(); return Task.CompletedTask; });
+        await WaitUntilAsync(() => preparing.cli.Calls.Any(call => call.StartsWith("changes prepare")));
+        var closingPrepare = preparing.vm.ShutdownAsync();
+        prepareGate.TrySetResult();
+        await closingPrepare;
+        await preparingStartup!.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert(preparing.cli.Calls.Count(call => call.StartsWith("changes prepare")) == 1 && preparing.cli.ServedTask is null
+               && preparing.transport.Requests.Count == 0 && stateStore.Load() is null,
+            "A task prepared after the launcher began closing must not be saved, served or connected.");
+
+        var stopping = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        int StoppingTurns() { lock (stopping.transport.Requests) return stopping.transport.Bodies.Count(body => body.StartsWith("turn/start")); }
+        stopping.cli.ModelsGate = new TaskCompletionSource();
+        stopping.vm.InputText = "which models?";
+        stopping.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => stopping.cli.Calls.Contains("models herika"));
+        await stopping.vm.InterruptAsync();
+        await WaitUntilAsync(() => stopping.vm.State == AssistantState.Ready);
+        Assert(stopping.vm.State == AssistantState.Ready && StoppingTurns() == 0 && stopping.vm.Transcript[^1].Text.StartsWith("Stopped before")
+               && stopping.vm.Transcript[0].Text == "which models?",
+            "Stop during the model lookup must cancel it and send no turn.");
+        stopping.cli.ModelsGate = null;
+        stopping.cli.InventoryGate = new TaskCompletionSource();
+        var inventoryCalls = stopping.cli.Calls.Count(call => call == "inventory");
+        stopping.vm.InputText = "what is installed?";
+        stopping.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => stopping.cli.Calls.Count(call => call == "inventory") > inventoryCalls);
+        await stopping.vm.InterruptAsync();
+        await WaitUntilAsync(() => stopping.vm.State == AssistantState.Ready);
+        Assert(stopping.vm.State == AssistantState.Ready && StoppingTurns() == 0 && stopping.vm.Transcript[^1].Text.StartsWith("Stopped before"),
+            "Stop during the inventory lookup must cancel it and send no turn.");
+        stopping.cli.InventoryGate = null;
+        stopping.vm.InputText = "which models?";
+        stopping.vm.SendCommand.Execute(null);
+        await WaitUntilAsync(() => StoppingTurns() == 1);
+        string unavailableBody;
+        lock (stopping.transport.Requests) unavailableBody = stopping.transport.Bodies.Single(body => body.StartsWith("turn/start"));
+        var unavailableInput = TurnInput(unavailableBody);
+        Assert(unavailableInput.Length == 2 && unavailableInput[0].Contains("CHIM selected models are unavailable")
+               && unavailableInput[0].Contains("DwemerDistro inventory is unavailable") && unavailableInput[0].Contains("Update Distro")
+               && unavailableInput[0].Contains(AssistantViewModel.ScopeReminder) && unavailableInput[1] == "which models?",
+            "An older Core without the lookups must still send the message, with the scope and explicit unavailable statements.");
+        await stopping.vm.ShutdownAsync();
+
         var unconfined = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId, confined: false);
         Assert(unconfined.vm.State == AssistantState.Error && unconfined.vm.StatusDetail.Contains("confined"),
             "A thread that does not report approval policy never and cwd /work must end the session, not reach Ready.");
@@ -2443,6 +2666,248 @@ try
                && stagedReview.vm.StatusDetail.Contains("ext/a.php: PHP Parse error"),
             "A failed re-stage must clear the earlier reviewed batch, so nothing stale can be approved.");
         await stagedReview.vm.ShutdownAsync();
+
+        // File requests: only a closed block of safe relative paths becomes a proposal; anything else fails closed.
+        const string fence = "```" + AssistantViewModel.FileRequestTag;
+        Assert(AssistantViewModel.ParseFileRequest($"Need it.\n{fence}\next/a.php\next/b.php\n```", out var askedPaths, out var askedText, out _) == FileRequestParse.Valid
+               && askedPaths.SequenceEqual(new[] { "ext/a.php", "ext/b.php" }) && askedText == "Need it."
+               && AssistantViewModel.ParseFileRequest("plain answer", out _, out _, out _) == FileRequestParse.None,
+            "A valid file request must yield its paths in order and hide only the block.");
+        foreach (var bad in new[] { $"{fence}\next/a.php", $"{fence}\n../a.php\n```", $"{fence}\n/etc/passwd\n```", $"{fence}\n-x\n```",
+                     $"{fence}\n.ddistro-context/status.json\n```", $"{fence}\n```", $"{fence}\na\n```\n{fence}\nb\n```", $"{fence}\next/a.php\next/a.php\n```",
+                     $"{fence}\n" + string.Join("\n", Enumerable.Range(0, 21).Select(i => $"f{i}.php")) + "\n```" })
+            Assert(AssistantViewModel.ParseFileRequest(bad, out var badPaths, out var badText, out var badProblem) == FileRequestParse.Invalid
+                   && badPaths.Count == 0 && badText == bad && badProblem.Length > 0,
+                "A truncated, unsafe, empty, duplicated or oversized file request must fail closed: " + bad.Replace("\n", "|"));
+        string DiffDocumentText(string task, int files, string state = "prepared") =>
+            $"{{\"schema_version\":1,\"ok\":true,\"data\":{{\"task_id\":\"{task}\",\"state\":\"{state}\",\"diff\":\"\",\"diff_truncated\":false,\"files\":["
+            + string.Join(",", Enumerable.Range(0, files).Select(i => $"{{\"path\":\"f{i}.php\",\"action\":\"modify\"}}")) + "]}}";
+        AssistantCliResult DiffDocument(string state, int files, string task = "t") => AssistantCliService.Parse(new CommandResult(0, DiffDocumentText(task, files, state), ""));
+        Assert(AssistantViewModel.ReadReviewableChanges(DiffDocument("prepared", 2), "t") == 2 && AssistantViewModel.ReadReviewableChanges(DiffDocument("staged", 0), "t") == 0
+               && AssistantViewModel.ReadReviewableChanges(DiffDocument("applied", 2), "t") == 0 && AssistantViewModel.ReadReviewableChanges(DiffDocument("interrupted", 2), "t") == -1
+               && AssistantViewModel.ReadReviewableChanges(DiffDocument("prepared", 2, "other"), "t") == -1,
+            "Review changes must follow Core's diff: reviewable edits only, and an unknown or foreign answer is not 'no changes'.");
+
+        AssistantCliResult ModelsDocument(string data) => AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(data), ""));
+        var projectedModels = AssistantCliService.ProjectModelsSnapshot(ModelsDocument(ValidModelsData), out _)!;
+        Assert(projectedModels.Select(pair => pair.Key).SequenceEqual(["product", "available", "scope", "captured_at", "assignments", "truncated", "reason"])
+               && projectedModels["assignments"]!.AsArray().Single()!.AsObject().Select(pair => pair.Key)
+                   .SequenceEqual(["profile_id", "profile", "role", "connector_id", "connector", "model", "provider", "driver"])
+               && !projectedModels.ToJsonString().Contains("SECRET"),
+            "The model snapshot must be re-projected onto its exact allowlist, dropping every unknown Core field.");
+        var modelsContext = AssistantViewModel.BuildModelsContext(ModelsDocument(ValidModelsData));
+        Assert(modelsContext.Contains("2026-10-19T17:00:00Z") && modelsContext.Contains("configured_profiles") && modelsContext.Contains("not show which NPC")
+               && modelsContext.Contains("complete (1 assignment(s))") && !modelsContext.Contains("TRUNCATED"),
+            "The context must state its capture time, its configured-profile scope and that the list is complete.");
+        Assert(AssistantViewModel.BuildModelsContext(ModelsDocument(ValidModelsData.Replace("\"truncated\":false", "\"truncated\":true"))).Contains("TRUNCATED"),
+            "A truncated snapshot must say so.");
+        var notAvailable = AssistantViewModel.BuildModelsContext(ModelsDocument(
+            "{\"product\":\"herika\",\"available\":false,\"scope\":\"configured_profiles\",\"captured_at\":\"2026-10-19T17:00:00+00:00\",\"assignments\":[],\"truncated\":false,\"reason\":\"database_unavailable\"}"));
+        Assert(notAvailable.StartsWith("CHIM selected models are unavailable") && notAvailable.Contains("unavailable") && notAvailable.Contains("database_unavailable")
+               && !notAvailable.Contains("assignments"),
+            "Core's own unavailable answer must reach the model as a plain statement with its reason.");
+        foreach (var malformed in new[]
+                 {
+                     ValidModelsData.Replace("\"profile_id\":1", "\"profile_id\":\"1\""),
+                     ValidModelsData.Replace("\"connector_id\":7", "\"connector_id\":7.5"),
+                     ValidModelsData.Replace("gpt-test-model", new string('m', 257)),
+                     ValidModelsData.Replace("gpt-test-model", "gpt\\u0000model"),
+                     ValidModelsData.Replace("2026-10-19T17:00:00Z", "2026-10-19T17:00:00"),
+                     ValidModelsData.Replace("2026-10-19T17:00:00Z", "2026-10-19T19:00:00+02:00"),
+                     ValidModelsData.Replace("2026-10-19T17:00:00Z", "yesterday at noon UTC Z"),
+                     ValidModelsData.Replace("\"product\":\"herika\"", "\"product\":\"stobe\""),
+                     ValidModelsData.Replace("\"scope\":\"configured_profiles\"", "\"scope\":\"active_npc\""),
+                     ValidModelsData.Replace(",\"truncated\":false", string.Empty),
+                     ValidModelsData.Replace("\"available\":true", "\"available\":false"),
+                     ValidModelsData.Replace("\"driver\":\"openai\",", string.Empty),
+                     ValidModelsData.Replace("\"assignments\":[", "\"assignments\":[\"x\","),
+                     "{\"product\":\"herika\",\"available\":true,\"scope\":\"configured_profiles\",\"captured_at\":\"2026-10-19T17:00:00Z\",\"assignments\":["
+                         + string.Join(",", Enumerable.Repeat(ModelAssignment, 201)) + "],\"truncated\":true,\"reason\":\"\"}",
+                     "[]"
+                 })
+        {
+            var rejected = AssistantViewModel.BuildModelsContext(ModelsDocument(malformed));
+            Assert(AssistantCliService.ProjectModelsSnapshot(ModelsDocument(malformed), out var why) is null && why.Length > 0
+                   && rejected.Contains("unavailable") && !rejected.Contains("gpt-test-model") && !rejected.Contains("SECRET"),
+                "A malformed model snapshot must be refused whole, never partly sent: " + malformed[..Math.Min(malformed.Length, 120)]);
+        }
+        Assert(AssistantViewModel.BuildModelsContext(ModelsDocument(ValidModelsData.Replace("Default", new string('p', 256)))).Contains(new string('p', 256)),
+            "A field of exactly 256 characters is within bounds.");
+        var oldCli = AssistantViewModel.BuildModelsContext(AssistantCliService.Parse(new CommandResult(2, "", "usage: ddistro {capabilities,agent,changes}")));
+        Assert(oldCli.Contains("Update Distro") && oldCli.Contains("Do not guess") && oldCli.Contains("do not read configuration, database or credential files")
+               && AssistantViewModel.BuildModelsContext(AssistantCliService.Parse(new CommandResult(66,
+                   "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"busy\",\"message\":\"x\"}}", ""))).Contains("reported busy")
+               && AssistantViewModel.BuildModelsContext(AssistantCliService.Parse(new CommandResult(127, "", "execvpe failed"))).Contains("not available")
+               && AssistantViewModel.BuildModelsContext(AssistantCliResult.Failure(AssistantCliResult.Timeout, "")).Contains("in time"),
+            "An old CLI, a busy Core, a missing command or a timeout must each give an explicit unavailable statement that forbids guessing or reading credentials.");
+        Assert(AssistantViewModel.DeveloperInstructions.Contains(AssistantViewModel.ContextLabel) && AssistantViewModel.DeveloperInstructions.Contains("exact IDs"),
+            "The developer instructions must tell the model to answer model questions from the per-message context.");
+        Assert(AssistantViewModel.DeveloperInstructions.StartsWith("You are the DwemerDistro Assistant") && AssistantViewModel.DeveloperInstructions.Contains("not limited to CHIM")
+               && AssistantViewModel.DeveloperInstructions.Contains("Dwemer Dashboard") && AssistantViewModel.DeveloperInstructions.Contains("custom mods")
+               && AssistantViewModel.DeveloperInstructions.Contains("only CHIM (HerikaServer) files")
+               && AssistantViewModel.DeveloperInstructions.Contains("never ask the user to paste a list")
+               && AssistantViewModel.DeveloperInstructions.Contains("present does not mean enabled")
+               && AssistantViewModel.DeveloperInstructions.Contains("cannot run commands on the live distro")
+               && !AssistantViewModel.DeveloperInstructions.Contains("with their CHIM (HerikaServer) server"),
+            "The developer instructions must cover the whole distro, the CHIM-only file editing limit, and inventory-first answers without overclaiming.");
+
+        // ddistro inventory: an exact allowlist projection, refused whole when anything is off.
+        AssistantCliResult InventoryDocument(string data) => AssistantCliService.Parse(new CommandResult(0, ModelsDocumentText(data), ""));
+        var projectedInventory = AssistantCliService.ProjectInventory(InventoryDocument(ValidInventoryData), out _)!;
+        var projectedText = projectedInventory.ToJsonString();
+        Assert(projectedInventory.Select(pair => pair.Key).SequenceEqual(["captured_at", "scope", "read_as", "complete", "servers", "extensions", "components", "custom_mods"])
+               && projectedInventory["servers"]!["items"]!.AsArray()[0]!.AsObject().Select(pair => pair.Key)
+                   .SequenceEqual(["product", "state", "repository_state", "database_present", "branch", "version"])
+               && projectedInventory["servers"]!["items"]!.AsArray()[1]!["database_present"] is null
+               && projectedInventory["extensions"]!["items"]!.AsArray()[0]!["entries"]!.AsArray()[0]!.AsObject().Select(pair => pair.Key).SequenceEqual(["name", "kind"])
+               && projectedInventory["custom_mods"]!["items"]!.AsArray()[0]!.AsObject().Select(pair => pair.Key).SequenceEqual(["id", "name", "state", "branch", "commit"])
+               && !projectedText.Contains("SECRET") && !projectedText.Contains("/var/www") && !projectedText.Contains("/home/dwemer")
+               && !projectedText.Contains("mtime") && !projectedText.Contains("port") && !projectedText.Contains("repository\""),
+            "The inventory must be re-projected onto its exact allowlist, dropping roots, ports, URLs, paths and every unknown Core field.");
+        var inventoryContext = AssistantViewModel.BuildInventoryContext(InventoryDocument(ValidInventoryData));
+        Assert(inventoryContext.Contains("2026-10-19T17:00:00Z") && inventoryContext.Contains("presence_only") && inventoryContext.Contains("not that it is running")
+               && inventoryContext.Contains("enabled, loaded") && inventoryContext.Contains("instead of asking the user") && inventoryContext.Contains("read in full")
+               && inventoryContext.Contains("\"name\":\"generic_installer.php\"") && !inventoryContext.Contains("INCOMPLETE"),
+            "The inventory context must state its capture time and scope, that presence is not enabled or running state, and that it is complete.");
+        var partialInventory = AssistantViewModel.BuildInventoryContext(InventoryDocument(ValidInventoryData
+            .Replace("\"complete\":true", "\"complete\":false")
+            .Replace("\"available\":true,\"reason\":\"\",\"items\":[{\"product\":\"herika\"", "\"available\":false,\"reason\":\"timeout\",\"items\":[],\"x\":[{\"product\":\"herika\"")));
+        Assert(partialInventory.Contains("INCOMPLETE") && partialInventory.Contains("\"reason\":\"timeout\"") && partialInventory.Contains("relationship_system"),
+            "An unavailable section must be kept as available false with its reason, and the context must say the inventory is incomplete.");
+        foreach (var contradictory in new[]
+                 {
+                     ValidInventoryData.Replace("\"total\":2,\"truncated\":false,\"skipped\":0", "\"total\":3,\"truncated\":false,\"skipped\":1"),
+                     ValidInventoryData.Replace("\"state\":\"product_absent\"", "\"state\":\"redirected\""),
+                     ValidInventoryData.Replace("\"state\":\"absent\"}]}", "\"state\":\"unreadable\"}]}"),
+                     ValidInventoryData.Replace("\"available\":true,\"reason\":\"\",\"truncated\":false", "\"available\":true,\"reason\":\"\",\"truncated\":true")
+                 })
+        {
+            var projected = AssistantCliService.ProjectInventory(InventoryDocument(contradictory), out _);
+            Assert(projected is not null && projected["complete"]!.GetValue<bool>() == false
+                   && AssistantViewModel.BuildInventoryContext(InventoryDocument(contradictory)).Contains("INCOMPLETE"),
+                "Core's complete:true must not survive a skipped, truncated, redirected or unreadable section.");
+        }
+        foreach (var malformed in new[]
+                 {
+                     ValidInventoryData.Replace("\"scope\":\"presence_only\"", "\"scope\":\"health\""),
+                     ValidInventoryData.Replace("2026-10-19T17:00:00Z", "2026-10-19T17:00:00"),
+                     ValidInventoryData.Replace(",\"complete\":true", string.Empty),
+                     ValidInventoryData.Replace("\"product\":\"stobe\"", "\"product\":\"kenshi\""),
+                     ValidInventoryData.Replace("\"database_present\":true", "\"database_present\":\"yes\""),
+                     ValidInventoryData.Replace("\"state\":\"installed\"", "\"state\":\"Installed!\""),
+                     ValidInventoryData.Replace("\"branch\":\"aiagent\"", "\"branch\":\"" + new string('b', 129) + "\""),
+                     ValidInventoryData.Replace("\"name\":\"generic_installer.php\"", "\"name\":\"../conf/conf.php\""),
+                     ValidInventoryData.Replace("\"name\":\"generic_installer.php\"", "\"name\":\".env\""),
+                     ValidInventoryData.Replace("\"name\":\"generic_installer.php\"", "\"name\":\"x\\u0007y\""),
+                     ValidInventoryData.Replace("\"kind\":\"file\"", "\"kind\":\"socket\""),
+                     ValidInventoryData.Replace("\"root\":\"ext\"", "\"root\":\"/var/www/html/HerikaServer/ext\""),
+                     ValidInventoryData.Replace("\"total\":2", "\"total\":-1"),
+                     ValidInventoryData.Replace("\"total\":2", "\"total\":2.5"),
+                     ValidInventoryData.Replace("\"truncated\":false,\"skipped\"", "\"truncated\":\"no\",\"skipped\""),
+                     ValidInventoryData.Replace("\"no_known_root\":[\"lorkhan\"", "\"no_known_root\":[\"skyrim\""),
+                     ValidInventoryData.Replace("\"basis\":\"startup_markers\"", "\"basis\":\"running\""),
+                     ValidInventoryData.Replace("\"id\":\"example-server\"", "\"id\":\"Example_Server\""),
+                     ValidInventoryData.Replace(new string('c', 40), "abc"),
+                     ValidInventoryData.Replace("\"available\":true,\"reason\":\"\",\"truncated\":false", "\"available\":true,\"reason\":\"x\",\"truncated\":false"),
+                     ValidInventoryData.Replace("\"available\":true,\"reason\":\"\",\"truncated\":false", "\"available\":false,\"reason\":\"timeout\",\"truncated\":false"),
+                     ValidInventoryData.Replace("\"available\":true,\"reason\":\"\",\"items\":[{\"product\":\"herika\"", "\"available\":true,\"reason\":\"\",\"items\":[\"x\",{\"product\":\"herika\""),
+                     ValidInventoryData.Replace("\"entries\":[{", "\"entries\":[" + string.Join(",", Enumerable.Repeat("{\"name\":\"a\",\"kind\":\"dir\"}", 201)) + ",{"),
+                     ValidInventoryData.Replace("\"components\":{", "\"components\":[{").Replace("}]},\"custom_mods\"", "}]}],\"custom_mods\""),
+                     "[]"
+                 })
+        {
+            var rejected = AssistantViewModel.BuildInventoryContext(InventoryDocument(malformed));
+            Assert(AssistantCliService.ProjectInventory(InventoryDocument(malformed), out var why) is null && why.Length > 0
+                   && rejected.StartsWith("DwemerDistro inventory is unavailable") && !rejected.Contains("relationship_system") && !rejected.Contains("SECRET"),
+                "A malformed inventory must be refused whole, never partly sent: " + malformed[..Math.Min(malformed.Length, 160)]);
+        }
+        var oldInventory = AssistantViewModel.BuildInventoryContext(AssistantCliService.Parse(new CommandResult(64,
+            "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"invalid_argument\",\"message\":\"Unknown command.\"}}", "")));
+        Assert(oldInventory.Contains("Update Distro") && oldInventory.Contains("Do not guess") && oldInventory.Contains("do not read configuration, database or credential files")
+               && AssistantViewModel.BuildInventoryContext(AssistantCliResult.Failure(AssistantCliResult.Timeout, "")).Contains("in time")
+               && AssistantViewModel.BuildInventoryContext(AssistantCliService.Parse(new CommandResult(127, "", "execvpe failed"))).Contains("not available"),
+            "An old Core, a timeout or a missing command must each give an explicit inventory-unavailable statement that forbids guessing.");
+        var turnContext = AssistantViewModel.BuildTurnContext(InventoryDocument(ValidInventoryData), ModelsDocument(ValidModelsData));
+        Assert(turnContext.StartsWith(AssistantViewModel.ContextLabel + "\n" + AssistantViewModel.ScopeReminder)
+               && turnContext.IndexOf("DwemerDistro inventory", StringComparison.Ordinal) < turnContext.IndexOf("CHIM selected models", StringComparison.Ordinal),
+            "The turn context is the label, the distro-wide scope, the inventory, then the CHIM model snapshot as one product-specific fact.");
+        Assert(AssistantCliCommands.Inventory().SequenceEqual(["inventory"]) && AssistantCliCommands.UserFor(AssistantCliCommands.Inventory()) == "root",
+            "The inventory lookup is the fixed inventory command, run through the supervised root path.");
+        Assert(AssistantCliCommands.Models().SequenceEqual(["models", "herika"]) && AssistantCliService.MaxModelAssignments == 200,
+            "The model lookup is the fixed models herika command.");
+
+        var access = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId);
+        var workspaceEdits = 0;
+        const string newTask = "99999999-2222-3333-4444-555555555555";
+        access.cli.Script = command => command.StartsWith("changes diff ")
+            ? DiffDocumentText(command.EndsWith(newTask) ? newTask : savedReference.TaskId, workspaceEdits)
+            : command.StartsWith("changes prepare") ? $"{{\"schema_version\":1,\"ok\":true,\"data\":{{\"task_id\":\"{newTask}\",\"diagnostic_only\":false}}}}" : null;
+        // The page's notifications are dispatcher posts this console never pumps, so they are delivered directly; the turn
+        // runner reads turn/completed from the transport itself, and the trailing marker shows it has been handled.
+        void Notify(string method, string json) => access.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
+        int TurnStarts() { lock (access.transport.Requests) return access.transport.Bodies.Count(body => body.StartsWith("turn/start")); }
+        async Task CompleteTurnAsync(string request, string reply, string status = "completed")
+        {
+            var started = TurnStarts();
+            access.vm.InputText = request;
+            access.vm.SendCommand.Execute(null);
+            await WaitUntilAsync(() => access.vm.State == AssistantState.Streaming && TurnStarts() > started);
+            Notify("item/completed", "{\"threadId\":\"thr-saved\",\"item\":{\"type\":\"agentMessage\",\"id\":\"msg-" + Guid.NewGuid().ToString("N") + "\",\"text\":"
+                + System.Text.Json.JsonSerializer.Serialize(reply) + "}}");
+            await CompleteTurn(status);
+        }
+        async Task CompleteTurn(string status = "completed")
+        {
+            var completed = "{\"threadId\":\"thr-saved\",\"turn\":{\"id\":\"turn-1\",\"status\":\"" + status + "\"}}";
+            access.transport.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":" + completed + "}");
+            access.transport.Incoming.Writer.TryWrite("{\"method\":\"test/marker\",\"params\":{}}");
+            await WaitUntilAsync(() => access.transport.Incoming.Reader.Count == 0);
+            Notify("turn/completed", completed);
+        }
+        Assert(!access.vm.HasChanges && !access.vm.IsSidePanelVisible && access.cli.Calls.Contains("changes diff " + savedReference.TaskId)
+               && access.vm.StatusDetail.StartsWith("Could not check"),
+            "A reopened task whose edits cannot be read must not claim Changes ready, open the side column, or stay silent.");
+        await CompleteTurnAsync("Fix the greeting", $"I need the plugin file.\n{fence}\next/a.php\n```", status: "interrupted");
+        Assert(!access.vm.HasFileRequest, "A file request from a turn that did not complete must not become a proposal.");
+        await CompleteTurnAsync("Fix the greeting", $"I need the plugin file.\n{fence}\next/a.php\n```");
+        Assert(access.vm.HasFileRequest && access.vm.AllowFileAccessCommand.CanExecute(null)
+               && access.vm.Transcript[^1].Text == "I need the plugin file." && !access.cli.Calls.Any(c => c.StartsWith("changes prepare")),
+            "A valid request must show the access card, hide the raw block, and prepare nothing before the user allows it.");
+        var startsBeforeWait = TurnStarts();
+        access.vm.InputText = "actually, wait";
+        access.vm.SendCommand.Execute(null);
+        Assert(!access.vm.HasFileRequest && !access.vm.AllowFileAccessCommand.CanExecute(null),
+            "A new turn must make the earlier file request stale, so it can no longer be allowed.");
+        await WaitUntilAsync(() => TurnStarts() > startsBeforeWait);
+        await CompleteTurn();
+        Assert(access.vm.State == AssistantState.Ready, "The interrupting turn must complete normally.");
+
+        workspaceEdits = 1;
+        await CompleteTurnAsync("Fix the greeting", $"Edited, but I also need another file.\n{fence}\next/b.php\n```");
+        await WaitUntilAsync(() => access.vm.HasChanges);
+        Assert(access.vm.HasChanges && access.vm.IsChangesVisible && access.vm.IsSidePanelVisible, "Edits found by Core's diff after a completed turn must show Review changes.");
+        access.vm.AllowFileAccessCommand.Execute(null);
+        await WaitUntilAsync(() => access.vm.StatusDetail.Contains("not reviewed"));
+        Assert(!access.cli.Calls.Any(c => c.StartsWith("changes prepare")) && access.cli.ServedTask == savedReference.TaskId && access.vm.StatusDetail.Contains("not reviewed"),
+            "Allowing access must not silently abandon unreviewed edits in the current working copy.");
+
+        workspaceEdits = 0;
+        await CompleteTurnAsync("Fix the greeting", $"I need the plugin file.\n{fence}\next/a.php\n```");
+        await WaitUntilAsync(() => access.vm.State == AssistantState.Ready && !access.vm.HasChanges);
+        Assert(!access.vm.IsSidePanelVisible && access.vm.HasFileRequest, "Once Core's diff reports no edits, Review changes and the side column must go away.");
+        access.vm.AllowFileAccessCommand.Execute(null);
+        await WaitUntilAsync(() => { lock (access.transport.Requests) return access.transport.Bodies.Any(body => body.StartsWith("turn/start") && body.Contains("ext/a.php")); });
+        string[] continued;
+        lock (access.transport.Requests) continued = access.transport.Bodies.Where(body => body.StartsWith("turn/start") && body.Contains("ext/a.php")).ToArray();
+        Assert(access.cli.Calls.Contains("changes prepare --product herika --path ext/a.php") && access.cli.ServedTask == newTask
+               && stateStore.Load() is { TaskId: newTask, InstallationId: var keptInstallation, Provider: "codex" } && keptInstallation == installationId
+               && continued.Length == 1 && continued[0].Contains("Fix the greeting") && !access.vm.HasFileRequest,
+            "Allow must prepare exactly the requested paths, keep the installation identity, and continue the original request in the new task.");
+        Assert(TurnInput(continued[0]) is [var continuedContext, var continuedText] && continuedContext.StartsWith(AssistantViewModel.ContextLabel)
+               && continuedText.Contains("Fix the greeting") && access.cli.Calls.Count(call => call == "models herika") == TurnStarts()
+               && access.cli.Calls.Count(call => call == "inventory") == TurnStarts() && continuedContext.Contains(AssistantViewModel.ScopeReminder),
+            "Every turn, the file-access continuation included, must read the model settings afresh.");
+        await access.vm.ShutdownAsync();
     }
     finally
     {
@@ -2544,13 +3009,16 @@ static ServerStatusResult StatusFor(ServerProduct product, ServerInstallState st
 
 static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTransport transport)> ConnectAssistantAsync(
     AssistantStateStore store, AssistantTaskReference saved, string installationId, string? statusTask, bool confined = true,
-    string distroName = LauncherConstants.DistroName)
+    string distroName = LauncherConstants.DistroName, bool signedOut = false, bool distroBusy = false, Func<string, string?>? script = null,
+    TaskCompletionSource? capabilitiesGate = null, Func<AssistantViewModel, Task>? connect = null,
+    System.Text.Json.Nodes.JsonArray? resumedTurns = null, TaskCompletionSource? prepareGate = null)
 {
     store.Save(saved);
-    // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work.
-    System.Text.Json.Nodes.JsonObject Thread(string id) => new()
+    // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work. Only thread/resume
+    // (and fork and read) populate thread.turns.
+    System.Text.Json.Nodes.JsonObject Thread(string id, System.Text.Json.Nodes.JsonArray? turns = null) => new()
     {
-        ["thread"] = new System.Text.Json.Nodes.JsonObject { ["id"] = id },
+        ["thread"] = new System.Text.Json.Nodes.JsonObject { ["id"] = id, ["turns"] = turns?.DeepClone() ?? new System.Text.Json.Nodes.JsonArray() },
         ["approvalPolicy"] = confined ? "never" : "on-request",
         ["cwd"] = "/work"
     };
@@ -2559,19 +3027,26 @@ static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTra
         Respond = (method, parameters) => method switch
         {
             "initialize" => new System.Text.Json.Nodes.JsonObject(),
-            "account/read" => System.Text.Json.Nodes.JsonNode.Parse("{\"account\":{\"type\":\"apiKey\"},\"requiresOpenaiAuth\":false}"),
+            "account/read" => System.Text.Json.Nodes.JsonNode.Parse(signedOut ? "{\"account\":null,\"requiresOpenaiAuth\":true}"
+                : "{\"account\":{\"type\":\"apiKey\"},\"requiresOpenaiAuth\":false}"),
             "model/list" => System.Text.Json.Nodes.JsonNode.Parse("{\"data\":[{\"id\":\"m\",\"displayName\":\"M\",\"isDefault\":true}],\"nextCursor\":null}"),
-            "thread/resume" => Thread(parameters["threadId"]!.GetValue<string>()),
+            "thread/resume" => Thread(parameters["threadId"]!.GetValue<string>(), resumedTurns),
             "thread/start" => Thread("thr-new"),
             "turn/start" => System.Text.Json.Nodes.JsonNode.Parse("{\"turn\":{\"id\":\"turn-1\",\"items\":[],\"status\":\"inProgress\"}}"),
             _ => null
         }
     };
-    var cli = new FakeAssistantCli(transport, statusTask) { DistroName = distroName };
-    var vm = new AssistantViewModel(cli, new FakeAssistantHost(installationId), store);
-    await vm.ConnectAsync();
+    var cli = new FakeAssistantCli(transport, statusTask) { DistroName = distroName, Script = script, CapabilitiesGate = capabilitiesGate, PrepareGate = prepareGate };
+    var vm = new AssistantViewModel(cli, new FakeAssistantHost(installationId) { DistroBusy = distroBusy }, store);
+    await (connect ?? (model => model.ConnectAsync()))(vm);
     return (vm, cli, transport);
 }
+
+static string ModelsDocumentText(string data) => "{\"schema_version\":1,\"ok\":true,\"data\":" + data + "}";
+
+/// <summary>The text of each input item of a recorded "turn/start {json}" body.</summary>
+static string[] TurnInput(string body) =>
+    System.Text.Json.Nodes.JsonNode.Parse(body[(body.IndexOf(' ') + 1)..])!["input"]!.AsArray().Select(item => item!["text"]!.GetValue<string>()).ToArray();
 
 static async Task WaitUntilAsync(Func<bool> condition)
 {
@@ -2585,6 +3060,30 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static class ModelsFixture
+{
+    // Core's models herika shape, plus fields the launcher must never forward.
+    internal const string ModelAssignment = "{\"profile_id\":1,\"profile\":\"Default\",\"role\":\"main\",\"connector_id\":7,\"connector\":\"OpenRouter\","
+        + "\"model\":\"gpt-test-model\",\"provider\":\"openrouter\",\"driver\":\"openai\",\"api_key\":\"SECRET-KEY\"}";
+    internal const string ValidModelsData = "{\"product\":\"herika\",\"available\":true,\"scope\":\"configured_profiles\",\"captured_at\":\"2026-10-19T17:00:00Z\","
+        + "\"assignments\":[" + ModelAssignment + "],\"truncated\":false,\"reason\":\"\",\"password\":\"SECRET-PW\"}";
+
+    // Core's inventory shape, plus roots, ports, paths and URLs the launcher must never forward.
+    internal const string ValidInventoryData = "{\"captured_at\":\"2026-10-19T17:00:00Z\",\"scope\":\"presence_only\",\"read_as\":\"root\",\"complete\":true,"
+        + "\"servers\":{\"available\":true,\"reason\":\"\",\"items\":[{\"product\":\"herika\",\"state\":\"installed\",\"repository_state\":\"managed\","
+        + "\"database_present\":true,\"branch\":\"aiagent\",\"version\":\"3.5.1\",\"root\":\"/var/www/html/HerikaServer\",\"port\":8081},"
+        + "{\"product\":\"stobe\",\"state\":\"not-installed\",\"repository_state\":\"absent\",\"database_present\":null,\"branch\":\"\",\"version\":\"\"}]},"
+        + "\"extensions\":{\"items\":[{\"product\":\"herika\",\"root\":\"ext\",\"state\":\"listed\",\"total\":2,\"truncated\":false,\"skipped\":0,"
+        + "\"entries\":[{\"name\":\"relationship_system\",\"kind\":\"dir\",\"mtime\":1},{\"name\":\"generic_installer.php\",\"kind\":\"file\"}]},"
+        + "{\"product\":\"dialectic\",\"root\":\"ext\",\"state\":\"product_absent\",\"total\":0,\"truncated\":false,\"skipped\":0,\"entries\":[]}],"
+        + "\"no_known_root\":[\"lorkhan\",\"stobe\",\"reign\"]},"
+        + "\"components\":{\"basis\":\"startup_markers\",\"items\":[{\"id\":\"xtts\",\"name\":\"CHIM XTTS\",\"role\":\"tts\",\"state\":\"present\","
+        + "\"path\":\"/home/dwemer/xtts-api-server/start.sh\"},{\"id\":\"chatterbox\",\"name\":\"Chatterbox\",\"role\":\"tts\",\"state\":\"absent\"}]},"
+        + "\"custom_mods\":{\"available\":true,\"reason\":\"\",\"truncated\":false,\"items\":[{\"id\":\"example-server\",\"name\":\"Example\",\"state\":\"ready\","
+        + "\"branch\":\"main\",\"commit\":\"" + "cccccccccccccccccccccccccccccccccccccccc" + "\",\"repository\":\"https://user:SECRET-TOKEN@example.invalid/x\","
+        + "\"health_url\":\"http://127.0.0.1:19000/SECRET\"}]},\"token\":\"SECRET-TOP\"}";
 }
 
 sealed class FakeAssistantTransport : IAssistantTransport
@@ -2635,7 +3134,9 @@ sealed class FakeAssistantTransport : IAssistantTransport
 
 sealed class FakeAssistantHost(string installationId) : IAssistantHost
 {
-    public bool TryBeginDistroActivity() => true;
+    /// <summary>Distro maintenance holds the shared gate.</summary>
+    public bool DistroBusy { get; init; }
+    public bool TryBeginDistroActivity() => !DistroBusy;
     public void EndDistroActivity() { }
     public bool TryBeginLiveChange() => true;
     public void EndLiveChange() { }
@@ -2653,10 +3154,31 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
     /// <summary>Optional scripted document for a command; null falls back to the defaults below.</summary>
     public Func<string, string?>? Script { get; set; }
 
-    public Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    /// <summary>When set, models herika waits for it and, like the real service, throws when its caller cancels.</summary>
+    public TaskCompletionSource? ModelsGate { get; set; }
+
+    /// <summary>The same for inventory.</summary>
+    public TaskCompletionSource? InventoryGate { get; set; }
+
+    /// <summary>The same for capabilities, Connect's first read.</summary>
+    public TaskCompletionSource? CapabilitiesGate { get; set; }
+
+    /// <summary>The same for changes prepare, which then answers with a fresh task.</summary>
+    public TaskCompletionSource? PrepareGate { get; set; }
+
+    public async Task<AssistantCliResult> RunAsync(IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var command = string.Join(" ", arguments);
         Calls.Add(command);
+        if (command.StartsWith("changes prepare") && PrepareGate is { } prepareGate)
+        {
+            await prepareGate.Task.WaitAsync(cancellationToken);
+            return AssistantCliService.Parse(new CommandResult(0,
+                "{\"schema_version\":1,\"ok\":true,\"data\":{\"task_id\":\"99999999-8888-7777-6666-555555555555\",\"diagnostic_only\":true}}", ""));
+        }
+        if (command == "models herika" && ModelsGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
+        if (command == "inventory" && InventoryGate is { } inventoryGate) await inventoryGate.Task.WaitAsync(cancellationToken);
+        if (command == "capabilities" && CapabilitiesGate is { } capabilitiesGate) await capabilitiesGate.Task.WaitAsync(cancellationToken);
         var document = Script?.Invoke(command) ?? command switch
         {
             "capabilities" => "{\"schema_version\":1,\"ok\":true,\"data\":{\"features\":{\"agent\":true}}}",
@@ -2665,7 +3187,7 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
                 $"{{\"schema_version\":1,\"ok\":true,\"data\":{{\"task_id\":\"{statusTask}\",\"product\":\"herika\",\"state\":\"working\"}}}}",
             _ => "{\"schema_version\":1,\"ok\":false,\"error\":{\"code\":\"not_found\",\"message\":\"No such task.\"}}"
         };
-        return Task.FromResult(AssistantCliService.Parse(new CommandResult(document.Contains("\"ok\":true") ? 0 : 66, document, "")));
+        return AssistantCliService.Parse(new CommandResult(document.Contains("\"ok\":true") ? 0 : 66, document, ""));
     }
 
     public Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken)

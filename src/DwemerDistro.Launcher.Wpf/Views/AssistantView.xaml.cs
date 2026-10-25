@@ -1,0 +1,313 @@
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Automation.Peers;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Input;
+using DwemerDistro.Launcher.Wpf.ViewModels;
+using UserControl = System.Windows.Controls.UserControl;
+
+namespace DwemerDistro.Launcher.Wpf.Views;
+
+public partial class AssistantView : UserControl
+{
+    // Below this width the task and review column moves under the conversation.
+    private const double NarrowWidth = 860;
+    private AssistantViewModel? _viewModel;
+    private bool? _isNarrow;
+    // The text run shown for each transcript item; every key is subscribed to PropertyChanged.
+    private readonly Dictionary<AssistantTranscriptItem, Run> _transcriptRuns = new();
+
+    public AssistantView()
+    {
+        InitializeComponent();
+        DataContextChanged += AssistantView_DataContextChanged;
+    }
+
+    private AssistantViewModel? ViewModel => _viewModel;
+
+    private void AssistantView_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (_viewModel is not null)
+        {
+            _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            _viewModel.Transcript.CollectionChanged -= Transcript_CollectionChanged;
+        }
+
+        _viewModel = e.NewValue as AssistantViewModel;
+        if (_viewModel is not null)
+        {
+            _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+            _viewModel.Transcript.CollectionChanged += Transcript_CollectionChanged;
+        }
+
+        RebuildTranscript();
+        _isNarrow = null;
+        ApplyLayout(ActualWidth);
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AssistantViewModel.StatusText))
+        {
+            RaiseLiveRegion(StatusTextBlock);
+        }
+        else if (e.PropertyName == nameof(AssistantViewModel.OutcomeText))
+        {
+            RaiseLiveRegion(OutcomeTextBlock);
+        }
+        else if (e.PropertyName == nameof(AssistantViewModel.IsSidePanelVisible))
+        {
+            _isNarrow = null;
+            ApplyLayout(ActualWidth);
+        }
+        else if (e.PropertyName == nameof(AssistantViewModel.HasFileRequest) && _viewModel?.HasFileRequest == true)
+        {
+            AccessCard.BringIntoView();
+            RaiseLiveRegion(AccessCard);
+        }
+    }
+
+    /// <summary>Scrolls the status header into view and announces it, e.g. after a blocked close.</summary>
+    internal void RevealStatus()
+    {
+        PageScroll.ScrollToTop();
+        StatusTextBlock.BringIntoView();
+        RaiseLiveRegion(StatusTextBlock);
+    }
+
+    private static void RaiseLiveRegion(UIElement element)
+    {
+        if (!AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+        {
+            return;
+        }
+
+        var peer = UIElementAutomationPeer.FromElement(element) ?? UIElementAutomationPeer.CreatePeerForElement(element);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
+    // Shows the current transcript from scratch, so nothing from a previous view model or task stays visible.
+    private void RebuildTranscript()
+    {
+        foreach (var item in _transcriptRuns.Keys)
+        {
+            item.PropertyChanged -= TranscriptItem_PropertyChanged;
+        }
+
+        _transcriptRuns.Clear();
+        TranscriptBox.Document.Blocks.Clear();
+        if (_viewModel is not null)
+        {
+            foreach (var item in _viewModel.Transcript)
+            {
+                TranscriptBox.Document.Blocks.Add(CreateTranscriptBlock(item));
+            }
+        }
+
+        TranscriptBox.ScrollToEnd();
+    }
+
+    private Section CreateTranscriptBlock(AssistantTranscriptItem item)
+    {
+        var role = new Run(item.Role) { FontWeight = FontWeights.SemiBold, FontSize = 11 };
+        role.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
+        var text = new Run(item.Text);
+        _transcriptRuns[item] = text;
+        item.PropertyChanged += TranscriptItem_PropertyChanged;
+
+        var block = new Section { Tag = item, Margin = new Thickness(0, 0, 0, 10) };
+        block.Blocks.Add(new Paragraph(role) { Margin = new Thickness(0) });
+        block.Blocks.Add(new Paragraph(text) { Margin = new Thickness(0, 2, 0, 0) });
+        return block;
+    }
+
+    // Adds and removes blocks in place so a selection elsewhere survives; anything else rebuilds.
+    private void Transcript_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, _viewModel?.Transcript))
+        {
+            return;
+        }
+
+        var follow = IsFollowingTranscript();
+        var pinned = PinSelection();
+        var blocks = TranscriptBox.Document.Blocks;
+        if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
+        {
+            var before = e.NewStartingIndex >= 0 && e.NewStartingIndex < blocks.Count ? blocks.ElementAt(e.NewStartingIndex) : null;
+            foreach (AssistantTranscriptItem item in e.NewItems)
+            {
+                var block = CreateTranscriptBlock(item);
+                if (before is null)
+                {
+                    blocks.Add(block);
+                }
+                else
+                {
+                    blocks.InsertBefore(before, block);
+                }
+            }
+        }
+        else if (e.Action == NotifyCollectionChangedAction.Remove && e.OldItems is not null)
+        {
+            foreach (AssistantTranscriptItem item in e.OldItems)
+            {
+                item.PropertyChanged -= TranscriptItem_PropertyChanged;
+                _transcriptRuns.Remove(item);
+                if (blocks.FirstOrDefault(block => ReferenceEquals(block.Tag, item)) is { } block)
+                {
+                    blocks.Remove(block);
+                }
+            }
+        }
+        else
+        {
+            RebuildTranscript();
+            return;
+        }
+
+        RestoreSelection(pinned);
+        if (follow)
+        {
+            TranscriptBox.ScrollToEnd();
+        }
+    }
+
+    private void TranscriptItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(AssistantTranscriptItem.Text) || sender is not AssistantTranscriptItem item
+            || !_transcriptRuns.TryGetValue(item, out var run))
+        {
+            return;
+        }
+
+        var follow = IsFollowingTranscript();
+        var pinned = PinSelection();
+        var shown = run.Text;
+        // Streamed text is appended in place, so a selection inside this message keeps its position.
+        if (item.Text.StartsWith(shown, StringComparison.Ordinal))
+        {
+            run.ContentEnd.InsertTextInRun(item.Text[shown.Length..]);
+        }
+        else
+        {
+            run.Text = item.Text;
+        }
+
+        RestoreSelection(pinned);
+        if (follow)
+        {
+            TranscriptBox.ScrollToEnd();
+        }
+    }
+
+    // Copies of the selection ends that do not move when text arrives exactly at them, so a selection that
+    // ends where the reply is streaming, or a Ctrl+A, keeps the text it had.
+    private (TextPointer Start, TextPointer End)? PinSelection()
+    {
+        var selection = TranscriptBox.Selection;
+        return selection.IsEmpty
+            ? null
+            : (selection.Start.GetPositionAtOffset(0, LogicalDirection.Forward), selection.End.GetPositionAtOffset(0, LogicalDirection.Backward));
+    }
+
+    private void RestoreSelection((TextPointer Start, TextPointer End)? pinned)
+    {
+        var selection = TranscriptBox.Selection;
+        if (pinned is { } range && (selection.Start.CompareTo(range.Start) != 0 || selection.End.CompareTo(range.End) != 0))
+        {
+            selection.Select(range.Start, range.End);
+        }
+    }
+
+    // Follow the conversation only from the bottom, and never while the reader is selecting in it.
+    private bool IsFollowingTranscript()
+    {
+        var atBottom = TranscriptBox.VerticalOffset >= TranscriptBox.ExtentHeight - TranscriptBox.ViewportHeight - 24;
+        return atBottom && (TranscriptBox.Selection.IsEmpty || !IsTranscriptInUse());
+    }
+
+    private bool IsTranscriptInUse() =>
+        TranscriptBox.IsKeyboardFocusWithin || TranscriptBox.IsMouseCaptureWithin
+        || Keyboard.FocusedElement is FrameworkElement focused
+        && (focused as System.Windows.Controls.ContextMenu ?? focused.Parent as System.Windows.Controls.ContextMenu)?.PlacementTarget == TranscriptBox;
+
+    // Enter sends, Shift+Enter keeps the newline the TextBox would insert anyway.
+    private void InputBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || (Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (ViewModel?.SendCommand.CanExecute(null) == true)
+        {
+            ViewModel.SendCommand.Execute(null);
+        }
+    }
+
+    // Esc only reaches this handler while focus is inside the Assistant page.
+    private void AssistantView_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || ViewModel is not { State: AssistantState.Streaming } viewModel)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _ = viewModel.InterruptAsync();
+    }
+
+    private void CopySignInCode_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { HasSignInCode: true } viewModel)
+        {
+            return;
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(viewModel.SignInCode);
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            // Another application holds the clipboard; the code stays visible and selectable.
+        }
+    }
+
+    private void AssistantView_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        ApplyLayout(e.NewSize.Width);
+    }
+
+    internal void ApplyLayout(double width)
+    {
+        var narrow = width > 0 && width < NarrowWidth;
+        if (_isNarrow == narrow)
+        {
+            return;
+        }
+
+        _isNarrow = narrow;
+        // Narrow: one column, the page scrolls, and the conversation keeps a usable fixed height.
+        // Wide: the conversation takes the full width until there is a review or live-change card to show.
+        var side = _viewModel?.IsSidePanelVisible == true;
+        SideColumn.Width = narrow || !side ? new GridLength(0) : new GridLength(320);
+        Grid.SetColumn(SidePanel, narrow ? 0 : 1);
+        Grid.SetRow(SidePanel, narrow ? 1 : 0);
+        SidePanel.Margin = narrow ? new Thickness(0, 10, 0, 0) : new Thickness(10, 0, 0, 0);
+        SidePanel.VerticalScrollBarVisibility = narrow ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        ChatRow.Height = narrow ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+        ChatCard.Height = narrow ? 380 : double.NaN;
+        SessionActions.HorizontalAlignment = narrow ? System.Windows.HorizontalAlignment.Left : System.Windows.HorizontalAlignment.Right;
+        Grid.SetColumn(SessionActions, narrow ? 0 : 1);
+        Grid.SetColumnSpan(SessionActions, narrow ? 2 : 1);
+        Grid.SetRow(SessionActions, narrow ? 1 : 0);
+        SessionActions.Margin = narrow ? new Thickness(0, 8, 0, 0) : new Thickness(0);
+        PageScroll.VerticalScrollBarVisibility = narrow ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+    }
+}

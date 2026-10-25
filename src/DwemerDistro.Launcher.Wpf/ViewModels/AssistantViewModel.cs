@@ -58,6 +58,15 @@ public sealed record AssistantModelOption(string Id, string DisplayName)
 internal sealed record AssistantReviewBatch(string TaskId, string ManifestSha256, string Diff, IReadOnlyList<string> Files,
     IReadOnlyList<string> Warnings, int WarningTotal);
 
+/// <summary>
+/// Files the assistant asked for at the end of one completed turn. It is only a proposal: it is bound to the task,
+/// thread and turn it came from, and nothing is copied until the user allows it while all three are still current.
+/// </summary>
+internal sealed record AssistantFileRequest(string TaskId, string ThreadId, int Turn, IReadOnlyList<string> Paths,
+    string OriginalRequest, string Context);
+
+internal enum FileRequestParse { None, Valid, Invalid }
+
 public sealed class AssistantViewModel : ObservableObject
 {
     internal const int MaxTranscriptItems = 200;
@@ -68,6 +77,61 @@ public sealed class AssistantViewModel : ObservableObject
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan LiveChangeTimeout = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan RpcTimeout = TimeSpan.FromSeconds(45);
+    // Read before every message; a slow or missing lookup must not hold the conversation up.
+    private static readonly TimeSpan ModelsTimeout = TimeSpan.FromSeconds(10);
+    // Core bounds its own server status read to 20 seconds; this covers that and the WSL round trip.
+    private static readonly TimeSpan InventoryTimeout = TimeSpan.FromSeconds(30);
+    internal const string FileRequestTag = "dwemer-file-request";
+    private const int MaxContinuationContextChars = 4000;
+
+    /// <summary>
+    /// Sent as the thread's developer instructions. It describes the whole distro the assistant helps with, what it can
+    /// really do, what the workspace holds and the one way to ask for files; the launcher, not the model, decides
+    /// whether anything is copied.
+    /// </summary>
+    internal const string DeveloperInstructions =
+        "You are the DwemerDistro Assistant. You help the user set up, check, understand and troubleshoot their whole DwemerDistro: " +
+        "the managed game servers (CHIM/HerikaServer for Skyrim, LORKHAN, STOBE for Kenshi, Dialectic for Fallout: New Vegas/TTW, Reign), " +
+        "the Dwemer Dashboard, voice and speech components (text to speech, speech to text), embeddings, the CHIM MCP server, and custom mods. " +
+        "You are not limited to CHIM.\n" +
+        "What you can do: read the launcher's per-message context described below, read and edit files in your isolated working copy at /work, " +
+        "and explain. You cannot run commands on the live distro, install, update, start, stop or configure anything, or list or browse live " +
+        "server folders. When the user asks for something you cannot execute, give concrete next steps grounded in the context (for example the " +
+        "launcher page or button to use, or a ddistro command they can run themselves) and say plainly that you cannot do it from here. " +
+        "Never claim you checked, ran or changed something you did not.\n" +
+        "File editing currently supports only CHIM (HerikaServer) files: only they can be copied into /work, and they change live only after the " +
+        "user reviews and approves the exact diff. Files of other servers, components or mods cannot be shared or edited through the Assistant yet. " +
+        "A task with no selected files holds only .ddistro-context/status.json and .ddistro-context/recent.log (sanitized CHIM status and recent " +
+        "CHIM log lines). Your edits stay in /work until the user reviews and approves them.\n" +
+        "If you need CHIM files to read or edit, explain why in plain words, then end your message with exactly one block:\n" +
+        "```" + FileRequestTag + "\n<one path per line, relative to the HerikaServer folder, e.g. ext/example/file.php>\n```\n" +
+        "List at most 20 files, only paths you are confident exist or must be created. Never ask for credentials, .env files, keys, " +
+        "databases, logs or user configuration; DwemerDistro refuses them. If you do not know the exact path, say so and ask the user " +
+        "instead of guessing. The user decides; if they allow it, a fresh working copy with only those files is prepared and you are given " +
+        "their request again. Do not write the block for any other purpose.\n" +
+        "Each user message arrives after a separate input that starts with \"" + ContextLabel + "\". The launcher adds it, not the user. " +
+        "It restates your scope, then holds a fresh DwemerDistro inventory and a fresh snapshot of CHIM's selected models, or statements that " +
+        "they are unavailable. The inventory reports presence only: each server's install state, branch, version and whether its database " +
+        "exists; the names of entries in the known extension folders (CHIM and Dialectic ext/); component startup markers; and registered " +
+        "custom mods. Answer questions about what is installed, such as which server mods or extensions are installed, directly from it with " +
+        "its capture time; never ask the user to paste a list it already holds. When asked to check or summarize a setup, give an " +
+        "evidence-based summary from it and say what it cannot show: present does not mean enabled, loaded, running, healthy or correct, and " +
+        "an inventory is not a code audit. When asked which models are selected, answer from the model snapshot: list them by profile and role " +
+        "with the exact IDs, give the capture time, and say whether the list is truncated. It covers configured CHIM profiles, not which NPC or " +
+        "profile is active in game. If any part is unavailable, say so. Never read configuration, database or credential files to find any of this.";
+
+    /// <summary>First line of the per-message context, so a resumed thread with older instructions still sees what it is.</summary>
+    internal const string ContextLabel = "[DwemerDistro context for this message - added by the launcher, not typed by the user]";
+
+    /// <summary>
+    /// Repeated in every message's context: a thread resumed from an older launcher keeps its original developer
+    /// instructions, so the distro-wide scope and the CHIM-only file editing limit must arrive with each turn too.
+    /// </summary>
+    internal const string ScopeReminder =
+        "Scope, which applies even if this conversation began with older instructions: you are the DwemerDistro Assistant for the whole " +
+        "distro (all managed game servers, the Dwemer Dashboard, voice and speech components, and custom mods), not a CHIM-only helper. " +
+        "File editing works only for CHIM (HerikaServer) files today. For anything you cannot execute, give grounded next steps and say what " +
+        "cannot be done from here. Use the inventory below for what is installed instead of asking the user for it.";
 
     private readonly IAssistantCli _cli;
     private readonly IAssistantHost _host;
@@ -77,9 +141,13 @@ public sealed class AssistantViewModel : ObservableObject
     private AssistantTurnRunner? _turns;
     private int _sessionGeneration;
     private bool _ownsDistroActivity;
+    private bool _startupConnectRequested;
+    private bool _isShutDown;
+    // Cancels Connect's own readiness reads and session start when the launcher closes.
+    private readonly CancellationTokenSource _lifetime = new();
     private AssistantState _state = AssistantState.NotChecked;
     private string _statusText = string.Empty;
-    private string _statusDetail = "Connect starts the assistant. Nothing runs until you ask.";
+    private string _statusDetail = "The assistant connects after the launcher's startup checks, or press Connect. Nothing is sent until you ask.";
     private string _providerText = "Codex";
     private string _accountText = "Not connected";
     private AssistantModelOption? _selectedModel;
@@ -87,6 +155,8 @@ public sealed class AssistantViewModel : ObservableObject
     private string _taskText = "No task yet";
     private string? _taskId;
     private string? _threadId;
+    // The thread whose conversation the transcript already shows, so a reconnect never restores it twice.
+    private string? _shownThreadId;
     private string? _installationId;
     private string _provider = string.Empty;
     private string _inputText = string.Empty;
@@ -97,8 +167,20 @@ public sealed class AssistantViewModel : ObservableObject
     private string _outcomeText = string.Empty;
     private bool _canRollback;
     private bool _canCheckOutcome;
+    private bool _hasChanges;
+    private int _changeCheck;
+    private int _turnSerial;
+    private string _lastUserRequest = string.Empty;
+    private AssistantTranscriptItem? _lastAgentItem;
+    private string? _lastAgentText;
+    private AssistantFileRequest? _fileRequest;
+    private string? _pendingContinuation;
+    private CancellationTokenSource? _contextLookup;
 
-    /// <summary>Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect.</summary>
+    /// <summary>
+    /// Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect, either the
+    /// user's or the launcher's one <see cref="ConnectOnStartupAsync"/>.
+    /// </summary>
     public AssistantViewModel(IAssistantCli cli, IAssistantHost host, IAssistantStateStore store)
     {
         _cli = cli;
@@ -119,6 +201,8 @@ public sealed class AssistantViewModel : ObservableObject
         RejectCommand = new RelayCommand(Reject, () => State == AssistantState.Review);
         RollbackCommand = new AsyncRelayCommand(RollbackAsync, () => _canRollback && _taskId is not null && State is AssistantState.Ready or AssistantState.Disconnected or AssistantState.Error);
         CheckOutcomeCommand = new AsyncRelayCommand(CheckOutcomeAsync, () => _canCheckOutcome && _taskId is not null && State is not (AssistantState.Applying or AssistantState.Busy));
+        AllowFileAccessCommand = new AsyncRelayCommand(AllowFileAccessAsync, () => State == AssistantState.Ready && _fileRequest is not null);
+        DeclineFileAccessCommand = new RelayCommand(DeclineFileAccess, () => _fileRequest is not null && State is not (AssistantState.Busy or AssistantState.Checking));
     }
 
     public AsyncRelayCommand ConnectCommand { get; }
@@ -133,11 +217,33 @@ public sealed class AssistantViewModel : ObservableObject
     public RelayCommand RejectCommand { get; }
     public AsyncRelayCommand RollbackCommand { get; }
     public AsyncRelayCommand CheckOutcomeCommand { get; }
+    public AsyncRelayCommand AllowFileAccessCommand { get; }
+    public RelayCommand DeclineFileAccessCommand { get; }
 
     public ObservableCollection<AssistantTranscriptItem> Transcript { get; } = new();
     public ObservableCollection<AssistantModelOption> Models { get; } = new();
-    public IReadOnlyList<string> Products { get; } = ["CHIM (HerikaServer)"];
-    public string SelectedProduct { get; set; } = "CHIM (HerikaServer)";
+
+    /// <summary>Paths the assistant asked for, shown on the access card; empty when nothing is pending.</summary>
+    public IReadOnlyList<string> FileRequestPaths => _fileRequest?.Paths ?? [];
+    public bool HasFileRequest => _fileRequest is not null;
+
+    /// <summary>Set from Core's own diff after a completed turn or a reopened task, never from the transcript.</summary>
+    public bool HasChanges
+    {
+        get => _hasChanges;
+        private set
+        {
+            if (!SetProperty(ref _hasChanges, value)) return;
+            OnPropertyChanged(nameof(IsChangesVisible));
+            OnPropertyChanged(nameof(IsSidePanelVisible));
+            ReviewCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool IsChangesVisible => HasChanges && !IsReviewVisible;
+
+    /// <summary>The right column exists only while it has something to show.</summary>
+    public bool IsSidePanelVisible => IsChangesVisible || IsReviewVisible || HasOutcome;
 
     public AssistantState State
     {
@@ -147,6 +253,8 @@ public sealed class AssistantViewModel : ObservableObject
             if (!SetProperty(ref _state, value)) return;
             OnPropertyChanged(nameof(IsSignInVisible));
             OnPropertyChanged(nameof(IsReviewVisible));
+            OnPropertyChanged(nameof(IsChangesVisible));
+            OnPropertyChanged(nameof(IsSidePanelVisible));
             OnPropertyChanged(nameof(IsProbeVisible));
             OnPropertyChanged(nameof(IsInputEnabled));
             OnPropertyChanged(nameof(StopButtonText));
@@ -161,7 +269,16 @@ public sealed class AssistantViewModel : ObservableObject
     public string SignInUrl { get => _signInUrl; private set { if (SetProperty(ref _signInUrl, value)) OpenSignInUrlCommand.RaiseCanExecuteChanged(); } }
     public string SignInCode { get => _signInCode; private set { if (SetProperty(ref _signInCode, value)) OnPropertyChanged(nameof(HasSignInCode)); } }
     public bool HasSignInCode => SignInCode.Length > 0;
-    public string OutcomeText { get => _outcomeText; private set { if (SetProperty(ref _outcomeText, value)) OnPropertyChanged(nameof(HasOutcome)); } }
+    public string OutcomeText
+    {
+        get => _outcomeText;
+        private set
+        {
+            if (!SetProperty(ref _outcomeText, value)) return;
+            OnPropertyChanged(nameof(HasOutcome));
+            OnPropertyChanged(nameof(IsSidePanelVisible));
+        }
+    }
     public bool HasOutcome => OutcomeText.Length > 0;
     public string ReviewDiff => _review?.Diff ?? string.Empty;
     public string ReviewSummary => _review is null ? string.Empty
@@ -227,10 +344,37 @@ public sealed class AssistantViewModel : ObservableObject
         RaiseCommands();
     }
 
+    /// <summary>Explains a blocked launcher close without changing the state or the running operation.</summary>
+    internal void ShowCloseBlocked() =>
+        StatusDetail = "Wait for the assistant to finish applying or rolling back reviewed changes before closing the launcher.";
+
     // --- Connection ---------------------------------------------------------------------------
+
+    /// <summary>
+    /// The launcher's one automatic Connect, after its startup checks. It does nothing once requested before, once the
+    /// user has used Connect or the launcher is closing. Like Connect it only reads readiness: it never runs the isolation
+    /// check, signs in, opens a page or sends a message, and any failure stays inline with Connect available.
+    /// </summary>
+    internal async Task ConnectOnStartupAsync()
+    {
+        if (_startupConnectRequested || _isShutDown) return;
+        _startupConnectRequested = true;
+        if (State != AssistantState.NotChecked || !ConnectCommand.CanExecute(null)) return;
+        try
+        {
+            await ConnectAsync();
+        }
+        catch (Exception ex)
+        {
+            // Connect pressed by the user reports this in a dialog; the automatic one must not interrupt startup.
+            LauncherLogService.Operation($"Assistant startup connection failed: {ex.GetType().Name}");
+            if (!_isShutDown) await EndSessionAsync(AssistantState.Error, "The assistant could not connect: " + Shorten(ex.Message, 200));
+        }
+    }
 
     internal async Task ConnectAsync()
     {
+        if (_isShutDown) return;
         if (!_ownsDistroActivity)
         {
             if (!_host.TryBeginDistroActivity())
@@ -244,7 +388,7 @@ public sealed class AssistantViewModel : ObservableObject
         try
         {
             SetState(AssistantState.Checking, "Reading DwemerDistro capabilities…");
-            var capabilities = await _cli.RunAsync(AssistantCliCommands.Capabilities(), QueryTimeout, CancellationToken.None);
+            var capabilities = await _cli.RunAsync(AssistantCliCommands.Capabilities(), QueryTimeout, _lifetime.Token);
             if (!capabilities.Ok)
             {
                 FailCli(capabilities);
@@ -256,7 +400,7 @@ public sealed class AssistantViewModel : ObservableObject
                 return;
             }
 
-            var agent = await _cli.RunAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, CancellationToken.None);
+            var agent = await _cli.RunAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, _lifetime.Token);
             if (!agent.Ok)
             {
                 FailCli(agent);
@@ -280,7 +424,12 @@ public sealed class AssistantViewModel : ObservableObject
             }
 
             if (_taskId is null && !await OpenTaskAsync()) return;
+            if (_isShutDown) return;
             await StartSessionAsync();
+        }
+        catch (OperationCanceledException) when (_isShutDown)
+        {
+            // The launcher is closing; nothing more is started and the state no longer matters.
         }
         finally
         {
@@ -321,7 +470,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
 
         SetState(AssistantState.Checking, $"Checking saved task {saved.TaskId}…");
-        var status = await _cli.RunAsync(AssistantCliCommands.ChangeStatus(saved.TaskId), QueryTimeout, CancellationToken.None);
+        var status = await _cli.RunAsync(AssistantCliCommands.ChangeStatus(saved.TaskId), QueryTimeout, _lifetime.Token);
         if (!status.Ok && (!status.HasDocument || status.ErrorCode == "busy"))
         {
             // Unknown rather than gone: keep the reference so Connect can try again.
@@ -355,8 +504,11 @@ public sealed class AssistantViewModel : ObservableObject
             return false;
         }
 
+        if (_isShutDown) return false;
         SetState(AssistantState.Checking, "Preparing an isolated working copy…");
+        // Core's prepare is not cut short, but a task it finishes after the launcher began closing is neither used nor saved.
         var prepared = await _cli.RunAsync(AssistantCliCommands.Prepare("herika", paths), PrepareTimeout, CancellationToken.None);
+        if (_isShutDown) return false;
         if (!prepared.Ok)
         {
             FailCli(prepared);
@@ -368,11 +520,21 @@ public sealed class AssistantViewModel : ObservableObject
             SetState(AssistantState.Error, "DwemerDistro returned an invalid task id.");
             return false;
         }
+        UseTask(taskId, paths.Length);
+        return true;
+    }
+
+    /// <summary>Makes a freshly prepared task current: no thread yet, nothing to review or roll back, saved for this installation.</summary>
+    private void UseTask(string taskId, int fileCount)
+    {
         _taskId = taskId;
         _threadId = null;
+        _canRollback = false;
+        _canCheckOutcome = false;
+        ClearFileRequest();
+        HasChanges = false;
         SaveReference();
-        TaskText = $"Task {taskId} · CHIM · " + (paths.Length == 0 ? "diagnostic workspace (no files)" : $"{paths.Length} file(s)");
-        return true;
+        TaskText = $"Task {taskId} · CHIM · " + (fileCount == 0 ? "diagnostic workspace (no files)" : $"{fileCount} file(s)");
     }
 
     private async Task StartSessionAsync()
@@ -382,7 +544,7 @@ public sealed class AssistantViewModel : ObservableObject
         IAssistantTransport transport;
         try
         {
-            transport = await _cli.StartServeAsync(_taskId!, CancellationToken.None);
+            transport = await _cli.StartServeAsync(_taskId!, _lifetime.Token);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException)
         {
@@ -436,7 +598,17 @@ public sealed class AssistantViewModel : ObservableObject
         await EnsureThreadAsync(client);
         SignInUrl = string.Empty;
         SignInCode = string.Empty;
-        SetState(AssistantState.Ready, "Ask about this task's working copy. Changes stay in the isolated workspace until you review and approve them.");
+        SetState(AssistantState.Ready, "Ask about your DwemerDistro setup, or describe a CHIM fix. Edits stay in an isolated copy until you review and approve them.");
+        // A request the user allowed files for continues in the new workspace's first turn.
+        if (_pendingContinuation is { } continuation)
+        {
+            _pendingContinuation = null;
+            await StartTurnAsync(continuation);
+        }
+        else
+        {
+            await RefreshChangesAsync();
+        }
     }
 
     private static string DescribeAccount(JsonElement account)
@@ -488,7 +660,7 @@ public sealed class AssistantViewModel : ObservableObject
         {
             try
             {
-                var resume = new JsonObject { ["threadId"] = existing };
+                var resume = new JsonObject { ["threadId"] = existing, ["developerInstructions"] = DeveloperInstructions };
                 CodexAppServerClient.AddConfinement(resume);
                 result = await client.RequestAsync("thread/resume", resume, RpcTimeout);
                 resumed = true;
@@ -500,7 +672,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
         if (!resumed)
         {
-            var start = new JsonObject();
+            var start = new JsonObject { ["developerInstructions"] = DeveloperInstructions };
             if (SelectedModel is not null) start["model"] = SelectedModel.Id;
             CodexAppServerClient.AddConfinement(start);
             result = await client.RequestAsync("thread/start", start, RpcTimeout);
@@ -512,12 +684,86 @@ public sealed class AssistantViewModel : ObservableObject
         if (resumed && threadId != _threadId) throw new AppServerException(0, "The assistant resumed a different conversation than this task's.");
         _threadId = threadId;
         SaveReference();
+        if (resumed && _shownThreadId != threadId) RestoreConversation(Prop(result, "thread"));
+        _shownThreadId = threadId;
     }
 
-    /// <summary>Identifiers only; the transcript and the account stay out of launcher storage.</summary>
+    /// <summary>
+    /// Shows a resumed thread's earlier conversation in order: the user's own text and the assistant's messages only.
+    /// rust-v0.163.0 returns it as thread.turns[].items[]; a userMessage keeps each text input the launcher sent as its own
+    /// content entry, so the labeled per-message context is dropped as a whole entry, never cut out of the user's text.
+    /// Reasoning, commands, tool calls and file changes stay hidden; nothing is sent, offered or applied here.
+    /// </summary>
+    private void RestoreConversation(JsonElement thread)
+    {
+        var restored = ReadConversation(thread, out var omitted);
+        foreach (var (item, index) in restored.TakeLast(MaxTranscriptItems).Select((item, index) => (item, index)))
+            Transcript.Insert(index, item);
+        while (Transcript.Count > MaxTranscriptItems) Transcript.RemoveAt(0);
+        if (omitted > 0) AddSystem($"{omitted} earlier message(s) in this conversation could not be shown here.");
+    }
+
+    internal static List<AssistantTranscriptItem> ReadConversation(JsonElement thread, out int omitted)
+    {
+        var restored = new List<AssistantTranscriptItem>();
+        omitted = 0;
+        if (Prop(thread, "turns") is not { ValueKind: JsonValueKind.Array } turns) return restored;
+        foreach (var turn in turns.EnumerateArray())
+        {
+            if (Prop(turn, "items") is not { ValueKind: JsonValueKind.Array } items) continue;
+            foreach (var item in items.EnumerateArray())
+            {
+                var id = AssistantCliService.GetString(item, "id");
+                switch (AssistantCliService.GetString(item, "type"))
+                {
+                    case "userMessage":
+                        var text = ReadUserText(Prop(item, "content"));
+                        if (text is null) omitted++;
+                        // The first message of a workspace the user allowed files for is the launcher's, not the user's.
+                        else if (text.StartsWith(ContinuationPrefix, StringComparison.Ordinal))
+                            restored.Add(new AssistantTranscriptItem("DwemerDistro", "Continued your request with the files you allowed.", id));
+                        else if (text.Length > 0) restored.Add(new AssistantTranscriptItem("You", text, id));
+                        break;
+                    case "agentMessage":
+                        var message = AssistantCliService.GetString(item, "text");
+                        // Shown as it was after its turn; an old file request is never offered again.
+                        if (ParseFileRequest(message, out _, out var visible, out _) == FileRequestParse.Valid) message = visible;
+                        if (message.Length > 0) restored.Add(new AssistantTranscriptItem("Codex", message, id));
+                        break;
+                }
+            }
+        }
+        return restored;
+    }
+
+    /// <summary>
+    /// The user's own text from one userMessage's content entries, exactly as sent, or null when it cannot be shown
+    /// safely: the launcher's context label anywhere but the start of its own entry hides the whole message.
+    /// </summary>
+    private static string? ReadUserText(JsonElement content)
+    {
+        if (content.ValueKind != JsonValueKind.Array) return null;
+        var parts = new List<string>();
+        var other = false;
+        foreach (var entry in content.EnumerateArray())
+        {
+            if (AssistantCliService.GetString(entry, "type") != "text" || Prop(entry, "text").ValueKind != JsonValueKind.String)
+            {
+                other = true;
+                continue;
+            }
+            var text = Prop(entry, "text").GetString()!;
+            if (text.StartsWith(ContextLabel, StringComparison.Ordinal)) continue;
+            if (text.Contains(ContextLabel, StringComparison.Ordinal)) return null;
+            parts.Add(text);
+        }
+        return parts.Count == 0 && other ? null : string.Join("\n\n", parts);
+    }
+
+    /// <summary>Identifiers only; the transcript and the account stay out of launcher storage. Never rewritten once closing.</summary>
     private void SaveReference()
     {
-        if (_taskId is null || _installationId is null) return;
+        if (_isShutDown || _taskId is null || _installationId is null) return;
         _store.Save(new AssistantTaskReference(AssistantTaskReference.CurrentVersion, _installationId, _cli.DistroName,
             _provider, "herika", _taskId, _threadId));
     }
@@ -555,19 +801,58 @@ public sealed class AssistantViewModel : ObservableObject
 
     private async Task SendAsync()
     {
-        var client = _client;
-        var turns = _turns;
         var text = InputText.Trim();
-        if (client is null || turns is null || _threadId is null || text.Length == 0) return;
+        if (_client is null || _turns is null || _threadId is null || text.Length == 0) return;
         InputText = string.Empty;
         AddItem(new AssistantTranscriptItem("You", text));
+        _lastUserRequest = text;
+        await StartTurnAsync(text);
+    }
+
+    /// <summary>Starts one turn. Any earlier file request belongs to an earlier turn and can no longer be allowed.</summary>
+    private async Task StartTurnAsync(string text)
+    {
+        var client = _client;
+        var turns = _turns;
+        if (client is null || turns is null || _threadId is null) return;
+        ClearFileRequest();
+        _turnSerial++;
+        _lastAgentItem = null;
+        _lastAgentText = null;
         SetState(AssistantState.Streaming, "The assistant is responding. Press Esc or Stop to interrupt.");
+
+        // Fresh reads for every message, continuations included; they are sent with the turn and never stored or logged.
+        var lookup = new CancellationTokenSource();
+        _contextLookup = lookup;
+        string context;
+        try
+        {
+            var inventory = LookupAsync(AssistantCliCommands.Inventory(), InventoryTimeout, lookup.Token);
+            var models = LookupAsync(AssistantCliCommands.Models(), ModelsTimeout, lookup.Token);
+            context = BuildTurnContext(await inventory, await models);
+        }
+        finally
+        {
+            if (ReferenceEquals(_contextLookup, lookup)) _contextLookup = null;
+        }
+        var stopped = lookup.IsCancellationRequested;
+        lookup.Dispose();
+        if (!ReferenceEquals(_client, client) || State != AssistantState.Streaming || _threadId is null) return;
+        if (stopped)
+        {
+            AddSystem("Stopped before the message was sent.");
+            SetState(AssistantState.Ready, "Response stopped.");
+            return;
+        }
+
         try
         {
             var turn = new JsonObject
             {
                 ["threadId"] = _threadId,
-                ["input"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = text })
+                ["input"] = new JsonArray(
+                    new JsonObject { ["type"] = "text", ["text"] = context },
+                    new JsonObject { ["type"] = "text", ["text"] = text })
             };
             if (SelectedModel is not null) turn["model"] = SelectedModel.Id;
             CodexAppServerClient.AddConfinement(turn);
@@ -589,9 +874,101 @@ public sealed class AssistantViewModel : ObservableObject
     /// </summary>
     public async Task InterruptAsync()
     {
-        if (State != AssistantState.Streaming || _turns is not { } turns) return;
+        if (State != AssistantState.Streaming) return;
+        // Still reading the inventory and model settings: nothing has been sent, so the turn is simply not started.
+        if (_contextLookup is { } lookup)
+        {
+            StatusDetail = "Stopping the response…";
+            lookup.Cancel();
+            return;
+        }
+        if (_turns is not { } turns) return;
         StatusDetail = "Stopping the response…";
         await turns.StopAsync();
+    }
+
+    /// <summary>A lookup that ends early (Stop or the session closing) reads as unanswered; the caller checks which.</summary>
+    private async Task<AssistantCliResult> LookupAsync(string[] arguments, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _cli.RunAsync(arguments, timeout, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return AssistantCliResult.Failure(AssistantCliResult.Timeout, string.Empty);
+        }
+    }
+
+    /// <summary>
+    /// The labeled context sent ahead of each message: the distro-wide scope, then the inventory and the CHIM model
+    /// snapshot, each as Core's allowlisted projection or a plain statement that it is unavailable and why.
+    /// </summary>
+    internal static string BuildTurnContext(AssistantCliResult inventory, AssistantCliResult models) =>
+        ContextLabel + "\n" + ScopeReminder + "\n\n" + BuildInventoryContext(inventory) + "\n\n" + BuildModelsContext(models);
+
+    private static string DescribeLookupFailure(AssistantCliResult result, string problem) =>
+        result.Ok ? problem : result.ErrorCode switch
+        {
+            AssistantCliResult.Timeout => "DwemerDistro did not answer the lookup in time.",
+            AssistantCliResult.CliMissing or AssistantCliResult.DistroMissing => "the DwemerDistro command is not available.",
+            AssistantCliResult.Protocol or "invalid_argument" or "unsupported" or "usage" or "not_found" =>
+                "this DwemerDistro Core does not provide the lookup (Update Distro adds it).",
+            _ => $"DwemerDistro reported {Shorten(result.ErrorCode, 40)}."
+        };
+
+    /// <summary>
+    /// Core's presence-only inventory of the whole distro. Only the allowlisted projection is serialized, never the raw
+    /// document, and the text says plainly what presence does not show.
+    /// </summary>
+    internal static string BuildInventoryContext(AssistantCliResult result)
+    {
+        var snapshot = AssistantCliService.ProjectInventory(result, out var problem);
+        if (snapshot is null)
+            return "DwemerDistro inventory is unavailable for this message: " + DescribeLookupFailure(result, problem) +
+                   " If asked what is installed, say it could not be read just now and point to the launcher's server and component pages. " +
+                   "Do not guess, and do not read configuration, database or credential files to find it.";
+
+        var complete = snapshot["complete"]!.GetValue<bool>();
+        return $"DwemerDistro inventory, read by DwemerDistro at {snapshot["captured_at"]!.GetValue<string>()} (UTC), just before this message. " +
+               "Scope presence_only. servers: each managed game server's install state, repository state, branch, version, and whether its " +
+               "database exists (null means unknown). extensions: the names of entries directly inside each known ext/ folder (CHIM and " +
+               "Dialectic); no_known_root lists servers without a known extension folder, so nothing was listed for them. components: whether " +
+               "each component's startup marker files are present (present means startup would try it, not that it is running). custom_mods: " +
+               "registered custom mod servers and their recorded state. None of this shows whether an extension is enabled, loaded, " +
+               "configured or working, whether a component is running or healthy, or anything about code quality; say so when it matters. " +
+               "Answer what-is-installed questions directly from it, with the capture time, instead of asking the user for a list. " +
+               (complete ? "Every section was read in full."
+                   : "Some sections are INCOMPLETE (see available, reason, state, truncated and skipped); say which when it matters.") +
+               "\n" + snapshot.ToJsonString();
+    }
+
+    /// <summary>Core's projected CHIM model snapshot, or a plain statement that it is unavailable and why.</summary>
+    internal static string BuildModelsContext(AssistantCliResult result)
+    {
+        var snapshot = AssistantCliService.ProjectModelsSnapshot(result, out var problem);
+        if (snapshot is null)
+            return Unavailable(DescribeLookupFailure(result, problem));
+
+        if (!snapshot["available"]!.GetValue<bool>())
+        {
+            var reason = snapshot["reason"]!.GetValue<string>();
+            return Unavailable("CHIM's model settings could not be read" + (reason.Length > 0 ? $" ({Shorten(reason, 120)})." : "."));
+        }
+
+        var count = snapshot["assignments"]!.AsArray().Count;
+        var truncated = snapshot["truncated"]!.GetValue<bool>();
+        return $"CHIM selected models, read by DwemerDistro from CHIM's configured profiles at {snapshot["captured_at"]!.GetValue<string>()} (UTC), " +
+               "just before this message. Scope configured_profiles: each assignment is the connector and model configured for one CHIM " +
+               "profile and role. It does not show which NPC or profile is active in game right now. " +
+               (truncated ? $"The list is TRUNCATED: CHIM has more assignments than the {count} shown; say so if it matters. "
+                   : count == 0 ? "No assignments are configured. " : $"The list is complete ({count} assignment(s)). ") +
+               "Use it directly for questions about selected models; do not read configuration, database or credential files for this.\n" +
+               snapshot.ToJsonString();
+
+        static string Unavailable(string why) =>
+            "CHIM selected models are unavailable for this message: " + why +
+            " If asked, say they could not be read. Do not guess them, and do not read configuration, database or credential files to find them.";
     }
 
     private async Task StopAsync()
@@ -610,15 +987,20 @@ public sealed class AssistantViewModel : ObservableObject
         _store.Clear();
         _taskId = null;
         _threadId = null;
+        _shownThreadId = null;
         _canRollback = false;
         _canCheckOutcome = false;
+        _pendingContinuation = null;
+        _lastUserRequest = string.Empty;
+        ClearFileRequest();
+        HasChanges = false;
         OutcomeText = string.Empty;
         Transcript.Clear();
         TaskText = "No task yet";
         await ConnectAsync();
     }
 
-    private void OnNotification(string method, JsonElement parameters)
+    internal void OnNotification(string method, JsonElement parameters)
     {
         switch (method)
         {
@@ -638,8 +1020,11 @@ public sealed class AssistantViewModel : ObservableObject
                 {
                     var final = AssistantCliService.GetString(item, "text");
                     var existing = FindItem(id);
-                    if (existing is null) AddItem(new AssistantTranscriptItem("Codex", final, id));
+                    if (existing is null) existing = AddItem(new AssistantTranscriptItem("Codex", final, id));
                     else if (final.Length > 0) existing.Replace(final);
+                    // Only the turn's last message may carry a file request, and only once the turn completes.
+                    _lastAgentItem = existing;
+                    _lastAgentText = final.Length > 0 ? final : existing.Text;
                 }
                 else if (type == "commandExecution")
                 {
@@ -647,7 +1032,7 @@ public sealed class AssistantViewModel : ObservableObject
                 }
                 else if (type == "fileChange")
                 {
-                    AddSystem("Edited files in the isolated workspace. Use Review changes to see them.");
+                    AddSystem("Edited files in the isolated workspace. Nothing is live yet.");
                 }
                 break;
             case "turn/completed":
@@ -656,7 +1041,17 @@ public sealed class AssistantViewModel : ObservableObject
                 if (status == "interrupted") AddSystem("Stopped.");
                 else if (status == "failed")
                     AddSystem("The response failed: " + Shorten(AssistantCliService.GetString(Prop(turn, "error"), "message"), 200));
-                if (State == AssistantState.Streaming) SetState(AssistantState.Ready, "Response complete.");
+                if (State != AssistantState.Streaming) break;
+                SetState(AssistantState.Ready, "Response complete.");
+                if (status == "completed")
+                {
+                    OfferFileRequest();
+                    _ = RefreshChangesAsync();
+                }
+                else if (_lastAgentText?.Contains(FileRequestTag, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    AddSystem("The response did not finish, so its file request was ignored. Nothing was shared.");
+                }
                 break;
             case "error":
                 if (!AssistantCliService.GetBool(parameters, "willRetry") && Prop(parameters, "error") is { ValueKind: JsonValueKind.Object } error)
@@ -714,6 +1109,8 @@ public sealed class AssistantViewModel : ObservableObject
         _client = null;
         _turns = null;
         _sessionGeneration++;
+        _contextLookup?.Cancel();
+        ClearFileRequest();
         if (client is not null)
         {
             try { await client.DisposeAsync(); }
@@ -723,7 +1120,186 @@ public sealed class AssistantViewModel : ObservableObject
         RaiseCommands();
     }
 
-    public Task ShutdownAsync() => DisposeClientAsync();
+    /// <summary>Ends the session and stops a Connect still in progress, so nothing starts after the launcher closes.</summary>
+    public Task ShutdownAsync()
+    {
+        _isShutDown = true;
+        _lifetime.Cancel();
+        return DisposeClientAsync();
+    }
+
+    // --- File access requests -----------------------------------------------------------------
+
+    /// <summary>
+    /// Reads the one fenced file-request block at the end of a completed message. Valid means a closed block of 1 to 20
+    /// distinct safe relative paths and nothing ambiguous; anything else that mentions the block is Invalid, never partly used.
+    /// </summary>
+    internal static FileRequestParse ParseFileRequest(string message, out IReadOnlyList<string> paths, out string visibleText, out string problem)
+    {
+        paths = [];
+        visibleText = message;
+        problem = string.Empty;
+        if (!message.Contains(FileRequestTag, StringComparison.OrdinalIgnoreCase)) return FileRequestParse.None;
+
+        var lines = message.Replace("\r\n", "\n").Split('\n');
+        var open = Array.FindIndex(lines, line => line.Trim() == "```" + FileRequestTag);
+        var close = open < 0 ? -1 : Array.FindIndex(lines, open + 1, line => line.Trim() == "```");
+        var mentions = lines.Count(line => line.Contains(FileRequestTag, StringComparison.OrdinalIgnoreCase));
+        var requested = close < 0 ? [] : lines[(open + 1)..close].Select(line => line.Trim()).Where(line => line.Length > 0).ToArray();
+        var duplicate = requested.GroupBy(path => path, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1)?.Key;
+        var invalid = requested.FirstOrDefault(path => !AssistantCliCommands.IsSafeRelativePath(path) || path.Split('/')[0] == ".ddistro-context");
+        if (message.Length > AssistantTranscriptItem.MaxTextChars) problem = "the message was too long to read in full.";
+        else if (open < 0 || close < 0) problem = "the file list was incomplete.";
+        else if (mentions != 1) problem = "the message held more than one file list.";
+        else if (requested.Length == 0) problem = "the file list was empty.";
+        else if (requested.Length > AssistantCliCommands.MaxRelativePaths) problem = $"it listed more than {AssistantCliCommands.MaxRelativePaths} files.";
+        else if (invalid is not null) problem = $"\"{Shorten(invalid, 80)}\" is not a plain path inside the CHIM folder.";
+        else if (duplicate is not null) problem = $"it listed \"{Shorten(duplicate, 80)}\" more than once.";
+        if (problem.Length > 0) return FileRequestParse.Invalid;
+
+        paths = requested;
+        visibleText = string.Join("\n", lines[..open].Concat(lines[(close + 1)..])).Trim();
+        if (visibleText.Length == 0) visibleText = "I need access to some CHIM files to continue.";
+        return FileRequestParse.Valid;
+    }
+
+    /// <summary>After a completed turn: turns the last message's file request into the access card, or says why it cannot.</summary>
+    private void OfferFileRequest()
+    {
+        if (_lastAgentText is not { } text || _lastAgentItem is not { } item || _taskId is null || _threadId is null) return;
+        switch (ParseFileRequest(text, out var paths, out var visible, out var problem))
+        {
+            case FileRequestParse.Valid:
+                item.Replace(visible);
+                _fileRequest = new AssistantFileRequest(_taskId, _threadId, _turnSerial, paths, _lastUserRequest,
+                    Shorten(visible, MaxContinuationContextChars));
+                RaiseFileRequest();
+                StatusDetail = "The assistant asks for access to CHIM files. Nothing is shared unless you allow it.";
+                break;
+            case FileRequestParse.Invalid:
+                AddSystem("The assistant asked for files, but the request could not be used: " + problem +
+                          " Nothing was shared. Ask it to list the files again, or choose files under Advanced.");
+                break;
+        }
+    }
+
+    private bool IsCurrent(AssistantFileRequest request) =>
+        ReferenceEquals(request, _fileRequest) && request.TaskId == _taskId && request.ThreadId == _threadId && request.Turn == _turnSerial;
+
+    private void ClearFileRequest()
+    {
+        if (_fileRequest is null) return;
+        _fileRequest = null;
+        RaiseFileRequest();
+    }
+
+    private void DeclineFileAccess()
+    {
+        ClearFileRequest();
+        AddSystem("File access not allowed. Nothing was shared.");
+    }
+
+    /// <summary>
+    /// The user's Allow click: refuses while the current copy has unreviewed edits or an unknown live change, prepares a
+    /// fresh task with exactly the requested paths through Core (which refuses secrets and unsafe paths), then reconnects
+    /// and continues the original request there. A stale request, or any failure, leaves the current task as it was.
+    /// </summary>
+    private async Task AllowFileAccessAsync()
+    {
+        var request = _fileRequest;
+        if (request is null || !IsCurrent(request))
+        {
+            ClearFileRequest();
+            StatusDetail = "That file request is out of date. Nothing was shared.";
+            return;
+        }
+        if (_canCheckOutcome)
+        {
+            StatusDetail = "Check the last live change's status before starting a new working copy. Nothing was shared.";
+            return;
+        }
+
+        SetState(AssistantState.Busy, "Checking the current working copy for unreviewed edits…");
+        var diff = await _cli.RunAsync(AssistantCliCommands.Diff(request.TaskId), QueryTimeout, CancellationToken.None);
+        var pending = ReadReviewableChanges(diff, request.TaskId);
+        if (!IsCurrent(request) || pending != 0)
+        {
+            SetState(SessionState(), !IsCurrent(request) ? "That file request is out of date. Nothing was shared."
+                : pending < 0 ? "Could not confirm the current working copy has no unreviewed edits, so nothing was switched or shared."
+                : $"The current working copy has {pending} edited file(s) you have not reviewed. Review and apply them first, " +
+                  "or press New task to discard them. Nothing was shared.");
+            if (pending > 0) HasChanges = true;
+            return;
+        }
+
+        SetState(AssistantState.Checking, $"Preparing a working copy with the {request.Paths.Count} file(s) you allowed…");
+        var prepared = await _cli.RunAsync(AssistantCliCommands.Prepare("herika", request.Paths), PrepareTimeout, CancellationToken.None);
+        var taskId = AssistantCliService.GetString(prepared.Data, "task_id");
+        if (!IsCurrent(request) || !prepared.Ok || !AssistantCliCommands.IsValidTaskId(taskId))
+        {
+            ClearFileRequest();
+            SetState(SessionState(), "Those files could not be prepared: " + Shorten(prepared.Ok
+                ? "DwemerDistro returned an invalid task id." : prepared.ErrorMessage.Length > 0 ? prepared.ErrorMessage : prepared.ErrorCode, 240) +
+                " Nothing was shared; the current task continues.");
+            return;
+        }
+
+        var hadRollback = _canRollback;
+        await DisposeClientAsync();
+        UseTask(taskId, request.Paths.Count);
+        OutcomeText = string.Empty;
+        AddSystem($"Access allowed to {request.Paths.Count} file(s) in a fresh isolated working copy:\n" + string.Join("\n", request.Paths) +
+                  (hadRollback ? "\nRoll back for the earlier applied change is no longer offered here." : string.Empty) +
+                  "\nContinuing your request…");
+        _pendingContinuation = BuildContinuation(request);
+        await ConnectAsync();
+    }
+
+    private const string ContinuationPrefix = "The user allowed access to these CHIM files.";
+
+    /// <summary>The first message in the new workspace: the user's own request, the assistant's reason, and the allowed files.</summary>
+    internal static string BuildContinuation(AssistantFileRequest request) =>
+        ContinuationPrefix + " They are now in /work at the same relative paths (a file that does not exist yet is absent):\n"
+        + string.Join("\n", request.Paths)
+        + "\n\nThe user's request was:\n" + Shorten(request.OriginalRequest, MaxInputChars)
+        + "\n\nYour earlier reply, before the files were available:\n" + Shorten(request.Context, MaxContinuationContextChars)
+        + "\n\nContinue the request using these files. Edit only what is needed; the user reviews every change before it goes live.";
+
+    /// <summary>
+    /// Asks Core's <c>changes diff</c> whether this task has edits that can still be reviewed. Review changes appears only
+    /// for real edits; an unreadable answer hides it and says so, and the next completed response or reconnect checks again.
+    /// </summary>
+    private async Task RefreshChangesAsync()
+    {
+        if (_taskId is not { } taskId) return;
+        var check = ++_changeCheck;
+        var diff = await _cli.RunAsync(AssistantCliCommands.Diff(taskId), QueryTimeout, CancellationToken.None);
+        if (check != _changeCheck || taskId != _taskId) return;
+        var pending = ReadReviewableChanges(diff, taskId);
+        HasChanges = pending > 0;
+        if (pending < 0)
+            StatusDetail = "Could not check this task's working copy for edits. It is checked again after the next response or when you reconnect.";
+    }
+
+    /// <summary>Edited files Core can still stage for this task: 0 when none or already applied, -1 when the answer is unusable.</summary>
+    internal static int ReadReviewableChanges(AssistantCliResult diff, string taskId)
+    {
+        if (!diff.Ok || AssistantCliService.GetString(diff.Data, "task_id") != taskId || Prop(diff.Data, "files") is not { ValueKind: JsonValueKind.Array } files)
+            return -1;
+        var state = AssistantCliService.GetString(diff.Data, "state");
+        // An apply or rollback that did not finish leaves the outcome unknown, so nothing is assumed about the edits.
+        if (state is "" or "interrupted" or "in_progress" or "rollback_interrupted") return -1;
+        if (state is not ("prepared" or "staged")) return 0;
+        return files.GetArrayLength();
+    }
+
+    private void RaiseFileRequest()
+    {
+        OnPropertyChanged(nameof(HasFileRequest));
+        OnPropertyChanged(nameof(FileRequestPaths));
+        AllowFileAccessCommand.RaiseCanExecuteChanged();
+        DeclineFileAccessCommand.RaiseCanExecuteChanged();
+    }
 
     // --- Review and live changes --------------------------------------------------------------
 
@@ -747,6 +1323,7 @@ public sealed class AssistantViewModel : ObservableObject
         }
         if (batch.Files.Count == 0)
         {
+            HasChanges = false;
             SetState(SessionState(), "There are no changes to review yet.");
             return;
         }
@@ -828,6 +1405,7 @@ public sealed class AssistantViewModel : ObservableObject
         RaiseReview();
         OutcomeText = DescribeApply(result, batch.Files.Count, out _canRollback, out _canCheckOutcome);
         SetState(SessionState(), OutcomeText);
+        await RefreshChangesAsync();
     }
 
     /// <summary>
@@ -1173,6 +1751,8 @@ public sealed class AssistantViewModel : ObservableObject
         OnPropertyChanged(nameof(ReviewValidationText));
         OnPropertyChanged(nameof(HasReviewWarnings));
         OnPropertyChanged(nameof(IsReviewVisible));
+        OnPropertyChanged(nameof(IsChangesVisible));
+        OnPropertyChanged(nameof(IsSidePanelVisible));
     }
 
     private void RaiseCommands()
@@ -1181,7 +1761,8 @@ public sealed class AssistantViewModel : ObservableObject
         foreach (var command in new System.Windows.Input.ICommand[]
                  {
                      ConnectCommand, RunProbeCommand, SignInCommand, OpenSignInUrlCommand, StopCommand, SendCommand, NewTaskCommand,
-                     ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand
+                     ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand,
+                     AllowFileAccessCommand, DeclineFileAccessCommand
                  })
         {
             switch (command)
