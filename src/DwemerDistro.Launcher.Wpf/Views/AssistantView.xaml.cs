@@ -340,6 +340,27 @@ public partial class AssistantView : UserControl
         }
     }
 
+    // The History list is read on first open (or by Connect); nothing is read while the page only loads.
+    private void HistoryToggle_Checked(object sender, RoutedEventArgs e) => ViewModel?.OpenHistory();
+
+    // Opening Memory reads Core's notes and settings once; Refresh reads them again.
+    private void MemoryToggle_Checked(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel?.Memory is { } memory && memory.RefreshCommand.CanExecute(null)) memory.RefreshCommand.Execute(null);
+    }
+
+    // A memory note starts from the selected conversation text, or the last reply; the user edits it before Remember.
+    private void RememberSelection_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } viewModel) return;
+        var text = TranscriptBox.Selection.IsEmpty
+            ? viewModel.Transcript.LastOrDefault(item => item.Role is "Codex" or "You")?.Text ?? string.Empty
+            : TranscriptBox.Selection.Text;
+        viewModel.Memory.BeginNote(text);
+        MemoryToggle.IsChecked = true;
+        MemoryPanel.BringIntoView();
+    }
+
     private void WiderReviewToggle_Changed(object sender, RoutedEventArgs e)
     {
         _isNarrow = null;
@@ -364,6 +385,8 @@ public partial class AssistantView : UserControl
         // Wide: the conversation takes the full width until there is a review or live-change card to show.
         var side = _viewModel?.IsSidePanelVisible == true;
         var wide = WiderReviewToggle.IsChecked == true && width >= WideReviewWidth * 2;
+        // Wider does nothing in one column or below the width it needs, so it is not offered there.
+        WiderReviewToggle.Visibility = narrow || width < WideReviewWidth * 2 ? Visibility.Collapsed : Visibility.Visible;
         SideColumn.Width = narrow || !side ? new GridLength(0) : new GridLength(wide ? WideReviewWidth : ReviewWidth);
         Grid.SetColumn(SidePanel, narrow ? 0 : 1);
         Grid.SetRow(SidePanel, narrow ? 1 : 0);

@@ -7,6 +7,18 @@ using DwemerDistro.Launcher.Wpf.Models;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
 
+/// <summary>One assistant memory note as Core reports it; text is the user's or assistant's note, never a transcript.</summary>
+public sealed record AssistantMemoryNote(long Id, string Kind, string Text, string Source, string? TaskId, string? ThreadId,
+    string CapturedAt, string UpdatedAt, string? ExpiresAt, bool Expired)
+{
+    public string SourceText =>
+        (Source == "assistant" ? "Learned by the assistant" : "Added by you") + $" · {Kind} · captured {CapturedAt}" +
+        (UpdatedAt != CapturedAt ? $" · edited {UpdatedAt}" : string.Empty) +
+        (TaskId is null ? string.Empty : $" · task {(TaskId.Length > 8 ? TaskId[..8] : TaskId)}") +
+        (ThreadId is null ? string.Empty : $" · chat {(ThreadId.Length > 8 ? ThreadId[..8] : ThreadId)}") +
+        (Expired ? " · expired" : ExpiresAt is null ? string.Empty : $" · expires {ExpiresAt}");
+}
+
 /// <summary>One <c>ddistro --json</c> document, or a launcher-side failure when none was readable.</summary>
 public sealed record AssistantCliResult(
     bool Ok,
@@ -76,6 +88,80 @@ public static partial class AssistantCliCommands
     public static string[] Stage(string taskId) => ["changes", "stage", RequireTaskId(taskId)];
     public static string[] ChangeStatus(string taskId) => ["changes", "status", RequireTaskId(taskId)];
     public static string[] Rollback(string taskId) => ["changes", "rollback", RequireTaskId(taskId)];
+
+    // ddistro memory: Core's MEMORY_SPEC limits, checked here too so a refused value never reaches the CLI.
+    public const int MaxMemoryText = 2000;
+    public const int MaxMemoryQuery = 200;
+    public const int MaxMemoryListPage = 200;
+    public static readonly string[] MemoryKinds = ["preference", "decision", "note"];
+
+    public static string[] MemoryStatus() => ["memory", "status"];
+    public static string[] MemoryExport() => ["memory", "export"];
+    public static string[] MemoryReset() => ["memory", "reset", "--yes"];
+
+    public static string[] MemoryList(int limit, int offset) =>
+        limit is < 1 or > MaxMemoryListPage || offset is < 0 or > 1000
+            ? throw new ArgumentException("The memory page is out of range.")
+            : ["memory", "list", "--limit", limit.ToString(System.Globalization.CultureInfo.InvariantCulture),
+               "--offset", offset.ToString(System.Globalization.CultureInfo.InvariantCulture)];
+
+    public static string[] MemorySearch(string query) =>
+        ["memory", "search", "--query", RequireMemoryValue(query, MaxMemoryQuery, "search"), "--limit", "10"];
+
+    /// <summary>A user note; the task and thread it was written from are kept as its source when known.</summary>
+    public static string[] MemoryAdd(string text, string kind, string? taskId, string? threadId)
+    {
+        var arguments = new List<string> { "memory", "add", "--text", RequireMemoryValue(text, MaxMemoryText, "note"), "--kind", RequireKind(kind) };
+        if (taskId is not null) arguments.AddRange(["--task", RequireTaskId(taskId)]);
+        if (threadId is not null) arguments.AddRange(["--thread", RequireMemoryThread(threadId)]);
+        return [.. arguments];
+    }
+
+    public static string[] MemoryUpdate(long id, string text, string kind) =>
+        ["memory", "update", "--id", RequireNoteId(id), "--text", RequireMemoryValue(text, MaxMemoryText, "note"), "--kind", RequireKind(kind)];
+
+    public static string[] MemoryForget(long id) => ["memory", "forget", "--id", RequireNoteId(id)];
+
+    public static string[] MemoryForgetThread(string threadId) => ["memory", "forget", "--thread", RequireMemoryThread(threadId)];
+
+    public static string[] MemoryConfigure(bool? retrieval, bool? autoLearning)
+    {
+        if (retrieval is null && autoLearning is null) throw new ArgumentException("Nothing to configure.");
+        var arguments = new List<string> { "memory", "configure" };
+        if (retrieval is { } on) arguments.AddRange(["--retrieval", on ? "on" : "off"]);
+        if (autoLearning is { } learn) arguments.AddRange(["--auto-learning", learn ? "on" : "off"]);
+        return [.. arguments];
+    }
+
+    /// <summary>
+    /// Text Core accepts: trimmed 1..limit characters, tabs and newlines only as control characters, and never a value
+    /// ddistro could read as one of its own options.
+    /// </summary>
+    public static bool IsValidMemoryValue(string? value, int limit)
+    {
+        var text = value?.Trim() ?? string.Empty;
+        return text.Length > 0 && text.Length <= limit && !text.StartsWith("--", StringComparison.Ordinal)
+               && !text.Any(c => char.IsControl(c) && c is not ('\n' or '\t'));
+    }
+
+    private static string RequireMemoryValue(string value, int limit, string what) =>
+        IsValidMemoryValue(value, limit) ? value.Trim()
+            : throw new ArgumentException($"The {what} must be 1-{limit} characters of plain text and not start with \"--\".");
+
+    private static string RequireKind(string kind) =>
+        MemoryKinds.Contains(kind) ? kind : throw new ArgumentException("Unknown memory kind.", nameof(kind));
+
+    private static string RequireNoteId(long id) =>
+        id is >= 1 and <= int.MaxValue ? id.ToString(System.Globalization.CultureInfo.InvariantCulture) : throw new ArgumentException("Invalid note id.");
+
+    /// <summary>Core's THREAD_ID for memory provenance: narrower than the launcher's own thread id check.</summary>
+    public static bool IsValidMemoryThread(string? threadId) => MemoryThreadRegex().IsMatch(threadId ?? string.Empty);
+
+    private static string RequireMemoryThread(string threadId) =>
+        IsValidMemoryThread(threadId) ? threadId : throw new ArgumentException("Invalid thread id for memory.", nameof(threadId));
+
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}\z")]
+    private static partial Regex MemoryThreadRegex();
 
     public static string[] Apply(string taskId, string manifestSha256)
     {
@@ -396,6 +482,49 @@ public sealed partial class AssistantCliService : IAssistantCli
             ["reason"] = reason
         };
     }
+
+    /// <summary>
+    /// One note from <c>ddistro memory list|search|add|update|export</c>, re-read field by field: an id, a known kind and
+    /// source, bounded text and Core's own provenance and timestamps. Anything else refuses the note.
+    /// </summary>
+    internal static AssistantMemoryNote? ProjectMemoryNote(JsonElement note)
+    {
+        if (note.ValueKind != JsonValueKind.Object || Prop(note, "id") is not { ValueKind: JsonValueKind.Number } id
+            || !id.TryGetInt64(out var noteId) || noteId < 1) return null;
+        var kind = GetString(note, "kind");
+        var source = GetString(note, "source");
+        var text = Prop(note, "text").ValueKind == JsonValueKind.String ? Prop(note, "text").GetString()! : string.Empty;
+        if (!AssistantCliCommands.MemoryKinds.Contains(kind) || source is not ("user" or "assistant")
+            || text.Length is 0 or > AssistantCliCommands.MaxMemoryText) return null;
+        string? Optional(string name, Func<string, bool> valid) =>
+            Prop(note, name) is { ValueKind: JsonValueKind.String } value && valid(value.GetString()!) ? value.GetString() : null;
+        var captured = Optional("captured_at", IsUtcTimestamp);
+        var updated = Optional("updated_at", IsUtcTimestamp);
+        if (captured is null || updated is null) return null;
+        return new AssistantMemoryNote(noteId, kind, text, source,
+            Optional("task_id", AssistantCliCommands.IsValidTaskId), Optional("thread_id", AssistantCliCommands.IsValidMemoryThread),
+            captured, updated, Optional("expires_at", IsUtcTimestamp), GetBool(note, "expired"));
+    }
+
+    /// <summary>The notes array under <paramref name="name"/>, bounded; null when it is missing or any note is malformed.</summary>
+    internal static List<AssistantMemoryNote>? ProjectMemoryNotes(JsonElement data, string name, int limit)
+    {
+        if (Prop(data, name) is not { ValueKind: JsonValueKind.Array } notes || notes.GetArrayLength() > limit) return null;
+        var projected = new List<AssistantMemoryNote>();
+        foreach (var note in notes.EnumerateArray())
+        {
+            if (ProjectMemoryNote(note) is not { } valid) return null;
+            projected.Add(valid);
+        }
+        return projected;
+    }
+
+    /// <summary>Core's memory settings, both switches present as booleans; null otherwise.</summary>
+    internal static (bool Retrieval, bool AutoLearning)? ProjectMemorySettings(JsonElement data) =>
+        Prop(data, "settings") is { ValueKind: JsonValueKind.Object } settings
+        && Prop(settings, "retrieval").ValueKind is JsonValueKind.True or JsonValueKind.False
+        && Prop(settings, "auto_learning").ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? (GetBool(settings, "retrieval"), GetBool(settings, "auto_learning")) : null;
 
     internal const int MaxInventoryEntries = 200;
     internal const int MaxInventoryMods = 100;
