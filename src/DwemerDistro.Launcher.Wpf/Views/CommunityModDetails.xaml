@@ -58,16 +58,15 @@
                         <Button x:Name="DownloadButton" Content="Download mod release" Style="{StaticResource GameCenter.PrimaryButton}"
                                 Visibility="Collapsed" Click="Download_Click" Height="40" MinWidth="180" />
                     </WrapPanel>
-                    <Expander Header="Details" Foreground="{DynamicResource GameCenter.Text}" Margin="0,16,0,12">
-                        <StackPanel Margin="0,10,0,0">
-                            <TextBlock x:Name="CompatibilityText" FontSize="12" Foreground="{DynamicResource GameCenter.TextMuted}" />
-                            <WrapPanel Margin="0,10,0,0">
-                                <Button x:Name="SourceButton" Content="Repository" IsEnabled="False" Margin="0,0,6,6" Click="Source_Click" />
-                                <Button x:Name="NotesButton" Content="Release notes" IsEnabled="False" Margin="0,0,6,6" Click="Notes_Click" />
-                                <Button x:Name="EvidenceButton" Content="Test evidence" IsEnabled="False" Margin="0,0,0,6" Click="Evidence_Click" />
-                            </WrapPanel>
-                        </StackPanel>
-                    </Expander>
+                    <StackPanel Margin="0,16,0,12">
+                        <TextBlock Text="Details" FontWeight="SemiBold" Margin="0,0,0,10" />
+                        <TextBlock x:Name="CompatibilityText" FontSize="12" Foreground="{DynamicResource GameCenter.TextMuted}" />
+                        <WrapPanel Margin="0,10,0,0">
+                            <Button x:Name="SourceButton" Content="Repository" IsEnabled="False" Margin="0,0,6,6" Click="Source_Click" />
+                            <Button x:Name="NotesButton" Content="Release notes" IsEnabled="False" Margin="0,0,6,6" Click="Notes_Click" />
+                            <Button x:Name="EvidenceButton" Content="Test evidence" IsEnabled="False" Margin="0,0,0,6" Click="Evidence_Click" />
+                        </WrapPanel>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>

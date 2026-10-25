@@ -74,7 +74,7 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
                 _cards.Add(card);
             }
             StatusText.Text = _cards.Count == 0
-                ? "No matching mods. Try another name or use Add custom mod to paste a repository URL."
+                ? "No matching mods. Try another name."
                 : result.Notice;
             // Titles are usable immediately; at most three release/artwork lookups run at once.
             using var slots = new SemaphoreSlim(3);

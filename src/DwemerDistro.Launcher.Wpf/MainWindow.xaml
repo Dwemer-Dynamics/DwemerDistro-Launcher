@@ -193,12 +193,6 @@
                                          Command="{Binding BrowseCommunityModsCommand}"
                                          AutomationProperties.Name="Browse mods"
                                          AutomationProperties.HelpText="Browse published custom mods in the main panel." />
-                            <RadioButton Content="Installed mods" GroupName="CustomModNavigation" Margin="0,0,0,10"
-                                         Style="{StaticResource GameCenter.NavButton}"
-                                         IsChecked="{Binding IsShowingInstalledCustomMod, Mode=OneWay}"
-                                         Command="{Binding ShowInstalledCustomModsCommand}"
-                                         AutomationProperties.Name="Installed custom mods"
-                                         AutomationProperties.HelpText="Read the installed mod list from the distro." />
                             <ListBox x:Name="CustomModRail" ItemsSource="{Binding CustomMods}" SelectedItem="{Binding SelectedCustomMod}"
                                      ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0" Padding="0"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
@@ -232,22 +226,15 @@
                             </ListBox>
                             <TextBlock Text="No custom mods yet." Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="11" Margin="5,2,0,6"
                                        Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}" />
-                            <Button Content="Add by URL" Command="{Binding AddCommunityModCommand}" Style="{StaticResource GameCenter.Button}"
-                                    Margin="0,6,0,0" Height="32"
-                                    AutomationProperties.Name="Add published mod by URL"
-                                    AutomationProperties.HelpText="Preview a published mod inside the launcher." />
                             <Button Command="{Binding OpenCustomModCreationGuideCommand}" Style="{StaticResource GameCenter.UtilityButton}"
                                     Margin="0,6,0,0" AutomationProperties.Name="Creation guide"
-                                    AutomationProperties.HelpText="Open the custom mod creation guide in your browser."
-                                    ToolTip="Open the custom mod creation guide in your browser.">
+                                    AutomationProperties.HelpText="Open the KAGRENAC repository in your browser."
+                                    ToolTip="Open the KAGRENAC repository in your browser.">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
                                     <AccessText Text="Creation _guide" />
                                 </StackPanel>
                             </Button>
-                            <Button Content="Legacy server setup" Command="{Binding AddCustomModCommand}"
-                                    Style="{StaticResource GameCenter.UtilityButton}" Margin="0,6,0,0"
-                                    AutomationProperties.HelpText="Open the existing setup for older server-only repositories." />
                         </StackPanel>
                         <StackPanel x:Name="UtilityLandmark" Margin="0,14,0,0" KeyboardNavigation.TabNavigation="Local">
                             <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
