@@ -36,7 +36,6 @@
             </Grid>
         </Expander>
         <Grid Grid.Row="2">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /><ColumnDefinition Width="300" /></Grid.ColumnDefinitions>
             <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
                 <StackPanel>
                     <Border Background="{DynamicResource GameCenter.Panel}" Height="180" ClipToBounds="True">
@@ -52,14 +51,18 @@
                     </Grid>
                     <TextBlock x:Name="AuthorText" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" />
                     <TextBlock x:Name="DescriptionText" Text="Paste a repository URL to preview its published mod." Margin="0,16,0,12" FontSize="14" />
-                    <ItemsControl x:Name="FeatureList" Margin="0,0,0,12">
-                        <ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" Margin="0,0,0,6" FontSize="12" /></DataTemplate></ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <Button x:Name="SourceButton" Content="Repository ↗" HorizontalAlignment="Left" IsEnabled="False" Click="Source_Click" />
-                    <Expander Header="Compatibility and testing" Foreground="{DynamicResource GameCenter.Text}" Margin="0,16,0,12">
+                    <TextBlock x:Name="ReleaseText" Margin="0,0,0,16" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" />
+                    <WrapPanel>
+                        <Button x:Name="InstallButton" Content="Install server" Style="{StaticResource GameCenter.PrimaryButton}"
+                                IsEnabled="False" Click="Install_Click" Height="40" MinWidth="160" />
+                        <Button x:Name="DownloadButton" Content="Download mod release" Style="{StaticResource GameCenter.PrimaryButton}"
+                                Visibility="Collapsed" Click="Download_Click" Height="40" MinWidth="180" />
+                    </WrapPanel>
+                    <Expander Header="Details" Foreground="{DynamicResource GameCenter.Text}" Margin="0,16,0,12">
                         <StackPanel Margin="0,10,0,0">
                             <TextBlock x:Name="CompatibilityText" FontSize="12" Foreground="{DynamicResource GameCenter.TextMuted}" />
                             <WrapPanel Margin="0,10,0,0">
+                                <Button x:Name="SourceButton" Content="Repository" IsEnabled="False" Margin="0,0,6,6" Click="Source_Click" />
                                 <Button x:Name="NotesButton" Content="Release notes" IsEnabled="False" Margin="0,0,6,6" Click="Notes_Click" />
                                 <Button x:Name="EvidenceButton" Content="Test evidence" IsEnabled="False" Margin="0,0,0,6" Click="Evidence_Click" />
                             </WrapPanel>
@@ -67,33 +70,6 @@
                     </Expander>
                 </StackPanel>
             </ScrollViewer>
-            <Border Grid.Column="2" Style="{StaticResource GameCenter.Card}" Padding="16">
-                <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,4,0">
-                        <StackPanel>
-                            <TextBlock Text="Install mod" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock x:Name="ReleaseText" Margin="0,6,0,18" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" />
-                            <TextBlock Text="Game folder" FontWeight="SemiBold" Margin="0,0,0,6" />
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBox x:Name="GameFolderBox" AutomationProperties.Name="Game installation folder" />
-                                <Button x:Name="FolderButton" Grid.Column="1" Content="…" Width="34" Padding="0" Margin="6,0,0,0" Click="Folder_Click" AutomationProperties.Name="Choose game folder" />
-                            </Grid>
-                            <TextBlock x:Name="InstallPlanText" Margin="0,14,0,12" FontSize="12" Foreground="{DynamicResource GameCenter.TextMuted}" />
-                            <TextBlock x:Name="EnableInGameText" Margin="0,0,0,12" FontSize="12" />
-                        </StackPanel>
-                    </ScrollViewer>
-                    <StackPanel Grid.Row="1">
-                        <CheckBox x:Name="TrustBox" Content="I trust this author and reviewed the install plan."
-                                  Foreground="{DynamicResource GameCenter.Text}" Margin="0,12,0,12">
-                            <CheckBox.ContentTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" /></DataTemplate></CheckBox.ContentTemplate>
-                        </CheckBox>
-                        <Button x:Name="InstallButton" Content="Install / update" Style="{StaticResource GameCenter.PrimaryButton}"
-                                IsEnabled="False" Click="Install_Click" Height="42" />
-                    </StackPanel>
-                </Grid>
-            </Border>
         </Grid>
         <StackPanel Grid.Row="3" Margin="0,12,0,0">
             <ProgressBar x:Name="BusyProgress" Height="3" Margin="0,0,0,6" Visibility="Collapsed" />

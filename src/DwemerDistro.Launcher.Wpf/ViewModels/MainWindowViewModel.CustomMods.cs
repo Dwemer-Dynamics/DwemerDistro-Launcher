@@ -695,7 +695,8 @@ public sealed partial class MainWindowViewModel
     {
         if (_isCustomModMutationInProgress) return;
         IsBrowsingCustomMods = true;
-        var details = new CommunityModDetails(new CommunityModService(_wsl), () =>
+        var service = new CommunityModService(_wsl);
+        var details = new CommunityModDetails(service, () =>
         {
             if (IsCustomModBusy || !CanAccessDistro() || !TryBeginCustomModMutation()) return false;
             IsCustomModBusy = true;
@@ -704,7 +705,12 @@ public sealed partial class MainWindowViewModel
         {
             IsCustomModBusy = false;
             EndCustomModMutation();
-        }, () => RefreshCustomModsAsync(checkHealth: false));
+        }, () => RefreshCustomModsAsync(checkHealth: false), async (release, cancellation) =>
+        {
+            if (!TryBeginPassiveDistroActivity()) throw new IOException(CustomModsMaintenanceMessage);
+            try { return await service.IsServerInstalledAsync(release, cancellation); }
+            finally { EndPassiveDistroActivity(); }
+        });
         details.BackRequested += (_, _) => IsBrowsingCustomMods = true;
         CommunityDetails = details;
         await details.OpenAsync(repository);

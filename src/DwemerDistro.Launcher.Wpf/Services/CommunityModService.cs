@@ -38,6 +38,7 @@ public sealed class CommunityModService : IDisposable
     private readonly HttpClient _http;
     private readonly string _stateRoot;
     private readonly string _manager;
+    private readonly Func<string, IEnumerable<string>, CancellationToken, Task<Models.CommandResult>>? _coreOverride;
     private static readonly Regex RepositoryPattern = new(@"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$", RegexOptions.CultureInvariant);
     private static readonly Regex HashPattern = new("^[a-f0-9]{64}$", RegexOptions.CultureInvariant);
 
@@ -56,6 +57,10 @@ public sealed class CommunityModService : IDisposable
         if (!_http.DefaultRequestHeaders.UserAgent.Any())
             _http.DefaultRequestHeaders.UserAgent.ParseAdd("DwemerDistro-CommunityMods/1.0");
     }
+
+    internal CommunityModService(WslService wsl, HttpClient http, string stateRoot, string manager,
+        Func<string, IEnumerable<string>, CancellationToken, Task<Models.CommandResult>> core)
+        : this(wsl, http, stateRoot, manager) => _coreOverride = core;
 
     internal static string Text(JsonObject obj, string key) => obj[key]?.GetValue<string>() ?? string.Empty;
     public void Dispose() => _http.Dispose();
@@ -338,7 +343,69 @@ public sealed class CommunityModService : IDisposable
     }
 
     private async Task<Models.CommandResult> CoreAsync(string user, IEnumerable<string> arguments, CancellationToken cancellationToken) =>
-        await _wsl.RunWslAsync(new[] { "-d", LauncherConstants.DistroName, "-u", user, "--exec", _manager }.Concat(arguments), null, cancellationToken).ConfigureAwait(false);
+        await (_coreOverride is null
+            ? _wsl.RunWslAsync(new[] { "-d", LauncherConstants.DistroName, "-u", user, "--exec", _manager }.Concat(arguments), null, cancellationToken)
+            : _coreOverride(user, arguments, cancellationToken)).ConfigureAwait(false);
+
+    // Core remains the authority for server ownership and readiness; no Windows client receipt is created.
+    private async Task<JsonObject?> ServerEntryAsync(CommunityRelease release, CancellationToken cancellationToken)
+    {
+        RepositoryKey(release.Repository);
+        if (!CustomModService.IsValidModId(release.Id)) throw new InvalidDataException("Invalid mod id.");
+        var result = await CoreAsync(LauncherConstants.DistroUser, ["status", "--json"], cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded) throw new IOException(CustomModService.DescribeFailure(result));
+        var status = JsonNode.Parse(result.StandardOutput)?.AsObject();
+        if (status?["schema_version"]?.GetValue<int>() != 1 || status["mods"] is not JsonArray mods)
+            throw new InvalidDataException("Could not read installed servers. Update Distro and try again.");
+        var entry = mods.FirstOrDefault(n => n?["id"]?.GetValue<string>() == release.Id)?.AsObject();
+        if (entry is not null && (Text(entry, "repository") != release.Repository || Text(entry, "install_mode") != "release"))
+            throw new IOException("This mod id belongs to another repository or a legacy server. Nothing was changed.");
+        return entry;
+    }
+
+    private static bool ServerMatchesRelease(JsonObject? entry, CommunityRelease release) =>
+        entry is not null && Text(entry, "state") == "ready" && Text(entry, "commit") == release.Commit &&
+        Text(entry, "server_folder") == Text(release.Manifest, "server_folder") && entry["pending_release"] is null &&
+        entry["release"] is JsonObject installed && Text(installed, "tag") == release.Version &&
+        Text(installed, "descriptor_sha256") == release.DescriptorHash;
+
+    public async Task<bool> IsServerInstalledAsync(CommunityRelease release, CancellationToken cancellationToken = default) =>
+        ServerMatchesRelease(await ServerEntryAsync(release, cancellationToken).ConfigureAwait(false), release);
+
+    public async Task InstallServerAsync(CommunityRelease release, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
+    {
+        RepositoryKey(release.Repository);
+        if (!CustomModService.IsValidModId(release.Id)) throw new InvalidDataException("Invalid mod id.");
+        Directory.CreateDirectory(_stateRoot);
+        // Share the existing lock with combined installs so their client phase cannot overlap a server update.
+        using var operationLock = new FileStream(Path.Combine(_stateRoot, release.Id + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        progress?.Report("Checking server release…");
+        var check = await CoreAsync(LauncherConstants.DistroUser,
+            ["release-check", release.Repository, "--tag", release.Version, "--json"], cancellationToken).ConfigureAwait(false);
+        if (!check.Succeeded) throw new IOException(CustomModService.DescribeFailure(check));
+        var preview = JsonNode.Parse(check.StandardOutput)?.AsObject();
+        if (preview?["release_hash"]?.GetValue<string>() != release.DescriptorHash ||
+            preview?["release"]?["commit"]?.GetValue<string>() != release.Commit)
+            throw new IOException("Release changed after preview. Check it again.");
+        var entry = await ServerEntryAsync(release, cancellationToken).ConfigureAwait(false);
+        if (ServerMatchesRelease(entry, release)) return;
+        var update = entry is not null && Text(entry, "state") != "unregistered";
+        progress?.Report("Installing server…");
+        var install = await CoreAsync("root", [update ? "release-update" : "release-install", update ? release.Id : release.Repository,
+            "--tag", release.Version, "--expect-commit", release.Commit, "--expect-release", release.DescriptorHash], cancellationToken).ConfigureAwait(false);
+        if (!install.Succeeded) throw new IOException(CustomModService.DescribeFailure(install));
+        if (!await IsServerInstalledAsync(release, cancellationToken).ConfigureAwait(false))
+            throw new IOException("The server is not ready yet. Retry installation.");
+    }
+
+    public static string ClientReleaseUrl(CommunityRelease release)
+    {
+        var repository = RepositoryKey(release.Repository);
+        if (!Regex.IsMatch(release.Version, "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")) throw new InvalidDataException("Unsupported release tag.");
+        var asset = Relative(Text(release.Document["packages"]!["client"]!.AsObject(), "asset"));
+        if (asset.Contains('/') || !asset.EndsWith(".zip", StringComparison.Ordinal)) throw new InvalidDataException("Invalid client release asset.");
+        return "https://github.com/" + repository + "/releases/download/" + release.Version + "/" + asset;
+    }
 
     private static void SaveReceipt(string path, JsonObject document)
     {

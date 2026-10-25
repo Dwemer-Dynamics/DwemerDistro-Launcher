@@ -12,19 +12,23 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
     private readonly Func<bool> _beginInstall;
     private readonly Action _endInstall;
     private readonly Func<Task> _afterInstall;
+    private readonly Func<CommunityRelease, CancellationToken, Task<bool>> _isServerInstalled;
     private CommunityRelease? _release;
     private bool _busy;
     private bool _installing;
     private bool _disposed;
+    private bool _serverInstalled;
     private CancellationTokenSource _cancellation = new();
 
-    public CommunityModDetails(CommunityModService service, Func<bool> beginInstall, Action endInstall, Func<Task> afterInstall)
+    public CommunityModDetails(CommunityModService service, Func<bool> beginInstall, Action endInstall, Func<Task> afterInstall,
+        Func<CommunityRelease, CancellationToken, Task<bool>> isServerInstalled)
     {
         InitializeComponent();
         _service = service;
         _beginInstall = beginInstall;
         _endInstall = endInstall;
         _afterInstall = afterInstall;
+        _isServerInstalled = isServerInstalled;
     }
 
     public bool InstallAttempted { get; private set; }
@@ -35,6 +39,7 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
     {
         RepositoryBox.Text = repository ?? string.Empty;
         RepositoryEditor.IsExpanded = RepositoryBox.Text.Length == 0;
+        RepositoryEditor.Visibility = RepositoryEditor.IsExpanded ? Visibility.Visible : Visibility.Collapsed;
         if (RepositoryBox.Text.Length != 0) await CheckAsync();
     }
 
@@ -43,15 +48,23 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
         if (_disposed) return;
         if (busy) { _cancellation.Dispose(); _cancellation = new CancellationTokenSource(); }
         _busy = busy;
-        CheckButton.IsEnabled = FolderButton.IsEnabled = TrustBox.IsEnabled = !_busy;
+        CheckButton.IsEnabled = !_busy;
         BackButton.IsEnabled = !_installing;
-        RepositoryBox.IsReadOnly = GameFolderBox.IsReadOnly = _busy;
-        InstallButton.IsEnabled = !_busy && _release is not null;
+        RepositoryBox.IsReadOnly = _busy;
+        UpdateActions();
         SourceButton.IsEnabled = NotesButton.IsEnabled = !_busy && _release is not null;
         EvidenceButton.IsEnabled = !_busy && _release?.Manifest["testing"]?["evidence_path"] is not null;
         BusyProgress.IsIndeterminate = _busy;
         BusyProgress.Visibility = _busy ? Visibility.Visible : Visibility.Collapsed;
         StatusText.Text = message;
+    }
+
+    private void UpdateActions()
+    {
+        if (InstallButton is null || DownloadButton is null) return;
+        InstallButton.Visibility = _serverInstalled ? Visibility.Collapsed : Visibility.Visible;
+        DownloadButton.Visibility = _serverInstalled ? Visibility.Visible : Visibility.Collapsed;
+        InstallButton.IsEnabled = DownloadButton.IsEnabled = !_busy && _release is not null;
     }
 
     private async void Repository_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -62,8 +75,8 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
     private void Repository_Changed(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
         _release = null;
-        if (InstallButton is not null) InstallButton.IsEnabled = false;
-        if (TrustBox is not null) TrustBox.IsChecked = false;
+        _serverInstalled = false;
+        UpdateActions();
     }
 
     private async void Check_Click(object sender, RoutedEventArgs e) => await CheckAsync();
@@ -79,17 +92,12 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
             ModTitle.Text = _release.Name;
             AuthorText.Text = "By " + new Uri(_release.Repository).AbsolutePath.Trim('/').Split('/')[0];
             DescriptionText.Text = CommunityModService.Text(_release.Manifest, "description");
-            FeatureList.ItemsSource = (_release.Manifest["features"] as System.Text.Json.Nodes.JsonArray)?.Select(f => "•  " + f!.GetValue<string>()).ToArray();
             ReleaseText.Text = CommunityModService.Text(_release.Game, "name") + " · " + _release.Version;
             CompatibilityText.Text = "Declared game build: " + CommunityModService.Text(_release.Game, "version") +
                 "\nLoader: " + CommunityModService.Text(_release.Game, "loader") +
                 "\nSource commit: " + _release.Commit +
-                "\nAuthor-reported testing: " + (_release.Manifest["testing"]?["summary"]?.GetValue<string>() ?? "Not provided.");
-            GameFolderBox.Text = CommunityModService.DetectGame(_release) ?? string.Empty;
-            InstallPlanText.Text = "Client: " + CommunityModService.Text(_release.Install, "path") +
-                "\nServer: /var/www/html/" + (CommunityModService.Text(_release.Manifest, "server_folder") is { Length: > 0 } folder ? folder : "custom-mods/" + _release.Id) +
-                "\nExisting private data is kept.";
-            EnableInGameText.Text = CommunityModService.Text(_release.Game, "enable_in_game");
+                "\nAuthor-reported testing: " + (_release.Manifest["testing"]?["summary"]?.GetValue<string>() ?? "Not provided.") +
+                "\n" + CommunityModService.Text(_release.Game, "enable_in_game");
             BannerImage.Source = IconImage.Source = null;
             foreach (var kind in new[] { "icon", "banner" })
             {
@@ -113,15 +121,11 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
                 }
                 catch (Exception error) when (error is IOException or System.Net.Http.HttpRequestException or NotSupportedException or FormatException or ArgumentException or InvalidOperationException) { /* Optional artwork keeps its placeholder. */ }
             }
-            SetBusy(false, "Ready to install.");
+            _serverInstalled = await _isServerInstalled(_release, _cancellation.Token);
+            if (_disposed) return;
+            SetBusy(false, _serverInstalled ? "Server installed." : string.Empty);
         }
-        catch (Exception error) { _release = null; SetBusy(false, error.Message); }
-    }
-
-    private void Folder_Click(object sender, RoutedEventArgs e)
-    {
-        var picker = new Microsoft.Win32.OpenFolderDialog { Title = "Select the game's installation folder", Multiselect = false };
-        if (picker.ShowDialog(Window.GetWindow(this)) == true) GameFolderBox.Text = picker.FolderName;
+        catch (Exception error) { _release = null; _serverInstalled = false; SetBusy(false, error.Message); }
     }
 
     private void OpenSource(string suffix)
@@ -135,18 +139,19 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
     private async void Install_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || _disposed || _release is null) return;
-        if (TrustBox.IsChecked != true) { StatusText.Text = "Review the plan and confirm that you trust the author."; return; }
         if (!_beginInstall()) { StatusText.Text = "Set up the distro and finish any maintenance before installing."; return; }
         _installing = true;
         InstallAttempted = true;
-        SetBusy(true, "Preparing installation…");
+        _serverInstalled = false;
+        SetBusy(true, "Installing server…");
         try
         {
-            var status = await _service.InstallAsync(_release, GameFolderBox.Text,
-                new Progress<string>(message => StatusText.Text = message));
-            SetBusy(false, status);
+            await _service.InstallServerAsync(_release,
+                new Progress<string>(message => { if (_installing && !_disposed) StatusText.Text = message; }));
+            _serverInstalled = true;
+            SetBusy(false, "Server installed.");
         }
-        catch (Exception error) { SetBusy(false, error.Message + " If the server installed, retry this release to finish the client."); }
+        catch (Exception error) { SetBusy(false, error.Message); }
         finally
         {
             _installing = false;
@@ -154,6 +159,21 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
             BackButton.IsEnabled = true;
             await _afterInstall();
         }
+    }
+
+    private async void Download_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _disposed || _release is null || !_serverInstalled) return;
+        SetBusy(true, "Checking server…");
+        try
+        {
+            _serverInstalled = await _isServerInstalled(_release, _cancellation.Token);
+            if (_disposed) return;
+            if (!_serverInstalled) { SetBusy(false, "Install the matching server release first."); return; }
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(CommunityModService.ClientReleaseUrl(_release)) { UseShellExecute = true });
+            SetBusy(false, "Download opened.");
+        }
+        catch (Exception error) { _serverInstalled = false; SetBusy(false, error.Message); }
     }
 
     public void Dispose()
