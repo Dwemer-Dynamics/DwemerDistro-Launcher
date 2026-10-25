@@ -13,7 +13,8 @@
   <DockPanel Margin="0,0,0,8"><Button x:Name="Refresh" DockPanel.Dock="Right" Content="Reload" Click="Refresh_Click"/><TextBlock Text="Global API Keys" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center"/></DockPanel>
   <StackPanel Grid.Row="1" Margin="0,0,0,12">
    <DockPanel><Button x:Name="AddCustom" DockPanel.Dock="Right" Content="Add custom key" Click="AddCustom_Click"/><TextBlock Text="Global keys for DwemerDistro" FontSize="14" Foreground="#CCCCCC" VerticalAlignment="Center"/></DockPanel>
-   <TextBlock Text="Paste a key in its row and Save. Blank keeps the saved key. Existing mod-specific keys are left unchanged." Foreground="#BBBBBB" Margin="0,8,0,0"/>
+   <TextBlock Text="Paste a key in its row and Save. Blank keeps the saved key." Foreground="#BBBBBB" Margin="0,8,0,0"/>
+   <TextBlock Text="CHIM, Stobe and Dialectic do not currently use these global API keys. Configure their keys in each mod's own settings." Foreground="#BBBBBB" Margin="0,4,0,0"/>
   </StackPanel>
   <DataGrid x:Name="Rows" Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserReorderColumns="False" IsReadOnly="True" EnableRowVirtualization="False" EnableColumnVirtualization="False" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#404040" Background="#242424" Foreground="White" RowBackground="#292929" AlternatingRowBackground="#252525" BorderBrush="#444444" RowHeaderWidth="0" MinRowHeight="34" AutomationProperties.Name="Global API keys">
    <DataGrid.Columns>

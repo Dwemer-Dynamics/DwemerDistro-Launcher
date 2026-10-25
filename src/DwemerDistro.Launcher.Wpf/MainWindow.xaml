@@ -301,13 +301,13 @@
                                  Style="{StaticResource GameCenter.NavButton}" Tag="1" Checked="DestinationNav_Checked" />
                     <RadioButton x:Name="SettingsNavButton" GroupName="Destination" Content="_SETTINGS"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="2" Checked="DestinationNav_Checked" />
-                    <RadioButton x:Name="LogsNavButton" GroupName="Destination" Content="LO_GS"
-                                 Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                     <RadioButton x:Name="ApiKeysNavButton" GroupName="Destination" Content="API _KEYS"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="5" Checked="DestinationNav_Checked"
                                  AutomationProperties.Name="API Keys" />
                     <RadioButton x:Name="AssistantNavButton" GroupName="Destination" Content="_ASSISTANT"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="4" Checked="DestinationNav_Checked" />
+                    <RadioButton x:Name="LogsNavButton" GroupName="Destination" Content="LO_GS"
+                                 Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </WrapPanel>
                 <StackPanel Grid.Row="1" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,0,8">
                     <!-- The one Update Distro action in the normal launcher. The widest state is reserved
