@@ -315,7 +315,7 @@ public sealed partial class CustomModService(WslService wsl)
     }
 
     /// <summary>Accepts only the fixed local route for this mod id, never a manifest-supplied host.</summary>
-    public static bool IsSafeModUrl(string? url, string modId)
+    public static bool IsSafeModUrl(string? url, string modId, string? serverFolder = null)
     {
         if (string.IsNullOrEmpty(url) || !IsValidModId(modId))
         {
@@ -324,7 +324,14 @@ public sealed partial class CustomModService(WslService wsl)
 
         var routeBase = RouteBasePattern().Match(url);
         var prefix = routeBase.Value + modId + "/";
-        if (!routeBase.Success || !url.StartsWith(prefix, StringComparison.Ordinal))
+        if (!string.IsNullOrEmpty(serverFolder) && Regex.IsMatch(serverFolder, "^[A-Z][A-Za-z0-9]{0,40}Server$"))
+        {
+            var origin = Regex.Match(url, @"^http://127\.0\.0\.1:(?:8081|19[0-9]{3})/");
+            if (!origin.Success) return false;
+            prefix = origin.Value + serverFolder + "/";
+        }
+        else if (!routeBase.Success) return false;
+        if (!url.StartsWith(prefix, StringComparison.Ordinal))
         {
             return false;
         }
@@ -334,9 +341,9 @@ public sealed partial class CustomModService(WslService wsl)
     }
 
     /// <summary>An installed icon or banner: the fixed local route for this id, ending in a PNG/JPEG file.</summary>
-    public static bool IsSafeModAssetUrl(string? url, string modId)
+    public static bool IsSafeModAssetUrl(string? url, string modId, string? serverFolder = null)
     {
-        return IsSafeModUrl(url, modId) &&
+        return IsSafeModUrl(url, modId, serverFolder) &&
                (url!.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
                 url.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
                 url.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase));
@@ -387,13 +394,16 @@ public sealed partial class CustomModService(WslService wsl)
                 ShortCommit(entry.Commit),
                 ParseState(entry.State),
                 Clean(entry.Message, 300) ?? string.Empty,
-                IsSafeModUrl(entry.DashboardUrl, entry.Id!) ? entry.DashboardUrl : null,
-                IsSafeModUrl(entry.HealthUrl, entry.Id!) ? entry.HealthUrl : null,
+                IsSafeModUrl(entry.DashboardUrl, entry.Id!, entry.ServerFolder) ? entry.DashboardUrl : null,
+                IsSafeModUrl(entry.HealthUrl, entry.Id!, entry.ServerFolder) ? entry.HealthUrl : null,
                 Clean(entry.Health, 20),
                 Clean(entry.HealthMessage, 200),
-                IsSafeModAssetUrl(entry.IconUrl, entry.Id!) ? entry.IconUrl : null,
-                IsSafeModAssetUrl(entry.BannerUrl, entry.Id!) ? entry.BannerUrl : null)
+                IsSafeModAssetUrl(entry.IconUrl, entry.Id!, entry.ServerFolder) ? entry.IconUrl : null,
+                IsSafeModAssetUrl(entry.BannerUrl, entry.Id!, entry.ServerFolder) ? entry.BannerUrl : null)
             {
+                ServerFolder = entry.ServerFolder,
+                InstallMode = entry.InstallMode ?? "branch",
+                ReleaseVersion = entry.PendingRelease?.Tag ?? entry.Release?.Tag ?? string.Empty,
                 DefaultBranch = IsValidBranchName(entry.Branches?.Default) ? entry.Branches!.Default! : string.Empty,
                 OfferedBranches = CleanBranches(entry.Branches?.Allowed),
                 BranchesCheckedAt = Clean(entry.BranchesCheckedAt, 40) ?? string.Empty
@@ -576,7 +586,13 @@ public sealed partial class CustomModService(WslService wsl)
         public string? BannerUrl { get; set; }
         public BranchPolicyDocument? Branches { get; set; }
         public string? BranchesCheckedAt { get; set; }
+        public string? ServerFolder { get; set; }
+        public string? InstallMode { get; set; }
+        public ReleaseRecord? Release { get; set; }
+        public ReleaseRecord? PendingRelease { get; set; }
     }
+
+    private sealed class ReleaseRecord { public string? Tag { get; set; } }
 
     private sealed class BranchPolicyDocument
     {
@@ -633,6 +649,10 @@ public sealed record CustomModInfo(
     string? IconUrl,
     string? BannerUrl)
 {
+    public string? ServerFolder { get; init; }
+    public string InstallMode { get; init; } = "branch";
+    public string ReleaseVersion { get; init; } = string.Empty;
+    public string ClientState { get; init; } = string.Empty;
     /// <summary>The installed icon, loaded by the view model; null shows the name alone.</summary>
     public System.Windows.Media.ImageSource? IconImage { get; init; }
 

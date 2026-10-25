@@ -3,6 +3,81 @@ using DwemerDistro.Launcher.Wpf.ViewModels;
 using DwemerDistro.Launcher.Wpf.Models;
 using static ModelsFixture;
 using System.Net;
+using System.Text.Json.Nodes;
+
+// An opt-in local package fixture exercises the real Windows installer and candidate WSL Core.
+if (args.Length == 5 && args[0] is "--community-fixture" or "--community-remove")
+{
+    var descriptor = Path.Combine(args[1], "kagrenac-release.json");
+    var fixture = new CommunityGithubFixture(args[1]);
+    var service = new CommunityModService(new WslService(new ProcessRunner()), new HttpClient(fixture), args[3], args[4]);
+    var data = JsonNode.Parse(File.ReadAllBytes(descriptor))!.AsObject();
+    if (args[0] == "--community-remove")
+    {
+        Console.WriteLine(await service.RemoveAsync(data["manifest"]!["id"]!.GetValue<string>(), data["repository"]!.GetValue<string>()));
+        var directory = Path.Combine(args[2], data["manifest"]!["distribution"]!["client"]!["install"]!["path"]!.GetValue<string>().Replace('/', Path.DirectorySeparatorChar));
+        Assert(!File.Exists(Path.Combine(directory, "mod.lua")), "Owned client file removed.");
+        Assert(File.Exists(Path.Combine(directory, "config.json")) && File.Exists(Path.Combine(directory, "unowned-notes.txt")), "Private and unknown client data preserved.");
+        return 0;
+    }
+    var catalog = await service.BrowseAsync("");
+    Assert(catalog.Items.Count == 1, "Fixture repository is discoverable.");
+    var release = await service.CheckAsync(data["repository"]!.GetValue<string>());
+    var result = await service.InstallAsync(release, args[2], new Progress<string>(Console.WriteLine));
+    var target = Path.Combine(args[2], CommunityModService.Text(release.Install, "path").Replace('/', Path.DirectorySeparatorChar));
+    Assert(File.Exists(Path.Combine(target, "mod.lua")), "Client runtime installed.");
+    Assert(!File.Exists(Path.Combine(target, "developer.pdb")), "Excluded build symbols never installed.");
+    Assert(File.Exists(Path.Combine(target, "config.json")), "Client was paired privately.");
+    if (release.Version == "v1.1.0") Assert(!File.Exists(Path.Combine(target, "obsolete.lua")), "Update removed an obsolete owned file.");
+    var receipt = JsonNode.Parse(File.ReadAllText(Path.Combine(args[3], release.Id + ".json")))!;
+    Assert(receipt["server_ready"]!.GetValue<bool>() && !receipt["pending"]!.GetValue<bool>(), "Both installation stages completed.");
+    Console.WriteLine(result);
+    Console.WriteLine("COMMUNITY INSTALL FIXTURE PASSED: " + release.Version);
+    return 0;
+}
+
+if (args.Length == 2 && args[0] == "--render-community")
+{
+    Exception? failure = null;
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            var app = new DwemerDistro.Launcher.Wpf.App();
+            app.InitializeComponent();
+            var window = new DwemerDistro.Launcher.Wpf.Views.CommunityModsWindow(
+                new CommunityModService(new WslService(new ProcessRunner())), () => false, () => { });
+            ((System.Windows.Controls.TextBlock)window.FindName("ModTitle")).Text = "Publishing Proof";
+            ((System.Windows.Controls.TextBlock)window.FindName("DescriptionText")).Text = "One repository. Independently packaged game client and server, with exclusions applied before download.";
+            ((System.Windows.Controls.TextBlock)window.FindName("ReleaseText")).Text = "Example Game · v1.1.0 · 1234567\nAuthor-tested build: declared by the author\nLoader: native mod menu";
+            ((System.Windows.Controls.TextBlock)window.FindName("InstallPlanText")).Text = "Client: mods/publishing-proof. Server: /var/www/html/PublishingProofServer. Existing private data is kept.";
+            ((System.Windows.Controls.ListBox)window.FindName("Repositories")).ItemsSource = new[] { new CommunityRepository("Example/Publishing-Proof", "https://github.com/Example/Publishing-Proof", "A monorepo release with a native game client and its own server.") };
+            ((System.Windows.Controls.TextBlock)window.FindName("StatusText")).Text = "Server installed; client installation pending. Retry this release to finish pairing.";
+            var content = (System.Windows.Controls.Grid)window.Content;
+            content.Background = window.Background;
+            foreach (var width in new[] { 1040, 780 })
+            {
+                window.Width = width;
+                window.Height = 740;
+                content.Measure(new System.Windows.Size(width, 740));
+                content.Arrange(new System.Windows.Rect(0, 0, width, 740));
+                content.UpdateLayout();
+                var image = new System.Windows.Media.Imaging.RenderTargetBitmap(width, 740, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                image.Render(content);
+                var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));
+                using var output = File.Create(Path.Combine(args[1], "community-" + width + ".png"));
+                encoder.Save(output);
+            }
+        }
+        catch (Exception error) { failure = error; }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start(); thread.Join();
+    if (failure is not null) throw failure;
+    Console.WriteLine("Community layouts rendered at 1040 and 780 pixels; no WSL or game started.");
+    return 0;
+}
 
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
 var installDirectory = Path.Combine(root, "install");
@@ -5682,5 +5757,31 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
     {
         ServedTask = taskId;
         return Task.FromResult<IAssistantTransport>(transport);
+    }
+}
+
+sealed class CommunityGithubFixture(string folder) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var uri = request.RequestUri!;
+        var versionFolder = folder;
+        if (uri.Host == "api.github.com" && uri.AbsolutePath.Contains("/releases/tags/"))
+            versionFolder = Path.Combine(Path.GetDirectoryName(folder)!, Path.GetFileName(uri.AbsolutePath));
+        if (uri.Host == "github.com" && uri.AbsolutePath.Contains("/releases/download/"))
+            versionFolder = Path.Combine(Path.GetDirectoryName(folder)!, uri.Segments[^2].TrimEnd('/'));
+        var descriptor = File.ReadAllBytes(Path.Combine(versionFolder, "kagrenac-release.json"));
+        var doc = JsonNode.Parse(descriptor)!;
+        byte[] bytes;
+        if (uri.Host == "api.github.com" && uri.AbsolutePath.StartsWith("/search/"))
+            bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new { total_count = 1, incomplete_results = false,
+                items = new[] { new { full_name = "Dwemer-Dynamics/kagrenac-publishing-proof", html_url = doc["repository"]!.GetValue<string>(), description = "Local monorepo fixture" } } });
+        else if (uri.Host == "api.github.com" && uri.AbsolutePath.Contains("/releases/"))
+            bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new { draft = false, prerelease = false, tag_name = doc["version"]!.GetValue<string>(),
+                assets = new[] { new { name = "kagrenac-release.json", browser_download_url = doc["repository"]!.GetValue<string>() + "/releases/download/" + doc["version"]!.GetValue<string>() + "/kagrenac-release.json" } } });
+        else if (uri.Host == "github.com" && uri.AbsolutePath.Contains("/releases/download/"))
+            bytes = File.ReadAllBytes(Path.Combine(versionFolder, Path.GetFileName(uri.AbsolutePath)));
+        else throw new InvalidOperationException("Unexpected fixture request; no external network is permitted.");
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) });
     }
 }
