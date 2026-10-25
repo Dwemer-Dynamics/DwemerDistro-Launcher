@@ -17,9 +17,9 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="Margin" Value="0,0,10,0" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontFamily" Value="Segoe UI" />
             <Setter Property="FontSize" Value="12" />
-            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="MinWidth" Value="110" />
             <Setter Property="MinHeight" Value="34" />
@@ -150,7 +150,7 @@
 
         <Style x:Key="SectionHeader" TargetType="TextBlock">
             <Setter Property="Foreground" Value="#FFD700" />
-            <Setter Property="FontFamily" Value="Trebuchet MS" />
+            <Setter Property="FontFamily" Value="Segoe UI" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Margin" Value="0,18,0,8" />
@@ -198,7 +198,7 @@
                                    Margin="0,0,8,0" />
                             <TextBlock Text="NVIDIA / CUDA"
                                        Foreground="#CFEFCF"
-                                       FontFamily="Trebuchet MS"
+                                       FontFamily="Segoe UI"
                                        FontSize="11"
                                        FontWeight="Bold"
                                        VerticalAlignment="Center" />
@@ -220,7 +220,7 @@
                                    Margin="0,0,8,0" />
                             <TextBlock Text="AMD / CPU"
                                        Foreground="#F4D8A6"
-                                       FontFamily="Trebuchet MS"
+                                       FontFamily="Segoe UI"
                                        FontSize="11"
                                        FontWeight="Bold"
                                        VerticalAlignment="Center" />
@@ -234,7 +234,7 @@
                             Padding="10,8">
                         <TextBlock Text="Install CUDA before enabling GPU-backed services."
                                    Foreground="#DDDDDD"
-                                   FontFamily="Trebuchet MS"
+                                   FontFamily="Segoe UI"
                                    TextWrapping="Wrap" />
                     </Border>
 
@@ -245,7 +245,7 @@
                             Padding="10,8">
                         <TextBlock Text="Skip CUDA and use CPU mode where the service offers it."
                                    Foreground="#DDDDDD"
-                                   FontFamily="Trebuchet MS"
+                                   FontFamily="Segoe UI"
                                    TextWrapping="Wrap" />
                     </Border>
                 </Grid>
@@ -275,7 +275,7 @@
                                    VerticalAlignment="Center" />
                             <TextBlock Text="{Binding HuggingFaceAccessTitle}"
                                        Foreground="White"
-                                       FontFamily="Trebuchet MS"
+                                       FontFamily="Segoe UI"
                                        FontSize="13"
                                        FontWeight="Bold"
                                        VerticalAlignment="Center" />
@@ -286,20 +286,20 @@
                                     VerticalAlignment="Center">
                                 <TextBlock Text="{Binding HuggingFaceTokenStatusText}"
                                            Foreground="{Binding HuggingFaceTokenStatusForeground}"
-                                           FontFamily="Trebuchet MS"
+                                           FontFamily="Segoe UI"
                                            FontSize="11"
                                            FontWeight="Bold" />
                             </Border>
                         </StackPanel>
                         <TextBlock Text="{Binding HuggingFaceAccessSummary}"
                                    Foreground="#DDDDDD"
-                                   FontFamily="Trebuchet MS"
+                                   FontFamily="Segoe UI"
                                    TextWrapping="Wrap"
                                    Margin="0,7,0,0"
                                    Visibility="{Binding HasHuggingFaceAccessSummary, Converter={StaticResource BoolToVisibilityConverter}}" />
                         <TextBlock Text="{Binding HuggingFaceTokenDetailText}"
                                    Foreground="#DDDDDD"
-                                   FontFamily="Trebuchet MS"
+                                   FontFamily="Segoe UI"
                                    TextWrapping="Wrap"
                                    Margin="0,7,0,0" />
                     </StackPanel>
@@ -333,7 +333,7 @@
 
                         <TextBlock Text="Installed Components"
                                    Foreground="White"
-                                   FontFamily="Trebuchet MS"
+                                   FontFamily="Segoe UI"
                                    FontSize="13"
                                    FontWeight="Bold"
                                    VerticalAlignment="Center" />
@@ -357,19 +357,19 @@
                             <TextBlock Grid.Column="0"
                                        Text="Component"
                                        Foreground="#FFD700"
-                                       FontFamily="Trebuchet MS"
+                                       FontFamily="Segoe UI"
                                        FontSize="11"
                                        FontWeight="Bold" />
                             <TextBlock Grid.Column="1"
                                        Text="Current configuration"
                                        Foreground="#FFD700"
-                                       FontFamily="Trebuchet MS"
+                                       FontFamily="Segoe UI"
                                        FontSize="11"
                                        FontWeight="Bold" />
                             <TextBlock Grid.Column="2"
                                        Text="Action"
                                        Foreground="#FFD700"
-                                       FontFamily="Trebuchet MS"
+                                       FontFamily="Segoe UI"
                                        FontSize="11"
                                        FontWeight="Bold"
                                        HorizontalAlignment="Center" />
@@ -414,7 +414,7 @@
                                             </Viewbox>
                                             <TextBlock Text="{Binding Title}"
                                                        Foreground="White"
-                                                       FontFamily="Trebuchet MS"
+                                                       FontFamily="Segoe UI"
                                                        FontSize="12"
                                                        FontWeight="Bold"
                                                        TextWrapping="Wrap" />
@@ -423,7 +423,7 @@
                                         <TextBlock Grid.Column="1"
                                                    Text="{Binding ConfigurationText}"
                                                    Foreground="#D6D6D6"
-                                                   FontFamily="Trebuchet MS"
+                                                   FontFamily="Segoe UI"
                                                    FontSize="12"
                                                    TextWrapping="Wrap"
                                                    VerticalAlignment="Center"
@@ -443,7 +443,7 @@
 
                     <TextBlock Text="{Binding ConfigurableComponentsStatusText}"
                                Foreground="#BDBDBD"
-                               FontFamily="Trebuchet MS"
+                               FontFamily="Segoe UI"
                                FontSize="12"
                                TextWrapping="Wrap"
                                TextAlignment="Center"
@@ -487,7 +487,7 @@
                                                     <StackPanel Orientation="Horizontal">
                                                         <TextBlock Text="{Binding Title}"
                                                                    Foreground="White"
-                                                                   FontFamily="Trebuchet MS"
+                                                                   FontFamily="Segoe UI"
                                                                    FontSize="15"
                                                                    FontWeight="Bold"
                                                                    VerticalAlignment="Center" />
@@ -508,12 +508,12 @@
                                                     </StackPanel>
                                                     <TextBlock Text="{Binding Description}"
                                                                Foreground="#DDDDDD"
-                                                               FontFamily="Trebuchet MS"
+                                                               FontFamily="Segoe UI"
                                                                TextWrapping="Wrap"
                                                                Margin="0,6,0,0" />
                                                     <TextBlock Text="{Binding ConnectorStatusText}"
                                                                Foreground="#FFD27A"
-                                                               FontFamily="Trebuchet MS"
+                                                               FontFamily="Segoe UI"
                                                                FontSize="12"
                                                                TextWrapping="Wrap"
                                                                Margin="0,6,0,0"
@@ -528,7 +528,7 @@
                                                         VerticalAlignment="Top">
                                                     <TextBlock Text="{Binding StatusText}"
                                                                Foreground="{Binding StatusForeground}"
-                                                               FontFamily="Trebuchet MS"
+                                                               FontFamily="Segoe UI"
                                                                FontSize="11"
                                                                FontWeight="Bold" />
                                                 </Border>

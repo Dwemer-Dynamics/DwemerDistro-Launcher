@@ -162,8 +162,9 @@
 
     <!-- Neutral charcoal button. Every other tier derives from this template so hover,
          pressed, focus, and disabled feedback stay identical across the launcher.
-         Rounded 8px corners, bold Trebuchet MS, and a 34px floor carry over the
-         visual character of the pre-Game-Center launcher controls. -->
+         Rounded 8px corners and a 34px floor carry over the visual character of the
+         pre-Game-Center launcher controls; labels use the shared Segoe UI face at
+         SemiBold so buttons read as part of the same type system as the text. -->
     <Style x:Key="GameCenter.Button" TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
@@ -171,9 +172,9 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Padding" Value="12,6" />
         <Setter Property="MinHeight" Value="34" />
-        <Setter Property="FontFamily" Value="Trebuchet MS" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
@@ -198,7 +199,7 @@
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground"
                                                 Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}, FallbackValue=White}" />
-                                        <Setter Property="FontFamily" Value="Trebuchet MS" />
+                                        <Setter Property="FontFamily" Value="Segoe UI" />
                                     </Style>
                                 </ContentPresenter.Resources>
                             </ContentPresenter>
@@ -391,17 +392,27 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Per-mod update action. It is the brand-filled button above by default and only swaps to
-         the shared success green when the mod's own version comparison confirmed the selected
-         branch is ahead - the view model's IsUpdateAvailable, never the yellow status colour,
-         which also stands for an unknown or missing version. Geometry, padding, the white label
-         and the base template's focus ring are inherited unchanged, so the swap costs no layout
-         and no focus visual. Hover and pressed keep moving two channels in green (fill darkens or
-         lightens, outline goes gold), and disabled is left to the brand style's neutral muted
-         treatment, so a confirmed update that becomes unavailable reads as "off" rather than as a
-         dimmer green. The DataContext of each of these buttons is its ServerManagerItemViewModel. -->
+    <!-- Per-mod update action. At rest it drops to the brand outline (transparent fill, brand
+         border), so the mod Webpage stays the panel's one strong action while the installed server is
+         current. It only takes a fill - the shared success green - when the mod's own version
+         comparison confirmed the selected branch is ahead: the view model's IsUpdateAvailable, never
+         the yellow status colour, which also stands for an unknown or missing version. Geometry,
+         position, the white label and the base template's focus ring are unchanged in every state,
+         so the swap costs no layout and no focus visual. Hover and pressed keep the brand feedback
+         (or move two channels in green for a confirmed update), and disabled is left to the brand
+         style's neutral muted treatment. The DataContext of each of these buttons is its
+         ServerManagerItemViewModel. -->
     <Style x:Key="GameCenter.ModAction.ChimUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.ChimButton}">
         <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="False" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
                     <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
@@ -433,6 +444,15 @@
         <Style.Triggers>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="False" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
                     <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
@@ -460,6 +480,15 @@
 
     <Style x:Key="GameCenter.ModAction.LorkhanUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.LorkhanButton}">
         <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="False" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
                     <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
@@ -491,6 +520,15 @@
         <Style.Triggers>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="False" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
                     <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
@@ -516,9 +554,9 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Compact secondary tier for the supporting actions inside an installed mod's action
-         panel. The brand-filled Update above them stays the one strong call to action; these sit
-         a step down at 34px with a transparent fill and a 1px outline, so the panel reads as one
+    <!-- Compact secondary tier for the supporting actions inside a mod's action panel. The one
+         brand-filled action of the current state stays the strong call to action; these sit a
+         step down at 34px with a transparent fill and a soft 1px outline, so the panel reads as one
          primary followed by supporting actions instead of a stack of equal-weight buttons.
          Geometry only - hover, pressed, focus, and disabled feedback all come from the base
          GameCenter.Button template, and the label stays full-strength white while enabled so the
@@ -526,7 +564,7 @@
          BorderStrong / TextMuted treatment every other tier uses. -->
     <Style x:Key="GameCenter.ModAction.SecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
         <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Setter Property="Height" Value="34" />
         <Setter Property="MinHeight" Value="34" />
@@ -550,7 +588,7 @@
 
     <!-- Brand-outlined variants of the compact secondary tier. They keep the mod's colour on the
          outline so a supporting action still belongs to its mod, but never take a brand fill at
-         rest - the fill is reserved for that panel's Update action. Hover and pressed move the
+         rest - the fill is reserved for that panel's primary action. Hover and pressed move the
          same two channels as the filled brand buttons (fill to the brand tint, outline to the
          brand tone), and disabled drops the brand for the shared neutral treatment. -->
     <Style x:Key="GameCenter.ModAction.ReignSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
@@ -633,17 +671,83 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Hairline rule that closes the reversible actions and opens the destructive one, so the
-         purge below it is a deliberate reach rather than the next button in the stack. Purely
+    <!-- Mod Webpage action. It is the panel's primary action while the installed server is
+         current, so it takes the brand fill at rest. When the mod's own version check confirms an
+         update, the Update button above it takes the emphasis and this drops to the brand outline
+         (transparent fill, brand border) without moving. Hover and pressed come from the brand
+         style in both states. The DataContext is the main view model, so each variant watches its
+         own manager. Reign and Lorkhan never report IsUpdateAvailable and use the plain brand
+         buttons. -->
+    <Style x:Key="GameCenter.ModAction.ChimWebpageButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.ChimButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding HerikaManager.IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.StobeWebpageButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.StobeButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding StobeManager.IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.DialecticWebpageButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.DialecticButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding DialecticManager.IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- External pages and local logs: a compact, wrapping group of neutral outline buttons
+         under the mod's main actions. Visible labels may be shortened, but every button keeps
+         its full automation name and help text, and the WrapPanel keeps document (tab) order. -->
+    <Style x:Key="GameCenter.ModAction.LinkButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="Height" Value="30" />
+        <Setter Property="MinHeight" Value="30" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="Margin" Value="0,0,6,6" />
+    </Style>
+
+    <!-- Hairline rule that closes the everyday actions and opens the Manage group, so rollback
+         and removal are a deliberate reach rather than the next button in the stack. Purely
          decorative: it takes no hit testing and no focus and carries no automation name, so the
          tab order and the screen-reader walk of the panel are unchanged. -->
     <Style x:Key="GameCenter.ModAction.Separator" TargetType="Border">
         <Setter Property="Height" Value="1" />
-        <Setter Property="Background" Value="{DynamicResource GameCenter.BorderStrong}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
-        <Setter Property="Margin" Value="0,14,0,14" />
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Border}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+        <Setter Property="Margin" Value="0,12,0,8" />
         <Setter Property="IsHitTestVisible" Value="False" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
+    </Style>
+
+    <!-- Quiet "Manage" label under the separator. -->
+    <Style x:Key="GameCenter.ModAction.GroupLabel" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,0,0,6" />
     </Style>
 
     <Style x:Key="GameCenter.SuccessButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
@@ -691,9 +795,9 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Filled red destructive action, for a purge that deletes user data. DangerButton is the
-         outline treatment used for reversible risky actions such as Force Stop; this one is filled
-         so it never reads as just another secondary button beside a brand-filled action. The label
+    <!-- Filled red destructive action, for the final confirmation of a purge in the uninstall and
+         update dialogs. DangerButton is the outline treatment for risky actions; this one is filled
+         so the confirming click never reads as just another secondary button. The label
          stays the same near-white in every state - hover and pressed move the fill, not the text -
          which keeps it above 5:1 on the burgundy-red fill and matches the brand buttons next to it. -->
     <Style x:Key="GameCenter.ServerUninstallButton" TargetType="Button" BasedOn="{StaticResource GameCenter.DangerButton}">
@@ -715,6 +819,46 @@
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Uninstall inside a mod's action panel: a restrained danger outline under the Manage label
+         rather than a red fill, so removal stays clearly destructive without competing with the
+         panel's primary action. The typed confirmation in the dialog keeps the filled red. -->
+    <Style x:Key="GameCenter.ModAction.UninstallButton" TargetType="Button" BasedOn="{StaticResource GameCenter.DangerButton}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Height" Value="34" />
+        <Setter Property="MinHeight" Value="34" />
+        <Setter Property="Padding" Value="10,0" />
+        <Style.Triggers>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Force Stop: always labelled and always reachable, but neutral at rest so it does not shout
+         beside Start and Stop. Hover, press and keyboard focus switch it to the danger treatment;
+         focus also keeps the base template's white focus ring. -->
+    <Style x:Key="GameCenter.ForceStopButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="Transparent" />
+        <Style.Triggers>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -791,7 +935,7 @@
     </Style>
 
     <!-- Window chrome buttons: square, borderless, no gold accent. These keep their own
-         template so the rounded, bold Trebuchet treatment of GameCenter.Button never
+         template so the rounded, outlined treatment of GameCenter.Button never
          reaches the caption glyphs. -->
     <Style x:Key="GameCenter.CaptionButton" TargetType="Button">
         <Setter Property="Background" Value="Transparent" />
