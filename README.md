@@ -1,5 +1,7 @@
 # DwemerDistro Launcher WPF
 
+Community mod releases: see [publishing and installation](docs/COMMUNITY_MODS.md).
+
 This workspace is the C# WPF launcher rewrite for DwemerDistro.
 
 It keeps WSL distro management in the launcher, but separates launcher binary updates from WSL distro updates. The launcher updates itself from GitHub Releases using a helper updater executable.
