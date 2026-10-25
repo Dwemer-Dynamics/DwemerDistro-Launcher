@@ -5,9 +5,12 @@ using System.Text.Json.Nodes;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
 
-public sealed class AppServerException(int code, string message) : Exception(message)
+public sealed class AppServerException(int code, string message, string reason = "") : Exception(message)
 {
     public int Code { get; } = code;
+
+    /// <summary>A refused session's data.reason token (for example account_home_unmanaged_config); empty otherwise.</summary>
+    public string Reason { get; } = reason;
 }
 
 /// <summary>
@@ -175,7 +178,9 @@ public sealed class CodexAppServerClient : IAsyncDisposable
                 // A refused session (-32001) names its reason in data.reason, for example busy or probe_stale.
                 var reason = error.TryGetProperty("data", out var data) ? AssistantCliService.GetString(data, "reason") : string.Empty;
                 var text = AssistantCliService.GetString(error, "message");
-                completion.TrySetException(new AppServerException(code, reason.Length > 0 && reason.Length <= 64 ? $"{text} ({reason})" : text));
+                var token = reason.Length is > 0 and <= 64 && reason.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '_') ? reason : string.Empty;
+                completion.TrySetException(new AppServerException(code, reason.Length > 0 && reason.Length <= 64 ? $"{text} ({reason})" : text,
+                    code == -32001 ? token : string.Empty));
             }
             else
             {
@@ -244,6 +249,9 @@ public sealed class AssistantTurnRunner
         _timeout = timeout;
         client.NotificationReceived += OnNotification;
     }
+
+    /// <summary>The running turn's id once known; null before turn/start answers or when no turn runs.</summary>
+    public string? ActiveTurnId { get { lock (_gate) return _current?.Id; } }
 
     /// <summary>Raised off the UI thread when an interrupt was sent but refused or not answered.</summary>
     public event Action<string>? StopFailed;
