@@ -35,4 +35,3 @@
   <TextBlock x:Name="Status" Grid.Row="3" Foreground="#CCCCCC" Margin="0,10,0,0" AutomationProperties.LiveSetting="Polite"/>
  </Grid>
 </UserControl>
-
