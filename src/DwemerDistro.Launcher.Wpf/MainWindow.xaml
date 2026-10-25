@@ -218,6 +218,7 @@
                             </ListBox>
                             <TextBlock Text="No custom mods yet." Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="11" Margin="5,2,0,6"
                                        Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}" />
+                            <Button Content="Browse community mods" Command="{Binding BrowseCommunityModsCommand}" Style="{StaticResource GameCenter.Button}" Margin="0,0,0,6" />
                             <Button Content="Add custom mod" Command="{Binding AddCustomModCommand}" Style="{StaticResource GameCenter.Button}"
                                     Margin="0,6,0,0" Height="32"
                                     AutomationProperties.Name="Add custom mod"
@@ -1069,11 +1070,9 @@
                                              The list comes from the last explicit check stored by the distro; choosing
                                              a branch changes nothing until Switch branch reviews and confirms it. -->
                                         <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" TextTrimming="CharacterEllipsis"
-                                                   ToolTip="{Binding SelectedCustomMod.Repository}">
-                                            <Run Text="Branch" /> <Run Text="{Binding SelectedCustomMod.Branch, Mode=OneWay}" />
-                                            <Run Text=" · Version" /> <Run Text="{Binding SelectedCustomMod.ShortCommit, Mode=OneWay}" />
-                                        </TextBlock>
+                                                   ToolTip="{Binding SelectedCustomMod.Repository}" Text="{Binding SelectedCustomModVersionText}" />
                                         <ComboBox ItemsSource="{Binding SelectedCustomModBranchOptions}" SelectedItem="{Binding SelectedCustomModBranch}"
+                                                  Visibility="{Binding SelectedCustomModUsesBranches, Converter={StaticResource BoolToVisibility}}"
                                                   Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
                                                   AutomationProperties.Name="Custom mod branch"
                                                   IsEnabled="{Binding IsComponentInteractionEnabled}"
@@ -1081,7 +1080,7 @@
                                         <TextBlock Text="{Binding SelectedCustomModBranchNotice}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
                                                    Margin="0,5,0,0" AutomationProperties.Name="Custom mod branch notice"
                                                    Visibility="{Binding HasSelectedCustomModBranchNotice, Converter={StaticResource BoolToVisibility}}" />
-                                        <Grid Margin="0,6,0,0">
+                                        <Grid Margin="0,6,0,0" Visibility="{Binding SelectedCustomModUsesBranches, Converter={StaticResource BoolToVisibility}}">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                             <Button Content="Check branches" Command="{Binding CheckCustomModBranchesCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
                                                     AutomationProperties.HelpText="Ask the repository which branches the author offers now. Nothing is installed." />
@@ -1106,8 +1105,8 @@
                                         <Button Content="Back up" Command="{Binding BackupCustomModCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
                                                 AutomationProperties.HelpText="Save a copy of this mod's settings and database inside the distro." />
                                         <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
-                                        <Button Content="Unregister" Command="{Binding UnregisterCustomModCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
-                                                AutomationProperties.HelpText="Remove this mod from the list. Its files and database are kept." />
+                                        <Button Content="{Binding SelectedCustomModUnregisterActionName}" Command="{Binding UnregisterCustomModCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
+                                                AutomationProperties.HelpText="Review removal. Private data and server files are kept; package installs also remove their owned game client files." />
                                     </StackPanel>
                                     <StackPanel Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}">
                                         <TextBlock Text="Custom mods" FontSize="18" Foreground="{DynamicResource GameCenter.Text}" />
