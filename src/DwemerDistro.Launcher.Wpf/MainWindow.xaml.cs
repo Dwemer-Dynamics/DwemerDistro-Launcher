@@ -322,6 +322,66 @@ public partial class MainWindow : Window
         LibraryNavButton.IsChecked = true;
     }
 
+    /// <summary>
+    /// Swallows the second press of a double-click on the header's Start/Stop Server button.
+    /// </summary>
+    // Start runs synchronously into the starting state, which swaps this button to Stop Server, so the
+    // second press of a double-click or an auto-repeated Enter would stop the server just started.
+    private void ServerRuntimeButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount > 1)
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void ServerRuntimeButton_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.IsRepeat && e.Key == Key.Enter)
+        {
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// A user's click on a sidebar mod shows it on the Mods page, including a click on the mod
+    /// that is already selected. Binding and refresh selection changes never raise this.
+    /// </summary>
+    private void ModRail_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ItemsControl rail &&
+            e.OriginalSource is DependencyObject source &&
+            ItemsControl.ContainerFromElement(rail, source) is ListBoxItem)
+        {
+            LibraryNavButton.IsChecked = true;
+        }
+    }
+
+    private void ModRail_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.None ||
+            sender is not ItemsControl rail ||
+            e.OriginalSource is not DependencyObject source ||
+            (!ReferenceEquals(source, rail) && ItemsControl.ContainerFromElement(rail, source) is not ListBoxItem))
+        {
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.Up:
+            case Key.Down:
+            case Key.Home:
+            case Key.End:
+            case Key.PageUp:
+            case Key.PageDown:
+            case Key.Space:
+            case Key.Enter:
+                LibraryNavButton.IsChecked = true;
+                break;
+        }
+    }
+
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSelectedGameDetails();
@@ -489,14 +549,20 @@ public partial class MainWindow : Window
             case Key.D1:
             case Key.NumPad1:
                 GameRail.SelectedIndex = 0;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.D2:
             case Key.NumPad2:
                 GameRail.SelectedIndex = 1;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.D3:
             case Key.NumPad3:
                 GameRail.SelectedIndex = 2;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.M:
                 LibraryNavButton.IsChecked = true;
@@ -532,12 +598,12 @@ public partial class MainWindow : Window
             5 => ApiKeysHost,
             _ => LibraryLandmark
         };
-        // Visual order: the sidebar's game list and utilities, then the header, page and console.
+        // Visual order: the full-width header, the sidebar's game list and utilities, then the page and console.
         var landmarks = new FrameworkElement[]
         {
+            NavigationLandmark,
             GameRail,
             UtilityLandmark,
-            NavigationLandmark,
             activePage,
             _isConsoleExpanded && _outputRichTextBox is not null ? _outputRichTextBox : ToggleConsoleButton
         };
