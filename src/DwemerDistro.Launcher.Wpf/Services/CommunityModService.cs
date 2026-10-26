@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Net;
@@ -24,6 +25,9 @@ public sealed record CommunityRelease(JsonObject Document, string DescriptorHash
     public string Version => CommunityModService.Text(Document, "version");
     public string Id => CommunityModService.Text(Manifest, "id");
     public string Name => CommunityModService.Text(Manifest, "name");
+    /// <summary>The manifest's optional author or team name as plain text; empty when absent or invalid.</summary>
+    public string Author => CommunityModService.DisplayText(Manifest["author"], 80);
+    public string GameName => CommunityModService.DisplayText(Game["name"], 200);
     public JsonObject Game => (JsonObject)Manifest["game"]!;
     public JsonObject Install => (JsonObject)Manifest["distribution"]!["client"]!["install"]!;
 }
@@ -64,6 +68,41 @@ public sealed class CommunityModService : IDisposable
 
     internal static string Text(JsonObject obj, string key) => obj[key]?.GetValue<string>() ?? string.Empty;
     public void Dispose() => _http.Dispose();
+
+    /// <summary>Optional manifest text for display only: trimmed, bounded and never markup; empty when absent or unsafe.</summary>
+    internal static string DisplayText(JsonNode? node, int maximum)
+    {
+        string? text;
+        // A parsed descriptor can hold an escaped lone surrogate, which JsonElement refuses to read as a string.
+        try { if (node is not JsonValue value || !value.TryGetValue<string>(out text)) return string.Empty; }
+        catch (InvalidOperationException) { return string.Empty; }
+        // Like Core and the publisher, reject Cc/Cf/Cs/Zl/Zp anywhere in the original text (lone surrogates
+        // fail to decode); a literal U+FFFD is ordinary text. Only the length limit applies to the trimmed text.
+        for (var rest = text.AsSpan(); !rest.IsEmpty;)
+        {
+            if (Rune.DecodeFromUtf16(rest, out var rune, out var used) != System.Buffers.OperationStatus.Done ||
+                Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format
+                    or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator)
+                return string.Empty;
+            rest = rest[used..];
+        }
+        var trimmed = text.Trim();
+        return trimmed.EnumerateRunes().Count() > maximum ? string.Empty : trimmed;
+    }
+
+    /// <summary>"By" the manifest author, else the public repository owner; empty for a local source.</summary>
+    internal static string Credit(string? author, string? repository)
+    {
+        var name = string.IsNullOrWhiteSpace(author) ? RepositoryOwner(repository) : author.Trim();
+        return name.Length == 0 ? string.Empty : "By " + name;
+    }
+
+    internal static string RepositoryOwner(string? repository)
+    {
+        if (!Uri.TryCreate(repository, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return string.Empty;
+        var owner = uri.AbsolutePath.Trim('/').Split('/')[0];
+        return Regex.IsMatch(owner, "^[A-Za-z0-9_.-]{1,100}$", RegexOptions.CultureInvariant) ? owner : string.Empty;
+    }
 
     internal static string Relative(string value)
     {

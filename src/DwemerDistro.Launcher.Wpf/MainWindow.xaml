@@ -59,6 +59,14 @@
             <Setter Property="MinWidth" Value="104" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
+        <!-- Optional custom mod game and author lines collapse when the registry has none. -->
+        <Style x:Key="CustomMod.OptionalText" TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Style.Triggers>
+                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+                <Trigger Property="Text" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="ShellGrid" Background="{DynamicResource GameCenter.Window}">
@@ -1196,12 +1204,19 @@
                                 </StackPanel>
                             </Grid>
                             <!-- Plain UI font: the shared title style's brand fonts follow the official selection. -->
+                            <!-- Title, the game directly below it, the quieter author credit, then the description. -->
                             <StackPanel Grid.Row="1" Margin="18,14" Visibility="{Binding HasSelectedCustomMod, Converter={StaticResource BoolToVisibility}}">
                                 <TextBlock Text="{Binding SelectedCustomMod.Name}" Foreground="{DynamicResource GameCenter.Text}"
                                            FontSize="22" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding SelectedCustomMod.GameName}" ToolTip="{Binding SelectedCustomMod.GameName}"
+                                           Style="{StaticResource CustomMod.OptionalText}" Foreground="{DynamicResource GameCenter.TextMuted}"
+                                           FontSize="14" Margin="0,1,0,0" />
+                                <TextBlock Text="{Binding SelectedCustomMod.AuthorCredit}" ToolTip="{Binding SelectedCustomMod.AuthorCredit}"
+                                           Style="{StaticResource CustomMod.OptionalText}" Foreground="{DynamicResource GameCenter.TextMuted}"
+                                           Opacity="0.75" FontSize="11" Margin="0,3,0,0" />
                                 <TextBlock Text="{Binding SelectedCustomMod.Description}" ToolTip="{Binding SelectedCustomMod.Description}"
                                            Foreground="{DynamicResource GameCenter.Text}" TextTrimming="CharacterEllipsis"
-                                           FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" />
+                                           FontSize="12" FontWeight="SemiBold" Margin="0,6,0,0" />
                             </StackPanel>
                             <StackPanel Grid.Row="1" Margin="18,14" Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}">
                                 <TextBlock Text="Custom mods" Foreground="{DynamicResource GameCenter.Text}" FontSize="22" FontWeight="SemiBold" />

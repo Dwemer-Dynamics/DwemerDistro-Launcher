@@ -92,9 +92,9 @@ public partial class CommunityModDetails : System.Windows.Controls.UserControl, 
             _release = await _service.CheckAsync(RepositoryBox.Text.Trim(), _cancellation.Token);
             if (_disposed) return;
             ModTitle.Text = _release.Name;
-            AuthorText.Text = "By " + new Uri(_release.Repository).AbsolutePath.Trim('/').Split('/')[0];
+            ReleaseText.Text = _release.GameName;
+            AuthorText.Text = CommunityModService.Credit(_release.Author, _release.Repository);
             DescriptionText.Text = CommunityModService.Text(_release.Manifest, "description");
-            ReleaseText.Text = CommunityModService.Text(_release.Game, "name");
             CompatibilityText.Text = CommunityModService.Text(_release.Game, "enable_in_game");
             BannerImage.Source = null;
             foreach (var kind in new[] { "icon", "banner" })

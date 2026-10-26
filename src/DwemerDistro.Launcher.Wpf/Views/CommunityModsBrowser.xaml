@@ -3,6 +3,14 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              IsVisibleChanged="Browser_VisibilityChanged" Unloaded="Browser_Unloaded">
     <UserControl.Resources>
+        <!-- Missing game or author metadata collapses instead of leaving a blank row. -->
+        <Style x:Key="OptionalText" TargetType="TextBlock">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Style.Triggers>
+                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+                <Trigger Property="Text" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="ModTile" TargetType="Button">
             <Setter Property="Width" Value="222" />
             <Setter Property="Margin" Value="0,0,12,12" />
@@ -79,10 +87,15 @@
                                     </Image>
                                     <Image Source="{Binding Artwork}" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
                                 </Grid>
-                                <TextBlock Text="{Binding Title}" Foreground="{DynamicResource GameCenter.Text}"
-                                           FontSize="14" FontWeight="SemiBold" Margin="12,10,12,3" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Author}" Foreground="{DynamicResource GameCenter.TextMuted}"
-                                           FontSize="11" Margin="12,0,12,11" TextTrimming="CharacterEllipsis" />
+                                <!-- Title, then the game directly below it, then the quieter author credit; plain text only. -->
+                                <StackPanel Margin="12,10,12,11">
+                                    <TextBlock Text="{Binding Title}" Foreground="{DynamicResource GameCenter.Text}"
+                                               FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding GameName}" Style="{StaticResource OptionalText}"
+                                               Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" Margin="0,1,0,0" />
+                                    <TextBlock Text="{Binding AuthorCredit}" Style="{StaticResource OptionalText}"
+                                               Foreground="{DynamicResource GameCenter.TextMuted}" Opacity="0.75" FontSize="11" Margin="0,3,0,0" />
+                                </StackPanel>
                             </StackPanel>
                         </Button>
                     </DataTemplate>
