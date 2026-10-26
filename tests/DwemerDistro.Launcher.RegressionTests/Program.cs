@@ -783,7 +783,7 @@ try
         {"schema_version":1,"mods":[
           {"id":"example-server","name":"Example","state":"ready","commit":"0123456789abcdef0123456789abcdef01234567",
            "dashboard_url":"http://127.0.0.1:19000/custom-mods/example-server/ui/","health_url":"http://127.0.0.1:19000/custom-mods/example-server/health.php",
-           "repository":"https://github.com/owner/example-server",
+           "repository":"https://github.com/owner/example-server","game_name":"Test Game","author":"Mod Team",
            "icon_url":"http://127.0.0.1:19000/custom-mods/example-server/ui/images/icon.png","banner_url":"http://127.0.0.1:19000/custom-mods/example-server/ui/banner.JPG"},
           {"id":"evil-mod","name":"Evil","state":"failed","message":"Update failed",
            "dashboard_url":"https://attacker.example/","health_url":"http://127.0.0.1:19000/custom-mods/other-mod/health.php",
@@ -795,6 +795,10 @@ try
            && customMods[0].ShortCommit == "0123456" && customMods[0].State == CustomModState.Ready
            && customMods[1].DashboardUrl is null && customMods[1].HealthUrl is null && customMods[1].State == CustomModState.Failed,
         "Custom mod links must stay on the fixed local route for their own id, and invalid ids are dropped.");
+    Assert(customMods[0].GameName == "Test Game" && customMods[0].AuthorCredit == "By Mod Team"
+           && customMods[1].GameName.Length == 0 && customMods[1].AuthorCredit.Length == 0
+           && (customMods[0] with { Author = "" }).AuthorCredit == "By owner",
+        "Optional custom mod game and author must parse when present, stay empty when absent, and fall back to the owner.");
     Assert(!CustomModService.IsSafeModUrl("http://127.0.0.1:19000/custom-mods/example-server/../HerikaServer/", "example-server")
            && !CustomModService.IsSafeModUrl("http://127.0.0.1:19000/custom-mods/example-server/.git/config", "example-server")
            && !CustomModService.IsSafeModUrl("http://127.0.0.1:19000/custom-mods/example-server/ui/\n", "example-server")

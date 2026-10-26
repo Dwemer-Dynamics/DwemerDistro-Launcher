@@ -402,6 +402,8 @@ public sealed partial class CustomModService(WslService wsl)
                 IsSafeModAssetUrl(entry.BannerUrl, entry.Id!, entry.ServerFolder) ? entry.BannerUrl : null)
             {
                 ServerFolder = entry.ServerFolder,
+                GameName = Clean(entry.GameName, 400) ?? string.Empty,
+                Author = Clean(entry.Author, 160) ?? string.Empty,
                 InstallMode = entry.InstallMode ?? "branch",
                 ReleaseVersion = entry.PendingRelease?.Tag ?? entry.Release?.Tag ?? string.Empty,
                 DefaultBranch = IsValidBranchName(entry.Branches?.Default) ? entry.Branches!.Default! : string.Empty,
@@ -573,6 +575,8 @@ public sealed partial class CustomModService(WslService wsl)
         public string? Id { get; set; }
         public string? Name { get; set; }
         public string? Description { get; set; }
+        public string? GameName { get; set; }
+        public string? Author { get; set; }
         public string? Repository { get; set; }
         public string? Branch { get; set; }
         public string? Commit { get; set; }
@@ -650,6 +654,16 @@ public sealed record CustomModInfo(
     string? BannerUrl)
 {
     public string? ServerFolder { get; init; }
+
+    /// <summary>The manifest's game from the last install or update; empty for version 1 manifests and older entries.</summary>
+    public string GameName { get; init; } = string.Empty;
+
+    /// <summary>The manifest's author or team name from the last install or update; plain display text only.</summary>
+    public string Author { get; init; } = string.Empty;
+
+    /// <summary>"By" the author, else the public repository owner; empty for a local source.</summary>
+    public string AuthorCredit => CommunityModService.Credit(Author, Repository);
+
     public string InstallMode { get; init; } = "branch";
     public string ReleaseVersion { get; init; } = string.Empty;
     public string ClientState { get; init; } = string.Empty;

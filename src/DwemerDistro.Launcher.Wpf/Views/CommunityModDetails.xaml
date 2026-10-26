@@ -7,6 +7,13 @@
             <Setter Property="TextWrapping" Value="Wrap" />
             <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         </Style>
+        <!-- Missing game or author metadata collapses instead of leaving a blank row. -->
+        <Style x:Key="OptionalText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Style.Triggers>
+                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+                <Trigger Property="Text" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+            </Style.Triggers>
+        </Style>
         <Style TargetType="TextBox">
             <Setter Property="Padding" Value="8,6" />
             <Setter Property="Background" Value="{DynamicResource GameCenter.Panel}" />
@@ -58,9 +65,12 @@
                             </Grid>
                         </Border>
                         <StackPanel Grid.Column="1" Margin="20,0,0,0">
+                            <!-- Title, the game directly below it, then the quieter author credit; plain text only. -->
                             <TextBlock x:Name="ModTitle" Text="Choose a mod" FontSize="23" FontWeight="SemiBold" />
-                            <TextBlock x:Name="AuthorText" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" Margin="0,6,0,0" />
-                            <TextBlock x:Name="ReleaseText" Margin="0,6,0,0" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="12" />
+                            <TextBlock x:Name="ReleaseText" Style="{StaticResource OptionalText}" Margin="0,2,0,0"
+                                       Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="14" />
+                            <TextBlock x:Name="AuthorText" Style="{StaticResource OptionalText}" Margin="0,5,0,0"
+                                       Foreground="{DynamicResource GameCenter.TextMuted}" Opacity="0.75" FontSize="12" />
                             <TextBlock x:Name="DescriptionText" Text="Select a mod to see what it adds to your game." Margin="0,16,0,20" FontSize="14" />
                             <WrapPanel>
                                 <Button x:Name="InstallButton" Content="Install server" Style="{StaticResource GameCenter.PrimaryButton}"

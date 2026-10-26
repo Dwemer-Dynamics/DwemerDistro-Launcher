@@ -14,7 +14,8 @@ namespace DwemerDistro.Launcher.Wpf.Views;
 public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
 {
     private readonly ObservableCollection<CommunityModCard> _cards = [];
-    private readonly Dictionary<string, (string Title, ImageSource? Artwork)> _artwork = new(StringComparer.Ordinal);
+    // Release metadata and artwork per repository, so repeated searches show the same title, game and author.
+    private readonly Dictionary<string, (string Title, string GameName, string Author, ImageSource? Artwork)> _artwork = new(StringComparer.Ordinal);
     private CancellationTokenSource? _search;
     private bool _loaded;
 
@@ -69,6 +70,8 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
                 if (_artwork.TryGetValue(card.Repository, out var cached))
                 {
                     card.Title = cached.Title;
+                    card.GameName = cached.GameName;
+                    card.Author = cached.Author;
                     card.Artwork = cached.Artwork;
                 }
                 _cards.Add(card);
@@ -86,6 +89,8 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
                     var release = await service.CheckAsync(card.Repository, search.Token);
                     search.Token.ThrowIfCancellationRequested();
                     if (!string.IsNullOrWhiteSpace(release.Name) && release.Name.Length <= 60) card.Title = release.Name;
+                    card.GameName = release.GameName;
+                    if (release.Author.Length != 0) card.Author = release.Author;
                     ImageSource? artwork = null;
                     foreach (var kind in new[] { "icon", "banner" })
                     {
@@ -120,7 +125,7 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
                     search.Token.ThrowIfCancellationRequested();
                     card.Artwork = artwork;
                     if (_artwork.Count >= 60) _artwork.Clear();
-                    _artwork[card.Repository] = (card.Title, artwork);
+                    _artwork[card.Repository] = (card.Title, card.GameName, card.Author, artwork);
                 }
                 catch (Exception error) when (error is HttpRequestException or IOException or System.Text.Json.JsonException
                     or InvalidOperationException or ArgumentException or NotSupportedException or FormatException
@@ -154,10 +159,24 @@ public partial class CommunityModsBrowser : System.Windows.Controls.UserControl
 public sealed class CommunityModCard(CommunityRepository repository) : ObservableObject
 {
     private string _title = repository.Name.Split('/').Last();
+    private string _gameName = string.Empty;
+    private string _author = repository.Name.Split('/')[0];
     private ImageSource? _artwork;
     public string Repository => repository.Repository;
-    public string Author => repository.Name.Split('/')[0];
     public string Description => repository.Description;
     public string Title { get => _title; set => SetProperty(ref _title, value); }
+    public string GameName { get => _gameName; set => SetProperty(ref _gameName, value); }
+
+    /// <summary>The release manifest's author once read; the repository owner until then or without one.</summary>
+    public string Author
+    {
+        get => _author;
+        set
+        {
+            if (SetProperty(ref _author, value)) OnPropertyChanged(nameof(AuthorCredit));
+        }
+    }
+
+    public string AuthorCredit => CommunityModService.Credit(Author, null);
     public ImageSource? Artwork { get => _artwork; set => SetProperty(ref _artwork, value); }
 }
