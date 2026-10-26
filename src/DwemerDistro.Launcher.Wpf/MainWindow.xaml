@@ -204,9 +204,10 @@
                     </Grid>
                     <!-- One runtime button: green Start Server while stopped, red Stop Server while the
                          server is starting or running, each on its own unchanged command and guard, so
-                         Stop stays reachable during startup. Startup progress lives in the tooltip, help
-                         text and item status instead of the label, so the label always names what a press
-                         will do and its width never changes. The Preview handlers drop the second press
+                         Stop stays reachable during startup. Startup progress shows as a small spinner
+                         beside the label, plus the tooltip, help text and item status, so the label always
+                         names what a press will do; the spinner slot is reserved in every state so the
+                         width never changes. The Preview handlers drop the second press
                          of a double-click and a held Enter key, which would otherwise stop the server the
                          first press had just started. -->
                     <Button x:Name="ServerRuntimeButton" MinWidth="132" Margin="0,0,6,0"
@@ -217,6 +218,60 @@
                             <Style TargetType="Button" BasedOn="{StaticResource GameCenter.ServerRuntimeButton}">
                                 <Setter Property="Command" Value="{Binding StartServerCommand}" />
                                 <Setter Property="Content" Value="Start Server" />
+                                <Setter Property="ContentTemplate">
+                                    <Setter.Value>
+                                        <!-- Content stays the plain label string. Equal slots either side
+                                             keep it centred; the spinner shows only while starting, turns
+                                             only while Windows client-area animation is on, and is
+                                             removed from the clock again when startup ends. -->
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="14" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="14" />
+                                                </Grid.ColumnDefinitions>
+                                                <Path x:Name="StartingSpinner" Grid.Column="0"
+                                                      Width="10" Height="10" Margin="0,0,4,0"
+                                                      HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                      Data="M5,1 A4,4 0 1 1 1,5"
+                                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                                      StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      RenderTransformOrigin="0.5,0.5"
+                                                      Visibility="Hidden" IsHitTestVisible="False" Focusable="False">
+                                                    <Path.RenderTransform>
+                                                        <RotateTransform Angle="0" />
+                                                    </Path.RenderTransform>
+                                                </Path>
+                                                <TextBlock Grid.Column="1" Text="{Binding}" VerticalAlignment="Center"
+                                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+                                            </Grid>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding DataContext.IsServerStarting, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Value="True">
+                                                    <Setter TargetName="StartingSpinner" Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding DataContext.IsServerStarting, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Value="True" />
+                                                        <Condition Binding="{Binding Path=(SystemParameters.ClientAreaAnimation)}" Value="True" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <MultiDataTrigger.EnterActions>
+                                                        <BeginStoryboard x:Name="StartingSpin">
+                                                            <Storyboard>
+                                                                <DoubleAnimation Storyboard.TargetName="StartingSpinner"
+                                                                                 Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                                                 From="0" To="360" Duration="0:0:1" RepeatBehavior="Forever" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </MultiDataTrigger.EnterActions>
+                                                    <MultiDataTrigger.ExitActions>
+                                                        <RemoveStoryboard BeginStoryboardName="StartingSpin" />
+                                                    </MultiDataTrigger.ExitActions>
+                                                </MultiDataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </Setter.Value>
+                                </Setter>
                                 <Setter Property="AutomationProperties.Name" Value="Start Server" />
                                 <Setter Property="AutomationProperties.ItemStatus" Value="Server stopped" />
                                 <Setter Property="AutomationProperties.HelpText" Value="Start the complete Dwemer Distro stack." />
