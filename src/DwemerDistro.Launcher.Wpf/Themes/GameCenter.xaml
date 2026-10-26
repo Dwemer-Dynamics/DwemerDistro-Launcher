@@ -842,7 +842,8 @@
 
     <!-- Force Stop: always labelled and always reachable, but neutral at rest so it does not shout
          beside Start and Stop. Hover, press and keyboard focus switch it to the danger treatment;
-         focus also keeps the base template's white focus ring. -->
+         focus also keeps the base template's white focus ring. High contrast uses the system button
+         colours, and the trigger order keeps it there over the focus, hover and press tones. -->
     <Style x:Key="GameCenter.ForceStopButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
         <Setter Property="Background" Value="Transparent" />
         <Style.Triggers>
@@ -860,10 +861,125 @@
                 <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
             </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="False" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+            </MultiDataTrigger>
         </Style.Triggers>
     </Style>
 
-    <!-- Dark action menus (the header's Stop menu). Items keep the button type system: Segoe UI
+    <!-- The header's one Start / Stop runtime button. Green while it starts the server; a Tag of "Stop"
+         turns it red while it stops one that is starting or running. Both fills keep the near-white
+         label in every state: hover and press darken the fill and take the gold outline rather than
+         lightening it, so the label stays above 4.5:1. Disabled drops to the neutral raised tier, as
+         the other filled buttons do. The label always says which action it is, so colour is never
+         the only signal, and high contrast swaps to the system button colours; those triggers come
+         last so they win over every state above. Based on GameCenter.Button, not PrimaryButton, so
+         no burgundy hover can leak through. -->
+    <Style x:Key="GameCenter.ServerRuntimeButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+            <Trigger Property="Tag" Value="Stop">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Danger}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+            </Trigger>
+            <MultiTrigger>
+                <MultiTrigger.Conditions>
+                    <Condition Property="Tag" Value="Stop" />
+                    <Condition Property="IsMouseOver" Value="True" />
+                </MultiTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiTrigger>
+            <MultiTrigger>
+                <MultiTrigger.Conditions>
+                    <Condition Property="Tag" Value="Stop" />
+                    <Condition Property="IsPressed" Value="True" />
+                </MultiTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiTrigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="False" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Dark action menus. Items keep the button type system: Segoe UI
          SemiBold 12 on the raised panel, a gold-soft outline on the highlighted (hovered or arrow-key)
          item, and the muted treatment when an item's command cannot run. The label's TextBlock style
          binds to the item so the app-wide TextBlock style never repaints a disabled item white.

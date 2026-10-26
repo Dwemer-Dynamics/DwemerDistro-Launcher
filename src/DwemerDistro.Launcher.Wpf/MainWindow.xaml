@@ -140,7 +140,7 @@
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
                     <!-- The one Update Distro action in the normal launcher. The widest state is reserved
-                         by this outer slot rather than by the coloured frame, so Start and the Stop menu
+                         by this outer slot rather than by the coloured frame, so Start / Stop and Force Stop
                          never move while the visible button sizes itself to whatever it is currently
                          saying; the resting "Update Distro" frame therefore hugs its label instead of
                          carrying the available-update text's width all day. The badge is an overlay in the
@@ -202,44 +202,56 @@
                             </Grid>
                         </Button>
                     </Grid>
-                    <Button Command="{Binding StartServerCommand}"
-                            Style="{StaticResource GameCenter.PrimaryButton}" MinWidth="132" Margin="0,0,6,0"
-                            AutomationProperties.Name="{Binding StartButtonText}"
-                            AutomationProperties.HelpText="Start the complete Dwemer Distro stack.">
-                        <Grid>
-                            <!-- Hidden content reserves the widest animation state without changing accessibility text. -->
-                            <TextBlock Text="Server is Starting ..." Visibility="Hidden" />
-                            <TextBlock Text="{Binding StartButtonText}" HorizontalAlignment="Center" />
-                        </Grid>
+                    <!-- One runtime button: green Start Server while stopped, red Stop Server while the
+                         server is starting or running, each on its own unchanged command and guard, so
+                         Stop stays reachable during startup. Startup progress lives in the tooltip, help
+                         text and item status instead of the label, so the label always names what a press
+                         will do and its width never changes. The Preview handlers drop the second press
+                         of a double-click and a held Enter key, which would otherwise stop the server the
+                         first press had just started. -->
+                    <Button x:Name="ServerRuntimeButton" MinWidth="132" Margin="0,0,6,0"
+                            ToolTipService.ShowOnDisabled="True"
+                            PreviewMouseLeftButtonDown="ServerRuntimeButton_PreviewMouseLeftButtonDown"
+                            PreviewKeyDown="ServerRuntimeButton_PreviewKeyDown">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource GameCenter.ServerRuntimeButton}">
+                                <Setter Property="Command" Value="{Binding StartServerCommand}" />
+                                <Setter Property="Content" Value="Start Server" />
+                                <Setter Property="AutomationProperties.Name" Value="Start Server" />
+                                <Setter Property="AutomationProperties.ItemStatus" Value="Server stopped" />
+                                <Setter Property="AutomationProperties.HelpText" Value="Start the complete Dwemer Distro stack." />
+                                <Setter Property="ToolTip" Value="Server is stopped. Start the complete Dwemer Distro stack." />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsServerRunning}" Value="True">
+                                        <Setter Property="Tag" Value="Stop" />
+                                        <Setter Property="Command" Value="{Binding StopServerCommand}" />
+                                        <Setter Property="Content" Value="Stop Server" />
+                                        <Setter Property="AutomationProperties.Name" Value="Stop Server" />
+                                        <Setter Property="AutomationProperties.ItemStatus" Value="Server running" />
+                                        <Setter Property="AutomationProperties.HelpText" Value="Stop the shared Dwemer Distro server." />
+                                        <Setter Property="ToolTip" Value="Server is running. Stop the shared Dwemer Distro server." />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsServerStarting}" Value="True">
+                                        <Setter Property="Tag" Value="Stop" />
+                                        <Setter Property="Command" Value="{Binding StopServerCommand}" />
+                                        <Setter Property="Content" Value="Stop Server" />
+                                        <Setter Property="AutomationProperties.Name" Value="Stop Server" />
+                                        <Setter Property="AutomationProperties.ItemStatus" Value="Server starting" />
+                                        <Setter Property="AutomationProperties.HelpText" Value="The server is starting. Stop Server cancels the startup and stops the shared Dwemer Distro server." />
+                                        <Setter Property="ToolTip" Value="Server is starting. Stop Server cancels the startup and stops the shared Dwemer Distro server." />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
                     </Button>
-                    <!-- Stop and Force Stop share one labelled menu so the row fits on one line. A left click,
-                         Enter or Space opens it (ServerMenuButton_Click); opening runs nothing, and each item
-                         keeps its own command and guard, so Stop stays available while the server is
-                         starting. The menu is outside the visual tree, so its DataContext is bridged from
-                         the button explicitly. -->
-                    <Button x:Name="ServerMenuButton" Style="{StaticResource GameCenter.Button}"
-                            Click="ServerMenuButton_Click"
-                            AutomationProperties.Name="Stop server menu"
-                            AutomationProperties.HelpText="Open the menu with Stop Server and Force Stop Server. Opening the menu does not stop anything."
-                            ToolTip="Stop Server or Force Stop Server">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Stop" />
-                            <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="10" FontWeight="Normal"
-                                       Margin="8,1,0,0" VerticalAlignment="Center" />
-                        </StackPanel>
-                        <Button.ContextMenu>
-                            <ContextMenu Style="{StaticResource GameCenter.Menu}"
-                                         DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}"
-                                         AutomationProperties.Name="Server actions">
-                                <MenuItem Header="_Stop Server" Command="{Binding StopServerCommand}"
-                                          AutomationProperties.HelpText="Stop the shared Dwemer Distro server. Available while it is starting or running." />
-                                <Separator Style="{StaticResource GameCenter.MenuSeparator}" />
-                                <MenuItem Header="_Force Stop Server" Command="{Binding ForceStopServerCommand}"
-                                          Style="{StaticResource GameCenter.DangerMenuItem}"
-                                          AutomationProperties.HelpText="Terminate the DwemerDistro WSL distribution immediately. Use this only when Stop Server does not respond." />
-                            </ContextMenu>
-                        </Button.ContextMenu>
-                    </Button>
+                    <!-- Force Stop is its own labelled button on the original command and guard, neutral at
+                         rest and red on hover, press or focus, so it never competes with Stop Server. -->
+                    <Button Content="Force Stop" Command="{Binding ForceStopServerCommand}"
+                            Style="{StaticResource GameCenter.ForceStopButton}"
+                            ToolTipService.ShowOnDisabled="True"
+                            AutomationProperties.Name="Force Stop Server"
+                            AutomationProperties.HelpText="Terminate the DwemerDistro WSL distribution immediately, without a clean shutdown. Use this only when Stop Server does not respond."
+                            ToolTip="Terminate the DwemerDistro WSL distribution immediately. Use this only when Stop Server does not respond." />
                 </StackPanel>
             </Grid>
         </Border>

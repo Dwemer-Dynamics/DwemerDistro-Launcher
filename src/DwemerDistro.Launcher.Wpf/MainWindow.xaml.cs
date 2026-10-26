@@ -323,19 +323,24 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Opens the header's Stop menu on a left click, Enter, or Space, under the button. Opening only
-    /// shows the menu; each item runs its own command when chosen. Setting PlacementTarget is what
-    /// feeds the menu's DataContext binding, because a ContextMenu is outside the window's tree.
+    /// Swallows the second press of a double-click on the header's Start/Stop Server button.
     /// </summary>
-    private void ServerMenuButton_Click(object sender, RoutedEventArgs e)
+    // Start runs synchronously into the starting state, which swaps this button to Stop Server, so the
+    // second press of a double-click or an auto-repeated Enter would stop the server just started.
+    private void ServerRuntimeButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not System.Windows.Controls.Button { ContextMenu: { } menu } button)
+        if (e.ClickCount > 1)
         {
-            return;
+            e.Handled = true;
         }
+    }
 
-        menu.PlacementTarget = button;
-        menu.IsOpen = true;
+    private void ServerRuntimeButton_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.IsRepeat && e.Key == Key.Enter)
+        {
+            e.Handled = true;
+        }
     }
 
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
