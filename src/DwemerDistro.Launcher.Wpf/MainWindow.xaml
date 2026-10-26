@@ -325,7 +325,7 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <StackPanel>
-                    <Image Source="Assets/dd_title.png" Height="50" Stretch="Uniform" HorizontalAlignment="Left" Margin="4,2,4,14" />
+                    <Image Source="Assets/dd_title.png" Height="50" Stretch="Uniform" HorizontalAlignment="Center" Margin="4,2,4,14" />
                 </StackPanel>
                 <StackPanel Grid.Row="1">
                     <!-- Top-level Official/Custom switch. Official keeps the existing game rail and
