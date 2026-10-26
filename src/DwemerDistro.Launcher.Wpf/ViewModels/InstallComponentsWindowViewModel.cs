@@ -28,10 +28,10 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private static readonly TimeSpan HuggingFaceTokenStatusTimeout = TimeSpan.FromSeconds(30);
     private static readonly IReadOnlyList<ConfigurableComponentDefinition> ConfigurableComponentDefinitions =
     [
-        new("text2vec", "Text2Vec", "/home/dwemer/text2vec-api", "/home/dwemer/text2vec-api/conf.sh", "start"),
+        new("text2vec", "Text2Vec", "/home/dwemer/text2vec-api", "/home/dwemer/text2vec-api/conf.sh", "start", CardKey: "minime"),
         new("localwhisper", "LocalWhisper", "/home/dwemer/remote-faster-whisper", "/home/dwemer/remote-faster-whisper/conf.sh", "whisper"),
         new("xtts", "Dwemer Distro XTTS", "/home/dwemer/xtts-api-server", "/home/dwemer/xtts-api-server/conf.sh", "start"),
-        new("llamacpp", "llama.cpp", "/home/dwemer/llama-cpp", "/home/dwemer/llama-cpp/conf.sh", "start"),
+        new("llamacpp", "llama.cpp", "/home/dwemer/llama-cpp", "/home/dwemer/llama-cpp/conf.sh", "start", CardKey: "lmstudio"),
         new("minime", "Minime and TXT2VEC", "/home/dwemer/minime-t5", "/home/dwemer/minime-t5/conf.sh", "start"),
         new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "start"),
         new("parakeet", "Parakeet STT", "/home/dwemer/parakeet-api-server", "/home/dwemer/parakeet-api-server/conf.sh", "start"),
@@ -459,7 +459,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
         try
         {
-            ConfigurableComponentsStatusText = "Checking installed components...";
+            // Each card shows its own Checking state, so the page-level line stays for failures only.
+            ConfigurableComponentsStatusText = string.Empty;
             foreach (var item in _allItems)
             {
                 item.SetCheckingState();
@@ -532,7 +533,12 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
 
         ConfigurableComponents.Clear();
-        ConfigurableComponentsStatusText = "Unable to check installed components.";
+        foreach (var item in _allItems)
+        {
+            item.SetConfigurations([]);
+        }
+
+        ConfigurableComponentsStatusText = "Unable to check installed components. Open Components again to retry.";
     }
 
     private void ApplyConfigurableComponents(IReadOnlyList<ConfigurableComponentProbeState> states)
@@ -551,12 +557,22 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 definition.Key,
                 definition.Title,
                 state.ConfigurationText ?? "Unknown",
-                () => ConfigureComponentAsync(definition)));
+                () => ConfigureComponentAsync(definition),
+                isCompanion: definition.CardKey is not null));
         }
 
-        ConfigurableComponentsStatusText = ConfigurableComponents.Count == 0
-            ? "No configurable components are currently installed."
-            : string.Empty;
+        foreach (var item in _allItems)
+        {
+            item.SetConfigurations(ConfigurableComponents
+                .Where(configuration => string.Equals(
+                    ConfigurableComponentsByKey[configuration.Key].CardKey ?? configuration.Key,
+                    item.Key,
+                    StringComparison.OrdinalIgnoreCase))
+                .OrderBy(configuration => configuration.IsCompanion));
+        }
+
+        // Every installed configurable component now shows its configuration on its card.
+        ConfigurableComponentsStatusText = string.Empty;
     }
 
     private async Task ConfigureComponentAsync(ConfigurableComponentDefinition definition)
@@ -1118,12 +1134,14 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         public string? ConfigurationText { get; set; }
     }
 
+    // CardKey places a companion service that has no card of its own on the card it ships beside.
     private sealed record ConfigurableComponentDefinition(
         string Key,
         string Title,
         string BasePath,
         string ScriptPath,
-        string ConfigurationKind);
+        string ConfigurationKind,
+        string? CardKey = null);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -1143,28 +1161,116 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }));
     }
 
+    // Project or creator marks shown for identification only; provenance is recorded in LICENSING.md.
+    private const string ArtworkRoot = "pack://application:,,,/DwemerDistro;component/Assets/";
+
     private IEnumerable<InstallComponentSectionViewModel> BuildSections(
         List<InstallComponentItemViewModel> allItems)
     {
         var sections = new List<InstallComponentSectionViewModel>();
 
         sections.Add(CreateSection(
-            "Core",
+            "Text to Speech",
             allItems,
             CreateItem(
-                key: "cuda",
-                title: "CUDA",
-                description: "Install the NVIDIA CUDA stack used by GPU-backed services. Run this first on NVIDIA systems.\nPort: None",
-                primaryCommand: CreateInstallCommand("cuda"),
-                supportsNvidiaCuda: true)));
+                key: "audiocpp",
+                title: "Pocket-TTS (GPU / audio.cpp)",
+                description: "Recommended Pocket-TTS runtime for NVIDIA GPUs.",
+                primaryCommand: CreateInstallCommand("audiocpp"),
+                supportsNvidiaCuda: true,
+                artwork: "component-pocket-tts.png",
+                port: 8086),
+            CreateItem(
+                key: "pockettts",
+                title: "Pocket-TTS (CPU / Python)",
+                description: "Python Pocket-TTS runtime for AMD or CPU-only systems.",
+                primaryCommand: CreateInstallCommand("pockettts"),
+                supportsAmdCpu: true,
+                artwork: "component-pocket-tts.png",
+                port: 8024),
+            CreateItem(
+                key: "higgs",
+                title: "Higgs TTS 3",
+                description: "Very powerful TTS.",
+                primaryCommand: CreateInstallCommand("higgs"),
+                supportsNvidiaCuda: true,
+                artwork: "component-higgs.png",
+                details:
+                [
+                    "Choose Higgs — Full or Higgs — Compact (Q8) during installation.",
+                    "Compact uses less memory. Its 5.1 GB download size is not its VRAM requirement."
+                ],
+                port: 8025),
+            CreateItem(
+                key: "chatterbox",
+                title: "Chatterbox",
+                description: "High-quality multilingual TTS with voice cloning.",
+                primaryCommand: CreateInstallCommand("chatterbox"),
+                supportsNvidiaCuda: true,
+                supportsAmdCpu: true,
+                artwork: "component-chatterbox.png",
+                port: 8023),
+            CreateItem(
+                key: "omnivoice",
+                title: "Multilingual OmniVoice TTS",
+                description: "Optional local OmniVoice TTS for CHIM voice libraries.",
+                primaryCommand: CreateInstallCommand("omnivoice"),
+                supportsNvidiaCuda: true,
+                secondaryActionText: "View Logs",
+                secondaryActionCommand: _mainWindowViewModel.ViewOmniVoiceLogsCommand,
+                artwork: "component-omnivoice.png",
+                port: 8021),
+            CreateItem(
+                key: "xtts",
+                title: "Dwemer Distro XTTS",
+                description: "High-quality XTTS deployment for cloned Skyrim voices.",
+                primaryCommand: CreateInstallCommand("xtts"),
+                supportsNvidiaCuda: true,
+                artwork: "component-xtts.png",
+                details: ["Requires the shared XTTS Python environment."],
+                port: 8020),
+            CreateItem(
+                key: "pipertts",
+                title: "Piper-TTS",
+                description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.",
+                primaryCommand: CreateInstallCommand("pipertts"),
+                supportsNvidiaCuda: true,
+                supportsAmdCpu: true,
+                secondaryActionText: "Open Piper Voice Folder",
+                secondaryActionCommand: _mainWindowViewModel.OpenPiperVoicesFolderCommand,
+                artwork: "component-piper.png",
+                port: 5000)));
 
         sections.Add(CreateSection(
-            "Local Language Models",
+            "Speech to Text",
+            allItems,
+            CreateItem(
+                key: "parakeet",
+                title: "Parakeet STT",
+                description: "Offline speech-to-text service with GPU and CPU modes for local transcription.",
+                primaryCommand: CreateInstallCommand("parakeet"),
+                supportsNvidiaCuda: true,
+                supportsAmdCpu: true,
+                artwork: "nvidia.png",
+                port: 8022),
+            CreateItem(
+                key: "localwhisper",
+                title: "LocalWhisper",
+                description: "Offline Whisper-based speech-to-text service for local microphone and transcription workflows.",
+                primaryCommand: CreateInstallCommand("localwhisper"),
+                supportsNvidiaCuda: true,
+                supportsAmdCpu: true,
+                artwork: "component-whisper.png",
+                port: 9876)));
+
+        // Core, local language model, and service-extension components share one Services section.
+        sections.Add(CreateSection(
+            "Services",
             allItems,
             CreateItem(
                 key: "lmstudio",
-                title: "LLM Studio",
-                description: "LM Studio built into the distro. Run local models directly in the distro\nPort: 1234",
+                title: "LM Studio",
+                description: "LM Studio built into the distro. Run local models directly in the distro.",
                 primaryCommand: CreateInstallCommand("lmstudio"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true,
@@ -1173,88 +1279,25 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 {
                     try { await new LmStudioService(_wsl).OpenManagerAsync(); }
                     catch (Exception error) { System.Windows.MessageBox.Show(error.Message, "LLM Studio"); }
-                }))));
-
-        sections.Add(CreateSection(
-            "Service Extensions",
-            allItems,
+                }),
+                artwork: "component-lmstudio.png",
+                port: 1234),
+            CreateItem(
+                key: "cuda",
+                title: "CUDA",
+                description: "Install the NVIDIA CUDA stack used by GPU-backed services. Run this first on NVIDIA systems.",
+                primaryCommand: CreateInstallCommand("cuda"),
+                supportsNvidiaCuda: true,
+                artwork: "nvidia.png"),
             CreateItem(
                 key: "minime",
                 title: "Minime and TXT2VEC",
-                description: "Installs the small helper LLM and vector service used to improve NPC responses and retrieval.\nPort: 8082",
+                description: "Installs the small helper LLM and vector service used to improve NPC responses and retrieval.",
                 primaryCommand: CreateInstallCommand("minime"),
                 supportsNvidiaCuda: true,
-                supportsAmdCpu: true)));
-
-        sections.Add(CreateSection(
-            "Text-to-Speech Engines",
-            allItems,
-            CreateItem(
-                key: "audiocpp",
-                title: "Pocket-TTS (GPU / audio.cpp)",
-                description: "Recommended Pocket-TTS runtime for NVIDIA GPUs.\nPort: 8086",
-                primaryCommand: CreateInstallCommand("audiocpp"),
-                supportsNvidiaCuda: true),
-            CreateItem(
-                key: "pockettts",
-                title: "Pocket-TTS (CPU / Python)",
-                description: "Python Pocket-TTS runtime for AMD or CPU-only systems.\nPort: 8024",
-                primaryCommand: CreateInstallCommand("pockettts"),
-                supportsAmdCpu: true),
-            CreateItem(
-                key: "higgs",
-                title: "Higgs TTS 3",
-                description: "Very powerful TTS. Choose Higgs — Full or Higgs — Compact (Q8) during installation.\nCompact uses less memory. Its 5.1 GB download size is not its VRAM requirement.\nPort: 8025",
-                primaryCommand: CreateInstallCommand("higgs"),
-                supportsNvidiaCuda: true),
-            CreateItem(
-                key: "chatterbox",
-                title: "Chatterbox",
-                description: "High-quality multilingual TTS with voice cloning.\nPort: 8023",
-                primaryCommand: CreateInstallCommand("chatterbox"),
-                supportsNvidiaCuda: true,
-                supportsAmdCpu: true),
-            CreateItem(
-                key: "omnivoice",
-                title: "Multilingual OmniVoice TTS",
-                description: "Optional local OmniVoice TTS for CHIM voice libraries.\nPort: 8021",
-                primaryCommand: CreateInstallCommand("omnivoice"),
-                supportsNvidiaCuda: true,
-                secondaryActionText: "View Logs",
-                secondaryActionCommand: _mainWindowViewModel.ViewOmniVoiceLogsCommand),
-            CreateItem(
-                key: "xtts",
-                title: "Dwemer Distro XTTS",
-                description: "High-quality XTTS deployment for cloned Skyrim voices. Requires the shared XTTS Python environment.\nPort: 8020",
-                primaryCommand: CreateInstallCommand("xtts"),
-                supportsNvidiaCuda: true),
-            CreateItem(
-                key: "pipertts",
-                title: "Piper-TTS",
-                description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.\nPort: 5000",
-                primaryCommand: CreateInstallCommand("pipertts"),
-                supportsNvidiaCuda: true,
                 supportsAmdCpu: true,
-                secondaryActionText: "Open Piper Voice Folder",
-                secondaryActionCommand: _mainWindowViewModel.OpenPiperVoicesFolderCommand)));
-
-        sections.Add(CreateSection(
-            "Speech-to-Text Engines",
-            allItems,
-            CreateItem(
-                key: "parakeet",
-                title: "Parakeet STT",
-                description: "Offline speech-to-text service with GPU and CPU modes for local transcription.\nPort: 8022",
-                primaryCommand: CreateInstallCommand("parakeet"),
-                supportsNvidiaCuda: true,
-                supportsAmdCpu: true),
-            CreateItem(
-                key: "localwhisper",
-                title: "LocalWhisper",
-                description: "Offline Whisper-based speech-to-text service for local microphone and transcription workflows.\nPort: 9876",
-                primaryCommand: CreateInstallCommand("localwhisper"),
-                supportsNvidiaCuda: true,
-                supportsAmdCpu: true)));
+                artwork: "DwemerDistro.png",
+                port: 8082)));
 
         return sections;
     }
@@ -1278,7 +1321,10 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         string? secondaryActionText = null,
         ICommand? secondaryActionCommand = null,
         string? tertiaryActionText = null,
-        ICommand? tertiaryActionCommand = null)
+        ICommand? tertiaryActionCommand = null,
+        string? artwork = null,
+        IReadOnlyList<string>? details = null,
+        int? port = null)
     {
         return new InstallComponentItemViewModel(
             key,
@@ -1292,7 +1338,10 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             secondaryActionText,
             secondaryActionCommand,
             tertiaryActionText,
-            tertiaryActionCommand);
+            tertiaryActionCommand,
+            artwork is null ? null : ArtworkRoot + artwork,
+            details,
+            port);
     }
 }
 
@@ -1306,10 +1355,12 @@ public sealed class ConfigurableComponentItemViewModel : ObservableObject
         string key,
         string title,
         string configurationText,
-        Func<Task> configure)
+        Func<Task> configure,
+        bool isCompanion = false)
     {
         Key = key;
         Title = title;
+        IsCompanion = isCompanion;
         _configurationText = configurationText;
         _configure = configure;
         ConfigureCommand = new AsyncRelayCommand(ConfigureAsync, () => !IsConfiguring);
@@ -1318,6 +1369,11 @@ public sealed class ConfigurableComponentItemViewModel : ObservableObject
     public string Key { get; }
 
     public string Title { get; }
+
+    /// <summary>True when this configuration is listed on another component's card, so it is named in full there.</summary>
+    public bool IsCompanion { get; }
+
+    public string ConfigurationLabel => IsCompanion ? $"{Title}:" : "Current:";
 
     public AsyncRelayCommand ConfigureCommand { get; }
 
@@ -1340,7 +1396,18 @@ public sealed class ConfigurableComponentItemViewModel : ObservableObject
         }
     }
 
-    public string ConfigureButtonText => IsConfiguring ? "Configuring..." : "Configure";
+    public string ConfigureButtonText
+    {
+        get
+        {
+            if (IsConfiguring)
+            {
+                return "Configuring...";
+            }
+
+            return IsCompanion ? $"Configure {Title}" : "Configure";
+        }
+    }
 
     private async Task ConfigureAsync()
     {
