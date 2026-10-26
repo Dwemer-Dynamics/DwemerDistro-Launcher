@@ -322,6 +322,22 @@ public partial class MainWindow : Window
         LibraryNavButton.IsChecked = true;
     }
 
+    /// <summary>
+    /// Opens the header's Stop menu on a left click, Enter, or Space, under the button. Opening only
+    /// shows the menu; each item runs its own command when chosen. Setting PlacementTarget is what
+    /// feeds the menu's DataContext binding, because a ContextMenu is outside the window's tree.
+    /// </summary>
+    private void ServerMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { ContextMenu: { } menu } button)
+        {
+            return;
+        }
+
+        menu.PlacementTarget = button;
+        menu.IsOpen = true;
+    }
+
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSelectedGameDetails();
@@ -532,12 +548,12 @@ public partial class MainWindow : Window
             5 => ApiKeysHost,
             _ => LibraryLandmark
         };
-        // Visual order: the sidebar's game list and utilities, then the header, page and console.
+        // Visual order: the full-width header, the sidebar's game list and utilities, then the page and console.
         var landmarks = new FrameworkElement[]
         {
+            NavigationLandmark,
             GameRail,
             UtilityLandmark,
-            NavigationLandmark,
             activePage,
             _isConsoleExpanded && _outputRichTextBox is not null ? _outputRichTextBox : ToggleConsoleButton
         };

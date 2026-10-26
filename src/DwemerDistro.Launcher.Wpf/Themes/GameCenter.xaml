@@ -863,6 +863,201 @@
         </Style.Triggers>
     </Style>
 
+    <!-- Dark action menus (the header's Stop menu). Items keep the button type system: Segoe UI
+         SemiBold 12 on the raised panel, a gold-soft outline on the highlighted (hovered or arrow-key)
+         item, and the muted treatment when an item's command cannot run. The label's TextBlock style
+         binds to the item so the app-wide TextBlock style never repaints a disabled item white.
+         High contrast swaps to the system menu colours. -->
+    <Style x:Key="GameCenter.MenuItem" TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="12,8" />
+        <Setter Property="MinWidth" Value="188" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Border" Background="Transparent" BorderBrush="Transparent" BorderThickness="1"
+                            CornerRadius="4" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center">
+                            <ContentPresenter.Resources>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground"
+                                            Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type MenuItem}}, FallbackValue=White}" />
+                                    <Setter Property="FontFamily" Value="Segoe UI" />
+                                </Style>
+                            </ContentPresenter.Resources>
+                        </ContentPresenter>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <!-- Template triggers outrank style setters, so the high-contrast menu text also wins over
+                             derived styles such as GameCenter.DangerMenuItem. Later triggers override earlier ones. -->
+                        <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.MenuTextBrushKey}}" />
+                        </DataTrigger>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                            <Setter TargetName="Border" Property="Opacity" Value="0.55" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                                <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="False" />
+                            </MultiDataTrigger.Conditions>
+                            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                        </MultiDataTrigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                                <Condition Binding="{Binding IsHighlighted, RelativeSource={RelativeSource Self}}" Value="True" />
+                                <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                            </MultiDataTrigger.Conditions>
+                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                        </MultiDataTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Force Stop keeps the danger text tone inside the menu, as the old header button did on focus. -->
+    <Style x:Key="GameCenter.DangerMenuItem" TargetType="MenuItem" BasedOn="{StaticResource GameCenter.MenuItem}">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+    </Style>
+
+    <Style x:Key="GameCenter.MenuSeparator" TargetType="Separator">
+        <Setter Property="Margin" Value="4,4" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Border Height="1" Background="{DynamicResource GameCenter.Border}" SnapsToDevicePixels="True" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GameCenter.Menu" TargetType="ContextMenu">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="4" />
+        <Setter Property="Placement" Value="Bottom" />
+        <Setter Property="VerticalOffset" Value="4" />
+        <Setter Property="HasDropShadow" Value="False" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource GameCenter.MenuItem}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6"
+                            Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.MenuBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.MenuTextBrushKey}}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- "Manage server" disclosure in a mod's action panel. Branch choice, rollback and removal sit
+         behind it so the everyday view is the webpage, the update and the links. The header is a
+         34px outline toggle in the compact secondary tier with a chevron that turns when open; it is
+         the only tab stop (the Expander itself takes none) and Space or Enter toggles it. The
+         Expander exposes ExpandCollapse to assistive technology. Collapsed content is not in the tab
+         order. -->
+    <Style x:Key="GameCenter.ModAction.ManageExpander" TargetType="Expander">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="Margin" Value="0,6,0,0" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Expander">
+                    <StackPanel>
+                        <ToggleButton x:Name="HeaderSite" Cursor="Hand" Height="34" MinHeight="34"
+                                      IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                      Content="{TemplateBinding Header}"
+                                      Foreground="{TemplateBinding Foreground}"
+                                      AutomationProperties.Name="{TemplateBinding AutomationProperties.Name}"
+                                      AutomationProperties.HelpText="{TemplateBinding AutomationProperties.HelpText}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Grid>
+                                        <Border x:Name="Border" Background="Transparent" BorderBrush="{DynamicResource GameCenter.Border}"
+                                                BorderThickness="1" CornerRadius="8" SnapsToDevicePixels="True">
+                                            <Grid Margin="10,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True">
+                                                    <ContentPresenter.Resources>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground"
+                                                                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type ToggleButton}}, FallbackValue=White}" />
+                                                            <Setter Property="FontFamily" Value="Segoe UI" />
+                                                            <Setter Property="FontSize" Value="12" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </Style>
+                                                    </ContentPresenter.Resources>
+                                                </ContentPresenter>
+                                                <TextBlock x:Name="Chevron" Grid.Column="1" Text="&#xE70D;" FontFamily="Segoe MDL2 Assets"
+                                                           FontSize="10" VerticalAlignment="Center"
+                                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource TemplatedParent}}" />
+                                            </Grid>
+                                        </Border>
+                                        <Border x:Name="FocusRing" Margin="2" CornerRadius="6" BorderBrush="{DynamicResource GameCenter.Focus}"
+                                                BorderThickness="1" Visibility="Collapsed" IsHitTestVisible="False" SnapsToDevicePixels="True" />
+                                    </Grid>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Chevron" Property="Text" Value="&#xE70E;" />
+                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
+                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                                        </Trigger>
+                                        <Trigger Property="IsKeyboardFocused" Value="True">
+                                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                                        </Trigger>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter TargetName="Border" Property="Opacity" Value="0.45" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter x:Name="ExpandSite" Margin="0,10,0,0" Visibility="Collapsed" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsExpanded" Value="True">
+                            <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="GameCenter.NavButton" TargetType="RadioButton">
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
         <Setter Property="Background" Value="Transparent" />
