@@ -600,21 +600,27 @@
                                             </WrapPanel>
                                         </StackPanel>
 
-                                        <!-- Installed: the webpage and the mod update first, then links and logs. Branch choice,
-                                             rollback and the destructive purge wait behind Manage server. The webpage is the
-                                             primary action unless an update is confirmed. -->
+                                        <!-- Installed: the webpage, then the update branch directly above the update it
+                                             drives, then links and logs, rollback, and the destructive purge last below a
+                                             rule. The webpage is the primary action unless an update is confirmed. -->
                                         <StackPanel Visibility="{Binding HerikaManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.ModAction.ChimWebpageButton}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Style="{StaticResource GameCenter.ModAction.ChimWebpageButton}" Margin="0,0,0,12" Height="38"
                                                     AutomationProperties.Name="CHIM Webpage"
                                                     AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
-                                            <!-- Updates the shared system, then this mod on the branch chosen under Manage server.
+                                            <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding HerikaManager.Branches}" SelectedItem="{Binding HerikaManager.SelectedBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      AutomationProperties.Name="HerikaServer update branch"
+                                                      IsEnabled="{Binding HerikaManager.CanUseInstalledFeatures}"
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
+                                            <!-- Updates the shared system, then this mod on the branch chosen above.
                                                  Disabled during conflicting operations so controls never shift.
                                                  The manager is this button's DataContext so the shared update
                                                  style can watch IsUpdateAvailable and fill the button green
                                                  only for a confirmed newer version on the selected branch. -->
                                             <Button DataContext="{Binding HerikaManager}"
                                                     Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.ModAction.ChimUpdateButton}" Margin="0,0,0,12" Height="38"
+                                                    Style="{StaticResource GameCenter.ModAction.ChimUpdateButton}" Margin="0,8,0,12" Height="38"
                                                     AutomationProperties.Name="{Binding UpdateActionName}"
                                                     ToolTip="{Binding UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
@@ -631,28 +637,17 @@
                                                         AutomationProperties.Name="Open CHIM Skyrim VR Logs"
                                                         AutomationProperties.HelpText="Open File Explorer with the local Skyrim VR AIAgent.log selected. The local server is not started or contacted." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage CHIM server"
-                                                      AutomationProperties.HelpText="Show the update branch, rollback, and uninstall for this server.">
-                                                <StackPanel>
-                                                    <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                                    <ComboBox ItemsSource="{Binding HerikaManager.Branches}" SelectedItem="{Binding HerikaManager.SelectedBranch}"
-                                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
-                                                              AutomationProperties.Name="HerikaServer update branch"
-                                                              IsEnabled="{Binding HerikaManager.CanUseInstalledFeatures}"
-                                                              AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                                    <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,10,0,6"
-                                                            AutomationProperties.Name="Rollback HerikaServer"
-                                                            AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
-                                                    <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
-                                                            Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                            AutomationProperties.Name="Uninstall CHIM"
-                                                            AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
-                                                </StackPanel>
-                                            </Expander>
+                                            <Button Content="Rollback HerikaServer" Command="{Binding OpenHerikaRollbackCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,6,0,0"
+                                                    AutomationProperties.Name="Rollback HerikaServer"
+                                                    AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
+                                            <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall CHIM"
+                                                    AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
 
-                                        <!-- Needs repair: choose the branch and repair in place; the purge waits behind Manage server. -->
+                                        <!-- Needs repair: choose the branch and repair in place; logs next, the purge last below a rule. -->
                                         <StackPanel Visibility="{Binding HerikaManager.ShowRepairActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Repair branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding HerikaManager.Branches}" SelectedItem="{Binding HerikaManager.SelectedBranch}"
@@ -674,14 +669,11 @@
                                                         AutomationProperties.Name="Open CHIM Skyrim VR Logs"
                                                         AutomationProperties.HelpText="Open File Explorer with the local Skyrim VR AIAgent.log selected. The local server is not started or contacted." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage CHIM server"
-                                                      AutomationProperties.HelpText="Show the uninstall action for this server.">
-                                                <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
-                                                        Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                        AutomationProperties.Name="Uninstall CHIM"
-                                                        AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
-                                            </Expander>
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                            <Button Content="Uninstall CHIM" Command="{Binding HerikaManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall CHIM"
+                                                    AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
                                     </StackPanel>
                                     <StackPanel x:Name="LorkhanDetails" Visibility="Collapsed">
@@ -726,38 +718,32 @@
                                                     AutomationProperties.HelpText="Download and install this server on the selected branch. Nothing else is changed." />
                                         </StackPanel>
                                         <StackPanel Visibility="{Binding LorkhanManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="LORKHAN Webpage" Command="{Binding OpenLorkhanCommand}" Style="{StaticResource GameCenter.Brand.LorkhanButton}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="LORKHAN Webpage" Command="{Binding OpenLorkhanCommand}" Style="{StaticResource GameCenter.Brand.LorkhanButton}" Margin="0,0,0,12" Height="38"
                                                     AutomationProperties.Name="LORKHAN Webpage"
                                                     AutomationProperties.HelpText="Open the LORKHAN server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding LorkhanManager.Branches}" SelectedItem="{Binding LorkhanManager.SelectedBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      AutomationProperties.Name="LorkhanServer update branch"
+                                                      IsEnabled="{Binding LorkhanManager.CanUseInstalledFeatures}"
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
                                             <Button DataContext="{Binding LorkhanManager}"
                                                     Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.ModAction.LorkhanUpdateButton}" Margin="0,0,0,12" Height="38"
+                                                    Style="{StaticResource GameCenter.ModAction.LorkhanUpdateButton}" Margin="0,8,0,12" Height="38"
                                                     AutomationProperties.Name="{Binding UpdateActionName}"
                                                     ToolTip="{Binding UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
-                                            <!-- Local OpenMW log, grouped with the everyday actions outside Manage server.
-                                                 Windows-side only, so it never probes or starts WSL. -->
+                                            <!-- Local OpenMW log. Windows-side only, so it never probes or starts WSL. -->
                                             <WrapPanel>
                                                 <Button Content="LORKHAN Logs" Command="{Binding OpenLorkhanLogsCommand}" Style="{StaticResource GameCenter.ModAction.LinkButton}"
                                                         AutomationProperties.Name="Open LORKHAN Logs"
                                                         AutomationProperties.HelpText="Show the local OpenMW log in File Explorer. Does not start the game or server." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage LORKHAN server"
-                                                      AutomationProperties.HelpText="Show the update branch and uninstall for this server.">
-                                                <StackPanel>
-                                                    <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                                    <ComboBox ItemsSource="{Binding LorkhanManager.Branches}" SelectedItem="{Binding LorkhanManager.SelectedBranch}"
-                                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
-                                                              AutomationProperties.Name="LorkhanServer update branch"
-                                                              IsEnabled="{Binding LorkhanManager.CanUseInstalledFeatures}"
-                                                              AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                                    <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
-                                                            Style="{StaticResource GameCenter.ModAction.UninstallButton}" Margin="0,10,0,0"
-                                                            AutomationProperties.Name="Uninstall LORKHAN"
-                                                            AutomationProperties.HelpText="Disable this server while retaining its files and saved data. Use Repair to enable it again. Asks for typed confirmation." />
-                                                </StackPanel>
-                                            </Expander>
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                            <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall LORKHAN"
+                                                    AutomationProperties.HelpText="Disable this server while retaining its files and saved data. Use Repair to enable it again. Asks for typed confirmation." />
                                         </StackPanel>
                                         <StackPanel Visibility="{Binding LorkhanManager.ShowRepairActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Repair branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
@@ -775,17 +761,14 @@
                                                         AutomationProperties.Name="Open LORKHAN Logs"
                                                         AutomationProperties.HelpText="Show the local OpenMW log in File Explorer. Does not start the game or server." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage LORKHAN server"
-                                                      AutomationProperties.HelpText="Show the uninstall action for this server.">
-                                                <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
-                                                        Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                        AutomationProperties.Name="Uninstall LORKHAN"
-                                                        AutomationProperties.HelpText="Disable this server while retaining its files and saved data. Use Repair to enable it again. Asks for typed confirmation." />
-                                            </Expander>
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                            <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall LORKHAN"
+                                                    AutomationProperties.HelpText="Disable this server while retaining its files and saved data. Use Repair to enable it again. Asks for typed confirmation." />
                                         </StackPanel>
                                         <!-- Log action while the state is Unknown (probe pending) or NotInstalled. Installed and
-                                             Repair carry their own copy outside Manage server, so this one collapses only then and
+                                             Repair carry their own copy, so this one collapses only then and
                                              exactly one log action is visible in every state. -->
                                         <Button Content="LORKHAN Logs" Command="{Binding OpenLorkhanLogsCommand}"
                                                 Margin="0,12,0,0" HorizontalAlignment="Left"
@@ -862,21 +845,27 @@
                                             </WrapPanel>
                                         </StackPanel>
 
-                                        <!-- Installed: the webpage and the mod update first, then links and logs. Branch choice,
-                                             rollback and the destructive purge wait behind Manage server. The webpage is the
-                                             primary action unless an update is confirmed. -->
+                                        <!-- Installed: the webpage, then the update branch directly above the update it
+                                             drives, then links and logs, rollback, and the destructive purge last below a
+                                             rule. The webpage is the primary action unless an update is confirmed. -->
                                         <StackPanel Visibility="{Binding StobeManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.ModAction.StobeWebpageButton}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Style="{StaticResource GameCenter.ModAction.StobeWebpageButton}" Margin="0,0,0,12" Height="38"
                                                     AutomationProperties.Name="STOBE Webpage"
                                                     AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
-                                            <!-- Updates the shared system, then this mod on the branch chosen under Manage server.
+                                            <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding StobeManager.Branches}" SelectedItem="{Binding StobeManager.SelectedBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      AutomationProperties.Name="StobeServer update branch"
+                                                      IsEnabled="{Binding StobeManager.CanUseInstalledFeatures}"
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
+                                            <!-- Updates the shared system, then this mod on the branch chosen above.
                                                  Disabled during conflicting operations so controls never shift.
                                                  The manager is this button's DataContext so the shared update
                                                  style can watch IsUpdateAvailable and fill the button green
                                                  only for a confirmed newer version on the selected branch. -->
                                             <Button DataContext="{Binding StobeManager}"
                                                     Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.ModAction.StobeUpdateButton}" Margin="0,0,0,12" Height="38"
+                                                    Style="{StaticResource GameCenter.ModAction.StobeUpdateButton}" Margin="0,8,0,12" Height="38"
                                                     AutomationProperties.Name="{Binding UpdateActionName}"
                                                     ToolTip="{Binding UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
@@ -890,28 +879,17 @@
                                                         AutomationProperties.Name="Open STOBE Logs"
                                                         AutomationProperties.HelpText="Open File Explorer with the local Kenshi Stobe.log selected, or RE_Kenshi_log.txt if STOBE has not written a log. The local server is not started or contacted." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage STOBE server"
-                                                      AutomationProperties.HelpText="Show the update branch, rollback, and uninstall for this server.">
-                                                <StackPanel>
-                                                    <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                                    <ComboBox ItemsSource="{Binding StobeManager.Branches}" SelectedItem="{Binding StobeManager.SelectedBranch}"
-                                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
-                                                              AutomationProperties.Name="StobeServer update branch"
-                                                              IsEnabled="{Binding StobeManager.CanUseInstalledFeatures}"
-                                                              AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                                    <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,10,0,6"
-                                                            AutomationProperties.Name="Rollback StobeServer"
-                                                            AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
-                                                    <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
-                                                            Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                            AutomationProperties.Name="Uninstall STOBE"
-                                                            AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
-                                                </StackPanel>
-                                            </Expander>
+                                            <Button Content="Rollback StobeServer" Command="{Binding OpenStobeRollbackCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,6,0,0"
+                                                    AutomationProperties.Name="Rollback StobeServer"
+                                                    AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
+                                            <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall STOBE"
+                                                    AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
 
-                                        <!-- Needs repair: choose the branch and repair in place; the purge waits behind Manage server. -->
+                                        <!-- Needs repair: choose the branch and repair in place; logs next, the purge last below a rule. -->
                                         <StackPanel Visibility="{Binding StobeManager.ShowRepairActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Repair branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding StobeManager.Branches}" SelectedItem="{Binding StobeManager.SelectedBranch}"
@@ -930,14 +908,11 @@
                                                         AutomationProperties.Name="Open STOBE Logs"
                                                         AutomationProperties.HelpText="Open File Explorer with the local Kenshi Stobe.log selected, or RE_Kenshi_log.txt if STOBE has not written a log. The local server is not started or contacted." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage STOBE server"
-                                                      AutomationProperties.HelpText="Show the uninstall action for this server.">
-                                                <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
-                                                        Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                        AutomationProperties.Name="Uninstall STOBE"
-                                                        AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
-                                            </Expander>
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                            <Button Content="Uninstall STOBE" Command="{Binding StobeManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall STOBE"
+                                                    AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
                                     </StackPanel>
                                     <StackPanel x:Name="DialecticDetails" Visibility="Collapsed">
@@ -997,21 +972,27 @@
                                             </WrapPanel>
                                         </StackPanel>
 
-                                        <!-- Installed: the webpage and the mod update first, then links and logs. Branch choice,
-                                             rollback and the destructive purge wait behind Manage server. The webpage is the
-                                             primary action unless an update is confirmed. -->
+                                        <!-- Installed: the webpage, then the update branch directly above the update it
+                                             drives, then links and logs, rollback, and the destructive purge last below a
+                                             rule. The webpage is the primary action unless an update is confirmed. -->
                                         <StackPanel Visibility="{Binding DialecticManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.ModAction.DialecticWebpageButton}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Style="{StaticResource GameCenter.ModAction.DialecticWebpageButton}" Margin="0,0,0,12" Height="38"
                                                     AutomationProperties.Name="DIALECTIC Webpage"
                                                     AutomationProperties.HelpText="Open the Dialectic server webpage. If it is unavailable, the launcher can start the server first." />
-                                            <!-- Updates the shared system, then this mod on the branch chosen under Manage server.
+                                            <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding DialecticManager.Branches}" SelectedItem="{Binding DialecticManager.SelectedBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      AutomationProperties.Name="DialecticServer update branch"
+                                                      IsEnabled="{Binding DialecticManager.CanUseInstalledFeatures}"
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
+                                            <!-- Updates the shared system, then this mod on the branch chosen above.
                                                  Disabled during conflicting operations so controls never shift.
                                                  The manager is this button's DataContext so the shared update
                                                  style can watch IsUpdateAvailable and fill the button green
                                                  only for a confirmed newer version on the selected branch. -->
                                             <Button DataContext="{Binding DialecticManager}"
                                                     Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.ModAction.DialecticUpdateButton}" Margin="0,0,0,12" Height="38"
+                                                    Style="{StaticResource GameCenter.ModAction.DialecticUpdateButton}" Margin="0,8,0,12" Height="38"
                                                     AutomationProperties.Name="{Binding UpdateActionName}"
                                                     ToolTip="{Binding UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
@@ -1025,28 +1006,17 @@
                                                         AutomationProperties.Name="Open DIALECTIC Logs"
                                                         AutomationProperties.HelpText="Open File Explorer with the local Fallout New Vegas dialectic.log selected. The local server is not started or contacted." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage DIALECTIC server"
-                                                      AutomationProperties.HelpText="Show the update branch, rollback, and uninstall for this server.">
-                                                <StackPanel>
-                                                    <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                                    <ComboBox ItemsSource="{Binding DialecticManager.Branches}" SelectedItem="{Binding DialecticManager.SelectedBranch}"
-                                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
-                                                              AutomationProperties.Name="DialecticServer update branch"
-                                                              IsEnabled="{Binding DialecticManager.CanUseInstalledFeatures}"
-                                                              AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                                    <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,10,0,6"
-                                                            AutomationProperties.Name="Rollback DialecticServer"
-                                                            AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
-                                                    <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
-                                                            Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                            AutomationProperties.Name="Uninstall Dialectic"
-                                                            AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
-                                                </StackPanel>
-                                            </Expander>
+                                            <Button Content="Rollback DialecticServer" Command="{Binding OpenDialecticRollbackCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,6,0,0"
+                                                    AutomationProperties.Name="Rollback DialecticServer"
+                                                    AutomationProperties.HelpText="Roll this server back to an earlier installed version." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
+                                            <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall Dialectic"
+                                                    AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
 
-                                        <!-- Needs repair: choose the branch and repair in place; the purge waits behind Manage server. -->
+                                        <!-- Needs repair: choose the branch and repair in place; logs next, the purge last below a rule. -->
                                         <StackPanel Visibility="{Binding DialecticManager.ShowRepairActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Repair branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding DialecticManager.Branches}" SelectedItem="{Binding DialecticManager.SelectedBranch}"
@@ -1065,14 +1035,11 @@
                                                         AutomationProperties.Name="Open DIALECTIC Logs"
                                                         AutomationProperties.HelpText="Open File Explorer with the local Fallout New Vegas dialectic.log selected. The local server is not started or contacted." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage DIALECTIC server"
-                                                      AutomationProperties.HelpText="Show the uninstall action for this server.">
-                                                <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
-                                                        Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                        AutomationProperties.Name="Uninstall Dialectic"
-                                                        AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
-                                            </Expander>
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                            <Button Content="Uninstall Dialectic" Command="{Binding DialecticManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall Dialectic"
+                                                    AutomationProperties.HelpText="Permanently delete this server, its database, and all of its profiles, memories, settings, logs, uploads, and voices. Asks for a typed confirmation first." />
                                         </StackPanel>
                                     </StackPanel>
                                     <StackPanel x:Name="ReignDetails" Visibility="Collapsed">
@@ -1123,12 +1090,18 @@
                                             </WrapPanel>
                                         </StackPanel>
                                         <StackPanel Visibility="{Binding ReignManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="REIGN Webpage" Command="{Binding OpenReignCommand}" Style="{StaticResource GameCenter.Brand.ReignButton}" Margin="0,0,0,8" Height="38"
+                                            <Button Content="REIGN Webpage" Command="{Binding OpenReignCommand}" Style="{StaticResource GameCenter.Brand.ReignButton}" Margin="0,0,0,12" Height="38"
                                                     AutomationProperties.Name="REIGN Webpage"
                                                     AutomationProperties.HelpText="Open the Reign server webpage. If it is unavailable, the launcher can start the server first." />
+                                            <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding ReignManager.Branches}" SelectedItem="{Binding ReignManager.SelectedBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      AutomationProperties.Name="ReignServer update branch"
+                                                      IsEnabled="{Binding ReignManager.CanUseInstalledFeatures}"
+                                                      AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
                                             <Button DataContext="{Binding ReignManager}"
                                                     Content="{Binding UpdateActionName}" Command="{Binding UpdateCommand}"
-                                                    Style="{StaticResource GameCenter.ModAction.ReignSecondaryButton}" Margin="0,0,0,12" Height="38"
+                                                    Style="{StaticResource GameCenter.ModAction.ReignSecondaryButton}" Margin="0,8,0,12" Height="38"
                                                     AutomationProperties.Name="{Binding UpdateActionName}"
                                                     ToolTip="{Binding UpdateActionHelpText}"
                                                     AutomationProperties.HelpText="{Binding UpdateActionHelpText}" />
@@ -1137,26 +1110,15 @@
                                                         AutomationProperties.Name="Open REIGN Logs"
                                                         AutomationProperties.HelpText="Select the local Bannerlord reignbeta.log in File Explorer, or open its folder if the log has not been created yet." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage REIGN server"
-                                                      AutomationProperties.HelpText="Show the update branch, rollback, and uninstall for this server.">
-                                                <StackPanel>
-                                                    <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                                    <ComboBox ItemsSource="{Binding ReignManager.Branches}" SelectedItem="{Binding ReignManager.SelectedBranch}"
-                                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
-                                                              AutomationProperties.Name="ReignServer update branch"
-                                                              IsEnabled="{Binding ReignManager.CanUseInstalledFeatures}"
-                                                              AutomationProperties.HelpText="Branch used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
-                                                    <Button Content="Rollback ReignServer" Command="{Binding OpenReignRollbackCommand}"
-                                                            Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,10,0,6"
-                                                            AutomationProperties.Name="Rollback ReignServer"
-                                                            AutomationProperties.HelpText="Restore a compatible retained ReignServer build while preserving campaigns and settings." />
-                                                    <Button Content="Uninstall Reign" Command="{Binding ReignManager.UninstallCommand}"
-                                                            Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                            AutomationProperties.Name="Uninstall Reign"
-                                                            AutomationProperties.HelpText="Remove the installed server. Its database, settings, memories, and previous runtimes are retained. Asks for a typed confirmation first." />
-                                                </StackPanel>
-                                            </Expander>
+                                            <Button Content="Rollback ReignServer" Command="{Binding OpenReignRollbackCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,6,0,0"
+                                                    AutomationProperties.Name="Rollback ReignServer"
+                                                    AutomationProperties.HelpText="Restore a compatible retained ReignServer build while preserving campaigns and settings." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
+                                            <Button Content="Uninstall Reign" Command="{Binding ReignManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall Reign"
+                                                    AutomationProperties.HelpText="Remove the installed server. Its database, settings, memories, and previous runtimes are retained. Asks for a typed confirmation first." />
                                         </StackPanel>
                                         <StackPanel Visibility="{Binding ReignManager.ShowRepairActions, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="Repair branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
@@ -1174,14 +1136,11 @@
                                                         AutomationProperties.Name="Open REIGN Logs"
                                                         AutomationProperties.HelpText="Select the local Bannerlord reignbeta.log in File Explorer, or open its folder if the log has not been created yet." />
                                             </WrapPanel>
-                                            <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                      AutomationProperties.Name="Manage REIGN server"
-                                                      AutomationProperties.HelpText="Show the uninstall action for this server.">
-                                                <Button Content="Uninstall Reign" Command="{Binding ReignManager.UninstallCommand}"
-                                                        Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                        AutomationProperties.Name="Uninstall Reign"
-                                                        AutomationProperties.HelpText="Remove the installed server. Its database, settings, memories, and previous runtimes are retained. Asks for a typed confirmation first." />
-                                            </Expander>
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                            <Button Content="Uninstall Reign" Command="{Binding ReignManager.UninstallCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                    AutomationProperties.Name="Uninstall Reign"
+                                                    AutomationProperties.HelpText="Remove the installed server. Its database, settings, memories, and previous runtimes are retained. Asks for a typed confirmation first." />
                                         </StackPanel>
                                     </StackPanel>
 
@@ -1289,8 +1248,8 @@
                                             </ProgressBar>
                                         </Grid>
 
-                                        <!-- Installed source, then the same order as the official mods: the dashboard and the
-                                             update first, links next, and branch switching plus removal behind Manage server. -->
+                                        <!-- Installed source, then the dashboard and the update from that source, links and
+                                             checks, the separate branch check and switch, and removal last below a rule. -->
                                         <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" TextTrimming="CharacterEllipsis"
                                                    ToolTip="{Binding SelectedCustomMod.Repository}" Text="{Binding SelectedCustomModVersionText}" />
                                         <TextBlock Text="{Binding SelectedCustomModBranchNotice}" Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap"
@@ -1316,31 +1275,27 @@
                                             <Button Content="Back up" Command="{Binding BackupCustomModCommand}" Style="{StaticResource GameCenter.ModAction.LinkButton}"
                                                     AutomationProperties.HelpText="Save a copy of this mod's settings and database inside the distro." />
                                         </WrapPanel>
-                                        <Expander Header="Manage server" Style="{StaticResource GameCenter.ModAction.ManageExpander}"
-                                                  AutomationProperties.Name="Manage custom mod server"
-                                                  AutomationProperties.HelpText="Show branch switching and removal for this custom mod.">
-                                            <StackPanel>
-                                                <!-- The author's offered branches, from the last explicit check stored by the distro;
-                                                     choosing a branch changes nothing until Switch branch reviews and confirms it. -->
-                                                <StackPanel Visibility="{Binding SelectedCustomModUsesBranches, Converter={StaticResource BoolToVisibility}}" Margin="0,0,0,10">
-                                                    <TextBlock Text="Branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
-                                                    <ComboBox ItemsSource="{Binding SelectedCustomModBranchOptions}" SelectedItem="{Binding SelectedCustomModBranch}"
-                                                              Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
-                                                              AutomationProperties.Name="Custom mod branch"
-                                                              IsEnabled="{Binding IsComponentInteractionEnabled}"
-                                                              AutomationProperties.HelpText="Branches offered by the mod's author, from the last branch check. Choose one, then Switch branch to review it." />
-                                                    <Grid Margin="0,6,0,0">
-                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                        <Button Content="Check branches" Command="{Binding CheckCustomModBranchesCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
-                                                                AutomationProperties.HelpText="Ask the repository which branches the author offers now. Nothing is installed." />
-                                                        <Button Grid.Column="2" Content="Switch branch" Command="{Binding SwitchCustomModBranchCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
-                                                                AutomationProperties.HelpText="Review the chosen branch's exact version, then confirm to back up and switch." />
-                                                    </Grid>
-                                                </StackPanel>
-                                                <Button Content="{Binding SelectedCustomModUnregisterActionName}" Command="{Binding UnregisterCustomModCommand}" Style="{StaticResource GameCenter.ModAction.UninstallButton}"
-                                                        AutomationProperties.HelpText="Review removal. Private data and server files are kept; package installs also remove their owned game client files." />
-                                            </StackPanel>
-                                        </Expander>
+                                        <!-- The author's offered branches, from the last explicit check stored by the distro.
+                                             Kept apart from Update, which always uses the installed source: choosing a branch
+                                             changes nothing until Switch branch reviews and confirms it. -->
+                                        <StackPanel Visibility="{Binding SelectedCustomModUsesBranches, Converter={StaticResource BoolToVisibility}}" Margin="0,6,0,6">
+                                            <TextBlock Text="Branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
+                                            <ComboBox ItemsSource="{Binding SelectedCustomModBranchOptions}" SelectedItem="{Binding SelectedCustomModBranch}"
+                                                      Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
+                                                      AutomationProperties.Name="Custom mod branch"
+                                                      IsEnabled="{Binding IsComponentInteractionEnabled}"
+                                                      AutomationProperties.HelpText="Branches offered by the mod's author, from the last branch check. Choose one, then Switch branch to review it." />
+                                            <Grid Margin="0,6,0,0">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="6" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Button Content="Check branches" Command="{Binding CheckCustomModBranchesCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
+                                                        AutomationProperties.HelpText="Ask the repository which branches the author offers now. Nothing is installed." />
+                                                <Button Grid.Column="2" Content="Switch branch" Command="{Binding SwitchCustomModBranchCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}"
+                                                        AutomationProperties.HelpText="Review the chosen branch's exact version, then confirm to back up and switch." />
+                                            </Grid>
+                                        </StackPanel>
+                                        <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                        <Button Content="{Binding SelectedCustomModUnregisterActionName}" Command="{Binding UnregisterCustomModCommand}" Style="{StaticResource GameCenter.ModAction.UninstallButton}"
+                                                AutomationProperties.HelpText="Review removal. Private data and server files are kept; package installs also remove their owned game client files." />
                                     </StackPanel>
                                     <StackPanel Visibility="{Binding HasNoCustomMods, Converter={StaticResource BoolToVisibility}}">
                                         <TextBlock Text="Custom mods" FontSize="18" Foreground="{DynamicResource GameCenter.Text}" />
