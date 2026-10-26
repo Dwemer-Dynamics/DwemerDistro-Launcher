@@ -1184,12 +1184,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 description: "Installs the small helper LLM and vector service used to improve NPC responses and retrieval.\nPort: 8082",
                 primaryCommand: CreateInstallCommand("minime"),
                 supportsNvidiaCuda: true,
-                supportsAmdCpu: true),
-            CreateItem(
-                key: "chimmcp",
-                title: "CHIM-MCP",
-                description: "Optional MCP integration for CHIM tooling. Install this only when you want MCP support.\nPort: None",
-                primaryCommand: CreateInstallCommand("chimmcp"))));
+                supportsAmdCpu: true)));
 
         sections.Add(CreateSection(
             "Text-to-Speech Engines",
