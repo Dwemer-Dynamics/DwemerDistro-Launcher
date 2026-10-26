@@ -356,6 +356,7 @@
                                  ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0" Padding="0"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
                                  KeyboardNavigation.DirectionalNavigation="Contained" SelectionChanged="GameRail_SelectionChanged"
+                                 PreviewMouseLeftButtonUp="ModRail_PreviewMouseLeftButtonUp" PreviewKeyDown="ModRail_PreviewKeyDown"
                                  Visibility="{Binding IsOfficialModsView, Converter={StaticResource BoolToVisibility}}"
                                  AutomationProperties.Name="Dwemer game selection">
                             <ListBox.ItemTemplate>
@@ -396,6 +397,7 @@
                                      ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0" Padding="0"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
                                      KeyboardNavigation.DirectionalNavigation="Contained"
+                                     PreviewMouseLeftButtonUp="ModRail_PreviewMouseLeftButtonUp" PreviewKeyDown="ModRail_PreviewKeyDown"
                                      AutomationProperties.Name="Custom mod selection">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>

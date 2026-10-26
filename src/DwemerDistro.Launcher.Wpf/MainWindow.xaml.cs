@@ -343,6 +343,45 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// A user's click on a sidebar mod shows it on the Mods page, including a click on the mod
+    /// that is already selected. Binding and refresh selection changes never raise this.
+    /// </summary>
+    private void ModRail_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ItemsControl rail &&
+            e.OriginalSource is DependencyObject source &&
+            ItemsControl.ContainerFromElement(rail, source) is ListBoxItem)
+        {
+            LibraryNavButton.IsChecked = true;
+        }
+    }
+
+    private void ModRail_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.None ||
+            sender is not ItemsControl rail ||
+            e.OriginalSource is not DependencyObject source ||
+            (!ReferenceEquals(source, rail) && ItemsControl.ContainerFromElement(rail, source) is not ListBoxItem))
+        {
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.Up:
+            case Key.Down:
+            case Key.Home:
+            case Key.End:
+            case Key.PageUp:
+            case Key.PageDown:
+            case Key.Space:
+            case Key.Enter:
+                LibraryNavButton.IsChecked = true;
+                break;
+        }
+    }
+
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSelectedGameDetails();
@@ -510,14 +549,20 @@ public partial class MainWindow : Window
             case Key.D1:
             case Key.NumPad1:
                 GameRail.SelectedIndex = 0;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.D2:
             case Key.NumPad2:
                 GameRail.SelectedIndex = 1;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.D3:
             case Key.NumPad3:
                 GameRail.SelectedIndex = 2;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.M:
                 LibraryNavButton.IsChecked = true;
