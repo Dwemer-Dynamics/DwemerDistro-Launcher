@@ -9,8 +9,8 @@ namespace DwemerDistro.Launcher.Wpf.Views;
 /// <summary>
 /// A bounded Markdown subset rendered into FlowDocument blocks: ATX headings, paragraphs, emphasis, inline code, fenced
 /// code blocks, flat bulleted and numbered lists, pipe tables and http(s) links. Everything else, raw HTML included, is
-/// shown as literal text. Links are never made clickable here (the transcript is not document-enabled), so nothing
-/// opens on its own; the address is shown as a tooltip.
+/// shown as literal text. Links are never made clickable: the transcript's own Hyperlink style disables them, so nothing
+/// opens on its own; the address stays readable in the selectable text.
 /// </summary>
 internal static partial class AssistantMarkdown
 {
@@ -128,7 +128,7 @@ internal static partial class AssistantMarkdown
         // One paragraph with line breaks, so a selection copies the code exactly, indentation included.
         var code = new Paragraph
         {
-            FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 12,
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 12, LineHeight = 18,
             Background = new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x40, 0, 0, 0)),
             Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 4, 0, 6)
         };
@@ -228,7 +228,7 @@ internal static partial class AssistantMarkdown
                 var label = match.Groups["label"].Value;
                 if (IsSafeLink(match.Groups["url"].Value, out var uri))
                 {
-                    // Not document-enabled, so the link is styled and its address shown, but nothing navigates on click.
+                    // The transcript's Hyperlink style disables the link, so its address is shown but nothing navigates on click.
                     var link = new Hyperlink { NavigateUri = uri, ToolTip = uri.AbsoluteUri };
                     link.Inlines.Add(new Run(label));
                     inlines.Add(link);

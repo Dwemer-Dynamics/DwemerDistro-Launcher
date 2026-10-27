@@ -1,11 +1,15 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using UserControl = System.Windows.Controls.UserControl;
 
@@ -24,22 +28,153 @@ public partial class AssistantView : UserControl
     private const double ReviewWidth = 320;
     // What is shown for each transcript item; every key is subscribed to PropertyChanged.
     private readonly Dictionary<AssistantTranscriptItem, TranscriptEntry> _transcriptRuns = new();
+    // The user's messages sit on the right and replies on the left, each leaving at least this share of the width to the other side.
+    private const double BubbleGutterShare = 0.18;
+    private const double BubbleMinGutter = 40;
+    private const double BubbleMaxGutter = 200;
+    // Prose stays at a readable line length on wide windows; the rest of the row is left open.
+    private const double MaxBubbleWidth = 720;
+    private const double BubbleMinWidth = 72;
+    // Space between one message and the next.
+    private const double MessageGap = 14;
+    // Role labels and DwemerDistro's own notes are set smaller than the conversation.
+    private const double LabelFontSize = 11;
+    private const double NoteFontSize = 12.5;
+    // Longer messages simply take the bubble's full width.
+    private const int MaxMeasuredChars = 4000;
+    // The width bubbles were last fitted to.
+    private double _bubbleWidth;
+    // Rounded shapes drawn behind the transparent transcript; the document itself stays one selectable FlowDocument.
+    private readonly TranscriptBackdrop _backdrop = new();
+    private readonly List<TranscriptBackdrop.Shape> _shapes = [];
+    private bool _backdropQueued;
+    // The shapes last measured, in document coordinates (0 is the top of the document), and the stretch of the document
+    // they fully describe; positions are measured again only when something other than the newest message changed.
+    private readonly List<(Section Section, TranscriptEntry Entry, double Top, double Bottom)> _measured = [];
+    private double _coveredTop;
+    private double _coveredBottom = double.NegativeInfinity;
+    private double _measuredExtent;
+    private double _measuredWidth;
+    private bool _remeasure = true;
+    // Measures once more after streaming pauses, so the newest shape ends exactly where its text ends.
+    private readonly System.Windows.Threading.DispatcherTimer _settle;
+
+    // User and Reply are rounded bubbles, Note is DwemerDistro's own quieter note, Code a live command or its output.
+    private enum EntryShape { Plain, User, Reply, Note, Code }
 
     /// <summary>
     /// One item's blocks. Plain items (the user's own text, launcher notes, activity) keep one run that streaming appends to;
     /// assistant replies keep their Markdown chunks, so only chunks from the first changed one are rendered again.
     /// </summary>
-    private sealed class TranscriptEntry(Section body, Run? plain)
+    private sealed class TranscriptEntry(Section body, Run? plain, EntryShape shape = EntryShape.Plain, Paragraph? label = null)
     {
         public Section Body { get; } = body;
         public Run? Plain { get; } = plain;
+        public EntryShape Shape { get; } = shape;
+        // The role line above the shape; the shape starts with the block after it.
+        public Paragraph? Label { get; } = label;
         public List<string> Chunks { get; } = [];
         public List<Block[]> Rendered { get; } = [];
+        // The bubble already takes all the width it may; streamed text only grows, so it is not measured again.
+        public bool Wide { get; set; }
+        // The Activity group this routine item is folded into, if any.
+        public ActivityGroup? Group { get; set; }
+    }
+
+    /// <summary>
+    /// A run of routine activity between messages, behind one toggle. Its items stay in <see cref="Items"/> while it is collapsed,
+    /// detached from the document, so they keep streaming in place and reappear exactly when it is opened again.
+    /// </summary>
+    private sealed class ActivityGroup
+    {
+        public ActivityGroup(RoutedEventHandler toggled)
+        {
+            Section = new Section { Tag = this, Margin = new Thickness(0, 0, 0, 10) };
+            Toggle = new ToggleButton { Tag = this };
+            Toggle.SetResourceReference(StyleProperty, "Assistant.ActivityToggle");
+            Toggle.Checked += toggled;
+            Toggle.Unchecked += toggled;
+            // The chevron lines up with the replies' text; the toggle's own border and padding sit to its left.
+            Section.Blocks.Add(new BlockUIContainer(Toggle) { Margin = new Thickness(ShapePadding(EntryShape.Reply).Width - 6, 0, 0, 0) });
+        }
+
+        public Section Section { get; }
+        public ToggleButton Toggle { get; }
+        public Section Items { get; } = new() { Margin = new Thickness(0, 6, 0, 0) };
+        public bool IsExpanded => Items.Parent is not null;
+
+        public void Recount()
+        {
+            var steps = Items.Blocks.Count;
+            var label = "Activity · " + steps.ToString(CultureInfo.CurrentCulture) + (steps == 1 ? " step" : " steps");
+            Toggle.Content = label;
+            AutomationProperties.SetName(Toggle, label);
+        }
+    }
+
+    /// <summary>
+    /// Paints the rounded message shapes behind the transcript. It never takes input or focus and holds no text:
+    /// selection, copy, links and scrolling all stay with the RichTextBox in front of it.
+    /// </summary>
+    private sealed class TranscriptBackdrop : FrameworkElement
+    {
+        public readonly record struct Shape(Rect Bounds, System.Windows.Media.Brush Fill, double Radius);
+
+        private readonly List<Shape> _shapes = [];
+        private Rect _clip;
+
+        public TranscriptBackdrop()
+        {
+            Name = "TranscriptBackdrop";
+            IsHitTestVisible = false;
+            Focusable = false;
+            SnapsToDevicePixels = true;
+        }
+
+        public IReadOnlyList<Shape> Shapes => _shapes;
+
+        public void Show(Rect clip, List<Shape> shapes)
+        {
+            if (clip == _clip && shapes.SequenceEqual(_shapes))
+            {
+                return;
+            }
+
+            _clip = clip;
+            _shapes.Clear();
+            _shapes.AddRange(shapes);
+            InvalidateVisual();
+        }
+
+        protected override void OnRender(DrawingContext drawingContext)
+        {
+            if (_shapes.Count == 0 || _clip.IsEmpty)
+            {
+                return;
+            }
+
+            drawingContext.PushClip(new RectangleGeometry(_clip));
+            foreach (var shape in _shapes)
+            {
+                drawingContext.DrawRoundedRectangle(shape.Fill, null, shape.Bounds, shape.Radius, shape.Radius);
+            }
+
+            drawingContext.Pop();
+        }
     }
 
     public AssistantView()
     {
         InitializeComponent();
+        // Behind the transcript in the same cell, so its shapes share the transcript's coordinates.
+        Grid.SetRow(_backdrop, Grid.GetRow(TranscriptBox));
+        ChatGrid.Children.Insert(0, _backdrop);
+        _settle = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromMilliseconds(300) };
+        _settle.Tick += (_, _) =>
+        {
+            _settle.Stop();
+            RemeasureBackdrop();
+        };
         DataContextChanged += AssistantView_DataContextChanged;
         // Ctrl+V in the composer attaches a copied screenshot or copied files; text pastes as usual.
         CommandManager.AddPreviewCanExecuteHandler(InputBox, InputBox_PreviewCanPaste);
@@ -126,26 +261,100 @@ public partial class AssistantView : UserControl
         TranscriptBox.Document.Blocks.Clear();
         if (_viewModel is not null)
         {
-            foreach (var item in _viewModel.Transcript)
+            // Appended in order, so no message ever splits a group here.
+            for (var index = 0; index < _viewModel.Transcript.Count; index++)
             {
-                TranscriptBox.Document.Blocks.Add(CreateTranscriptBlock(item));
+                PlaceTranscriptBlock(_viewModel.Transcript, index);
             }
         }
 
         TranscriptBox.ScrollToEnd();
+        RemeasureBackdrop();
+    }
+
+    /// <summary>
+    /// Adds the block of the item at <paramref name="index"/> between its neighbours' blocks. Routine activity joins the Activity group
+    /// of the item before or after it, or starts a collapsed one; anything else sits between groups. False, with nothing added, when a
+    /// message would split a group in two, which only a rebuild places.
+    /// </summary>
+    private bool PlaceTranscriptBlock(IList<AssistantTranscriptItem> transcript, int index)
+    {
+        var item = transcript[index];
+        var routine = AssistantViewModel.IsRoutineActivity(item);
+        var previous = index > 0 ? _transcriptRuns.GetValueOrDefault(transcript[index - 1]) : null;
+        TranscriptEntry? next = null;
+        for (var later = index + 1; later < transcript.Count && next is null; later++)
+        {
+            next = _transcriptRuns.GetValueOrDefault(transcript[later]);
+        }
+
+        if (!routine && previous?.Group is { } split && ReferenceEquals(next?.Group, split))
+        {
+            return false;
+        }
+
+        var block = CreateTranscriptBlock(item);
+        var top = next is null ? null : (Block)(next.Group?.Section ?? next.Body);
+        if (!routine)
+        {
+            if (top is null) TranscriptBox.Document.Blocks.Add(block);
+            else TranscriptBox.Document.Blocks.InsertBefore(top, block);
+            return true;
+        }
+
+        ActivityGroup group;
+        if (previous?.Group is { } earlier)
+        {
+            group = earlier;
+            group.Items.Blocks.InsertAfter(previous.Body, block);
+        }
+        else if (next?.Group is { } following)
+        {
+            group = following;
+            group.Items.Blocks.InsertBefore(next.Body, block);
+        }
+        else
+        {
+            group = new ActivityGroup(ActivityToggle_Changed);
+            group.Items.Blocks.Add(block);
+            if (top is null) TranscriptBox.Document.Blocks.Add(group.Section);
+            else TranscriptBox.Document.Blocks.InsertBefore(top, group.Section);
+        }
+
+        _transcriptRuns[item].Group = group;
+        group.Recount();
+        return true;
+    }
+
+    // Opens or folds an Activity group in place; its items keep their text, and a selection outside it is kept.
+    private void ActivityToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if ((sender as ToggleButton)?.Tag is not ActivityGroup group || (group.Toggle.IsChecked == true) == group.IsExpanded)
+        {
+            return;
+        }
+
+        var pinned = PinSelection();
+        if (group.IsExpanded) group.Section.Blocks.Remove(group.Items);
+        else group.Section.Blocks.Add(group.Items);
+        RestoreSelection(pinned);
+        RemeasureBackdrop();
     }
 
     private Section CreateTranscriptBlock(AssistantTranscriptItem item)
     {
         item.PropertyChanged += TranscriptItem_PropertyChanged;
-        var block = new Section { Tag = item, Margin = new Thickness(0, 0, 0, 10) };
+        var block = new Section { Tag = item, Margin = new Thickness(0, 0, 0, MessageGap) };
         if (item.Role == AssistantViewModel.ActivityRole)
         {
-            // Tool reads and other activity sit between replies, muted and outside the assistant's own text.
+            // Activity sits between replies, muted, aligned with the replies' text and outside it; routine steps in a group sit closer,
+            // under the group's label.
+            var routine = AssistantViewModel.IsRoutineActivity(item);
             var activity = new Run(item.Text);
-            var line = new Paragraph(activity) { Margin = new Thickness(0), FontSize = 11.5, FontStyle = FontStyles.Italic };
-            line.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
-            block.Margin = new Thickness(0, 0, 0, 6);
+            var line = new Paragraph(activity) { Margin = new Thickness(0), FontSize = 12, FontStyle = FontStyles.Italic, LineHeight = 18 };
+            line.SetResourceReference(TextElement.ForegroundProperty, "Assistant.QuietText");
+            block.Margin = new Thickness(0, 0, 0, routine ? 4 : 10);
+            block.Padding = new Thickness(ShapePadding(EntryShape.Reply).Width + (routine ? 12 : 0), 0, 0, 0);
             block.Blocks.Add(line);
             _transcriptRuns[item] = new TranscriptEntry(block, activity);
             return block;
@@ -153,34 +362,364 @@ public partial class AssistantView : UserControl
 
         if (item.Role is AssistantViewModel.OutputRole or AssistantViewModel.CommandRole)
         {
-            // A live command's code or redacted output: monospace, selectable with the rest, and output is appended in place as it streams.
-            var label = new Run(item.Role) { FontWeight = FontWeights.SemiBold, FontSize = 11 };
-            label.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
-            block.Blocks.Add(new Paragraph(label) { Margin = new Thickness(0) });
+            // A live command's code or redacted output: monospace in a dark panel, selectable with the rest, and output is appended in place as it streams.
             var output = new Run(item.Text);
-            block.Blocks.Add(new Paragraph(output)
-            {
-                Margin = new Thickness(0, 2, 0, 0), FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 12
-            });
-            _transcriptRuns[item] = new TranscriptEntry(block, output);
+            var code = new Paragraph(output) { Margin = new Thickness(0), FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 12, LineHeight = 18 };
+            var command = new TranscriptEntry(block, output, EntryShape.Code, AddLabel(block, item.Role, EntryShape.Code)) { Wide = true };
+            block.Blocks.Add(code);
+            _transcriptRuns[item] = command;
+            FitBubble(command, item.Text);
             return block;
         }
 
-        var role = new Run(item.Role) { FontWeight = FontWeights.SemiBold, FontSize = 11 };
-        role.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
-        block.Blocks.Add(new Paragraph(role) { Margin = new Thickness(0) });
+        // The user's messages are a bubble on the right, replies one on the left; DwemerDistro's own notes sit between them, quieter.
         if (item.Role is not ("Codex" or AssistantViewModel.ClaudeRole or AssistantViewModel.OpenRouterRole))
         {
+            var shape = item.Role == "You" ? EntryShape.User : EntryShape.Note;
+            var label = AddLabel(block, item.Role, shape);
             var text = new Run(item.Text);
-            block.Blocks.Add(new Paragraph(text) { Margin = new Thickness(0, 2, 0, 0) });
-            _transcriptRuns[item] = new TranscriptEntry(block, text);
+            var paragraph = new Paragraph(text) { Margin = new Thickness(0) };
+            if (shape == EntryShape.Note)
+            {
+                // A note keeps its whole text, URLs and codes included, selectable and copyable with the conversation; it is only set quieter.
+                paragraph.FontSize = NoteFontSize;
+                paragraph.LineHeight = 19;
+                paragraph.SetResourceReference(TextElement.ForegroundProperty, "Assistant.NoteText");
+            }
+
+            block.Blocks.Add(paragraph);
+            var plain = new TranscriptEntry(block, text, shape, label);
+            _transcriptRuns[item] = plain;
+            FitBubble(plain, item.Text);
             return block;
         }
 
-        var entry = new TranscriptEntry(block, null);
+        var entry = new TranscriptEntry(block, null, EntryShape.Reply, AddLabel(block, item.Role, EntryShape.Reply));
         _transcriptRuns[item] = entry;
         RenderMarkdown(entry, item.Text);
+        FitBubble(entry, item.Text);
         return block;
+    }
+
+    /// <summary>
+    /// A small role line above the shape, aligned with the text in it. It stays in the document, so a copied
+    /// conversation still says who wrote what. The section's padding is the shape's padding; the backdrop paints the shape.
+    /// </summary>
+    private static Paragraph AddLabel(Section block, string role, EntryShape shape)
+    {
+        var pad = ShapePadding(shape);
+        block.Padding = new Thickness(pad.Width, 0, pad.Width, pad.Height);
+        var label = new Paragraph(new Run(role))
+        {
+            FontSize = LabelFontSize, LineHeight = 15, Margin = new Thickness(0, 0, 0, pad.Height + 4),
+            TextAlignment = shape == EntryShape.User ? TextAlignment.Right : TextAlignment.Left
+        };
+        label.SetResourceReference(TextElement.ForegroundProperty, "Assistant.QuietText");
+        block.Blocks.Add(label);
+        return label;
+    }
+
+    // How far a shape reaches past its text: across (Width) and above and below (Height).
+    private static System.Windows.Size ShapePadding(EntryShape shape) =>
+        shape is EntryShape.User or EntryShape.Reply ? new System.Windows.Size(14, 9) : new System.Windows.Size(12, 7);
+
+    // The width blocks are laid out in: the transcript's viewport (already inside its Padding) less the document's page padding.
+    private double TranscriptWidth() =>
+        Math.Max(0, TranscriptBox.ViewportWidth - TranscriptBox.Document.PagePadding.Left - TranscriptBox.Document.PagePadding.Right);
+
+    /// <summary>
+    /// Sizes a bubble through its margin only, so text, selection and scroll stay as they are. A short message gets a bubble just
+    /// wide enough for it; a long one, code, a table or other Markdown structure takes the widest a bubble may be.
+    /// </summary>
+    private void FitBubble(TranscriptEntry entry, string text)
+    {
+        if (entry.Shape == EntryShape.Plain)
+        {
+            return;
+        }
+
+        var width = TranscriptWidth();
+        var gutter = Math.Clamp(width * BubbleGutterShare, BubbleMinGutter, BubbleMaxGutter);
+        var spare = gutter;
+        if (width > gutter + BubbleMinWidth)
+        {
+            var widest = Math.Min(width - gutter, MaxBubbleWidth);
+            var bubble = widest;
+            var padding = 2 * ShapePadding(entry.Shape).Width;
+            if (!entry.Wide)
+            {
+                var needed = MeasureText(entry, text, widest - padding) + padding;
+                if (needed >= widest) entry.Wide = true;
+                else bubble = Math.Max(needed, BubbleMinWidth);
+            }
+
+            spare = width - bubble;
+        }
+
+        var margin = entry.Shape == EntryShape.User ? new Thickness(spare, 0, 0, MessageGap) : new Thickness(0, 0, spare, MessageGap);
+        if (entry.Body.Margin != margin)
+        {
+            entry.Body.Margin = margin;
+            QueueBackdrop();
+        }
+    }
+
+    private double MeasureText(TranscriptEntry entry, string text, double max)
+    {
+        // Monospaced live commands and output, long text and structured Markdown take the full width.
+        if (entry.Shape == EntryShape.Code || text.Length > MaxMeasuredChars || entry.Shape == EntryShape.Reply && MarkdownStructureRegex().IsMatch(text))
+        {
+            return max;
+        }
+
+        var size = entry.Shape == EntryShape.Note ? NoteFontSize : TranscriptBox.FontSize;
+        // A reply's emphasis renders a little wider than its Markdown source.
+        var measured = MeasureWidth(text, size, max) * (entry.Shape == EntryShape.Reply ? 1.08 : 1) + 2;
+        // The role line above must fit on one line too.
+        var label = entry.Label is { } paragraph ? MeasureWidth(new TextRange(paragraph.ContentStart, paragraph.ContentEnd).Text, LabelFontSize, max) + 2 : 0;
+        return Math.Max(measured, label);
+    }
+
+    private double MeasureWidth(string text, double size, double max)
+    {
+        var typeface = new Typeface(TranscriptBox.FontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        var formatted = new FormattedText(text.Length == 0 ? " " : text, CultureInfo.CurrentUICulture, System.Windows.FlowDirection.LeftToRight, typeface,
+            size, System.Windows.Media.Brushes.Black, VisualTreeHelper.GetDpi(this).PixelsPerDip) { MaxTextWidth = Math.Max(1, max) };
+        return formatted.WidthIncludingTrailingWhitespace;
+    }
+
+    // At most one pass per dispatcher turn, after layout, however many tokens or changes arrived in it.
+    private void QueueBackdrop()
+    {
+        if (_backdropQueued)
+        {
+            return;
+        }
+
+        _backdropQueued = true;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, UpdateBackdrop);
+    }
+
+    // Something other than the newest message growing changed, so the shapes in view are measured again.
+    private void RemeasureBackdrop()
+    {
+        _remeasure = true;
+        QueueBackdrop();
+    }
+
+    /// <summary>
+    /// Places a rounded shape behind each message in view. Measuring text positions after the document changed makes WPF
+    /// rebuild its layout results for the whole document, so it is done only when needed: shapes are kept in document
+    /// coordinates, scrolling within what was measured only moves them, and while the newest message streams its shape
+    /// grows by however much the document grew. Anything else, and a short pause after streaming, measures again.
+    /// </summary>
+    private void UpdateBackdrop()
+    {
+        _backdropQueued = false;
+        _shapes.Clear();
+        if (TranscriptBox.Template?.FindName("PART_ContentHost", TranscriptBox) is not ScrollViewer host
+            || host.Template?.FindName("PART_ScrollContentPresenter", host) is not ScrollContentPresenter presenter
+            || !presenter.IsArrangeValid || !TranscriptBox.IsAncestorOf(presenter))
+        {
+            _measured.Clear();
+            _remeasure = true;
+            _backdrop.Show(Rect.Empty, _shapes);
+            return;
+        }
+
+        // Character positions are in the transcript's coordinates; the visible document is its scroll presenter.
+        var view = presenter.TransformToAncestor(TranscriptBox).TransformBounds(new Rect(0, 0, presenter.ActualWidth, presenter.ActualHeight));
+        var scrolled = host.VerticalOffset;
+        var width = TranscriptWidth();
+        if (_remeasure || Math.Abs(width - _measuredWidth) >= 0.5 || scrolled < _coveredTop - 0.5 || scrolled + view.Height > _coveredBottom + 0.5)
+        {
+            if (!MeasureBackdrop(view, scrolled))
+            {
+                return;
+            }
+
+            _measuredWidth = width;
+        }
+        else if (host.ExtentHeight != _measuredExtent)
+        {
+            // Only the newest message changed: the document grew or shrank at its end, by exactly that much.
+            var grown = host.ExtentHeight - _measuredExtent;
+            if (_measured.Count > 0 && IsNewest(_measured[^1].Section))
+            {
+                _measured[^1] = _measured[^1] with { Bottom = _measured[^1].Bottom + grown };
+                // Only the measured tail grew; growth below scrollback does not extend its measured coverage.
+                _coveredBottom += grown;
+            }
+        }
+
+        _measuredExtent = host.ExtentHeight;
+        var offset = TranscriptBox.TranslatePoint(new System.Windows.Point(0, 0), _backdrop);
+        var left = view.X + TranscriptBox.Document.PagePadding.Left - host.HorizontalOffset + offset.X;
+        var down = view.Top - scrolled + offset.Y;
+        foreach (var (section, entry, top, bottom) in _measured)
+        {
+            var fill = TryFindResource(entry.Shape switch
+            {
+                EntryShape.User => "Assistant.UserBubble",
+                EntryShape.Reply => "Assistant.ReplyBubble",
+                EntryShape.Code => "Assistant.CodeBubble",
+                _ => "Assistant.NoteBubble"
+            }) as System.Windows.Media.Brush;
+            if (fill is not null && bottom > top)
+            {
+                // Across from the section's margins, which streaming may still change; down from the measured lines.
+                var bounds = new Rect(left + section.Margin.Left, top + down, Math.Max(0, width - section.Margin.Left - section.Margin.Right), bottom - top);
+                _shapes.Add(new TranscriptBackdrop.Shape(bounds, fill, entry.Shape is EntryShape.User or EntryShape.Reply ? 12 : 8));
+            }
+        }
+
+        view.Offset(offset.X, offset.Y);
+        _backdrop.Show(view, _shapes);
+    }
+
+    /// <summary>
+    /// Measures the shapes of the messages in view from the laid-out positions of their first and last characters, in
+    /// document coordinates. Only positions inside the view are measured; a message running past an edge is kept past it.
+    /// </summary>
+    private bool MeasureBackdrop(Rect view, double scrolled)
+    {
+        TextPointer? first;
+        TextPointer? last;
+        try
+        {
+            // The start of the top line in view and the end of the bottom one.
+            first = TranscriptBox.GetPositionFromPoint(new System.Windows.Point(view.Left + 1, view.Top + 1), true);
+            last = TranscriptBox.GetPositionFromPoint(new System.Windows.Point(view.Right - 1, view.Bottom - 1), true);
+        }
+        catch (InvalidOperationException)
+        {
+            // Layout is not current; the scroll change that follows it queues another pass.
+            return false;
+        }
+
+        _measured.Clear();
+        _remeasure = false;
+        _coveredTop = scrolled;
+        _coveredBottom = scrolled + view.Height;
+        if (first is null || last is null)
+        {
+            return true;
+        }
+
+        // From view to document coordinates, and past the view by more than a corner so a cut shape shows no rounding there.
+        var up = scrolled - view.Top;
+        const double beyond = 24;
+        // From the message before the first visible one, whose shape may still reach into view, to the last visible one.
+        var topmost = TopBlock(first) ?? TranscriptBox.Document.Blocks.FirstBlock;
+        foreach (var block in MessagesFrom(topmost?.PreviousBlock ?? topmost))
+        {
+            if (block is not Section { Tag: AssistantTranscriptItem item } section || !_transcriptRuns.TryGetValue(item, out var entry)
+                || entry.Shape == EntryShape.Plain)
+            {
+                continue;
+            }
+
+            if (entry.Label?.NextBlock is not { } body)
+            {
+                // A reply that has not streamed any text yet shows only its role line; its first text is measured.
+                if (section.ContentStart.GetInsertionPosition(LogicalDirection.Forward).CompareTo(last) <= 0) _remeasure = true;
+                continue;
+            }
+
+            var start = body.ContentStart.GetInsertionPosition(LogicalDirection.Forward);
+            if (start.CompareTo(last) > 0)
+            {
+                break;
+            }
+
+            // A message ending just above the view is still measured: its shape's lower padding may reach into it.
+            var stop = section.ContentEnd.GetInsertionPosition(LogicalDirection.Backward);
+            var pad = ShapePadding(entry.Shape);
+            var top = start.CompareTo(first) < 0 ? view.Top - beyond : start.GetCharacterRect(LogicalDirection.Forward).Top - pad.Height;
+            var exact = stop.CompareTo(last) <= 0;
+            var bottom = exact ? stop.GetCharacterRect(LogicalDirection.Backward).Bottom + pad.Height : view.Bottom + beyond;
+            if (double.IsFinite(top) && double.IsFinite(bottom) && bottom > top)
+            {
+                _measured.Add((section, entry, top + up, bottom + up));
+                // Everything after the newest message's measured end is that message, so its growth stays covered.
+                if (exact && IsNewest(section)) _coveredBottom = double.PositiveInfinity;
+            }
+        }
+
+        return true;
+    }
+
+    // The top-level block a position is in, a message or an Activity group, e.g. the one at the top of the view.
+    private Block? TopBlock(TextPointer position)
+    {
+        for (var node = position.GetInsertionPosition(LogicalDirection.Forward).Parent as TextElement; node is not null; node = node.Parent as TextElement)
+        {
+            if (node is Block block && ReferenceEquals(block.Parent, TranscriptBox.Document))
+            {
+                return block;
+            }
+        }
+
+        return null;
+    }
+
+    // Each message from a top-level block on, with the items of an opened Activity group in its place; a folded group shows none.
+    private static IEnumerable<Block> MessagesFrom(Block? block)
+    {
+        for (; block is not null; block = block.NextBlock)
+        {
+            if (block is not Section { Tag: ActivityGroup group })
+            {
+                yield return block;
+            }
+            else if (group.IsExpanded)
+            {
+                foreach (var item in group.Items.Blocks)
+                {
+                    yield return item;
+                }
+            }
+        }
+    }
+
+    // The document's last message, also as the last item of an opened Activity group at its end; never a folded group's item.
+    private bool IsNewest(Block block)
+    {
+        while (block.NextBlock is null && block.Parent is Block parent)
+        {
+            block = parent;
+        }
+
+        return block.NextBlock is null && ReferenceEquals(block.Parent, TranscriptBox.Document);
+    }
+
+    // Code fences, tables, headings, lists and quotes render wider than their source, so such replies are not measured.
+    [GeneratedRegex(@"```|\||^\s*(#|>|[-*+]\s|\d+[.)]\s)", RegexOptions.Multiline)]
+    private static partial Regex MarkdownStructureRegex();
+
+    // Bubbles follow the transcript's width, including when its scroll bar appears or goes; their shapes follow every scroll.
+    private void TranscriptBox_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        QueueBackdrop();
+        var width = TranscriptWidth();
+        if (Math.Abs(width - _bubbleWidth) < 0.5)
+        {
+            return;
+        }
+
+        var follow = IsFollowingTranscript();
+        _bubbleWidth = width;
+        RemeasureBackdrop();
+        foreach (var (item, entry) in _transcriptRuns)
+        {
+            entry.Wide = false;
+            FitBubble(entry, item.Text);
+        }
+
+        if (follow)
+        {
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () => TranscriptBox.ScrollToEnd());
+        }
     }
 
     /// <summary>Renders again only from the first chunk that changed; older chunks keep their blocks and any selection in them.</summary>
@@ -214,20 +753,16 @@ public partial class AssistantView : UserControl
 
         var follow = IsFollowingTranscript();
         var pinned = PinSelection();
-        var blocks = TranscriptBox.Document.Blocks;
         if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
         {
-            var before = e.NewStartingIndex >= 0 && e.NewStartingIndex < blocks.Count ? blocks.ElementAt(e.NewStartingIndex) : null;
-            foreach (AssistantTranscriptItem item in e.NewItems)
+            var transcript = _viewModel!.Transcript;
+            var start = e.NewStartingIndex >= 0 ? e.NewStartingIndex : transcript.Count - e.NewItems.Count;
+            for (var offset = 0; offset < e.NewItems.Count; offset++)
             {
-                var block = CreateTranscriptBlock(item);
-                if (before is null)
+                if (!PlaceTranscriptBlock(transcript, start + offset))
                 {
-                    blocks.Add(block);
-                }
-                else
-                {
-                    blocks.InsertBefore(before, block);
+                    RebuildTranscript();
+                    return;
                 }
             }
         }
@@ -236,10 +771,17 @@ public partial class AssistantView : UserControl
             foreach (AssistantTranscriptItem item in e.OldItems)
             {
                 item.PropertyChanged -= TranscriptItem_PropertyChanged;
-                _transcriptRuns.Remove(item);
-                if (blocks.FirstOrDefault(block => ReferenceEquals(block.Tag, item)) is { } block)
+                if (!_transcriptRuns.Remove(item, out var entry))
                 {
-                    blocks.Remove(block);
+                    continue;
+                }
+
+                entry.Body.SiblingBlocks?.Remove(entry.Body);
+                if (entry.Group is { } group)
+                {
+                    // An emptied group goes with its last item.
+                    if (group.Items.Blocks.Count == 0) group.Section.SiblingBlocks?.Remove(group.Section);
+                    else group.Recount();
                 }
             }
         }
@@ -250,6 +792,7 @@ public partial class AssistantView : UserControl
         }
 
         RestoreSelection(pinned);
+        RemeasureBackdrop();
         if (follow)
         {
             TranscriptBox.ScrollToEnd();
@@ -264,8 +807,10 @@ public partial class AssistantView : UserControl
             return;
         }
 
-        var follow = IsFollowingTranscript();
-        var pinned = PinSelection();
+        // An item in a folded group changes only its own detached text; nothing on screen moves.
+        var hidden = entry.Group is { IsExpanded: false };
+        var follow = !hidden && IsFollowingTranscript();
+        var pinned = hidden ? null : PinSelection();
         if (entry.Plain is not { } run)
         {
             RenderMarkdown(entry, item.Text);
@@ -278,6 +823,25 @@ public partial class AssistantView : UserControl
         else
         {
             run.Text = item.Text;
+            entry.Wide = false;
+        }
+
+        FitBubble(entry, item.Text);
+        if (hidden)
+        {
+            return;
+        }
+
+        if (IsNewest(entry.Body))
+        {
+            // The newest message streaming: its shape follows the document's growth now and is measured once it pauses.
+            QueueBackdrop();
+            _settle.Stop();
+            _settle.Start();
+        }
+        else
+        {
+            RemeasureBackdrop();
         }
 
         RestoreSelection(pinned);
@@ -326,6 +890,7 @@ public partial class AssistantView : UserControl
     {
         if (e.NewValue is true)
         {
+            RemeasureBackdrop();
             _viewModel?.OnPageShown();
         }
     }
