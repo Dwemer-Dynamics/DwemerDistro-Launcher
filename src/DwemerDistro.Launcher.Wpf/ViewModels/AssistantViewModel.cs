@@ -2095,6 +2095,9 @@ public sealed partial class AssistantViewModel : ObservableObject
     internal const int MaxLiveOutputChars = 32 * 1024;
     internal const string OutputRole = "Live output";
     internal const string CommandRole = "Live command";
+    // Starts every live command's start and end line; an end that may have left things changed partway ends with LiveJobPartway.
+    private const string LiveCommandPrefix = "Live command ";
+    private const string LiveJobPartway = " It may have changed things partway; check before running it again.";
 
     private void OnRunStarted(JsonElement parameters)
     {
@@ -2113,7 +2116,7 @@ public sealed partial class AssistantViewModel : ObservableObject
             "automatic" => "run automatically as routine",
             _ => "approved once"
         };
-        AddActivity("Live command started" + (RunAccount.IsMatch(account) ? " as " + account : string.Empty)
+        AddActivity(LiveCommandPrefix + "started" + (RunAccount.IsMatch(account) ? " as " + account : string.Empty)
                     + (Prop(spec, "network").ValueKind == JsonValueKind.True ? " with network" : string.Empty) + ", " + approval + " (" + jobId + ").");
         // A run the grant covered, or a routine run that started automatically, had no card, so the code that ran is shown here
         // instead; approved runs were shown on their card.
@@ -2188,8 +2191,8 @@ public sealed partial class AssistantViewModel : ObservableObject
             ? $" after {ms / 1000.0:0.#} s" : string.Empty;
         var reason = AssistantCliService.GetString(parameters, "reason");
         var why = ActivityToken.IsMatch(reason) ? " (" + reason + ")" : string.Empty;
-        var partway = " It may have changed things partway; check before running it again.";
-        return "Live command " + jobId + AssistantCliService.GetString(parameters, "state") switch
+        const string partway = LiveJobPartway;
+        return LiveCommandPrefix + jobId + AssistantCliService.GetString(parameters, "state") switch
         {
             "exited" when Prop(parameters, "exitCode") is { ValueKind: JsonValueKind.Number } code && code.TryGetInt32(out var exit)
                 => $" exited with code {exit}{after}." + (exit == 0 ? " Exit code 0 is not verification; the result still has to be read back." : string.Empty),
@@ -5089,6 +5092,19 @@ public sealed partial class AssistantViewModel : ObservableObject
     private const string CompactedText = "The conversation was compacted to fit the model's context. Earlier detail may now be summarized.";
 
     private void AddActivity(string text, string? itemId = null) => AddItem(new AssistantTranscriptItem(ActivityRole, text, itemId));
+
+    /// <summary>
+    /// Routine progress the transcript folds into a collapsed Activity group: tool calls (the only activity keyed by an item id) and a
+    /// live command's start, code, output and ordinary end. Decisions, upgrades, compaction, coverage gaps and a live command that may
+    /// have stopped partway stay in the conversation; errors are DwemerDistro's own messages and are never activity.
+    /// </summary>
+    internal static bool IsRoutineActivity(AssistantTranscriptItem item) => item.Role switch
+    {
+        CommandRole or OutputRole => true,
+        ActivityRole => item.ItemId is not null
+                        || item.Text.StartsWith(LiveCommandPrefix, StringComparison.Ordinal) && !item.Text.EndsWith(LiveJobPartway, StringComparison.Ordinal),
+        _ => false
+    };
 
     /// <summary>
     /// One line for a ddistro_read call from rust-v0.163.0 dynamicToolCall: the operation and target when they match the

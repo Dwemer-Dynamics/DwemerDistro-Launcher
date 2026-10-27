@@ -6,6 +6,50 @@
              IsVisibleChanged="AssistantView_IsVisibleChanged">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <!-- The conversation's own quiet palette: rounded shapes painted behind the transcript, a calm warm tone for the user's
+             messages, a soft charcoal for replies, and dimmer text for role lines, activity and DwemerDistro's notes. -->
+        <SolidColorBrush x:Key="Assistant.UserBubble" Color="#3A3324" />
+        <SolidColorBrush x:Key="Assistant.ReplyBubble" Color="#2A2A2A" />
+        <SolidColorBrush x:Key="Assistant.NoteBubble" Color="#252525" />
+        <SolidColorBrush x:Key="Assistant.CodeBubble" Color="#161616" />
+        <SolidColorBrush x:Key="Assistant.QuietText" Color="#959595" />
+        <SolidColorBrush x:Key="Assistant.NoteText" Color="#BDBDBD" />
+        <SolidColorBrush x:Key="Assistant.SoftBorder" Color="#3A3A3A" />
+        <!-- The disclosure that folds routine tool and live command activity between replies: quiet, collapsed until opened. -->
+        <Style x:Key="Assistant.ActivityToggle" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="{StaticResource Assistant.QuietText}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="AutomationProperties.HelpText" Value="Routine tool and live command activity. Space or Enter shows or hides it." />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Frame" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6" Padding="5,1,8,2">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="Chevron" Text="&#x25B8;" Width="12" VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}" />
+                                <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" VerticalAlignment="Center"
+                                           Foreground="{TemplateBinding Foreground}" />
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chevron" Property="Text" Value="&#x25BE;" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource Assistant.NoteText}" />
+                                <Setter TargetName="Frame" Property="Background" Value="{StaticResource Assistant.NoteBubble}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource Assistant.NoteText}" />
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style x:Key="Assistant.TextBox" TargetType="TextBox">
             <Setter Property="Background" Value="#191919" />
             <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
@@ -14,6 +58,32 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="8,6" />
             <Setter Property="FontSize" Value="13" />
+        </Style>
+        <!-- The composer: the same text box, rounded and quiet until it has focus. -->
+        <Style x:Key="Assistant.Composer" TargetType="TextBox" BasedOn="{StaticResource Assistant.TextBox}">
+            <Setter Property="Background" Value="#252525" />
+            <Setter Property="BorderBrush" Value="{StaticResource Assistant.SoftBorder}" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Frame" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" HorizontalScrollBarVisibility="Hidden"
+                                          VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Frame" Property="Opacity" Value="0.6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="Assistant.Action" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
             <Setter Property="Margin" Value="0,0,6,6" />
@@ -247,8 +317,9 @@
                 </Grid.RowDefinitions>
 
                 <!-- Conversation -->
-                <Border x:Name="ChatCard" Style="{StaticResource GameCenter.Card}" Padding="0">
-                    <Grid>
+                <Border x:Name="ChatCard" Style="{StaticResource GameCenter.Card}" Padding="0" CornerRadius="8"
+                        BorderBrush="{StaticResource Assistant.SoftBorder}">
+                    <Grid x:Name="ChatGrid">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
@@ -256,18 +327,28 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <!-- One read-only document, so a selection, Ctrl+A and Copy can span the whole conversation.
-                             Code-behind keeps its blocks in step with Transcript. -->
+                             Code-behind keeps its blocks in step with Transcript: the user's messages on the right, replies on the left,
+                             with their rounded shapes painted on a layer behind this transparent document. -->
                         <RichTextBox x:Name="TranscriptBox" Grid.Row="1" IsReadOnly="True" IsReadOnlyCaretVisible="True" IsUndoEnabled="False"
                                      IsInactiveSelectionHighlightEnabled="True"
-                                     Background="Transparent" BorderThickness="0" Padding="10,10" FontSize="13"
+                                     Background="Transparent" BorderThickness="0" Padding="11,12,11,4" FontSize="14"
                                      Foreground="{DynamicResource GameCenter.Text}" CaretBrush="{DynamicResource GameCenter.Text}"
                                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.ScrollChanged="TranscriptBox_ScrollChanged"
                                      AutomationProperties.Name="Assistant conversation"
-                                     AutomationProperties.HelpText="Read-only. Ctrl+A selects the whole conversation and Ctrl+C copies the selection.">
-                            <FlowDocument PagePadding="0" />
+                                     AutomationProperties.HelpText="Read-only. Ctrl+A selects the whole conversation and Ctrl+C copies the selection."
+                                     IsDocumentEnabled="True" KeyboardNavigation.TabNavigation="Continue">
+                            <!-- The document is enabled only for the Activity toggles in it, which Tab reaches after the transcript itself;
+                                 links stay disabled, so nothing navigates on click and they are not tab stops. -->
+                            <RichTextBox.Resources>
+                                <Style TargetType="Hyperlink">
+                                    <Setter Property="IsEnabled" Value="False" />
+                                </Style>
+                            </RichTextBox.Resources>
+                            <FlowDocument PagePadding="0" LineHeight="21" />
                         </RichTextBox>
 
-                        <StackPanel Grid.Row="2" Margin="10,0,10,0">
+                        <StackPanel Grid.Row="2" Margin="14,0,14,0">
                             <!-- An action Core's broker proposed in the running turn, just above the composer: a live command, a restart, a model
                                  change or its undo, a file change or undo, or a registered service operation, with Core's exact code or lines. Nothing
                                  runs until Run once, Allow for this task, Approve restart, Apply change or Undo change; Cancel is the safe choice, no
@@ -275,7 +356,7 @@
                                  A destructive live command (routine ones run without a card) has a danger border and only Confirm and run or Cancel. -->
                             <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
                                     Background="{DynamicResource GameCenter.GoldTint}"
-                                    CornerRadius="4" Padding="10,8" Margin="0,0,0,6">
+                                    CornerRadius="8" Padding="12,10" Margin="0,0,0,6">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
@@ -359,7 +440,7 @@
                         </StackPanel>
 
                         <!-- The draft stays editable in every state; only Send waits for a ready session. -->
-                        <Grid Grid.Row="3" Margin="10">
+                        <Grid Grid.Row="3" Margin="14,8,14,12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -381,7 +462,7 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Background="#232323" BorderBrush="#3A3A3A" BorderThickness="1" CornerRadius="3" Margin="0,0,6,4" Padding="8,2,2,2"
+                                        <Border Background="#252525" BorderBrush="{StaticResource Assistant.SoftBorder}" BorderThickness="1" CornerRadius="10" Margin="0,0,6,4" Padding="10,2,2,2"
                                                 MaxWidth="320">
                                             <DockPanel>
                                                 <Button DockPanel.Dock="Right" Content="✕" Click="RemoveAttachment_Click" Style="{StaticResource Assistant.Action}"
@@ -396,8 +477,8 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <TextBox x:Name="InputBox" Grid.Row="1" Text="{Binding InputText, UpdateSourceTrigger=PropertyChanged}"
-                                     Style="{StaticResource Assistant.TextBox}" AcceptsReturn="True" TextWrapping="Wrap"
-                                     MinHeight="38" MaxHeight="120" VerticalScrollBarVisibility="Auto"
+                                     Style="{StaticResource Assistant.Composer}" AcceptsReturn="True" TextWrapping="Wrap"
+                                     MinHeight="40" MaxHeight="140" VerticalScrollBarVisibility="Auto"
                                      PreviewKeyDown="InputBox_PreviewKeyDown" AllowDrop="True"
                                      PreviewDragOver="InputBox_PreviewDragOver" PreviewDrop="InputBox_PreviewDrop"
                                      AutomationProperties.Name="Message to the assistant"
