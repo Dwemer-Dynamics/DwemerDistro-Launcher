@@ -96,11 +96,20 @@ public sealed class AssistantStateStore : IAssistantStateStore
     internal const int MaxFileBytes = 24 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public AssistantStateStore(string? localAppDataDirectory = null)
+    /// <summary>Codex/ChatGPT's reference file. Its name and format never change.</summary>
+    public const string CodexFileName = "task.json";
+
+    /// <summary>The local Claude chat's reference: the same identifiers-only format, with provider <c>claude</c>.</summary>
+    public const string ClaudeFileName = "task.claude.json";
+
+    /// <summary>The OpenRouter chat's reference: the same identifiers-only format, with provider <c>openrouter</c>.</summary>
+    public const string OpenRouterFileName = "task.openrouter.json";
+
+    public AssistantStateStore(string? localAppDataDirectory = null, string fileName = CodexFileName)
     {
         var resolvedDirectory = localAppDataDirectory
                                 ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        StatePath = Path.Combine(resolvedDirectory, "DwemerDistro", "assistant", "task.json");
+        StatePath = Path.Combine(resolvedDirectory, "DwemerDistro", "assistant", fileName);
     }
 
     public string StatePath { get; }
