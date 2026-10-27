@@ -27,10 +27,12 @@ internal static class AssistantChatExport
     /// through <c>thread/items/list</c>. Only the user's own text and the assistant's replies are written, exactly as
     /// stored: the launcher's hidden context, tool calls and results, commands and reasoning are left out. A repeated
     /// cursor, an error or a limit stops that part and marks the export partial; cancellation throws and writes nothing.
+    /// An <paramref name="external"/> (OpenRouter) thread is read through Core's <c>ddistro/external/thread/turns/list</c>,
+    /// whose turns always carry their items; turns Core dropped from a long chat and turn errors are stated in the file.
     /// </summary>
     internal static async Task<AssistantExportResult> BuildAsync(
         Func<string, JsonObject, CancellationToken, Task<JsonElement>> request, string title, IReadOnlyList<string> threadIds,
-        AssistantExportLimits limits, DateTimeOffset now, CancellationToken cancellationToken)
+        AssistantExportLimits limits, DateTimeOffset now, CancellationToken cancellationToken, bool external = false)
     {
         var body = new StringBuilder();
         var problems = new List<string>();
@@ -55,13 +57,17 @@ internal static class AssistantChatExport
                         problems.Add($"stopped after {limits.MaxTurnPages:N0} pages of turns");
                         break;
                     }
-                    var turnsRequest = new JsonObject { ["threadId"] = threadId, ["limit"] = TurnPageSize, ["sortDirection"] = "asc", ["itemsView"] = "full" };
+                    var turnsRequest = new JsonObject { ["threadId"] = threadId, ["limit"] = TurnPageSize, ["sortDirection"] = "asc" };
+                    if (!external) turnsRequest["itemsView"] = "full";
                     if (cursor is not null) turnsRequest["cursor"] = cursor;
-                    var result = await request("thread/turns/list", turnsRequest, cancellationToken);
+                    var result = await request(external ? "ddistro/external/thread/turns/list" : "thread/turns/list", turnsRequest, cancellationToken);
+                    if (external && page == 0 && result.ValueKind == JsonValueKind.Object && result.TryGetProperty("compacted", out var compacted)
+                        && compacted.ValueKind == JsonValueKind.Number && compacted.TryGetInt32(out var dropped) && dropped > 0)
+                        problems.Add($"DwemerDistro had already dropped the {dropped:N0} oldest turn(s) of this long chat");
                     foreach (var turn in Array(result, "data"))
                     {
                         var items = new List<JsonElement>();
-                        if (String(turn, "itemsView") == "full") items.AddRange(Array(turn, "items"));
+                        if (external || String(turn, "itemsView") == "full") items.AddRange(Array(turn, "items"));
                         else await ReadTurnItemsAsync(request, threadId, String(turn, "id"), items, limits, problems, cancellationToken);
                         foreach (var (role, text, _) in AssistantViewModel.ReadMessages(items, ref omitted))
                         {
@@ -76,6 +82,8 @@ internal static class AssistantChatExport
                             Append(entry);
                             messages++;
                         }
+                        if (external && !full && turn.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)
+                            Append("_This response ended with an error: " + Shorten(String(error, "message"), 300) + "_\n\n");
                         if (full) break;
                     }
                     cursor = String(result, "nextCursor") is { Length: > 0 } next ? next : null;

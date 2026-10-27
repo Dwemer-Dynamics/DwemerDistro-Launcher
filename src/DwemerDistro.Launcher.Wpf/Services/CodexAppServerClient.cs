@@ -11,6 +11,17 @@ public sealed class AppServerException(int code, string message, string reason =
 
     /// <summary>A refused session's data.reason token (for example account_home_unmanaged_config); empty otherwise.</summary>
     public string Reason { get; } = reason;
+
+    /// <summary>
+    /// The reason when a request was written but its outcome is not known: it timed out after the write, the write itself
+    /// failed part way, or Core said so (-32001 outcome_unknown). The request may still be queued or running.
+    /// </summary>
+    public const string OutcomeUnknown = "outcome_unknown";
+
+    public bool IsOutcomeUnknown => Reason == OutcomeUnknown;
+
+    /// <summary>For an unknown outcome after a timeout: Core's eventual answer to the same request, or null.</summary>
+    public Task<JsonElement>? LateResult { get; init; }
 }
 
 /// <summary>
@@ -69,27 +80,37 @@ public sealed class CodexAppServerClient : IAsyncDisposable
         var id = Interlocked.Increment(ref _nextId);
         var completion = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = completion;
+        var line = Serialize(new JsonObject
+        {
+            ["method"] = method,
+            ["id"] = id,
+            ["params"] = ToNode(parameters)
+        });
+        var keepPending = false;
         try
         {
-            await _transport.WriteLineAsync(Serialize(new JsonObject
-            {
-                ["method"] = method,
-                ["id"] = id,
-                ["params"] = ToNode(parameters)
-            }), cancellationToken).ConfigureAwait(false);
+            // From here bytes may reach Core, so a failure no longer proves the request was not received.
+            await _transport.WriteLineAsync(line, cancellationToken).ConfigureAwait(false);
             return await completion.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
         }
         catch (TimeoutException)
         {
-            throw new AppServerException(0, $"The assistant did not answer {method} in time.");
+            // The answer may still come (a queued turn waits for the model slot); it stays routed until it does or the session closes.
+            keepPending = true;
+            _ = completion.Task.ContinueWith(static task => _ = task.Exception, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            throw new AppServerException(0, $"The assistant did not answer {method} in time.", AppServerException.OutcomeUnknown)
+            {
+                LateResult = completion.Task
+            };
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
         {
-            throw new AppServerException(0, "The assistant session closed.");
+            throw new AppServerException(0, "The assistant session closed.", AppServerException.OutcomeUnknown);
         }
         finally
         {
-            _pending.TryRemove(id, out _);
+            if (!keepPending) _pending.TryRemove(id, out _);
         }
     }
 
@@ -179,6 +200,8 @@ public sealed class CodexAppServerClient : IAsyncDisposable
                 var reason = error.TryGetProperty("data", out var data) ? AssistantCliService.GetString(data, "reason") : string.Empty;
                 var text = AssistantCliService.GetString(error, "message");
                 var token = reason.Length is > 0 and <= 64 && reason.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '_') ? reason : string.Empty;
+                // Core may name an unknown outcome only in the message; it is the same fixed machine code.
+                if (code == -32001 && token.Length == 0 && text == AppServerException.OutcomeUnknown) token = AppServerException.OutcomeUnknown;
                 completion.TrySetException(new AppServerException(code, reason.Length > 0 && reason.Length <= 64 ? $"{text} ({reason})" : text,
                     code == -32001 ? token : string.Empty));
             }
@@ -256,9 +279,25 @@ public sealed class AssistantTurnRunner
     /// <summary>Raised off the UI thread when an interrupt was sent but refused or not answered.</summary>
     public event Action<string>? StopFailed;
 
-    public async Task StartAsync(string threadId, JsonObject parameters)
+    /// <summary>
+    /// Raised off the UI thread with (threadId, turnId) when a turn whose start was not confirmed in time turns out to have
+    /// started, from a late answer or a late <c>turn/started</c>. Raised once per turn.
+    /// </summary>
+    public event Action<string, string>? UnconfirmedTurnStarted;
+
+    /// <summary>
+    /// Raised off the UI thread with (threadId, message) when Core's late answer definitively refused or cancelled a turn
+    /// whose start was not confirmed in time; the runner has already let go of it.
+    /// </summary>
+    public event Action<string, string>? UnconfirmedTurnRefused;
+
+    /// <summary>
+    /// Starts a turn with <paramref name="method"/>: Codex's <c>turn/start</c>, or Core's <c>ddistro/external/turn/start</c>
+    /// for an external engine, which answers and notifies in the same shape and is stopped with the same <c>turn/interrupt</c>.
+    /// </summary>
+    public async Task StartAsync(string threadId, JsonObject parameters, string method = "turn/start")
     {
-        var turn = new PendingTurn(threadId);
+        var turn = new PendingTurn(threadId, method != "turn/start");
         lock (_gate)
         {
             if (_current is not null) throw new AppServerException(0, "A response is already running.");
@@ -268,7 +307,29 @@ public sealed class AssistantTurnRunner
         JsonElement result;
         try
         {
-            result = await _client.RequestAsync("turn/start", parameters, _timeout).ConfigureAwait(false);
+            result = await _client.RequestAsync(method, parameters, _timeout).ConfigureAwait(false);
+        }
+        catch (AppServerException ex) when (ex.IsOutcomeUnknown)
+        {
+            // Written but not confirmed: Core may have queued or started it. The turn stays owned, so a late turn/started,
+            // turn/completed, answer or Stop still reaches it; nothing is resent. A turn/started that already arrived counts as
+            // its late start.
+            string? startedId = null;
+            lock (_gate)
+            {
+                if (ReferenceEquals(_current, turn))
+                {
+                    turn.Unconfirmed = true;
+                    if (turn.Id is not null && !turn.StartNotified)
+                    {
+                        turn.StartNotified = true;
+                        startedId = turn.Id;
+                    }
+                }
+            }
+            if (startedId is not null) UnconfirmedTurnStarted?.Invoke(turn.ThreadId, startedId);
+            if (ex.LateResult is { } late) _ = WatchLateAsync(turn, late);
+            throw;
         }
         catch
         {
@@ -296,32 +357,78 @@ public sealed class AssistantTurnRunner
             if (turn is null) return false;
             turn.StopRequested = true;
             id = turn.Id;
-            if (id is null || turn.Interrupting) return true;
-            turn.Interrupting = true;
+            if (id is not null)
+            {
+                if (turn.IdInterruptSent) return true;
+                turn.IdInterruptSent = true;
+            }
+            else
+            {
+                // An unconfirmed external turn without an id is interrupted by thread: Core's turnId is optional there and also
+                // cancels a queued turn. That may reach Core before the turn starts, so the id, once known, is interrupted too.
+                // A Codex turn's interrupt needs the id, so its stop stays held (Disconnect ends it).
+                if (!(turn.Unconfirmed && turn.External) || turn.ThreadInterruptSent) return true;
+                turn.ThreadInterruptSent = true;
+            }
         }
         await InterruptAsync(turn.ThreadId, id).ConfigureAwait(false);
         return true;
     }
 
+    /// <summary>Core's eventual answer to an unconfirmed start: an id adopts the turn; a definitive refusal releases it.</summary>
+    private async Task WatchLateAsync(PendingTurn turn, Task<JsonElement> late)
+    {
+        JsonElement result;
+        try
+        {
+            result = await late.ConfigureAwait(false);
+        }
+        catch (AppServerException ex) when (ex.Code != 0 && !ex.IsOutcomeUnknown)
+        {
+            lock (_gate)
+            {
+                // A turn already known to have started ends only with its turn/completed.
+                if (!ReferenceEquals(_current, turn) || turn.Id is not null) return;
+                _current = null;
+            }
+            UnconfirmedTurnRefused?.Invoke(turn.ThreadId, ex.Message);
+            return;
+        }
+        catch (AppServerException)
+        {
+            // The session closed, or Core itself does not know: the turn stays owned until turn/completed or Disconnect.
+            return;
+        }
+        var id = result.ValueKind == JsonValueKind.Object && result.TryGetProperty("turn", out var t)
+            ? AssistantCliService.GetString(t, "id")
+            : string.Empty;
+        await LearnIdAsync(turn, id).ConfigureAwait(false);
+    }
+
     private async Task LearnIdAsync(PendingTurn turn, string id)
     {
         if (id.Length == 0) return;
+        bool interrupt, adopted;
         lock (_gate)
         {
             if (!ReferenceEquals(_current, turn) || turn.Id is not null && turn.Id != id) return;
+            adopted = turn.Unconfirmed && !turn.StartNotified;
+            if (adopted) turn.StartNotified = true;
             turn.Id = id;
-            if (!turn.StopRequested || turn.Interrupting) return;
-            turn.Interrupting = true;
+            interrupt = turn.StopRequested && !turn.IdInterruptSent;
+            if (interrupt) turn.IdInterruptSent = true;
         }
-        await InterruptAsync(turn.ThreadId, id).ConfigureAwait(false);
+        if (adopted) UnconfirmedTurnStarted?.Invoke(turn.ThreadId, id);
+        if (interrupt) await InterruptAsync(turn.ThreadId, id).ConfigureAwait(false);
     }
 
-    private async Task InterruptAsync(string threadId, string turnId)
+    private async Task InterruptAsync(string threadId, string? turnId)
     {
+        var parameters = new JsonObject { ["threadId"] = threadId };
+        if (turnId is not null) parameters["turnId"] = turnId;
         try
         {
-            await _client.RequestAsync("turn/interrupt", new JsonObject { ["threadId"] = threadId, ["turnId"] = turnId }, _timeout)
-                .ConfigureAwait(false);
+            await _client.RequestAsync("turn/interrupt", parameters, _timeout).ConfigureAwait(false);
         }
         catch (AppServerException ex)
         {
@@ -350,11 +457,17 @@ public sealed class AssistantTurnRunner
         _ = LearnIdAsync(turn, id);
     }
 
-    private sealed class PendingTurn(string threadId)
+    private sealed class PendingTurn(string threadId, bool external)
     {
         public string ThreadId { get; } = threadId;
+        public bool External { get; } = external;
+        /// <summary>The start request was written but neither answered nor refused in time.</summary>
+        public bool Unconfirmed { get; set; }
         public string? Id { get; set; }
+        /// <summary>UnconfirmedTurnStarted was raised for it.</summary>
+        public bool StartNotified { get; set; }
         public bool StopRequested { get; set; }
-        public bool Interrupting { get; set; }
+        public bool ThreadInterruptSent { get; set; }
+        public bool IdInterruptSent { get; set; }
     }
 }

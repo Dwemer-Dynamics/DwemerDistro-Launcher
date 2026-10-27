@@ -39,6 +39,9 @@ public interface IAssistantHost
 
     /// <summary>A Save dialog the user answers; null when cancelled or when no dialog can be shown.</summary>
     string? ChooseSavePath(string title, string fileName, string filter) => null;
+
+    /// <summary>Shows the launcher's API Keys page, where global keys are added; the assistant never edits keys itself.</summary>
+    void OpenApiKeys() { }
 }
 
 /// <summary>One row of the history list: a catalogue entry and what this launcher may do with it now.</summary>
@@ -67,7 +70,8 @@ public sealed class AssistantTranscriptItem(string role, string text, string? it
         value.Length <= MaxTextChars ? value : value[..MaxTextChars] + "\n[Message truncated.]";
 }
 
-public sealed record AssistantModelOption(string Id, string DisplayName)
+/// <param name="SupportsImages">False for a text-only model: images are not attached or sent while it is chosen.</param>
+public sealed record AssistantModelOption(string Id, string DisplayName, bool SupportsImages = true)
 {
     // The themed ComboBox renders items through ToString.
     public override string ToString() => DisplayName;
@@ -381,7 +385,8 @@ public sealed partial class AssistantViewModel : ObservableObject
 
     private readonly IAssistantCli _cli;
     private readonly IAssistantHost _host;
-    private readonly IAssistantStateStore _store;
+    // The open provider's reference store: ChatGPT's task.json, or Claude's task.claude.json (see AssistantViewModel.Claude).
+    private IAssistantStateStore _store;
     private readonly Dispatcher _dispatcher;
     private CodexAppServerClient? _client;
     private AssistantTurnRunner? _turns;
@@ -513,11 +518,29 @@ public sealed partial class AssistantViewModel : ObservableObject
     /// Runs nothing and reads nothing: WSL, the saved task and the model are all touched on Connect, either the
     /// user's or the launcher's one <see cref="ConnectOnStartupAsync"/>.
     /// </summary>
-    public AssistantViewModel(IAssistantCli cli, IAssistantHost host, IAssistantStateStore store, IAssistantCatalogStore? catalog = null)
+    /// <remarks>
+    /// Claude is offered only when its reference store, chat store, readiness check and process runner are all given;
+    /// otherwise the picker lists it as unavailable.
+    /// </remarks>
+    public AssistantViewModel(IAssistantCli cli, IAssistantHost host, IAssistantStateStore store, IAssistantCatalogStore? catalog = null,
+        IAssistantStateStore? claudeStore = null, ClaudeChatStore? claudeChats = null,
+        Func<CancellationToken, Task<ClaudeCodeStatus>>? claudeStatus = null, ProcessRunner? claudeRunner = null,
+        IAssistantStateStore? openRouterStore = null, OpenRouterChatStore? openRouterChats = null,
+        Func<CancellationToken, Task<ApiKeysResult>>? openRouterKeys = null)
     {
         _cli = cli;
         _host = host;
         _store = store;
+        _codexStore = store;
+        _claudeStore = claudeStore;
+        _claudeChats = claudeChats;
+        _claudeStatus = claudeStatus;
+        _claudeRunner = claudeRunner;
+        _openRouterStore = openRouterStore;
+        _openRouterChats = openRouterChats;
+        _openRouterKeySource = openRouterKeys;
+        InitializeOpenRouter();
+        InitializeProviders();
         _catalogStore = catalog;
         Memory = new AssistantMemoryViewModel((arguments, timeout) => RunCliAsync(arguments, timeout, _lifetime.Token), host, () => (_taskId, _threadId),
             () => CanClearMemory);
@@ -822,7 +845,14 @@ public sealed partial class AssistantViewModel : ObservableObject
     internal bool CanYieldForMaintenance => !_isShutDown && _client is not null && !_isLoadingHistory && !IsExporting && !HasRunningJobs
         && State is AssistantState.Ready or AssistantState.SignedOut;
 
-    public AssistantModelOption? SelectedModel { get => _selectedModel; set => SetProperty(ref _selectedModel, value); }
+    public AssistantModelOption? SelectedModel
+    {
+        get => _selectedModel;
+        set { if (SetProperty(ref _selectedModel, value)) OnPropertyChanged(nameof(CanAttachImages)); }
+    }
+
+    /// <summary>The chosen model reads images. A text-only model is offered text attachments only.</summary>
+    public bool CanAttachImages => SelectedModel?.SupportsImages != false;
 
     /// <summary>Optional working-copy files for the next task, one relative path per line.</summary>
     public string RelativePathsText { get => _relativePathsText; set => SetProperty(ref _relativePathsText, value ?? string.Empty); }
@@ -896,6 +926,11 @@ public sealed partial class AssistantViewModel : ObservableObject
         if (attachment is null)
         {
             problems.Add(problem);
+            return;
+        }
+        if (attachment.IsImage && !CanAttachImages)
+        {
+            problems.Add($"{attachment.Name}: {SelectedModel?.DisplayName ?? "this model"} reads text only, so images cannot be attached.");
             return;
         }
         if (Attachments.Sum(item => item.WireBytes) + attachment.WireBytes > AssistantAttachments.MaxTotalWireBytes)
@@ -1101,6 +1136,11 @@ public sealed partial class AssistantViewModel : ObservableObject
                 if (_isShutDown) return;
             }
 
+            // Claude needs Core's external engine and a ready local Claude Code; it never waits on a ChatGPT account.
+            if (IsClaude && !await CheckClaudeReadyAsync(capabilities.Data)) return;
+            // OpenRouter needs Core's external engine with OpenRouter; its key is chosen from API Keys once the chat is open.
+            if (IsOpenRouter && !CheckOpenRouterOffered(capabilities.Data)) return;
+
             var agent = await RunCliAsync(AssistantCliCommands.AgentStatus(), QueryTimeout, _lifetime.Token);
             if (!agent.Ok)
             {
@@ -1137,8 +1177,9 @@ public sealed partial class AssistantViewModel : ObservableObject
             var provider = AssistantCliService.GetString(agent.Data, "provider");
             var version = AssistantCliService.GetString(agent.Data, "version");
             var reason = DescribeAgentReason(AssistantCliService.GetString(agent.Data, "reason"));
-            _provider = provider.Length > 0 ? provider : "codex";
-            ProviderText = (provider.Length > 0 ? provider : "Codex") + (version.Length > 0 ? " " + version : string.Empty);
+            _provider = IsClaude ? ClaudeCatalogProvider : IsOpenRouter ? OpenRouterCatalogProvider : provider.Length > 0 ? provider : CodexCatalogProvider;
+            ProviderText = IsClaude ? "Claude" : IsOpenRouter ? "OpenRouter"
+                : (provider.Length > 0 ? provider : "Codex") + (version.Length > 0 ? " " + version : string.Empty);
             if (!AssistantCliService.GetBool(agent.Data, "installed"))
             {
                 SetState(AssistantState.RuntimeAbsent, reason.Length > 0 ? reason : "The Codex runtime is not installed in DwemerDistro.");
@@ -1455,7 +1496,8 @@ public sealed partial class AssistantViewModel : ObservableObject
         IAssistantTransport transport;
         try
         {
-            transport = await _cli.StartServeAsync(_taskId!, _lifetime.Token);
+            // Only a ChatGPT session may be offered the Windows Codex sign-in; Claude and OpenRouter never read or import it.
+            transport = await _cli.StartServeAsync(_taskId!, reuseCodexSignIn: !IsExternalEngine, _lifetime.Token);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or ArgumentException)
         {
@@ -1465,6 +1507,8 @@ public sealed partial class AssistantViewModel : ObservableObject
         var client = new CodexAppServerClient(transport);
         var turns = new AssistantTurnRunner(client, RpcTimeout);
         turns.StopFailed += message => Post(generation, () => AddSystem("Could not stop the response: " + Shorten(message, 200)));
+        turns.UnconfirmedTurnStarted += (threadId, turnId) => Post(generation, () => OnUnconfirmedTurnStarted(client, threadId, turnId));
+        turns.UnconfirmedTurnRefused += (threadId, message) => Post(generation, () => OnUnconfirmedTurnRefused(client, threadId, message));
         client.NotificationReceived += (method, parameters) => Post(generation, () => OnNotification(method, parameters));
         client.ServerRequestDeclined += method => Post(generation, () => AddSystem(DescribeDeclined(method)));
         client.Disconnected += reason => Post(generation, () => OnDisconnected(reason, transport.DiagnosticTail));
@@ -1507,9 +1551,13 @@ public sealed partial class AssistantViewModel : ObservableObject
                 // The foundation tools are asked for only by a launcher that can show their file and service cards.
                 if (HasFoundations(_toolRevision)) capabilities["ddistroTools"] = new JsonArray("explore", "exec");
             }
+            // One engine per bridge session: a Claude session never starts Codex threads, and needs no ChatGPT account.
+            if (IsExternalEngine && initialize["capabilities"] is JsonObject engineCapabilities) engineCapabilities["ddistroEngine"] = ExternalEngine;
             await client.RequestAsync("initialize", initialize, RpcTimeout);
             await client.NotifyAsync("initialized", null);
-            await RefreshAccountAsync(client);
+            if (IsClaude) await StartClaudeSessionAsync(client);
+            else if (IsOpenRouter) await StartOpenRouterSessionAsync(client);
+            else await RefreshAccountAsync(client);
         }
         catch (AppServerException ex)
         {
@@ -2313,13 +2361,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         if (!ReferenceEquals(_client, client)) return;
         SignInUrl = string.Empty;
         SignInCode = string.Empty;
-        SetState(AssistantState.Ready, HasAutoRun(ActiveToolRevision)
-            ? "Ask about your DwemerDistro setup, or describe a fix. Routine checks and changes run automatically; anything destructive asks you first."
-            : HasLiveRun(ActiveToolRevision)
-            ? "Ask about your DwemerDistro setup, or describe a fix. Nothing runs on the live distro until you approve it."
-            : HasFoundations(ActiveToolRevision)
-            ? "Ask about your DwemerDistro setup, or describe a fix. Changes stay proposals until you review and approve them."
-            : "Ask about your DwemerDistro setup, or describe a CHIM fix. Edits stay in an isolated copy until you review and approve them.");
+        SetState(AssistantState.Ready, ReadyText());
         if (_historyLoadPending)
         {
             _historyLoadPending = false;
@@ -2337,6 +2379,14 @@ public sealed partial class AssistantViewModel : ObservableObject
             await RefreshChangesAsync();
         }
     }
+
+    private string ReadyText() => HasAutoRun(ActiveToolRevision)
+        ? "Ask about your DwemerDistro setup, or describe a fix. Routine checks and changes run automatically; anything destructive asks you first."
+        : HasLiveRun(ActiveToolRevision)
+        ? "Ask about your DwemerDistro setup, or describe a fix. Nothing runs on the live distro until you approve it."
+        : HasFoundations(ActiveToolRevision)
+        ? "Ask about your DwemerDistro setup, or describe a fix. Changes stay proposals until you review and approve them."
+        : "Ask about your DwemerDistro setup, or describe a CHIM fix. Edits stay in an isolated copy until you review and approve them.";
 
     private static string DescribeAccount(JsonElement account)
     {
@@ -2778,6 +2828,7 @@ public sealed partial class AssistantViewModel : ObservableObject
     /// </summary>
     private async Task<(List<AssistantTranscriptItem> Items, int Omitted)> ReadHistoryPageAsync(CodexAppServerClient client, string threadId, int page)
     {
+        if (IsOpenRouter) return await ReadOpenRouterHistoryPageAsync(client, threadId, page);
         var (cursor, limit) = _historyPages[page];
         if (limit == 0) limit = _historyPageTurns;
         var request = new JsonObject { ["threadId"] = threadId, ["limit"] = limit, ["sortDirection"] = "desc", ["itemsView"] = "full" };
@@ -3190,7 +3241,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         string context;
         try
         {
-            if (ActiveToolRevision != _toolRevision) _pendingUpgrade = await UpgradeThreadAsync(client);
+            if (ActiveToolRevision != _toolRevision && !IsExternalEngine) _pendingUpgrade = await UpgradeThreadAsync(client);
             // The upgraded thread has not seen the earlier thread's checkpoints, so the recovery summary goes with its first message too.
             if (_pendingUpgrade is not null && _recovery is { IsEmpty: false }) _recoveryContextPending = true;
             if (ActiveToolRevision > 0)
@@ -3222,6 +3273,38 @@ public sealed partial class AssistantViewModel : ObservableObject
             var input = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = context });
             if (text.Length > 0) input.Add(new JsonObject { ["type"] = "text", ["text"] = text });
             foreach (var attachment in attachments ?? []) input.Add(attachment.ToInput());
+            if (IsClaude)
+            {
+                // Claude reads the same input on stdin; the same size bound keeps a turn's memory use predictable.
+                if (attachments is { Count: > 0 } && Encoding.UTF8.GetByteCount(input.ToJsonString()) > AssistantAttachments.MaxTurnWireBytes)
+                {
+                    AddSystem("The message was not sent: with its attachments it is too large. Remove an attachment and send again.");
+                    SetState(AssistantState.Ready);
+                    return;
+                }
+                await StartClaudeTurnAsync(client, turns, input);
+                _pendingUpgrade = null;
+                _recoveryContextPending = false;
+                if (attachments is { Count: > 0 })
+                {
+                    foreach (var attachment in attachments) Attachments.Remove(attachment);
+                    RaiseAttachments();
+                }
+                return;
+            }
+            if (IsOpenRouter)
+            {
+                // Core runs the model and its tools. A message refused before it started keeps its attachments in the composer.
+                if (!await StartOpenRouterTurnAsync(turns, input)) return;
+                _pendingUpgrade = null;
+                _recoveryContextPending = false;
+                if (attachments is { Count: > 0 })
+                {
+                    foreach (var attachment in attachments) Attachments.Remove(attachment);
+                    RaiseAttachments();
+                }
+                return;
+            }
             var turn = new JsonObject { ["threadId"] = _threadId, ["input"] = input };
             if (SelectedModel is not null) turn["model"] = SelectedModel.Id;
             CodexAppServerClient.AddConfinement(turn);
@@ -3245,10 +3328,54 @@ public sealed partial class AssistantViewModel : ObservableObject
         {
             if (State == AssistantState.Streaming && ReferenceEquals(_client, client))
             {
+                if (ex.IsOutcomeUnknown)
+                {
+                    // It may be queued or running: the tab stays busy with Stop available, and the message counts as sent.
+                    _pendingUpgrade = null;
+                    _recoveryContextPending = false;
+                    if (attachments is { Count: > 0 })
+                    {
+                        foreach (var attachment in attachments) Attachments.Remove(attachment);
+                        RaiseAttachments();
+                    }
+                    AddSystem(UnconfirmedTurnText);
+                    StatusDetail = "Waiting for DwemerDistro: the message may be queued or running.";
+                    return;
+                }
                 AddSystem("The message was not sent: " + Shorten(ex.Message, 200));
                 SetState(AssistantState.Ready);
             }
         }
+    }
+
+    private string UnconfirmedTurnText =>
+        "DwemerDistro did not confirm this message in time. It may still be queued or running, and nothing was retried. "
+        + (IsClaude ? "If it starts late, Claude Code is not run for it. "
+            : IsOpenRouter ? string.Empty : "If it never finishes, Disconnect ends it. ")
+        + "Wait for it or press Stop.";
+
+    /// <summary>
+    /// A turn whose start was not confirmed in time started after all. Core runs a Codex or OpenRouter turn itself, so it just
+    /// streams on; a Claude turn would need this launcher to start claude.exe, which it never does late: the turn is ended.
+    /// </summary>
+    internal void OnUnconfirmedTurnStarted(CodexAppServerClient client, string threadId, string turnId)
+    {
+        if (!ReferenceEquals(_client, client) || threadId != _threadId) return;
+        if (!IsClaude)
+        {
+            if (State == AssistantState.Streaming) StatusDetail = "DwemerDistro started the message.";
+            return;
+        }
+        AddSystem("DwemerDistro started this message after the launcher stopped waiting. Claude Code was not run for it and nothing was retried.");
+        _ = EndExternalTurnAsync(client, threadId, turnId, "failed");
+    }
+
+    /// <summary>Core's late answer refused or cancelled the unconfirmed start: it never ran, and the tab is free again.</summary>
+    internal void OnUnconfirmedTurnRefused(CodexAppServerClient client, string threadId, string message)
+    {
+        if (!ReferenceEquals(_client, client) || threadId != _threadId || State != AssistantState.Streaming) return;
+        AddSystem("DwemerDistro did not run this message: " + Shorten(message, 200) + " Nothing was retried.");
+        SetState(AssistantState.Ready);
     }
 
     /// <summary>
@@ -3272,6 +3399,8 @@ public sealed partial class AssistantViewModel : ObservableObject
             }
             if (_turns is not { } turns) return;
             StatusDetail = "Stopping the response…";
+            // Claude's process and relay end first, so no further tool call reaches Core; Core's interrupt then ends the turn.
+            if (IsClaude) StopClaudeProcess();
             await turns.StopAsync();
         }
         finally
@@ -3581,13 +3710,13 @@ public sealed partial class AssistantViewModel : ObservableObject
         switch (method)
         {
             case "item/started" when ItemOf(parameters, out var type, out var id) && type == "agentMessage":
-                if (FindItem(id) is null) AddItem(new AssistantTranscriptItem("Codex", string.Empty, id));
+                if (FindItem(id) is null) AddItem(new AssistantTranscriptItem(AgentRole, string.Empty, id));
                 break;
             case "item/agentMessage/delta":
                 var itemId = AssistantCliService.GetString(parameters, "itemId");
                 var d = Prop(parameters, "delta");
                 var delta = d.ValueKind == JsonValueKind.String ? d.GetString() ?? string.Empty : AssistantCliService.GetString(d, "text");
-                var target = FindItem(itemId) ?? AddItem(new AssistantTranscriptItem("Codex", string.Empty, itemId));
+                var target = FindItem(itemId) ?? AddItem(new AssistantTranscriptItem(AgentRole, string.Empty, itemId));
                 target.Append(delta);
                 break;
             case "item/completed" when ItemOf(parameters, out var type, out var id):
@@ -3596,7 +3725,7 @@ public sealed partial class AssistantViewModel : ObservableObject
                 {
                     var final = AssistantCliService.GetString(item, "text");
                     var existing = FindItem(id);
-                    if (existing is null) existing = AddItem(new AssistantTranscriptItem("Codex", final, id));
+                    if (existing is null) existing = AddItem(new AssistantTranscriptItem(AgentRole, final, id));
                     else if (final.Length > 0) existing.Replace(final);
                     // Only the turn's last message may carry a file request, and only once the turn completes.
                     _lastAgentItem = existing;
@@ -3678,6 +3807,8 @@ public sealed partial class AssistantViewModel : ObservableObject
                 var turn = Prop(parameters, "turn");
                 var status = AssistantCliService.GetString(turn, "status");
                 var completedTurn = AssistantCliService.GetString(turn, "id");
+                // Core's completion is authoritative: a Claude process still running for this turn is revoked and killed.
+                OnExternalTurnCompleted(AssistantCliService.GetString(parameters, "threadId"), completedTurn);
                 if (_actionProposal?.ThreadId == AssistantCliService.GetString(parameters, "threadId")) SetActionProposal(null);
                 // A late completion of another thread or an earlier turn must not end the running one. The runner has already
                 // let go of the turn this completes, so a still-known running id means the completion is someone else's.
@@ -3687,6 +3818,12 @@ public sealed partial class AssistantViewModel : ObservableObject
                 if (completedTurn is { Length: > 0 and <= 128 }) _endedTurnId = completedTurn;
                 ClearServiceRestarts();
                 if (status == "interrupted") AddSystem("Stopped.");
+                // Core may attach an error to any status (history_unsaved, a truncated answer), so OpenRouter shows it whenever present.
+                if (IsOpenRouter && Prop(turn, "error") is { ValueKind: JsonValueKind.Object } openRouterError)
+                {
+                    AddSystem(DescribeOpenRouterError(openRouterError));
+                    if (AssistantCliService.GetString(openRouterError, "code") == "key_missing") ForgetOpenRouterKey();
+                }
                 else if (status == "failed")
                     AddSystem("The response failed: " + Shorten(AssistantCliService.GetString(Prop(turn, "error"), "message"), 200));
                 if (State != AssistantState.Streaming) break;
@@ -3709,7 +3846,8 @@ public sealed partial class AssistantViewModel : ObservableObject
                 if (!AssistantCliService.GetBool(parameters, "willRetry") && Prop(parameters, "error") is { ValueKind: JsonValueKind.Object } error)
                     AddSystem("Assistant error: " + Shorten(AssistantCliService.GetString(error, "message"), 200));
                 break;
-            case "account/login/completed":
+            // A Claude session has no ChatGPT account; a stray account callback is ignored.
+            case "account/login/completed" when !IsExternalEngine:
                 if (_loginId is not null && AssistantCliService.GetString(parameters, "loginId") is var completed && completed.Length > 0 && completed != _loginId) break;
                 _loginId = null;
                 if (AssistantCliService.GetBool(parameters, "success") && _client is { } client)
@@ -3762,7 +3900,19 @@ public sealed partial class AssistantViewModel : ObservableObject
         _turns = null;
         _sessionGeneration++;
         _contextLookup?.Cancel();
+        // A Claude process of this session ends with it; its own completion still ends the turn and saves the chat.
+        if (_claudeTurn is not null) StopClaudeProcess();
         _historyLoadPending = false;
+        // A key read still running belongs to the closing session: its result is dropped. Key readiness is per session, so the
+        // next Connect reads key metadata again before Connected; the chat's saved key, thread, model and history stay.
+        _openRouterKeyCheck++;
+        _openRouterKeysLoading = false;
+        _openRouterKeysRead = false;
+        _openRouterKeysFailed = false;
+        OpenRouterKeys.Clear();
+        SetSelectedOpenRouterKey(null);
+        OpenRouterKeyStatus = OpenRouterIdleText;
+        RaiseOpenRouter();
         ClearFileRequest();
         SetActionProposal(null);
         ResetCoverage();
@@ -3955,7 +4105,7 @@ public sealed partial class AssistantViewModel : ObservableObject
 
     /// <summary>The newest user and assistant messages shown, oldest first and bounded; launcher notes stay behind.</summary>
     internal static IReadOnlyList<string> CarryForward(IEnumerable<AssistantTranscriptItem> transcript) =>
-        transcript.Where(item => item.Role is "You" or "Codex" && item.Text.Trim().Length > 0)
+        transcript.Where(item => item.Role is "You" or "Codex" or ClaudeRole or OpenRouterRole && item.Text.Trim().Length > 0)
             .TakeLast(MaxCarriedMessages)
             .Select(item => (item.Role == "You" ? "User: " : "Assistant: ") + Shorten(item.Text.Trim(), MaxCarriedMessageChars))
             .ToList();
@@ -4639,7 +4789,7 @@ public sealed partial class AssistantViewModel : ObservableObject
     public string DeleteHint => !CanDeleteChats ? string.Empty
         : SelectedHistory is null ? "Select the open chat to delete it."
         : !SelectedHistory.IsCurrent ? "Only the open chat can be deleted, through its own session: Reopen this chat first."
-        : CanDeleteSelected ? (DeleteThreadCount > 1 ? $"Delete removes this chat's conversation, all {DeleteThreadCount} of its threads, from Codex." : "Delete removes this chat's conversation from Codex.")
+        : CanDeleteSelected ? (DeleteThreadCount > 1 ? $"Delete removes this chat's conversation, all {DeleteThreadCount} of its threads, from {ChatHome}." : $"Delete removes this chat's conversation from {ChatHome}.")
             + " Archive only hides a chat in this list."
         : "Delete waits until the chat is connected and nothing is responding, under review, applying or exporting.";
 
@@ -4675,8 +4825,20 @@ public sealed partial class AssistantViewModel : ObservableObject
         ExportStatus = "Exporting the whole chat page by page… Cancel stops it and writes nothing.";
         try
         {
+            if (IsClaude)
+            {
+                // Core keeps no Claude transcript; the launcher's local copy of the open chat is what is exported.
+                SaveClaudeChat();
+                var partial = _claudeChat?.Partial == true;
+                var markdown = BuildClaudeExport(title, _claudeChat?.Messages ?? [], DateTimeOffset.UtcNow, partial);
+                await File.WriteAllTextAsync(path, markdown, new UTF8Encoding(false), CancellationToken.None);
+                ExportStatus = (partial
+                    ? $"Exported the part of this Claude chat the launcher kept locally (at most the newest {ClaudeChat.MaxMessages} messages; long ones shortened). "
+                    : "Exported this Claude chat from the launcher's local copy. ") + "Saved to " + path + ".";
+                return;
+            }
             var result = await AssistantChatExport.BuildAsync((method, parameters, token) => client.RequestAsync(method, parameters, RpcTimeout, token),
-                title, threads, ExportLimits, DateTimeOffset.UtcNow, export.Token);
+                title, threads, ExportLimits, DateTimeOffset.UtcNow, export.Token, external: IsOpenRouter);
             await File.WriteAllTextAsync(path, result.Markdown, new UTF8Encoding(false), CancellationToken.None);
             ExportStatus = result.Status + " Saved to " + path + ".";
         }
@@ -4747,6 +4909,10 @@ public sealed partial class AssistantViewModel : ObservableObject
             return;
         }
 
+        // Core removed these Claude threads; the launcher's own copies go too. Claude Code's own session files are Claude Code's.
+        if (IsClaude) foreach (var thread in deleted) _claudeChats?.Delete(thread);
+        // Core removed OpenRouter transcripts with their threads; the launcher's key/model records for them go too.
+        if (IsOpenRouter) foreach (var thread in deleted) _openRouterChats?.Delete(thread);
         var notes = forget ? await ForgetDeletedNotesAsync(deleted) : string.Empty;
         if (failure is not null)
         {
@@ -4781,7 +4947,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         }
         if (liveChange) RememberCurrentTask();
         ForgetCurrentChat();
-        SetState(AssistantState.Disconnected, "Chat deleted from Codex" + (group.Count > 1 ? $" (all {group.Count} threads)" : string.Empty) + ". " + (liveChange
+        SetState(AssistantState.Disconnected, "Chat deleted from " + ChatHome + (group.Count > 1 ? $" (all {group.Count} threads)" : string.Empty) + ". " + (liveChange
             ? "Its task stays in History, marked as a deleted chat, because it has a recorded live change you may need to check or roll back."
             : "It was removed from History.") + notes + " Press New chat or Connect to start a new chat.");
     }
@@ -4794,8 +4960,8 @@ public sealed partial class AssistantViewModel : ObservableObject
     public int DeleteThreadCount => DeleteGroup().Count;
 
     public string DeleteConfirmText => DeleteThreadCount <= 1
-        ? "Delete this chat's conversation from Codex? This cannot be undone; Archive only hides a chat. The task's working copy, live-change receipts and backups are kept, and a chat with a recorded live change stays in History so you can still check or roll it back."
-        : $"Delete all {DeleteThreadCount} threads of this chat from Codex: the open one and {DeleteThreadCount - 1} earlier one(s) of this same task that a tool upgrade or failed resume replaced? This cannot be undone; Archive only hides a chat. Other chats in History are not deleted. The task's working copy, live-change receipts and backups are kept, and a chat with a recorded live change stays in History so you can still check or roll it back.";
+        ? $"Delete this chat's conversation from {ChatHome}? This cannot be undone; Archive only hides a chat. The task's working copy, live-change receipts and backups are kept, and a chat with a recorded live change stays in History so you can still check or roll it back."
+        : $"Delete all {DeleteThreadCount} threads of this chat from {ChatHome}: the open one and {DeleteThreadCount - 1} earlier one(s) of this same task that a tool upgrade or failed resume replaced? This cannot be undone; Archive only hides a chat. Other chats in History are not deleted. The task's working copy, live-change receipts and backups are kept, and a chat with a recorded live change stays in History so you can still check or roll it back.";
 
     public string ForgetNotesLabel => DeleteThreadCount <= 1 ? "Also forget this chat’s notes" : $"Also forget the notes of these {DeleteThreadCount} threads";
 
@@ -5167,8 +5333,12 @@ public sealed partial class AssistantViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(IsApplying));
         OnPropertyChanged(nameof(DeleteHint));
+        OnPropertyChanged(nameof(CanSwitchProvider));
+        OnPropertyChanged(nameof(CanChooseOpenRouterKey));
+        RaiseOpenRouterConnection();
         foreach (var command in new System.Windows.Input.ICommand[]
                  {
+                     ReloadOpenRouterKeysCommand, OpenApiKeysCommand,
                      ConnectCommand, RunProbeCommand, SignInCommand, OpenSignInUrlCommand, StopCommand, DisconnectCommand, LoadEarlierCommand, LoadNewerCommand, BackToLatestCommand,
                      SendCommand, NewTaskCommand, ReviewCommand, ApproveCommand, RejectCommand, RollbackCommand, CheckOutcomeCommand,
                      AllowFileAccessCommand, DeclineFileAccessCommand, ReopenCommand, ArchiveCommand, RenameCommand,

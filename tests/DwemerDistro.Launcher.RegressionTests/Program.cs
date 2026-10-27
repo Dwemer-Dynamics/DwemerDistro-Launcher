@@ -5517,6 +5517,94 @@ try
         "A stop for one turn must not be sent twice or carried over to the next turn.");
     await turnClient.DisposeAsync();
 
+    // A written turn start that is not answered in time has an unknown outcome: the runner keeps owning it, never resends it,
+    // adopts a late id, stops an external one by thread, and lets go only on turn/completed or Core's definitive refusal.
+    {
+        var unknownTransport = new FakeAssistantTransport();
+        var unknownClient = new CodexAppServerClient(unknownTransport);
+        var unknownRunner = new AssistantTurnRunner(unknownClient, TimeSpan.FromMilliseconds(150));
+        var adopted = new List<string>();
+        var refusedLate = new List<string>();
+        unknownRunner.UnconfirmedTurnStarted += (thread, id) => { lock (adopted) adopted.Add(thread + "/" + id); };
+        unknownRunner.UnconfirmedTurnRefused += (thread, message) => { lock (refusedLate) refusedLate.Add(thread + "/" + message); };
+        unknownClient.Start();
+        async Task<AppServerException?> StartUnknownAsync(string method)
+        {
+            try { await unknownRunner.StartAsync("thr", TurnParameters(), method); return null; }
+            catch (AppServerException ex) { return ex; }
+        }
+        async Task MarkerAsync(string message)
+        {
+            await unknownClient.NotifyAsync("probe/marker", null);
+            Assert((await unknownTransport.NextOutgoingAsync()).Contains("probe/marker"), message);
+        }
+
+        var external = StartUnknownAsync("ddistro/external/turn/start");
+        var externalStartId = System.Text.Json.Nodes.JsonNode.Parse(await unknownTransport.NextOutgoingAsync())!["id"]!.GetValue<long>();
+        Assert(await external is { IsOutcomeUnknown: true, LateResult: not null } && unknownRunner.ActiveTurnId is null,
+            "A turn start written but not answered in time reports an unknown outcome, not a refusal.");
+        var busy = await StartUnknownAsync("ddistro/external/turn/start");
+        Assert(busy is { IsOutcomeUnknown: false } && busy.Message.Contains("already running"),
+            "An unconfirmed turn still owns the runner, so nothing can be sent over it.");
+        Assert(await unknownRunner.StopAsync(), "Stop is available for an unconfirmed turn.");
+        var threadInterrupt = System.Text.Json.Nodes.JsonNode.Parse(await unknownTransport.NextOutgoingAsync())!;
+        Assert(threadInterrupt["method"]!.GetValue<string>() == "turn/interrupt" && threadInterrupt["params"]!["threadId"]!.GetValue<string>() == "thr"
+               && threadInterrupt["params"]!["turnId"] is null,
+            "An external turn without an id is interrupted by thread (Core's turnId is optional and cancels a queued turn).");
+        unknownTransport.Incoming.Writer.TryWrite($"{{\"id\":{threadInterrupt["id"]},\"result\":{{}}}}");
+        Assert(await unknownRunner.StopAsync(), "A repeated Stop is still accepted.");
+        await MarkerAsync("A repeated Stop before the id is known sends no second thread interrupt.");
+        Assert(unknownRunner.StartAsync("thr", TurnParameters(), "ddistro/external/turn/start") is { IsFaulted: true },
+            "The acknowledged thread interrupt does not finish the turn: it may have reached Core before the turn started.");
+        unknownTransport.Incoming.Writer.TryWrite($"{{\"id\":{externalStartId},\"result\":{{\"turn\":{{\"id\":\"late-1\",\"status\":\"inProgress\"}}}}}}");
+        var lateIdInterrupt = System.Text.Json.Nodes.JsonNode.Parse(await unknownTransport.NextOutgoingAsync())!;
+        Assert(lateIdInterrupt["method"]!.GetValue<string>() == "turn/interrupt" && lateIdInterrupt["params"]!["turnId"]!.GetValue<string>() == "late-1"
+               && lateIdInterrupt["params"]!["threadId"]!.GetValue<string>() == "thr",
+            "A turn that starts after the thread interrupt is interrupted once more by its own id.");
+        unknownTransport.Incoming.Writer.TryWrite($"{{\"id\":{lateIdInterrupt["id"]},\"result\":{{}}}}");
+        unknownTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thr\",\"turn\":{\"id\":\"late-1\"}}}");
+        unknownTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"other\",\"turn\":{\"id\":\"late-x\"}}}");
+        Assert(await unknownRunner.StopAsync(), "Stop after the id interrupt is still accepted.");
+        await MarkerAsync("A duplicate turn/started or Stop sends no further interrupt, and nothing is retried.");
+        lock (adopted) Assert(adopted.SequenceEqual(new[] { "thr/late-1" }) && unknownRunner.ActiveTurnId == "late-1",
+            "The late answer adopts the turn once; a duplicate or another thread's turn/started changes nothing.");
+        unknownTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thr\",\"turn\":{\"id\":\"late-1\",\"status\":\"interrupted\"}}}");
+        await WaitUntilAsync(() => unknownRunner.ActiveTurnId is null);
+
+        // turn/started before the start times out: the unknown outcome reports that start once, and the late answer adds nothing.
+        var early = StartUnknownAsync("ddistro/external/turn/start");
+        var earlyStartId = System.Text.Json.Nodes.JsonNode.Parse(await unknownTransport.NextOutgoingAsync())!["id"]!.GetValue<long>();
+        unknownTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thr\",\"turn\":{\"id\":\"early-1\"}}}");
+        Assert(await early is { IsOutcomeUnknown: true } && unknownRunner.ActiveTurnId == "early-1", "The start still timed out with its turn known.");
+        unknownTransport.Incoming.Writer.TryWrite($"{{\"id\":{earlyStartId},\"result\":{{\"turn\":{{\"id\":\"early-1\",\"status\":\"inProgress\"}}}}}}");
+        unknownTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thr\",\"turn\":{\"id\":\"early-1\"}}}");
+        await MarkerAsync("A late answer for an already-started turn sends nothing.");
+        lock (adopted) Assert(adopted.SequenceEqual(new[] { "thr/late-1", "thr/early-1" }),
+            "A turn that started before the timeout is reported as an unconfirmed start exactly once, so a Claude tab ends it.");
+        unknownTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thr\",\"turn\":{\"id\":\"early-1\",\"status\":\"failed\"}}}");
+        await WaitUntilAsync(() => unknownRunner.ActiveTurnId is null);
+
+        var queued = StartUnknownAsync("ddistro/external/turn/start");
+        var queuedStartId = System.Text.Json.Nodes.JsonNode.Parse(await unknownTransport.NextOutgoingAsync())!["id"]!.GetValue<long>();
+        Assert(await queued is { IsOutcomeUnknown: true }, "turn/completed released the earlier turn; the next one may start.");
+        unknownTransport.Incoming.Writer.TryWrite($"{{\"id\":{queuedStartId},\"error\":{{\"code\":-32001,\"message\":\"Cancelled while queued.\",\"data\":{{\"reason\":\"cancelled\"}}}}}}");
+        await WaitUntilAsync(() => { lock (refusedLate) return refusedLate.Count == 1; });
+        lock (refusedLate) Assert(refusedLate.Single().StartsWith("thr/Cancelled while queued."),
+            "Core's late definitive refusal of a queued start releases the turn and is reported, so the tab is not left waiting forever.");
+
+        var codex = StartUnknownAsync("turn/start");
+        var codexStartId = System.Text.Json.Nodes.JsonNode.Parse(await unknownTransport.NextOutgoingAsync())!["id"]!.GetValue<long>();
+        unknownTransport.Incoming.Writer.TryWrite($"{{\"id\":{codexStartId},\"error\":{{\"code\":-32001,\"message\":\"outcome_unknown\"}}}}");
+        Assert(await codex is { IsOutcomeUnknown: true, Code: -32001, LateResult: null }, "Core's -32001 outcome_unknown without data.reason is the same unknown outcome.");
+        Assert(await unknownRunner.StopAsync(), "Stop is held for an unconfirmed Codex turn.");
+        await MarkerAsync("A Codex turn's interrupt needs its id, so nothing is sent until it is known.");
+        unknownTransport.Incoming.Writer.TryWrite("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"thr\",\"turn\":{\"id\":\"codex-late\"}}}");
+        var heldCodexInterrupt = System.Text.Json.Nodes.JsonNode.Parse(await unknownTransport.NextOutgoingAsync())!;
+        Assert(heldCodexInterrupt["method"]!.GetValue<string>() == "turn/interrupt" && heldCodexInterrupt["params"]!["turnId"]!.GetValue<string>() == "codex-late",
+            "The held stop interrupts the late-started Codex turn by its id.");
+        await unknownClient.DisposeAsync();
+    }
+
     // A second launcher start hands over through the install-scoped activation event; with nothing listening it reports so.
     var activationName = InstanceActivationChannel.BuildName("Local\\DwemerDistro.Launcher.Test" + Guid.NewGuid().ToString("N")[..16]);
     Assert(!await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.Zero),
@@ -5913,6 +6001,562 @@ try
         }
     }
 
+    {
+        // The local Claude copy: an oversized message is shortened with a marker, later metadata saves still work, and a
+        // partial copy says so in its export.
+        var storeRoot = Path.Combine(Path.GetTempPath(), "ddistro-claude-store-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new ClaudeChatStore(storeRoot);
+            var storeThread = Guid.NewGuid().ToString();
+            var huge = new string('x', ClaudeChat.MaxMessageChars + 5000);
+            var big = new ClaudeChat(ClaudeChat.CurrentVersion, storeThread, Guid.NewGuid().ToString("D"), false, "claude-sonnet-5-5",
+                [new ClaudeChatMessage("You", "hi"), new ClaudeChatMessage("Claude", huge)]);
+            Assert(store.Save(big) && store.Load(storeThread) is { Partial: true } savedBig && savedBig.Messages.Length == 2
+                && savedBig.Messages[1].Text.Length == ClaudeChat.MaxMessageChars && savedBig.Messages[1].Text.EndsWith(ClaudeChat.ClippedMarker),
+                "A message over 64 KiB is kept shortened with a visible marker instead of failing the whole save.");
+            Assert(store.Save(store.Load(storeThread)! with { SessionStarted = true, Model = "claude-opus-5-5" })
+                && store.Load(storeThread) is { SessionStarted: true, Model: "claude-opus-5-5", Partial: true },
+                "Later metadata saves keep working and the copy stays marked partial.");
+            var many = Enumerable.Range(0, ClaudeChat.MaxMessages + 1).Select(i => new ClaudeChatMessage("You", "m" + i)).ToArray();
+            Assert(store.Save(big with { Messages = many, Partial = false }) && store.Load(storeThread) is { Partial: true } capped
+                && capped.Messages.Length == ClaudeChat.MaxMessages && capped.Messages[0].Text == "m1",
+                "Past 200 messages the newest are kept and the copy is marked partial.");
+            var wide = Enumerable.Range(0, ClaudeChat.MaxMessages).Select(_ => new ClaudeChatMessage("Claude", new string('\u00e9', ClaudeChat.MaxMessageChars))).ToArray();
+            Assert(store.Save(big with { Messages = wide, Partial = false }) && store.Load(storeThread) is { Partial: true } bounded
+                && bounded.Messages.Length is > 0 and < ClaudeChat.MaxMessages && new FileInfo(Path.Combine(storeRoot, "DwemerDistro", "assistant", "claude-chats", storeThread + ".json")).Length <= ClaudeChatStore.MaxFileBytes,
+                "A copy over the 16 MiB file bound keeps the newest messages that fit and still saves.");
+            var clippedMessages = store.Load(storeThread)!.Messages;
+            var partialExport = AssistantViewModel.BuildClaudeExport("t", clippedMessages, DateTimeOffset.UnixEpoch, partial: true);
+            Assert(partialExport.Contains(AssistantViewModel.ClaudePartialExportText) && !AssistantViewModel.BuildClaudeExport("t", clippedMessages, DateTimeOffset.UnixEpoch).Contains("only the part"),
+                "A partial local copy says so in its export; a whole one does not.");
+        }
+        finally
+        {
+            try { Directory.Delete(storeRoot, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    {
+        // Claude provider in the Assistant view model: fake Core (scripted bridge) and a fake readiness check. No CLI or model runs.
+        var vmRoot = Path.Combine(Path.GetTempPath(), "ddistro-claude-vm-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(vmRoot);
+        try
+        {
+            var claudeInstallation = Guid.NewGuid().ToString();
+            var claudeThread = Guid.NewGuid().ToString();
+            var codexStore = new AssistantStateStore(vmRoot);
+            var claudeStore = new AssistantStateStore(vmRoot, AssistantStateStore.ClaudeFileName);
+            var chats = new ClaudeChatStore(vmRoot);
+            codexStore.Save(new AssistantTaskReference(AssistantTaskReference.CurrentVersion, claudeInstallation, LauncherConstants.DistroName, "codex", "herika",
+                "11111111-2222-3333-4444-555555555555", "thr-codex"));
+            var codexBytes = File.ReadAllBytes(codexStore.StatePath);
+            var offersEngine = false;
+            var claudeTurnUnknown = false;
+            var claudeTurnId = "ext-turn-1";
+            var claudeBridge = new FakeAssistantTransport
+            {
+                Respond = (method, parameters) => method switch
+                {
+                    "initialize" => new JsonObject(),
+                    "ddistro/external/thread/start" => JsonNode.Parse("{\"threadId\":\"" + claudeThread
+                        + "\",\"engine\":\"claude\",\"tools\":[{\"name\":\"ddistro_read\",\"description\":\"Read\",\"inputSchema\":{\"type\":\"object\"}}]}"),
+                    "ddistro/external/turn/start" => claudeTurnUnknown ? JsonNode.Parse("{\"$error\":{\"code\":-32001,\"message\":\"outcome_unknown\"}}")
+                        : JsonNode.Parse("{\"turn\":{\"id\":\"" + claudeTurnId + "\",\"status\":\"inProgress\"}}"),
+                    "ddistro/external/turn/end" => new JsonObject(),
+                    "ddistro/external/thread/resume" => JsonNode.Parse("{\"threadId\":\"" + claudeThread
+                        + "\",\"engine\":\"claude\",\"tools\":[{\"name\":\"ddistro_read\",\"description\":\"Read\",\"inputSchema\":{\"type\":\"object\"}}]}"),
+                    "turn/interrupt" => new JsonObject(),
+                    _ => null
+                }
+            };
+            var claudeCli = new FakeAssistantCli(claudeBridge, null)
+            {
+                Script = command => command == "capabilities"
+                    ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true,\"assistant_tools\":true,"
+                      + "\"assistant_external_engine\":" + (offersEngine ? "true" : "false") + "},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false}]},"
+                      + "\"assistant_external_engine\":{\"engines\":[\"claude\"]}}}"
+                    : command.StartsWith("changes prepare")
+                    ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"task_id\":\"99999999-8888-7777-6666-555555555555\",\"diagnostic_only\":true}}"
+                    : null
+            };
+            var statusChecks = 0;
+            var claudeVm = new AssistantViewModel(claudeCli, new FakeAssistantHost(claudeInstallation), codexStore, null, claudeStore, chats,
+                _ =>
+                {
+                    Interlocked.Increment(ref statusChecks);
+                    return Task.FromResult(new ClaudeCodeStatus(ClaudeCodeState.Ready, Path.Combine(vmRoot, "missing-claude.exe"), new Version(2, 1, 284), "claude.ai"));
+                }, new ProcessRunner());
+            Assert(claudeVm.Providers.Select(p => p.Id).SequenceEqual(new[] { "chatgpt", "claude", "openrouter" }) && !claudeVm.Providers[2].IsAvailable && !claudeVm.IsClaude,
+                "The provider picker lists ChatGPT (default), Claude, and OpenRouter as not available yet.");
+            claudeVm.SelectedProvider = claudeVm.Providers[2];
+            Assert(!claudeVm.IsClaude && claudeVm.SelectedProvider.Id == "chatgpt", "OpenRouter cannot be chosen until its backend exists.");
+            claudeVm.SelectedProvider = claudeVm.Providers[1];
+            Assert(claudeVm.IsClaude && claudeVm.Models.Select(m => m.Id).SequenceEqual(new[] { "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5" })
+                && claudeVm.SelectedModel?.Id == "claude-sonnet-5-5", "Claude offers exactly the three model presets, Sonnet by default.");
+
+            await claudeVm.ConnectAsync();
+            Assert(claudeVm.State == AssistantState.RuntimeAbsent && claudeVm.StatusDetail == AssistantViewModel.ClaudeCoreTooOldText && claudeCli.ServedTask is null,
+                "An older Core without the external engine gets a clean update message and no session.");
+            offersEngine = true;
+            await claudeVm.ConnectAsync();
+            string[] claudeRequests;
+            lock (claudeBridge.Requests) claudeRequests = claudeBridge.Requests.ToArray();
+            string initBody;
+            lock (claudeBridge.Requests) initBody = claudeBridge.Bodies.First(body => body.StartsWith("initialize "));
+            Assert(claudeVm.State == AssistantState.Ready && claudeRequests.Contains("ddistro/external/thread/start") && !claudeRequests.Contains("account/read")
+                && !claudeRequests.Contains("model/list") && !claudeRequests.Any(r => r.StartsWith("thread/start")) && initBody.Contains("\"ddistroEngine\":\"claude\"")
+                && statusChecks >= 1, "Claude connects with ddistroEngine claude and an external thread, never a ChatGPT account read or model list.");
+            Assert(claudeCli.ServeSignInReuse.SequenceEqual(new[] { false }), "A Claude session never offers the Windows Codex sign-in to Core.");
+            Assert(claudeStore.Load() is { Provider: "claude" } claudeRef && claudeRef.ThreadId == claudeThread
+                && File.ReadAllBytes(codexStore.StatePath).SequenceEqual(codexBytes) && chats.Load(claudeThread) is { SessionStarted: false },
+                "Claude's chat is saved in task.claude.json and its own local copy; ChatGPT's task.json is byte-for-byte unchanged.");
+            claudeVm.OnNotification("account/login/completed", System.Text.Json.JsonDocument.Parse("{\"success\":true}").RootElement);
+            Assert(claudeVm.State == AssistantState.Ready, "A stray ChatGPT account callback is ignored in a Claude session.");
+            Assert(!claudeVm.CanSwitchProvider || claudeVm.State == AssistantState.Ready, "Switching is offered only while idle.");
+
+            claudeVm.InputText = "hello";
+            claudeVm.SendCommand.Execute(null);
+            await WaitUntilAsync(() => { lock (claudeBridge.Requests) return claudeBridge.Requests.Contains("ddistro/external/turn/end"); });
+            string endBody;
+            lock (claudeBridge.Requests) endBody = claudeBridge.Bodies.FirstOrDefault(body => body.StartsWith("ddistro/external/turn/end ")) ?? string.Empty;
+            Assert(endBody.Contains("\"turnId\":\"ext-turn-1\"") && endBody.Contains("\"status\":\"failed\"") && claudeVm.State == AssistantState.Streaming
+                && !claudeVm.CanSwitchProvider && claudeVm.Transcript.Any(item => item.Text.StartsWith("Claude Code could not start")),
+                "A Claude Code that cannot start ends Core's turn as failed, and the tab waits for Core's completion without allowing a switch.");
+            claudeVm.OnNotification("turn/completed", System.Text.Json.JsonDocument.Parse(
+                "{\"threadId\":\"" + claudeThread + "\",\"turn\":{\"id\":\"ext-turn-1\",\"status\":\"failed\"}}").RootElement);
+            Assert(claudeVm.State == AssistantState.Ready && claudeVm.CanSwitchProvider, "Core's turn/completed is what returns the tab to Ready.");
+            Assert(!Directory.EnumerateFileSystemEntries(Path.Combine(vmRoot, "DwemerDistro", "assistant", "claude-turn")).Any(),
+                "The failed start left no private turn folder behind.");
+
+            // Core answers the turn start with outcome_unknown: the message counts as sent, the tab stays busy with Stop, and a
+            // late start never runs Claude Code; the reserved turn is ended so Core's model slot is not held.
+            var claudeRunner = (AssistantTurnRunner)typeof(AssistantViewModel).GetField("_turns", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(claudeVm)!;
+            var claudeClient = (CodexAppServerClient)typeof(AssistantViewModel).GetField("_client", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(claudeVm)!;
+            // The completion above went straight to the view model; the runner hears it from the bridge.
+            claudeBridge.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"" + claudeThread + "\",\"turn\":{\"id\":\"ext-turn-1\",\"status\":\"failed\"}}}");
+            await WaitUntilAsync(() => claudeRunner.ActiveTurnId is null);
+            claudeTurnUnknown = true;
+            int EndCount() { lock (claudeBridge.Requests) return claudeBridge.Requests.Count(r => r.StartsWith("ddistro/external/turn/end")); }
+            var endsBefore = EndCount();
+            claudeVm.InputText = "maybe queued";
+            claudeVm.SendCommand.Execute(null);
+            await WaitUntilAsync(() => claudeVm.Transcript.Any(item => item.Text.StartsWith("DwemerDistro did not confirm this message in time")));
+            Assert(claudeVm.State == AssistantState.Streaming && claudeVm.InputText.Length == 0 && claudeRunner.ActiveTurnId is null
+                && !claudeVm.Transcript.Any(item => item.Text.StartsWith("The message was not sent"))
+                && claudeVm.Transcript.Last(item => item.Role == "DwemerDistro").Text.Contains("nothing was retried"),
+                "An unknown outcome keeps the tab busy, says it may be queued or running, and never invites a resend.");
+            await claudeVm.InterruptAsync();
+            string[] interrupts;
+            lock (claudeBridge.Requests) interrupts = claudeBridge.Bodies.Where(body => body.StartsWith("turn/interrupt ")).ToArray();
+            Assert(interrupts.Length == 1 && interrupts[0].Contains("\"threadId\":\"" + claudeThread + "\"") && !interrupts[0].Contains("turnId")
+                && claudeVm.State == AssistantState.Streaming,
+                "Stop before the id is known interrupts the external thread once and still waits for Core's own end.");
+            claudeBridge.Incoming.Writer.TryWrite("{\"method\":\"turn/started\",\"params\":{\"threadId\":\"" + claudeThread + "\",\"turn\":{\"id\":\"ext-turn-2\"}}}");
+            await WaitUntilAsync(() => claudeRunner.ActiveTurnId == "ext-turn-2");
+            // The runner's event reaches the view model through the dispatcher, which this test thread does not pump.
+            claudeVm.OnUnconfirmedTurnStarted(claudeClient, claudeThread, "ext-turn-2");
+            await WaitUntilAsync(() => EndCount() > endsBefore);
+            string lateEnd;
+            lock (claudeBridge.Requests) lateEnd = claudeBridge.Bodies.Last(body => body.StartsWith("ddistro/external/turn/end "));
+            Assert(lateEnd.Contains("\"turnId\":\"ext-turn-2\"") && lateEnd.Contains("\"status\":\"failed\"")
+                && claudeVm.Transcript.Any(item => item.Text.Contains("Claude Code was not run for it"))
+                && !Directory.EnumerateFileSystemEntries(Path.Combine(vmRoot, "DwemerDistro", "assistant", "claude-turn")).Any(),
+                "A late Core start never launches Claude Code: the reserved turn is ended as failed and nothing was retried.");
+            claudeBridge.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":{\"threadId\":\"" + claudeThread + "\",\"turn\":{\"id\":\"ext-turn-2\",\"status\":\"failed\"}}}");
+            await WaitUntilAsync(() => claudeRunner.ActiveTurnId is null);
+            claudeVm.OnNotification("turn/completed", System.Text.Json.JsonDocument.Parse(
+                "{\"threadId\":\"" + claudeThread + "\",\"turn\":{\"id\":\"ext-turn-2\",\"status\":\"failed\"}}").RootElement);
+            Assert(claudeVm.State == AssistantState.Ready, "Core's completion of the late turn frees the tab.");
+            claudeTurnUnknown = false;
+
+            // Session start is recorded only for this chat's own session id, and the chat's saved model survives a reopen.
+            var sessionId = chats.Load(claudeThread)!.SessionId;
+            claudeVm.RecordClaudeSessionStarted(claudeThread, Guid.NewGuid().ToString("D"));
+            Assert(chats.Load(claudeThread) is { SessionStarted: false }, "A different session id never marks this chat's session started.");
+            claudeVm.RecordClaudeSessionStarted(claudeThread, sessionId);
+            Assert(chats.Load(claudeThread) is { SessionStarted: true } && claudeVm.State == AssistantState.Ready,
+                "The matching session id is saved as started at once, before the turn ends.");
+
+            // The real user's chat: marked started, but Claude Code never saved that session (its first turn was refused at init).
+            // This executable stands in for claude.exe; each start is logged. Core's turn/completed is fed to runner and view model.
+            var fakeLog = Path.Combine(vmRoot, "fake-claude.log");
+            Environment.SetEnvironmentVariable("DDISTRO_FAKE_LOG", fakeLog);
+            var claudeCodeField = typeof(AssistantViewModel).GetField("_claudeCode", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            var turnNumber = 2;
+            var claudeTurnField = typeof(AssistantViewModel).GetField("_claudeTurn", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            async Task<(string[] Starts, string[] Ends)> ClaudeTurnAsync(string mode, Func<Task>? whileRunning = null)
+            {
+                claudeCodeField.SetValue(claudeVm, new ClaudeCodeStatus(ClaudeCodeState.Ready, Environment.ProcessPath!, new Version(2, 1, 284), "claude.ai"));
+                File.Delete(fakeLog);
+                Environment.SetEnvironmentVariable("DDISTRO_FAKE_CLAUDE", mode);
+                claudeTurnId = "ext-turn-" + ++turnNumber;
+                int before;
+                lock (claudeBridge.Requests) before = claudeBridge.Bodies.Count;
+                claudeVm.InputText = "hello " + mode;
+                claudeVm.SendCommand.Execute(null);
+                await WaitUntilAsync(() => File.Exists(fakeLog));
+                if (whileRunning is not null) await whileRunning();
+                await WaitUntilAsync(() => claudeTurnField.GetValue(claudeVm) is null);
+                // Core's turn/end and the chat's save follow the process; then Core completes the turn.
+                await Task.Delay(300);
+                string[] ends;
+                lock (claudeBridge.Requests) ends = claudeBridge.Bodies.Skip(before).Where(body => body.StartsWith("ddistro/external/turn/end ")).ToArray();
+                var completion = "{\"threadId\":\"" + claudeThread + "\",\"turn\":{\"id\":\"" + claudeTurnId + "\",\"status\":\"completed\"}}";
+                claudeBridge.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":" + completion + "}");
+                await WaitUntilAsync(() => claudeRunner.ActiveTurnId is null);
+                claudeVm.OnNotification("turn/completed", System.Text.Json.JsonDocument.Parse(completion).RootElement);
+                await WaitUntilAsync(() => claudeVm.State == AssistantState.Ready);
+                return (File.Exists(fakeLog) ? File.ReadAllLines(fakeLog) : [], ends);
+            }
+            var savedBefore = chats.Load(claudeThread)!;
+            var missingSession = savedBefore.SessionId;
+            var shownBefore = claudeVm.Transcript.Select(item => item.Role + ":" + item.Text).ToArray();
+            var recovered = await ClaudeTurnAsync("vm-missing");
+            var savedAfter = chats.Load(claudeThread)!;
+            Assert(recovered.Starts.Length == 2 && recovered.Starts[0] == "resume " + missingSession && recovered.Starts[1] == "session " + savedAfter.SessionId
+                && savedAfter.SessionId != missingSession && savedAfter.SessionStarted && savedAfter.Model == savedBefore.Model && savedAfter.ThreadId == claudeThread
+                && recovered.Ends.Length == 1 && recovered.Ends[0].Contains("\"turnId\":\"" + claudeTurnId + "\"") && recovered.Ends[0].Contains("\"status\":\"completed\""),
+                "A saved chat whose session Claude Code does not have is answered once in a fresh session, in the same Core turn, which completes.");
+            Assert(claudeVm.Transcript.Count(item => item.Text == AssistantViewModel.ClaudeSessionReplacedText) == 1
+                && claudeVm.Transcript.Select(item => item.Role + ":" + item.Text).Take(shownBefore.Length).SequenceEqual(shownBefore)
+                && savedAfter.Messages.Take(savedBefore.Messages.Length).SequenceEqual(savedBefore.Messages)
+                && savedAfter.Messages.Any(message => message.Text == AssistantViewModel.ClaudeSessionReplacedText)
+                && claudeStore.Load() is { Provider: "claude" } keptRef && keptRef.ThreadId == claudeThread && claudeVm.CanSwitchProvider,
+                "The recovery keeps every shown message, the chat and its task, and says honestly that Claude starts without them.");
+            var resumedTurn = await ClaudeTurnAsync("vm-ok");
+            Assert(resumedTurn.Starts.SequenceEqual(new[] { "resume " + savedAfter.SessionId }) && resumedTurn.Ends.Length == 1 && resumedTurn.Ends[0].Contains("\"status\":\"completed\"")
+                && chats.Load(claudeThread) is { SessionStarted: true } resumedChat && resumedChat.SessionId == savedAfter.SessionId,
+                "The next message resumes the fresh session, with no retry.");
+
+            // Nothing else is replayed: sign-in, model and other start-up errors, a success before init, a not-found error for
+            // another session, and a Stop each start Claude Code once and keep the chat's session.
+            foreach (var (mode, message) in new[]
+            {
+                ("vm-auth", ClaudeStreamTranslator.SignInMessage), ("vm-model", ClaudeStreamTranslator.FailedMessage),
+                ("vm-success", ClaudeStreamTranslator.RefusedMessage), ("vm-missing-other", ClaudeStreamTranslator.FailedMessage)
+            })
+            {
+                var single = await ClaudeTurnAsync(mode);
+                Assert(single.Starts.Length == 1 && single.Ends.Length == 1 && single.Ends[0].Contains("\"status\":\"failed\"")
+                    && claudeVm.Transcript.Last(item => item.Role == "DwemerDistro").Text == message
+                    && chats.Load(claudeThread) is { SessionStarted: true } kept && kept.SessionId == savedAfter.SessionId,
+                    "A start-up failure that is not this session's not-found error is not retried and keeps the session: " + mode);
+            }
+            var interruptsBefore = 0;
+            lock (claudeBridge.Requests) interruptsBefore = claudeBridge.Requests.Count(r => r.StartsWith("turn/interrupt"));
+            var stoppedTurn = await ClaudeTurnAsync("vm-hang", async () =>
+            {
+                await WaitUntilAsync(() => File.Exists(fakeLog));
+                await claudeVm.InterruptAsync();
+            });
+            lock (claudeBridge.Requests) Assert(stoppedTurn.Starts.Length == 1 && stoppedTurn.Ends.Length == 0 && claudeBridge.Requests.Count(r => r.StartsWith("turn/interrupt")) == interruptsBefore + 1
+                && chats.Load(claudeThread) is { SessionStarted: true } afterStop && afterStop.SessionId == savedAfter.SessionId,
+                "Stop ends the Claude process through Core and nothing is retried.");
+            Assert(claudeVm.ForgetMissingClaudeSession(chats.Load(claudeThread)! with { SessionId = missingSession }) is null
+                && chats.Load(claudeThread) is { SessionStarted: true } unchanged && unchanged.SessionId == savedAfter.SessionId,
+                "A stale not-found result for an earlier session never replaces the chat's current one.");
+            // How the user's chat got there: a refused init echoes the requested session id, but the killed CLI never saved it.
+            var unstarted = claudeVm.ForgetMissingClaudeSession(chats.Load(claudeThread)!)!;
+            var refusedStart = await ClaudeTurnAsync("vm-refuse");
+            Assert(refusedStart.Starts.SequenceEqual(new[] { "session " + unstarted.SessionId }) && refusedStart.Ends.Length == 1
+                && refusedStart.Ends[0].Contains("\"status\":\"failed\"") && chats.Load(claudeThread) is { SessionStarted: false } notStarted
+                && notStarted.SessionId == unstarted.SessionId, "A refused init never marks the chat's session started, so the next turn does not resume it.");
+            var afterRefusal = await ClaudeTurnAsync("vm-missing");
+            Assert(afterRefusal.Starts.SequenceEqual(new[] { "session " + unstarted.SessionId }) && afterRefusal.Ends.Length == 1
+                && afterRefusal.Ends[0].Contains("\"status\":\"completed\"") && chats.Load(claudeThread) is { SessionStarted: true } started
+                && started.SessionId == unstarted.SessionId, "After a refused init the same new session is started, once, and then saved as started.");
+            Assert(!Directory.EnumerateFileSystemEntries(Path.Combine(vmRoot, "DwemerDistro", "assistant", "claude-turn")).Any()
+                && !Directory.EnumerateFileSystemEntries(Path.Combine(vmRoot, "DwemerDistro", "assistant", "claude-work")).Any(),
+                "Every recovery and failed start removed its private config and left the working folder empty.");
+            Environment.SetEnvironmentVariable("DDISTRO_FAKE_CLAUDE", null);
+            Environment.SetEnvironmentVariable("DDISTRO_FAKE_LOG", null);
+            await claudeVm.ShutdownAsync();
+
+            chats.Save(chats.Load(claudeThread)! with { Model = "claude-opus-5-5" });
+            // The reopened chat's task is still there in Core this time.
+            var reopenedCli = new FakeAssistantCli(claudeBridge, "99999999-8888-7777-6666-555555555555") { Script = claudeCli.Script };
+            var reopenedVm = new AssistantViewModel(reopenedCli, new FakeAssistantHost(claudeInstallation), codexStore, null, claudeStore, chats,
+                _ => Task.FromResult(new ClaudeCodeStatus(ClaudeCodeState.Ready, Path.Combine(vmRoot, "missing-claude.exe"), new Version(2, 1, 284), "claude.ai")),
+                new ProcessRunner());
+            reopenedVm.SelectedProvider = reopenedVm.Providers[1];
+            Assert(reopenedVm.SelectedModel?.Id == "claude-sonnet-5-5", "The picker starts at the default before the chat is opened.");
+            await reopenedVm.ConnectAsync();
+            lock (claudeBridge.Requests) Assert(claudeBridge.Requests.Contains("ddistro/external/thread/resume:" + claudeThread), "The saved Claude chat is resumed.");
+            Assert(reopenedVm.State == AssistantState.Ready && reopenedVm.SelectedModel?.Id == "claude-opus-5-5"
+                && chats.Load(claudeThread) is { Model: "claude-opus-5-5", SessionStarted: true },
+                "A reopened chat's saved model wins over the picker's previous choice and is not overwritten by the reopen save.");
+            await reopenedVm.ShutdownAsync();
+        }
+        finally
+        {
+            try { Directory.Delete(vmRoot, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    {
+        // OpenRouter provider: Core-hosted engine over a scripted bridge, key metadata from a fake global-status. No WSL, key or model call.
+        var orRoot = Path.Combine(Path.GetTempPath(), "ddistro-openrouter-vm-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(orRoot);
+        try
+        {
+            var largestInstructions = Enumerable.Range(0, 101).Max(revision => System.Text.Encoding.UTF8.GetByteCount(AssistantViewModel.InstructionsFor(revision)));
+            Console.WriteLine($"OpenRouter instructions: largest {largestInstructions} bytes of {AssistantViewModel.MaxOpenRouterInstructionsBytes}");
+            Assert(largestInstructions <= AssistantViewModel.MaxOpenRouterInstructionsBytes, "Every tool revision's instructions fit Core's 32 KiB OpenRouter limit.");
+            var orInstallation = Guid.NewGuid().ToString();
+            var orThread = Guid.NewGuid().ToString();
+            var keyA = Guid.NewGuid().ToString("D");
+            var keyB = Guid.NewGuid().ToString("D");
+            const string SecretPreview = "sk-or-v1-PREVIEW-NEVER-SHOWN";
+            var codexStore = new AssistantStateStore(orRoot);
+            var openRouterStore = new AssistantStateStore(orRoot, AssistantStateStore.OpenRouterFileName);
+            var orChats = new OpenRouterChatStore(orRoot);
+            codexStore.Save(new AssistantTaskReference(AssistantTaskReference.CurrentVersion, orInstallation, LauncherConstants.DistroName, "codex", "herika",
+                "11111111-2222-3333-4444-555555555555", "thr-codex"));
+            var codexBytes = File.ReadAllBytes(codexStore.StatePath);
+            string Key(string id, string label, string provider = "openrouter", string origin = "https://openrouter.ai:443", bool configured = true) =>
+                $"{{\"key_id\":\"{id}\",\"provider\":\"{provider}\",\"kind\":\"{provider}\",\"label\":\"{label}\",\"origin\":\"{origin}\",\"revision\":3,"
+                + $"\"usage\":[],\"preview\":\"{SecretPreview}\",\"configured\":{(configured ? "true" : "false")},\"test_supported\":true}}";
+            var noise = Key(Guid.NewGuid().ToString(), "Wrong origin", origin: "https://evil.example:443") + "," + Key(Guid.NewGuid().ToString(), "Unset", configured: false)
+                        + "," + Key(Guid.NewGuid().ToString(), "Anthropic", provider: "anthropic", origin: "https://api.anthropic.com:443");
+            var keys = new[] { Key(keyA, "Main") };
+            var keyReads = 0;
+            Task<ApiKeysResult> ReadKeys(CancellationToken _)
+            {
+                Interlocked.Increment(ref keyReads);
+                var json = "{\"ok\":true,\"outcome\":\"listed\",\"data\":{\"keys\":[" + string.Join(",", keys.Append(noise))
+                           + "],\"providers\":{\"openrouter\":{\"kind\":\"openrouter\",\"origin\":\"https://openrouter.ai:443\",\"test_supported\":true}}}}";
+                return Task.FromResult(System.Text.Json.JsonSerializer.Deserialize<ApiKeysResult>(json, ApiKeysService.JsonOptions)!);
+            }
+            var models = "\"models\":[{\"id\":\"z-ai/glm-5.3\",\"label\":\"GLM 5.3 (Z.ai) via OpenRouter\"},{\"id\":\"openai/gpt-6.1-sol\",\"label\":\"x\"},"
+                         + "{\"id\":\"anthropic/claude-sonnet-5.5\",\"label\":\"y\"}]";
+            var turnCount = 0;
+            var turnsList = "{\"data\":[],\"nextCursor\":null,\"backwardsCursor\":null,\"compacted\":0}";
+            var offersOpenRouter = false;
+            var orBridge = new FakeAssistantTransport
+            {
+                Respond = (method, parameters) => method switch
+                {
+                    "initialize" => new JsonObject(),
+                    "ddistro/external/thread/start" or "ddistro/external/thread/resume" => JsonNode.Parse("{\"threadId\":\"" + orThread
+                        + "\",\"engine\":\"openrouter\",\"tools\":[{\"name\":\"ddistro_read\",\"description\":\"Read\",\"inputSchema\":{\"type\":\"object\"}}]," + models + "}"),
+                    "ddistro/external/turn/start" => JsonNode.Parse("{\"turn\":{\"id\":\"or-turn-" + Interlocked.Increment(ref turnCount) + "\",\"status\":\"inProgress\"},"
+                        + "\"model\":\"" + parameters["model"]!.GetValue<string>() + "\",\"keyId\":\"" + parameters["keyId"]!.GetValue<string>() + "\"}"),
+                    "ddistro/external/thread/turns/list" => JsonNode.Parse(turnsList),
+                    "turn/interrupt" => new JsonObject(),
+                    _ => null
+                }
+            };
+            var orCli = new FakeAssistantCli(orBridge, null)
+            {
+                Script = command => command == "capabilities"
+                    ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"assistant_api\":{\"version\":1},\"features\":{\"agent\":true,\"assistant_tools\":true,"
+                      + "\"assistant_external_engine\":true},\"assistant_tools\":{\"tools\":[{\"name\":\"ddistro_read\",\"mutates\":false}]},"
+                      + "\"assistant_external_engine\":{\"revision\":2,\"engines\":[\"claude\"" + (offersOpenRouter ? ",\"openrouter\"" : string.Empty) + "],\"reserved_engines\":[]}}}"
+                    : command.StartsWith("changes prepare")
+                    ? "{\"schema_version\":1,\"ok\":true,\"data\":{\"task_id\":\"99999999-8888-7777-6666-555555555555\",\"diagnostic_only\":true}}"
+                    : null
+            };
+            var orHost = new FakeAssistantHost(orInstallation);
+            AssistantViewModel NewVm(FakeAssistantCli cli) => new(cli, orHost, codexStore, null, null, null, null, null, openRouterStore, orChats, ReadKeys);
+            var orVm = NewVm(orCli);
+            Assert(orVm.Providers[2] is { Id: "openrouter", IsAvailable: true, Label: "OpenRouter" } && !orVm.IsOpenRouter && keyReads == 0,
+                "OpenRouter is offered when its stores and key source exist; nothing is read before Connect.");
+            orVm.SelectedProvider = orVm.Providers[2];
+            Assert(orVm.IsOpenRouter && !orVm.IsChatGptSignInShown && orVm.Models.Select(m => m.Id).SequenceEqual(new[]
+                       { "z-ai/glm-5.3", "openai/gpt-6.1-sol", "anthropic/claude-sonnet-5.5" }) && orVm.SelectedModel?.Id == "z-ai/glm-5.3",
+                "OpenRouter offers exactly Core's three fixed presets, GLM 5.3 by default and no Gemma, and no ChatGPT sign-in.");
+            Assert(!orVm.CanAttachImages && orVm.Models.Where(m => m.Id != "z-ai/glm-5.3").All(m => m.SupportsImages)
+                && orVm.OpenRouterConnectionText == "Not connected" && !orVm.IsOpenRouterConnected && !orVm.IsOpenRouterKeyMissing,
+                "GLM 5.3 is text only while the other presets keep images; before Connect the status says Not connected.");
+            await orVm.ConnectAsync();
+            Assert(orVm.State == AssistantState.RuntimeAbsent && orVm.StatusDetail == AssistantViewModel.OpenRouterCoreTooOldText && orCli.ServedTask is null,
+                "A Core whose external engine lacks openrouter gets a clean update message and no session.");
+            offersOpenRouter = true;
+            await orVm.ConnectAsync();
+            string[] orRequests;
+            string orInit;
+            lock (orBridge.Requests)
+            {
+                orRequests = orBridge.Requests.ToArray();
+                orInit = orBridge.Bodies.First(body => body.StartsWith("initialize "));
+            }
+            Assert(orVm.State == AssistantState.Ready && orInit.Contains("\"ddistroEngine\":\"openrouter\"") && orRequests.Contains("ddistro/external/thread/start")
+                && !orRequests.Contains("account/read") && !orRequests.Contains("model/list") && !orRequests.Any(r => r.StartsWith("thread/start"))
+                && orCli.ServeSignInReuse.SequenceEqual(new[] { false }) && keyReads == 1,
+                "OpenRouter connects with ddistroEngine openrouter and an external thread: no ChatGPT account, model list or Codex sign-in import.");
+            Assert(orVm.OpenRouterKeys.Count == 1 && orVm.SelectedOpenRouterKey?.KeyId == keyA && orChats.Load(orThread) is { KeyId: var boundA } && boundA == keyA
+                && openRouterStore.Load() is { Provider: "openrouter" } orRef && orRef.ThreadId == orThread && File.ReadAllBytes(codexStore.StatePath).SequenceEqual(codexBytes),
+                "The only configured OpenRouter key with OpenRouter's origin is chosen and saved by id; task.openrouter.json is separate and task.json is unchanged.");
+            var orFiles = Directory.EnumerateFiles(orRoot, "*", SearchOption.AllDirectories).Select(File.ReadAllText);
+            Assert(!orFiles.Any(text => text.Contains(SecretPreview)) && !orVm.OpenRouterKeyStatus.Contains(SecretPreview)
+                && !orVm.OpenRouterKeys.Any(key => key.Display.Contains(SecretPreview)), "No key preview or secret is stored or shown.");
+            Assert(orVm.IsOpenRouterConnected && orVm.OpenRouterConnectionText == "Connected" && !orVm.IsOpenRouterKeyMissing
+                && new[] { orVm.OpenRouterConnectionText, orVm.OpenRouterKeyStatus, orVm.AccountText }.All(text => !text.Contains("Main") && !text.Contains(keyA[..8])),
+                "With Core connected and the one global key chosen, the compact status says Connected and shows no key label or id.");
+
+            keys = [Key(keyA, "Main"), Key(keyB, "Backup")];
+            orVm.ReloadOpenRouterKeysCommand.Execute(null);
+            await WaitUntilAsync(() => keyReads == 2 && orVm.ReloadOpenRouterKeysCommand.CanExecute(null));
+            Assert(orVm.SelectedOpenRouterKey?.KeyId == keyA && keyReads == 2, "Reload keys keeps the chat's bound key when several keys exist.");
+            keys = [];
+            orVm.ReloadOpenRouterKeysCommand.Execute(null);
+            await WaitUntilAsync(() => keyReads == 3 && orVm.ReloadOpenRouterKeysCommand.CanExecute(null));
+            Assert(orVm.SelectedOpenRouterKey is null && orVm.IsOpenRouterKeyMissing && orChats.Load(orThread)?.KeyId == keyA
+                && !orVm.IsOpenRouterConnected && orVm.OpenRouterConnectionText == "No key",
+                "A bound key that is gone, with no OpenRouter key left, is reported and its saved binding kept.");
+            orVm.InputText = "hello";
+            orVm.SendCommand.Execute(null);
+            await WaitUntilAsync(() => orVm.Transcript.Any(item => item.Text.StartsWith("The message was not sent:")) && orVm.State == AssistantState.Ready);
+            lock (orBridge.Requests) orRequests = orBridge.Requests.ToArray();
+            Assert(!orRequests.Contains("ddistro/external/turn/start") && orVm.State == AssistantState.Ready
+                && orVm.Transcript.Any(item => item.Text.StartsWith("The message was not sent:")), "Without its bound key nothing is sent.");
+            orVm.OpenApiKeysCommand.Execute(null);
+            Assert(orHost.ApiKeysOpened == 1, "The API Keys link asks the launcher to show its API Keys page.");
+            keys = [Key(keyB, "Backup"), Key(Guid.NewGuid().ToString("D"), "Spare")];
+            orVm.OnPageShown();
+            await WaitUntilAsync(() => keyReads == 4 && orVm.ReloadOpenRouterKeysCommand.CanExecute(null));
+            Assert(orVm.SelectedOpenRouterKey is null && orVm.IsOpenRouterKeyMissing && orChats.Load(orThread)?.KeyId == keyA,
+                "Back from API Keys with several keys and none saved for this chat, none is chosen for it.");
+            keys = [Key(keyB, "Backup")];
+            var orTranscriptCount = orVm.Transcript.Count;
+            orVm.OnPageShown();
+            await WaitUntilAsync(() => keyReads == 5 && orVm.ReloadOpenRouterKeysCommand.CanExecute(null));
+            orVm.OnPageShown();
+            Assert(orVm.SelectedOpenRouterKey?.KeyId == keyB && orChats.Load(orThread) is { KeyId: var rebound, ThreadId: var reboundThread }
+                && rebound == keyB && reboundThread == orThread && orVm.IsOpenRouterConnected && keyReads == 5 && orVm.Transcript.Count == orTranscriptCount + 1
+                && orVm.Transcript.Last().Text.Contains("now uses your global OpenRouter key") && !orVm.Transcript.Last().Text.Contains("Backup")
+                && !orVm.Transcript.Last().Text.Contains(keyB[..8]),
+                "Back from API Keys with one key, the same chat is bound to it once, with a short notice; a page shown with a key in use reads nothing.");
+
+            // GLM 5.3 reads text only: an image is refused at the composer, and one attached under another model is not sent with it.
+            var pixel = System.Windows.Media.Imaging.BitmapSource.Create(2, 2, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null, new byte[16], 8);
+            orVm.AttachImage(pixel);
+            Assert(orVm.Attachments.Count == 0 && orVm.AttachmentFeedback.Contains("reads text only"), "A text-only model is not given an image attachment.");
+            orVm.SelectedModel = orVm.Models.First(m => m.Id == "openai/gpt-6.1-sol");
+            orVm.AttachImage(pixel);
+            Assert(orVm.CanAttachImages && orVm.Attachments.Count == 1, "Models that read images still take them.");
+            orVm.SelectedModel = orVm.Models.First(m => m.Id == "z-ai/glm-5.3");
+            orVm.InputText = "look at this";
+            orVm.SendCommand.Execute(null);
+            await WaitUntilAsync(() => orVm.Transcript.Any(item => item.Text.Contains("reads text only. Remove the image")) && orVm.State == AssistantState.Ready);
+            lock (orBridge.Requests) orRequests = orBridge.Requests.ToArray();
+            Assert(!orRequests.Contains("ddistro/external/turn/start:" + orThread) && orVm.Attachments.Count == 1,
+                "An image is never sent to a text-only model; the attachment stays in the composer.");
+            orVm.RemoveAttachment(orVm.Attachments.Single());
+
+            orVm.InputText = "check my distro";
+            orVm.SendCommand.Execute(null);
+            await WaitUntilAsync(() => { lock (orBridge.Requests) return orBridge.Requests.Contains("ddistro/external/turn/start:" + orThread); });
+            string startBody;
+            lock (orBridge.Requests) startBody = orBridge.Bodies.First(body => body.StartsWith("ddistro/external/turn/start "));
+            var startParams = JsonNode.Parse(startBody["ddistro/external/turn/start ".Length..])!.AsObject();
+            Assert(startParams.Select(p => p.Key).OrderBy(k => k).SequenceEqual(new[] { "input", "instructions", "keyId", "model", "threadId" })
+                && startParams["keyId"]!.GetValue<string>() == keyB && startParams["model"]!.GetValue<string>() == "z-ai/glm-5.3"
+                && startParams["input"]!.AsArray().Any(item => item!["text"]?.GetValue<string>() == "check my distro")
+                && System.Text.Encoding.UTF8.GetByteCount(startParams["instructions"]!.GetValue<string>()) <= AssistantViewModel.MaxOpenRouterInstructionsBytes
+                && !startBody.Contains(SecretPreview), "turn/start sends exactly threadId, model, keyId, input and instructions; no effort, secret or Codex fields.");
+            await WaitUntilAsync(() => orVm.State == AssistantState.Streaming);
+            Assert(!orVm.CanSwitchProvider && !orVm.CanChooseOpenRouterKey, "Provider and key cannot change during a turn.");
+            System.Text.Json.JsonElement Note(string json) => System.Text.Json.JsonDocument.Parse(json).RootElement;
+            orVm.OnNotification("item/started", Note("{\"threadId\":\"" + orThread + "\",\"turnId\":\"or-turn-1\",\"item\":{\"type\":\"agentMessage\",\"id\":\"or-turn-1:1\",\"text\":\"\"}}"));
+            orVm.OnNotification("item/agentMessage/delta", Note("{\"threadId\":\"" + orThread + "\",\"turnId\":\"or-turn-1\",\"itemId\":\"or-turn-1:1\",\"delta\":\"All \"}"));
+            orVm.OnNotification("item/completed", Note("{\"threadId\":\"" + orThread + "\",\"turnId\":\"or-turn-1\",\"item\":{\"type\":\"agentMessage\",\"id\":\"or-turn-1:1\",\"text\":\"All good.\"}}"));
+            orVm.OnNotification("account/login/completed", Note("{\"success\":true}"));
+            async Task CompleteOpenRouterTurn(string completed)
+            {
+                // The runner reads the bridge; the view model's handler runs here, as the dispatcher is not pumped in this test.
+                orBridge.Incoming.Writer.TryWrite("{\"method\":\"turn/completed\",\"params\":" + completed + "}");
+                orBridge.Incoming.Writer.TryWrite("{\"method\":\"test/marker\",\"params\":{}}");
+                await WaitUntilAsync(() => orBridge.Incoming.Reader.Count == 0);
+                orVm.OnNotification("turn/completed", Note(completed));
+            }
+            await CompleteOpenRouterTurn("{\"threadId\":\"" + orThread + "\",\"turn\":{\"id\":\"or-turn-1\",\"status\":\"completed\","
+                + "\"error\":{\"code\":\"history_unsaved\",\"message\":\"the turn ran but could not be saved\"}}}");
+            Assert(orVm.State == AssistantState.Ready && orVm.Transcript.Any(item => item.Role == "OpenRouter" && item.Text == "All good.")
+                && orVm.Transcript.Any(item => item.Role == "DwemerDistro" && item.Text.Contains("could not be saved") && item.Text.Contains("(history_unsaved)")),
+                "Core's notifications render as OpenRouter's reply, and an error on a completed turn is still shown.");
+
+            orVm.InputText = "second";
+            orVm.SendCommand.Execute(null);
+            await WaitUntilAsync(() => orVm.State == AssistantState.Streaming && Volatile.Read(ref turnCount) == 2);
+            await orVm.InterruptAsync();
+            // Pressed before the runner had the turn id, the stop is held and sent the moment the id arrives.
+            await WaitUntilAsync(() => { lock (orBridge.Requests) return orBridge.Requests.Contains("turn/interrupt:" + orThread); });
+            string interruptBody;
+            lock (orBridge.Requests) interruptBody = orBridge.Bodies.FirstOrDefault(body => body.StartsWith("turn/interrupt ")) ?? string.Empty;
+            await CompleteOpenRouterTurn("{\"threadId\":\"" + orThread + "\",\"turn\":{\"id\":\"or-turn-2\",\"status\":\"interrupted\"}}");
+            orVm.OnNotification("turn/completed", Note("{\"threadId\":\"" + Guid.NewGuid() + "\",\"turn\":{\"id\":\"stale\",\"status\":\"failed\",\"error\":{\"code\":\"provider_auth\",\"message\":\"x\"}}}"));
+            lock (orBridge.Requests) orRequests = orBridge.Requests.ToArray();
+            Assert(interruptBody.Contains("\"turnId\":\"or-turn-2\"") && orVm.State == AssistantState.Ready && orVm.Transcript.Last().Text == "Stopped."
+                && orRequests.Count(r => r.StartsWith("ddistro/external/turn/start")) == 2
+                && !orRequests.Any(r => r.StartsWith("ddistro/external/turn/end") || r.StartsWith("ddistro/external/tool/call")),
+                "Stop sends turn/interrupt for the running turn; nothing is replayed, and no turn/end or tool/call is ever sent; a stale completion is ignored.");
+            Assert(AssistantViewModel.DescribeOpenRouterError(Note("{\"code\":\"provider_credits\",\"message\":\"Payment required\"}")).Contains("no credits left")
+                && AssistantViewModel.DescribeOpenRouterError(Note("{\"code\":\"provider_finish\",\"message\":\"length\"}")).Contains("nothing was retried"),
+                "Credit and truncation errors are explained, never swallowed.");
+            orVm.DisconnectCommand.Execute(null);
+            await WaitUntilAsync(() => orVm.CanSwitchProvider && !orVm.DisconnectCommand.CanExecute(null));
+            Assert(orVm.SelectedOpenRouterKey is null && orVm.OpenRouterConnectionText == "Not connected" && !orVm.IsOpenRouterConnected
+                && !orVm.IsOpenRouterKeyMissing && orVm.OpenRouterKeyStatus == AssistantViewModel.OpenRouterIdleText && orChats.Load(orThread)?.KeyId == keyB,
+                "Disconnected, the key is no longer shown ready or missing; the chat's saved key stays.");
+            var readsBeforeReconnect = keyReads;
+            await orVm.ConnectAsync();
+            Assert(orVm.State == AssistantState.Ready && keyReads == readsBeforeReconnect + 1 && orVm.SelectedOpenRouterKey?.KeyId == keyB
+                && orVm.OpenRouterConnectionText == "Connected", "Reconnect reads key metadata again before the chat's saved key is shown Connected.");
+            orVm.DisconnectCommand.Execute(null);
+            await WaitUntilAsync(() => orVm.CanSwitchProvider && !orVm.DisconnectCommand.CanExecute(null));
+            orVm.SelectedProvider = orVm.Providers[0];
+            await WaitUntilAsync(() => !orVm.IsOpenRouter);
+            Assert(File.ReadAllBytes(codexStore.StatePath).SequenceEqual(codexBytes) && openRouterStore.Load()?.ThreadId == orThread,
+                "Switching back to ChatGPT keeps both references; task.json is byte-for-byte unchanged.");
+            await orVm.ShutdownAsync();
+
+            // Reopened chat: history is paged from Core, with its errors and dropped-turns notice; the saved key binding is restored.
+            turnsList = "{\"data\":[{\"id\":\"t2\",\"status\":\"failed\",\"model\":\"google/gemma-4-31b-it\",\"error\":{\"code\":\"provider_credits\",\"message\":\"Payment required\"},"
+                        + "\"items\":[{\"type\":\"userMessage\",\"id\":\"t2:0\",\"content\":[{\"type\":\"text\",\"text\":\"again\"},{\"type\":\"image\",\"url\":\"[not retained]\"}]}]},"
+                        + "{\"id\":\"t1\",\"status\":\"completed\",\"model\":\"google/gemma-4-31b-it\",\"error\":null,\"items\":[{\"type\":\"userMessage\",\"id\":\"t1:0\","
+                        + "\"content\":[{\"type\":\"text\",\"text\":\"check my distro\"}]},{\"type\":\"agentMessage\",\"id\":\"t1:1\",\"text\":\"All good.\"}]}],"
+                        + "\"nextCursor\":null,\"backwardsCursor\":null,\"compacted\":3}";
+            var reopenCli = new FakeAssistantCli(orBridge, "99999999-8888-7777-6666-555555555555") { Script = orCli.Script };
+            orChats.Save(orChats.Load(orThread)! with { Model = "google/gemma-4-31b-it" });
+            var reopenVm = NewVm(reopenCli);
+            reopenVm.SelectedProvider = reopenVm.Providers[2];
+            await WaitUntilAsync(() => reopenVm.IsOpenRouter);
+            await reopenVm.ConnectAsync();
+            await WaitUntilAsync(() => reopenVm.Transcript.Any(item => item.Text == "All good."));
+            string listBody;
+            lock (orBridge.Requests) listBody = orBridge.Bodies.Last(body => body.StartsWith("ddistro/external/thread/turns/list "));
+            var texts = reopenVm.Transcript.Select(item => item.Role + ":" + item.Text).ToList();
+            Assert(listBody.Contains("\"limit\":10") && listBody.Contains("\"sortDirection\":\"desc\"") && !listBody.Contains("itemsView")
+                && texts.FindIndex(t => t.Contains("dropped the 3 oldest")) < texts.IndexOf("You:check my distro")
+                && texts.IndexOf("OpenRouter:All good.") < texts.FindIndex(t => t.StartsWith("You:again"))
+                && texts.Any(t => t.StartsWith("DwemerDistro:") && t.Contains("provider_credits")) && reopenVm.SelectedOpenRouterKey?.KeyId == keyB
+                && reopenVm.SelectedModel?.Id == "z-ai/glm-5.3",
+                "A reopened OpenRouter chat pages Core's history (Gemma turns included) oldest first with the dropped-turns notice and turn errors, "
+                + "keeps its saved key, and a retired Gemma choice opens on GLM 5.3.");
+            await reopenVm.ShutdownAsync();
+
+            // A reopened chat whose launcher record is gone keeps its thread and history and is bound to the one global key.
+            orChats.Delete(orThread);
+            var lostCli = new FakeAssistantCli(orBridge, "99999999-8888-7777-6666-555555555555") { Script = orCli.Script };
+            var lostVm = NewVm(lostCli);
+            lostVm.SelectedProvider = lostVm.Providers[2];
+            await WaitUntilAsync(() => lostVm.IsOpenRouter);
+            await lostVm.ConnectAsync();
+            await WaitUntilAsync(() => lostVm.Transcript.Any(item => item.Text == "All good."));
+            Assert(lostVm.State == AssistantState.Ready && lostVm.OpenRouterKeys.Count == 1 && lostVm.SelectedOpenRouterKey?.KeyId == keyB
+                && orChats.Load(orThread) is { KeyId: var recovered } && recovered == keyB && openRouterStore.Load()?.ThreadId == orThread
+                && lostVm.Transcript.Any(item => item.Text.Contains("now uses your global OpenRouter key")) && lostVm.OpenRouterConnectionText == "Connected"
+                && !lostVm.IsOpenRouterKeyMissing, "A lost binding is stated and the same chat, with its history, uses the one global key.");
+            await lostVm.ShutdownAsync();
+        }
+        finally
+        {
+            try { Directory.Delete(orRoot, recursive: true); } catch (IOException) { }
+        }
+    }
+
     Console.WriteLine("Launcher regression tests: OK");
     return 0;
 }
@@ -6176,6 +6820,9 @@ sealed class FakeAssistantHost(string installationId) : IAssistantHost
     /// <summary>The path the Save dialog answers with; null is a cancelled dialog.</summary>
     public string? SavePath { get; set; }
     public string? ChooseSavePath(string title, string fileName, string filter) => SavePath;
+
+    public int ApiKeysOpened { get; private set; }
+    public void OpenApiKeys() => ApiKeysOpened++;
 }
 
 /// <summary>Core documents for Connect; status names <paramref name="statusTask"/>, or not_found when null.</summary>
@@ -6232,6 +6879,15 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
     {
         ServedTask = taskId;
         return Task.FromResult<IAssistantTransport>(transport);
+    }
+
+    /// <summary>Whether each session asked for the Windows Codex sign-in to be offered to Core first.</summary>
+    public List<bool> ServeSignInReuse { get; } = [];
+
+    public Task<IAssistantTransport> StartServeAsync(string taskId, bool reuseCodexSignIn, CancellationToken cancellationToken)
+    {
+        ServeSignInReuse.Add(reuseCodexSignIn);
+        return StartServeAsync(taskId, cancellationToken);
     }
 }
 

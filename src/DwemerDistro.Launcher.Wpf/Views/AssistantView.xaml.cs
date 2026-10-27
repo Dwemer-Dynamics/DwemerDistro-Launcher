@@ -169,7 +169,7 @@ public partial class AssistantView : UserControl
         var role = new Run(item.Role) { FontWeight = FontWeights.SemiBold, FontSize = 11 };
         role.SetResourceReference(TextElement.ForegroundProperty, "GameCenter.TextMuted");
         block.Blocks.Add(new Paragraph(role) { Margin = new Thickness(0) });
-        if (item.Role != "Codex")
+        if (item.Role is not ("Codex" or AssistantViewModel.ClaudeRole or AssistantViewModel.OpenRouterRole))
         {
             var text = new Run(item.Text);
             block.Blocks.Add(new Paragraph(text) { Margin = new Thickness(0, 2, 0, 0) });
@@ -321,6 +321,15 @@ public partial class AssistantView : UserControl
         || Keyboard.FocusedElement is FrameworkElement focused
         && (focused as System.Windows.Controls.ContextMenu ?? focused.Parent as System.Windows.Controls.ContextMenu)?.PlacementTarget == TranscriptBox;
 
+    // Shown again, e.g. back from API Keys: an OpenRouter chat without a usable key reads its key once more.
+    private void AssistantView_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true)
+        {
+            _viewModel?.OnPageShown();
+        }
+    }
+
     // Enter sends, Shift+Enter keeps the newline the TextBox would insert anyway.
     private void InputBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
@@ -396,7 +405,9 @@ public partial class AssistantView : UserControl
         {
             Title = "Attach to the next message",
             Multiselect = true,
-            Filter = "Screenshots and text files|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.txt;*.log;*.md;*.json;*.yaml;*.yml;*.toml;*.ini;*.cfg;*.conf;*.xml;*.csv;*.py;*.php;*.js;*.cs;*.sh;*.ps1;*.sql;*.lua;*.psc|All files|*.*"
+            // A text-only model is offered text files only; an image chosen anyway is refused with a note under the composer.
+            Filter = (viewModel.CanAttachImages ? "Screenshots and text files|*.png;*.jpg;*.jpeg;*.gif;*.bmp;" : "Text files|")
+                     + "*.txt;*.log;*.md;*.json;*.yaml;*.yml;*.toml;*.ini;*.cfg;*.conf;*.xml;*.csv;*.py;*.php;*.js;*.cs;*.sh;*.ps1;*.sql;*.lua;*.psc|All files|*.*"
         };
         if (dialog.ShowDialog(Window.GetWindow(this)) == true) viewModel.AttachFiles(dialog.FileNames);
         InputBox.Focus();
