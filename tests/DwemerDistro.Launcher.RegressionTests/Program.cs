@@ -5,6 +5,10 @@ using static ModelsFixture;
 using System.Net;
 using System.Text.Json.Nodes;
 
+// The Claude engine regression run starts this executable as a stand-in claude.exe.
+if (args.Length > 0 && args[0] == "--print" && Environment.GetEnvironmentVariable("DDISTRO_FAKE_CLAUDE") is { Length: > 0 } fakeClaudeMode)
+    return await FakeClaude.RunAsync(fakeClaudeMode, args);
+
 // An opt-in local package fixture exercises the real Windows installer and candidate WSL Core.
 if (args.Length == 5 && args[0] is "--community-fixture" or "--community-remove")
 {
@@ -5542,6 +5546,373 @@ try
         Assert(oversized, "One unterminated assistant line must not grow without bound.");
     }
 
+    // Claude engine primitives (L1): recorded stream-json, the loopback MCP relay over raw sockets, and one fake claude.exe
+    // (this test executable in --print mode) for argv, environment, stdin, init gate, Stop and resume. No real CLI or model.
+    {
+        var claudeSession = "11111111-2222-4333-8444-555555555555";
+        var claudeTools = new HashSet<string>(StringComparer.Ordinal) { "mcp__ddistro__ddistro_read", "mcp__ddistro__ddistro_hold" };
+        string ClaudeInit(params string[] tools) => new JsonObject
+        {
+            ["type"] = "system", ["subtype"] = "init", ["session_id"] = claudeSession, ["permissionMode"] = "dontAsk", ["plugins"] = new JsonArray(),
+            ["tools"] = new JsonArray(tools.Select(tool => (JsonNode)tool).ToArray()),
+            ["mcp_servers"] = new JsonArray(new JsonObject { ["name"] = "ddistro", ["status"] = "connected" })
+        }.ToJsonString();
+        string StreamEvent(string json) => "{\"type\":\"stream_event\",\"parent_tool_use_id\":null,\"event\":" + json + "}";
+
+        var translator = new ClaudeStreamTranslator("thr-c", "turn-c", claudeTools);
+        Assert(translator.Translate(ClaudeInit("mcp__ddistro__ddistro_read", "EndConversation")).Count == 0 && translator.Init == ClaudeInitState.Allowed
+            && translator.SessionId == claudeSession, "An init with only DwemerDistro tools and the connected relay is allowed.");
+        var notes = new List<(string Method, System.Text.Json.JsonElement Params)>();
+        foreach (var line in new[]
+        {
+            StreamEvent("{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}"),
+            StreamEvent("{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}"),
+            StreamEvent("{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}"),
+            StreamEvent("{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}"),
+            StreamEvent("{\"type\":\"content_block_stop\",\"index\":0}"),
+            "{\"type\":\"assistant\",\"parent_tool_use_id\":null,\"message\":{\"id\":\"msg_1\",\"content\":[{\"type\":\"text\",\"text\":\"Hello\"},"
+                + "{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"mcp__ddistro__ddistro_read\",\"input\":{}}]}}",
+            "not json",
+            "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Hello\",\"session_id\":\"" + claudeSession + "\"}"
+        })
+            notes.AddRange(translator.Translate(line));
+        Assert(string.Join(",", notes.Select(n => n.Method)) == "item/started,item/agentMessage/delta,item/agentMessage/delta,item/completed",
+            "Text deltas stream once as one agentMessage item and the whole message is not repeated.");
+        Assert(notes[1].Params.GetProperty("itemId").GetString() == "msg_1:0" && notes[1].Params.GetProperty("delta").GetString() == "Hel"
+            && notes[3].Params.GetProperty("item").GetProperty("text").GetString() == "Hello"
+            && notes[3].Params.GetProperty("threadId").GetString() == "thr-c" && notes[3].Params.GetProperty("turnId").GetString() == "turn-c",
+            "Deltas and the final text carry the Codex item shape the view model reads.");
+        Assert(translator.Finish() is { Outcome: ClaudeTurnOutcome.Completed } done && done.SessionId == claudeSession, "A success result completes with the session id.");
+
+        foreach (var refused in new[]
+        {
+            new[] { ClaudeInit("mcp__ddistro__ddistro_read", "Bash", "Read") },
+            new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("\"connected\"", "\"failed\"") },
+            new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("\"mcp_servers\":[", "\"mcp_servers\":[{\"name\":\"user\",\"status\":\"connected\"},") },
+            new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("\"plugins\":[]", "\"plugins\":[{\"name\":\"p\"}]") },
+            new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("dontAsk", "bypassPermissions") },
+            new[] { StreamEvent("{\"type\":\"message_start\",\"message\":{\"id\":\"msg_0\"}}") },
+            new[] { ClaudeInit("mcp__ddistro__ddistro_read"), "{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\"}]}}" }
+        })
+        {
+            var gate = new ClaudeStreamTranslator("thr-c", "turn-c", claudeTools);
+            var emitted = refused.SelectMany(line => gate.Translate(line)).ToList();
+            emitted.AddRange(gate.Translate("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"leak\"}"));
+            Assert(gate.Init == ClaudeInitState.Refused && emitted.Count == 0 && gate.Finish().Outcome == ClaudeTurnOutcome.Refused
+                && gate.Finish().Message == ClaudeStreamTranslator.RefusedMessage, "Unexpected tools, servers, plugins, modes or early output refuse the turn: " + refused[^1][..60]);
+        }
+
+        // Claude Code 2.1.284 lists its built-in plugins in init even with --restricted and --strict-mcp-config. They still
+        // refuse; the turn's --settings turn them off. The first refusal's reason names only fixed words, counts and known tools.
+        string BuiltinPlugin(string name) => new JsonObject { ["name"] = name, ["path"] = "builtin", ["source"] = name + "@builtin" }.ToJsonString();
+        foreach (var (lines, reason) in new[]
+        {
+            (new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("\"plugins\":[]", "\"plugins\":[" + BuiltinPlugin("agents-md") + "," + BuiltinPlugin("telemetry") + "]") },
+                "init: plugins 2 builtin=2"),
+            (new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("\"plugins\":[]", "\"plugins\":[{\"name\":\"secret-plugin\",\"source\":\"secret-plugin@synced\"}]") },
+                "init: plugins 1 builtin=0"),
+            (new[] { ClaudeInit("mcp__ddistro__ddistro_read", "ToolSearch", "Bash", "mcp__secret__x", "secret_tool") }, "init: tools [Bash,ToolSearch] mcp=1 other=1"),
+            (new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("\"connected\"", "\"pending\"") }, "init: mcp_servers ddistro=1 other=0 status=pending"),
+            (new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("\"mcp_servers\":[", "\"mcp_servers\":[{\"name\":\"secret\",\"status\":\"connected\"},") },
+                "init: mcp_servers ddistro=1 other=1 status=connected"),
+            (new[] { ClaudeInit("mcp__ddistro__ddistro_read").Replace("dontAsk", "secretMode") }, "init: permissionMode other"),
+            (new[] { "{\"type\":\"rate_limit_event\"}" }, "output before init: rate_limit_event"),
+            (new[] { "{\"type\":\"secret_type\"}" }, "output before init: other"),
+            (new[] { ClaudeInit("mcp__ddistro__ddistro_read"), StreamEvent("{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"name\":\"secret_tool\"}}") },
+                "tool_use other=1"),
+            (new[] { ClaudeInit("mcp__ddistro__ddistro_read"), "{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\"}]}}",
+                ClaudeInit("mcp__ddistro__ddistro_read", "Read") }, "tool_use [Bash]")
+        })
+        {
+            var gate = new ClaudeStreamTranslator("thr-c", "turn-c", claudeTools);
+            var emitted = lines.SelectMany(line => gate.Translate(line)).ToList();
+            Assert(gate.Init == ClaudeInitState.Refused && emitted.Count == 0 && gate.Finish().Outcome == ClaudeTurnOutcome.Refused
+                && gate.RefusalReason == reason && !gate.RefusalReason.Contains("secret"),
+                "A refusal keeps its first reason, without stream text or unknown names: " + reason + " / " + gate.RefusalReason);
+        }
+        var observed = new ClaudeStreamTranslator("thr-c", "turn-c", claudeTools);
+        var observedNotes = new[]
+        {
+            ClaudeInit("mcp__ddistro__ddistro_read"),
+            "{\"type\":\"system\",\"subtype\":\"status\",\"status\":null,\"session_id\":\"" + claudeSession + "\"}",
+            StreamEvent("{\"type\":\"message_start\",\"message\":{\"id\":\"msg_2\"}}"),
+            StreamEvent("{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}"),
+            StreamEvent("{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}"),
+            "{\"type\":\"assistant\",\"parent_tool_use_id\":null,\"message\":{\"id\":\"msg_2\",\"content\":[{\"type\":\"text\",\"text\":\"Hi\"}]}}",
+            StreamEvent("{\"type\":\"content_block_stop\",\"index\":0}"),
+            StreamEvent("{\"type\":\"message_delta\"}"),
+            StreamEvent("{\"type\":\"message_stop\"}"),
+            "{\"type\":\"rate_limit_event\",\"session_id\":\"" + claudeSession + "\"}",
+            "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Hi\",\"session_id\":\"" + claudeSession + "\"}"
+        }.SelectMany(line => observed.Translate(line)).Select(note => note.Method);
+        Assert(string.Join(",", observedNotes) == "item/started,item/agentMessage/delta,item/completed"
+            && observed.Finish().Outcome == ClaudeTurnOutcome.Completed && observed.RefusalReason.Length == 0,
+            "The observed plugin-free stream (status, text, rate limit, result) completes with one text reply.");
+
+        var signIn = new ClaudeStreamTranslator("thr-c", "turn-c", claudeTools);
+        signIn.Translate(ClaudeInit("mcp__ddistro__ddistro_read"));
+        signIn.Translate("{\"type\":\"assistant\",\"error\":\"authentication_failed\",\"message\":{\"id\":\"m\",\"content\":[{\"type\":\"text\",\"text\":\"Not logged in\"}]}}");
+        signIn.Translate("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"result\":\"Not logged in · Please run /login\"}");
+        Assert(signIn.Finish() is { Outcome: ClaudeTurnOutcome.SignInNeeded, Message: ClaudeStreamTranslator.SignInMessage }, "An auth error asks for Claude sign-in, in launcher words.");
+        var failed = new ClaudeStreamTranslator("thr-c", "turn-c", claudeTools);
+        failed.Translate(ClaudeInit("mcp__ddistro__ddistro_read"));
+        failed.Translate("{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":\"SECRET detail\"}");
+        Assert(failed.Finish() is { Outcome: ClaudeTurnOutcome.Failed } failedResult && !failedResult.Message.Contains("SECRET"), "A failed result never shows the CLI's text.");
+        var truncated = new ClaudeStreamTranslator("thr-c", "turn-c", claudeTools);
+        truncated.Translate(ClaudeInit("mcp__ddistro__ddistro_read"));
+        var whole = truncated.Translate("{\"type\":\"assistant\",\"message\":{\"id\":\"msg_9\",\"content\":[{\"type\":\"text\",\"text\":\"Partial\"}]}}");
+        Assert(whole.Count == 2 && whole[1].Params.GetProperty("item").GetProperty("text").GetString() == "Partial", "A message without partial deltas still shows once.");
+        Assert(truncated.Finish() is { Outcome: ClaudeTurnOutcome.Failed, Message: ClaudeStreamTranslator.TruncatedMessage }, "A stream without a result is a truncated failure.");
+
+        // Claude Code 2.1.284's only line for --resume of a session it does not have: an error result before init, no model turn.
+        string EarlyResult(string session, string subtype = "error_during_execution", string isError = "true", string turns = "0", params string[] errors) =>
+            "{\"type\":\"result\",\"subtype\":\"" + subtype + "\",\"duration_api_ms\":0,\"is_error\":" + isError + ",\"num_turns\":" + turns
+            + ",\"session_id\":\"" + session + "\",\"total_cost_usd\":0,\"usage\":{},\"modelUsage\":{},\"permission_denials\":[],\"errors\":["
+            + string.Join(",", errors.Select(error => System.Text.Json.JsonSerializer.Serialize(error))) + "]}";
+        var notFound = "No conversation found with session ID: " + claudeSession;
+        foreach (var (lines, resume, outcome, startup, refusal) in new[]
+        {
+            (new[] { EarlyResult(claudeSession, errors: notFound) }, true, ClaudeTurnOutcome.SessionMissing, "session-not-found", ""),
+            (new[] { EarlyResult(claudeSession, errors: notFound), ClaudeInit("mcp__ddistro__ddistro_read", "Bash"),
+                StreamEvent("{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}") },
+                true, ClaudeTurnOutcome.SessionMissing, "session-not-found", ""),
+            (new[] { EarlyResult(claudeSession, errors: notFound) }, false, ClaudeTurnOutcome.Failed, "other", ""),
+            (new[] { EarlyResult("99999999-2222-4333-8444-555555555555", errors: notFound) }, true, ClaudeTurnOutcome.Failed, "other", ""),
+            (new[] { EarlyResult(claudeSession, errors: [notFound, "SECRET more"]) }, true, ClaudeTurnOutcome.Failed, "other", ""),
+            (new[] { EarlyResult(claudeSession, errors: "Not logged in · Please run /login") }, true, ClaudeTurnOutcome.SignInNeeded, "sign-in", ""),
+            (new[] { EarlyResult(claudeSession, errors: "SECRET There's an issue with the selected model (claude-x).") }, true, ClaudeTurnOutcome.Failed, "other", ""),
+            (new[] { EarlyResult(claudeSession, errors: []) }, true, ClaudeTurnOutcome.Failed, "other", ""),
+            (new[] { EarlyResult(claudeSession, subtype: "success", errors: notFound) }, true, ClaudeTurnOutcome.Refused, "", "output before init: result"),
+            (new[] { EarlyResult(claudeSession, isError: "false", errors: notFound) }, true, ClaudeTurnOutcome.Refused, "", "output before init: result"),
+            (new[] { EarlyResult(claudeSession, turns: "1", errors: notFound) }, true, ClaudeTurnOutcome.Refused, "", "output before init: result"),
+            (new[] { EarlyResult(claudeSession, turns: "\"0\"", errors: notFound) }, true, ClaudeTurnOutcome.Refused, "", "output before init: result"),
+            (new[] { "{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}}", EarlyResult(claudeSession, errors: notFound) },
+                true, ClaudeTurnOutcome.Refused, "", "output before init: assistant")
+        })
+        {
+            var early = new ClaudeStreamTranslator("thr-c", "turn-c", claudeTools, resume ? claudeSession : null);
+            var emitted = lines.SelectMany(line => early.Translate(line)).ToList();
+            var finished = early.Finish();
+            Assert(emitted.Count == 0 && finished.Outcome == outcome && early.StartupError == startup && early.RefusalReason == refusal
+                && !finished.SessionReported && !finished.Message.Contains("SECRET") && !early.RefusalReason.Contains("SECRET")
+                && (outcome == ClaudeTurnOutcome.Refused ? early.Init == ClaudeInitState.Refused : early.Init == ClaudeInitState.Pending),
+                $"An error result before init is a start-up failure only with no model turn; the not-found error for the resumed session alone is SessionMissing: {outcome} {startup}{refusal} / {finished.Outcome} {early.StartupError}{early.RefusalReason}");
+        }
+
+        // MCP relay: raw HTTP/1.1 against the real loopback listener.
+        using var brokerTools = System.Text.Json.JsonDocument.Parse("""
+            [{"name":"ddistro_read","description":"Read","inputSchema":{"type":"object","properties":{"operation":{"type":"string"}}}},
+             {"name":"ddistro_hold","description":"Hold","inputSchema":{"type":"object"}}]
+            """);
+        var forwarded = new List<string>();
+        var relay = AssistantMcpRelay.Start(brokerTools.RootElement, "thr-c", "turn-c", async (parameters, cancellation) =>
+        {
+            lock (forwarded) forwarded.Add(parameters.ToJsonString());
+            if (parameters["tool"]!.GetValue<string>() == "ddistro_hold") await Task.Delay(Timeout.Infinite, cancellation);
+            return System.Text.Json.JsonDocument.Parse("{\"success\":true,\"contentItems\":[{\"type\":\"inputText\",\"text\":\"{\\\"tool\\\":\\\"ddistro_read\\\"}\"}]}").RootElement.Clone();
+        });
+        var relayNotes = new List<(string Method, System.Text.Json.JsonElement Params)>();
+        relay.Notification += (method, parameters) => { lock (relayNotes) relayNotes.Add((method, parameters)); };
+        var config = JsonNode.Parse(relay.BuildClientConfig())!["mcpServers"]!["ddistro"]!;
+        var bearer = config["headers"]!["Authorization"]!.GetValue<string>();
+        Assert(config["type"]!.GetValue<string>() == "http" && config["url"]!.GetValue<string>() == relay.Endpoint && relay.Endpoint.StartsWith("http://127.0.0.1:")
+            && bearer.Length > 40 && relay.ClaudeToolNames.SetEquals(claudeTools), "The private MCP config names only the loopback relay and the declared tools.");
+        string Request(string body, string? authorization = null, string method = "POST", string extra = "", string? host = null) =>
+            $"{method} /mcp HTTP/1.1\r\nHost: {host ?? "127.0.0.1:" + relay.Port}\r\nAuthorization: {authorization ?? bearer}\r\nContent-Type: application/json\r\n"
+            + $"Accept: application/json, text/event-stream\r\n{extra}Content-Length: {System.Text.Encoding.UTF8.GetByteCount(body)}\r\n\r\n{body}";
+        string Rpc(int id, string method, string parameters = "{}") => $"{{\"jsonrpc\":\"2.0\",\"id\":{id},\"method\":\"{method}\",\"params\":{parameters}}}";
+
+        var initReply = await RawHttpAsync(relay.Port, Request(Rpc(1, "initialize", "{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{}}")));
+        Assert(initReply.Status == 200 && JsonNode.Parse(initReply.Body)!["result"]!["protocolVersion"]!.GetValue<string>() == "2025-06-18"
+            && initReply.Head.Contains("Content-Type: application/json") && initReply.Head.Contains("Connection: close"), "initialize echoes a supported protocol version as JSON.");
+        var unknownVersion = await RawHttpAsync(relay.Port, Request(Rpc(2, "initialize", "{\"protocolVersion\":\"1999-01-01\"}")));
+        Assert(JsonNode.Parse(unknownVersion.Body)!["result"]!["protocolVersion"]!.GetValue<string>() == "2025-06-18", "An unknown version gets the relay's own.");
+        Assert((await RawHttpAsync(relay.Port, Request("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"))) is { Status: 202, Body: "" },
+            "notifications/initialized is accepted with 202 and no body.");
+        Assert(JsonNode.Parse((await RawHttpAsync(relay.Port, Request(Rpc(3, "ping")))).Body)!["result"] is JsonObject, "ping answers an empty result.");
+        var listed = JsonNode.Parse((await RawHttpAsync(relay.Port, Request(Rpc(4, "tools/list")))).Body)!["result"]!["tools"]!.AsArray();
+        Assert(listed.Count == 2 && listed[0]!["name"]!.GetValue<string>() == "ddistro_read"
+            && listed[0]!["inputSchema"]!["properties"]!["operation"]!["type"]!.GetValue<string>() == "string", "tools/list is the broker's declared tools, verbatim.");
+        var called = JsonNode.Parse((await RawHttpAsync(relay.Port, Request(Rpc(5, "tools/call", "{\"name\":\"ddistro_read\",\"arguments\":{\"operation\":\"inventory\"}}")))).Body)!["result"]!;
+        var sent = JsonNode.Parse(forwarded.Single())!;
+        Assert(called["isError"]!.GetValue<bool>() == false && called["content"]![0]!["type"]!.GetValue<string>() == "text"
+            && called["content"]![0]!["text"]!.GetValue<string>() == "{\"tool\":\"ddistro_read\"}", "A broker reply becomes native MCP text content.");
+        Assert(sent["threadId"]!.GetValue<string>() == "thr-c" && sent["turnId"]!.GetValue<string>() == "turn-c" && sent["tool"]!.GetValue<string>() == "ddistro_read"
+            && sent["arguments"]!["operation"]!.GetValue<string>() == "inventory" && sent["callId"]!.GetValue<string>().StartsWith("mcp_"),
+            "tools/call forwards thread, turn, a minted call id, the tool and its arguments to the broker.");
+        Assert(relayNotes.Count == 2 && relayNotes[0].Method == "item/started" && relayNotes[1].Method == "item/completed"
+            && relayNotes[1].Params.GetProperty("item").GetProperty("type").GetString() == "dynamicToolCall"
+            && relayNotes[1].Params.GetProperty("item").GetProperty("id").GetString() == sent["callId"]!.GetValue<string>()
+            && relayNotes[1].Params.GetProperty("item").GetProperty("success").GetBoolean(),
+            "Each relayed reply is a completed dynamicToolCall item keyed by the minted call id.");
+        var unknownTool = JsonNode.Parse((await RawHttpAsync(relay.Port, Request(Rpc(6, "tools/call", "{\"name\":\"Bash\",\"arguments\":{}}")))).Body)!;
+        Assert(unknownTool["error"]!["code"]!.GetValue<int>() == -32602 && forwarded.Count == 1, "An undeclared tool is refused locally and never forwarded.");
+        Assert((await RawHttpAsync(relay.Port, Request("[" + Rpc(7, "ping") + "]"))).Status == 400, "Batches are refused.");
+
+        Assert((await RawHttpAsync(relay.Port, Request("", method: "GET"))) is { Status: 405 } getReply && getReply.Head.Contains("Allow: POST"), "GET is 405, with no OAuth redirect.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping"), authorization: "Bearer wrong"))).Status == 403, "A wrong bearer is 403, never 401.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping"), method: "GET", authorization: "Bearer wrong"))).Status == 403, "Even GET needs the bearer first.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping"), extra: "Origin: http://evil.example\r\n"))).Status == 403, "Any Origin is 403.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping"), host: "evil.example"))).Status == 403, "A non-loopback Host is 403 (DNS rebinding).");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping"), extra: "Transfer-Encoding: chunked\r\n"))).Status == 400, "Transfer-Encoding is refused.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping"), extra: "Content-Length: 99\r\n"))).Status == 400, "Two Content-Length headers are refused.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping")) + "POST /mcp HTTP/1.1\r\n\r\n")).Status == 400, "Bytes past the body are refused, not read as a second request.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping")).Replace("\r\nAccept:", "\r\n Accept:"))).Status == 400, "Obsolete header folding is refused.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping")).Replace("/mcp", "/other"))).Status == 404, "Only /mcp is served.");
+        var oversize = $"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{relay.Port}\r\nAuthorization: {bearer}\r\nContent-Type: application/json\r\nContent-Length: {AssistantMcpRelay.MaxBodyBytes + 1}\r\n\r\n";
+        Assert((await RawHttpAsync(relay.Port, oversize)).Status == 413, "A body over 8 MiB is refused before it is read.");
+        Assert((await RawHttpAsync(relay.Port, Request(Rpc(8, "ping")).Replace("Accept: application/json, text/event-stream", "Accept: text/html"))).Status == 406,
+            "A client that accepts no JSON is refused.");
+
+        var duplicate = Request(Rpc(11, "tools/call", "{\"name\":\"ddistro_read\",\"arguments\":{\"operation\":\"x\"}}"));
+        var firstReply = JsonNode.Parse((await RawHttpAsync(relay.Port, duplicate)).Body)!;
+        var retriedReply = JsonNode.Parse((await RawHttpAsync(relay.Port, duplicate)).Body)!;
+        Assert(forwarded.Count == 2 && retriedReply["id"]!.GetValue<int>() == 11 && retriedReply["result"]!.ToJsonString() == firstReply["result"]!.ToJsonString(),
+            "A retried tools/call request id gets the first reply and never runs the tool twice.");
+        var changedPayload = JsonNode.Parse((await RawHttpAsync(relay.Port, Request(Rpc(11, "tools/call", "{\"name\":\"ddistro_read\",\"arguments\":{\"operation\":\"y\"}}")))).Body)!;
+        Assert(changedPayload["error"]!["code"]!.GetValue<int>() == -32600 && forwarded.Count == 2, "The same request id with other arguments is refused, not run.");
+
+        var holding = RawHttpAsync(relay.Port, Request(Rpc(9, "tools/call", "{\"name\":\"ddistro_hold\"}")));
+        await WaitUntilAsync(() => { lock (forwarded) return forwarded.Count == 3; });
+        var holdingRetry = RawHttpAsync(relay.Port, Request(Rpc(9, "tools/call", "{\"name\":\"ddistro_hold\"}")));
+        await Task.Delay(300);
+        Assert(forwarded.Count == 3, "A concurrent retry of a running call waits on the same broker call instead of starting another.");
+        relay.Revoke();
+        var held = JsonNode.Parse((await holding.WaitAsync(TimeSpan.FromSeconds(10))).Body)!;
+        var heldRetry = JsonNode.Parse((await holdingRetry.WaitAsync(TimeSpan.FromSeconds(10))).Body)!;
+        Assert(held["error"]!["code"]!.GetValue<int>() == -32000 && heldRetry["error"]!["code"]!.GetValue<int>() == -32000 && forwarded.Count == 3,
+            "Revoke ends a pending call (and its waiting retry) with an MCP error; the unknown outcome is not replayed.");
+        Assert(JsonNode.Parse((await RawHttpAsync(relay.Port, Request(Rpc(10, "tools/call", "{\"name\":\"ddistro_read\"}")))).Body)!["error"] is not null
+            && forwarded.Count == 3, "After revoke, new calls are refused without reaching the broker.");
+        Assert(relayNotes.Last().Params.GetProperty("item").GetProperty("status").GetString() == "failed", "A revoked call still completes its item as failed.");
+        var relayPort = relay.Port;
+        await relay.DisposeAsync();
+        var refusedConnection = false;
+        try { await RawHttpAsync(relayPort, "x"); } catch (System.Net.Sockets.SocketException) { refusedConnection = true; } catch (IOException) { refusedConnection = true; }
+        Assert(refusedConnection, "A disposed relay no longer listens.");
+
+        // Arguments, environment, stdin and locator parsing.
+        var claudeRequest = new ClaudeTurnRequest("C:\\claude.exe", claudeSession, false, "sonnet", "high", "-starts with a dash",
+            new JsonArray(new JsonObject { ["type"] = "text", ["text"] = "hello" },
+                new JsonObject { ["type"] = "image", ["url"] = "data:image/png;base64,iVBORw0KGgo=" }));
+        var argv = ClaudeTurnProcess.BuildArguments(claudeRequest, "C:\\turn\\mcp.json", claudeTools);
+        Assert(argv.Contains("--print") && argv[argv.IndexOf("--tools") + 1] == "" && argv.Contains("--restricted") && argv.Contains("--strict-mcp-config")
+            && argv[argv.IndexOf("--mcp-config") + 1] == "C:\\turn\\mcp.json" && argv[argv.IndexOf("--settings") + 1] == ClaudeTurnProcess.TurnSettings
+            && JsonNode.Parse(ClaudeTurnProcess.TurnSettings) is { } turnSettings && turnSettings["disableAllHooks"]!.GetValue<bool>()
+            && turnSettings["enabledPlugins"]!["agents-md@builtin"]!.GetValue<bool>() == false
+            && turnSettings["enabledPlugins"]!["telemetry@builtin"]!.GetValue<bool>() == false
+            && argv[argv.IndexOf("--allowedTools") + 1] == "mcp__ddistro__ddistro_hold,mcp__ddistro__ddistro_read"
+            && argv[argv.IndexOf("--permission-mode") + 1] == "dontAsk" && argv[argv.IndexOf("--permission-prompts") + 1] == "none"
+            && argv.Contains("--disable-slash-commands") && argv.Contains("--system-prompt=-starts with a dash") && argv.Contains("--session-id=" + claudeSession)
+            && !argv.Any(a => a.StartsWith("--resume")), "A first turn pins every isolation flag and its session id.");
+        Assert(!argv.Any(a => a is "--bare" or "--safe-mode" || a.Contains("Bearer") || a.Contains("hello")), "Never --bare, never a bearer or the prompt on the command line.");
+        Assert(argv.Where(a => a.StartsWith("--")).All(a => a == "--effort=high" || ClaudeCodeLocator.RequiredFlags.Any(flag => a == flag || a.StartsWith(flag + "="))),
+            "Every flag the turn uses is one the locator checks in --help (effort is optional).");
+        Assert(ClaudeTurnProcess.BuildArguments(claudeRequest with { Resume = true }, "m", claudeTools).Contains("--resume=" + claudeSession), "Later turns resume by session id.");
+        Assert(ThrowsArgumentException(() => ClaudeTurnProcess.BuildArguments(claudeRequest with { SessionId = "x" }, "m", claudeTools))
+            && ThrowsArgumentException(() => ClaudeTurnProcess.BuildArguments(claudeRequest with { Model = "--bare x" }, "m", claudeTools))
+            && ThrowsArgumentException(() => ClaudeTurnProcess.BuildArguments(claudeRequest, "m", new HashSet<string> { "Bash" }))
+            && ThrowsArgumentException(() => ClaudeTurnProcess.BuildArguments(claudeRequest with { SystemPrompt = new string('x', 40000) }, "m", claudeTools)),
+            "Bad session ids, model names, non-DwemerDistro tools and oversize instructions are refused.");
+        var environment = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ANTHROPIC_API_KEY"] = "k", ["anthropic_base_url"] = "u", ["ANTHROPIC_AUTH_TOKEN"] = "t", ["CLAUDE_CODE_USE_BEDROCK"] = "1",
+            ["CLAUDE_CODE_USE_VERTEX"] = "1", ["CLAUDE_CODE_USE_FOUNDRY"] = "1", ["NODE_OPTIONS"] = "--require x", ["PATH"] = "p", ["USERPROFILE"] = "u"
+        };
+        ClaudeTurnProcess.SanitizeEnvironment(environment);
+        Assert(environment.Keys.Order().SequenceEqual(new[] { "DISABLE_AUTOUPDATER", "ENABLE_CLAUDEAI_MCP_SERVERS", "MCP_TIMEOUT", "MCP_TOOL_TIMEOUT", "PATH", "USERPROFILE" })
+            && environment["MCP_TOOL_TIMEOUT"] == "660000", "API keys, tokens, endpoints and third-party providers are removed; the user's own sign-in stays.");
+        var userMessage = JsonNode.Parse(ClaudeTurnProcess.BuildUserMessage(claudeRequest.Input))!;
+        Assert(userMessage["type"]!.GetValue<string>() == "user" && userMessage["message"]!["content"]![0]!["text"]!.GetValue<string>() == "hello"
+            && userMessage["message"]!["content"]![1]!["source"]!["media_type"]!.GetValue<string>() == "image/png"
+            && userMessage["message"]!["content"]![1]!["source"]!["data"]!.GetValue<string>() == "iVBORw0KGgo=", "Text and images become one stream-json user message.");
+        Assert(ThrowsArgumentException(() => ClaudeTurnProcess.BuildUserMessage(new JsonArray(new JsonObject { ["type"] = "image", ["url"] = "https://x/y.png" }))),
+            "Only data-URL images are sent.");
+        Assert(ClaudeCodeLocator.ParseVersion("2.1.284 (Claude Code)") == new Version(2, 1, 284) && ClaudeCodeLocator.ParseVersion("Claude") is null,
+            "The CLI version is parsed from --version.");
+        Assert(ClaudeCodeLocator.SupportsRequiredFlags(string.Join("\n", ClaudeCodeLocator.RequiredFlags.Select(flag => "  " + flag + " <x>  text")))
+            && !ClaudeCodeLocator.SupportsRequiredFlags("  --print\n  --system-prompt-file <f>"), "Every required flag must be in --help.");
+        Assert(ClaudeCodeLocator.ReadAuthMethod("{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"email\":\"SECRET\"}", out var readable) == "claude.ai" && readable
+            && ClaudeCodeLocator.ReadAuthMethod("{\"loggedIn\":true,\"authMethod\":\"api_key\"}", out _) is null
+            && ClaudeCodeLocator.ReadAuthMethod("{\"loggedIn\":false}", out var signedOutReadable) is null && signedOutReadable
+            && ClaudeCodeLocator.ReadAuthMethod("Not logged in", out var unreadable) is null && !unreadable,
+            "Only a Claude subscription sign-in is ready; API-key sign-ins read as signed out.");
+        var profile = Path.Combine(root, "claude-profile");
+        Directory.CreateDirectory(Path.Combine(profile, ".local", "bin"));
+        File.WriteAllText(Path.Combine(profile, ".local", "bin", "claude.exe"), "");
+        Assert(ClaudeCodeLocator.Locate(profile, ".;relative") == Path.Combine(profile, ".local", "bin", "claude.exe")
+            && ClaudeCodeLocator.Locate(Path.Combine(root, "nobody"), ".;relative;" + root) is null, "The native install is found; relative PATH entries never are.");
+
+        // The real process path, with this executable standing in for claude.exe.
+        var previousKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+        Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", "must-not-reach-claude");
+        var pidFile = Path.Combine(root, "fake-claude-child.pid");
+        Environment.SetEnvironmentVariable("DDISTRO_FAKE_PIDFILE", pidFile);
+        var turnFolders = Path.Combine(localAppDataDirectory, "DwemerDistro", "assistant", "claude-turn");
+        try
+        {
+            (ClaudeTurnProcess Turn, AssistantMcpRelay Relay, List<string> Methods, List<string> Calls, List<string> Sessions) StartFake(string mode, bool resume)
+            {
+                var sessions = new List<string>();
+                Environment.SetEnvironmentVariable("DDISTRO_FAKE_CLAUDE", mode);
+                var calls = new List<string>();
+                var turnRelay = AssistantMcpRelay.Start(brokerTools.RootElement, "thr-c", "turn-" + mode, (parameters, _) =>
+                {
+                    lock (calls) calls.Add(parameters["tool"]!.GetValue<string>());
+                    return Task.FromResult(System.Text.Json.JsonDocument.Parse("{\"success\":true,\"contentItems\":[{\"type\":\"inputText\",\"text\":\"ok\"}]}").RootElement.Clone());
+                });
+                var methods = new List<string>();
+                var turn = ClaudeTurnProcess.Start(claudeRequest with { ExecutablePath = Environment.ProcessPath!, Resume = resume }, turnRelay, "thr-c", "turn-" + mode,
+                    (method, _) => { lock (methods) methods.Add(method); }, new ProcessRunner(), localAppDataDirectory,
+                    session => { lock (sessions) sessions.Add(session); });
+                return (turn, turnRelay, methods, calls, sessions);
+            }
+
+            var streamed = StartFake("stream", resume: false);
+            var streamedResult = await streamed.Turn.Completion.WaitAsync(TimeSpan.FromSeconds(60));
+            Assert(streamedResult is { Outcome: ClaudeTurnOutcome.Completed } && streamedResult.SessionId == claudeSession && streamed.Calls.SequenceEqual(new[] { "ddistro_read" })
+                && streamed.Methods.Contains("item/agentMessage/delta") && streamed.Methods.Count(m => m == "item/completed") == 2 && streamed.Relay.IsRevoked,
+                "A fake CLI turn gets a clean environment, reads stdin, calls the relay through its private config, streams text and completes.");
+            lock (streamed.Sessions) Assert(streamed.Sessions.SequenceEqual(new[] { claudeSession }) && streamedResult.SessionReported,
+                "An allowed init with the requested session id reports the session as started exactly once.");
+            var badExit = StartFake("badexit", resume: false);
+            Assert((await badExit.Turn.Completion.WaitAsync(TimeSpan.FromSeconds(60))).Outcome == ClaudeTurnOutcome.Failed,
+                "A streamed success followed by a non-zero CLI exit is a failed turn, not a completed one.");
+            var resumed = StartFake("stream", resume: true);
+            Assert((await resumed.Turn.Completion.WaitAsync(TimeSpan.FromSeconds(60))).Outcome == ClaudeTurnOutcome.Completed, "A resumed turn passes --resume and completes.");
+            var refusedTurn = StartFake("refuse", resume: false);
+            Assert((await refusedTurn.Turn.Completion.WaitAsync(TimeSpan.FromSeconds(60))) is { Outcome: ClaudeTurnOutcome.Refused, SessionReported: false }
+                && refusedTurn.Calls.Count == 0 && refusedTurn.Relay.IsRevoked, "An init listing Bash kills the CLI and refuses the turn.");
+            var missingTurn = StartFake("missing", resume: true);
+            Assert((await missingTurn.Turn.Completion.WaitAsync(TimeSpan.FromSeconds(60))) is
+                    { Outcome: ClaudeTurnOutcome.SessionMissing, SessionReported: false, Message: ClaudeStreamTranslator.SessionMissingMessage } missingResult
+                && missingResult.SessionId == claudeSession && missingTurn.Calls.Count == 0 && missingTurn.Relay.IsRevoked && missingTurn.Methods.Count == 0,
+                "A resumed session Claude Code does not have ends the (still running) CLI as SessionMissing, not as Stopped, with nothing relayed.");
+            lock (missingTurn.Sessions) Assert(missingTurn.Sessions.Count == 0, "A start-up failure never marks the session started.");
+            lock (refusedTurn.Sessions) Assert(refusedTurn.Sessions.Count == 0, "A refused init never marks the session started.");
+            var early = StartFake("hang", resume: false);
+            early.Turn.Stop();
+            Assert((await early.Turn.Completion.WaitAsync(TimeSpan.FromSeconds(30))).Outcome == ClaudeTurnOutcome.Stopped, "Stop before the CLI prints anything ends the turn.");
+            if (File.Exists(pidFile)) File.Delete(pidFile);
+            var hung = StartFake("hang", resume: false);
+            await WaitUntilAsync(() => File.Exists(pidFile) && new FileInfo(pidFile).Length > 0);
+            using var child = System.Diagnostics.Process.GetProcessById(int.Parse(File.ReadAllText(pidFile)));
+            Assert(!hung.Turn.Completion.IsCompleted, "A CLI that never sends init keeps waiting (up to the init timeout) until stopped.");
+            hung.Turn.Stop();
+            Assert((await hung.Turn.Completion.WaitAsync(TimeSpan.FromSeconds(30))).Outcome == ClaudeTurnOutcome.Stopped, "Stop ends a hung turn.");
+            Assert(child.WaitForExit(10000), "The CLI's own child process ends with its job: no orphan.");
+            Assert(!Directory.EnumerateFileSystemEntries(turnFolders).Any()
+                && !Directory.EnumerateFileSystemEntries(Path.Combine(localAppDataDirectory, "DwemerDistro", "assistant", "claude-work")).Any(),
+                "Every turn removed its private config and the working folder stays empty.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", previousKey);
+            Environment.SetEnvironmentVariable("DDISTRO_FAKE_CLAUDE", null);
+            Environment.SetEnvironmentVariable("DDISTRO_FAKE_PIDFILE", null);
+        }
+    }
+
     Console.WriteLine("Launcher regression tests: OK");
     return 0;
 }
@@ -5663,6 +6034,21 @@ static async Task WaitUntilAsync(Func<bool> condition)
 {
     var deadline = DateTime.UtcNow.AddSeconds(10);
     while (!condition() && DateTime.UtcNow < deadline) await Task.Delay(10);
+}
+
+/// <summary>One raw HTTP/1.1 exchange with the loopback relay: status, head and body, read until the relay closes.</summary>
+static async Task<(int Status, string Head, string Body)> RawHttpAsync(int port, string request)
+{
+    using var client = new System.Net.Sockets.TcpClient();
+    await client.ConnectAsync(System.Net.IPAddress.Loopback, port);
+    var stream = client.GetStream();
+    await stream.WriteAsync(System.Text.Encoding.UTF8.GetBytes(request));
+    using var response = new MemoryStream();
+    await stream.CopyToAsync(response).WaitAsync(TimeSpan.FromSeconds(30));
+    var text = System.Text.Encoding.UTF8.GetString(response.ToArray());
+    var split = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+    var head = split < 0 ? text : text[..split];
+    return (int.Parse(head.Split(' ')[1]), head, split < 0 ? string.Empty : text[(split + 4)..]);
 }
 
 static void Assert(bool condition, string message)
@@ -5872,5 +6258,125 @@ sealed class CommunityGithubFixture(string folder) : HttpMessageHandler
             bytes = File.ReadAllBytes(Path.Combine(versionFolder, Path.GetFileName(uri.AbsolutePath)));
         else throw new InvalidOperationException("Unexpected fixture request; no external network is permitted.");
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) });
+    }
+}
+
+/// <summary>
+/// This executable as a stand-in claude.exe (DDISTRO_FAKE_CLAUDE set by the regression run, --print first). It checks the
+/// environment and argv the launcher gave it, then speaks recorded stream-json and calls the relay with its private config.
+/// </summary>
+static class FakeClaude
+{
+    internal static async Task<int> RunAsync(string mode, string[] args)
+    {
+        if (mode == "child")
+        {
+            await Task.Delay(Timeout.Infinite);
+            return 0;
+        }
+        if (Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY") is not null || Environment.GetEnvironmentVariable("MCP_TOOL_TIMEOUT") != "660000"
+            || args.Contains("--bare") || !Environment.CurrentDirectory.EndsWith("claude-work", StringComparison.OrdinalIgnoreCase))
+            return 3;
+        if (mode == "hang")
+        {
+            var start = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!, "--print") { UseShellExecute = false, CreateNoWindow = true };
+            start.Environment["DDISTRO_FAKE_CLAUDE"] = "child";
+            var child = System.Diagnostics.Process.Start(start)!;
+            File.WriteAllText(Environment.GetEnvironmentVariable("DDISTRO_FAKE_PIDFILE")!, child.Id.ToString());
+            await Task.Delay(Timeout.Infinite);
+            return 0;
+        }
+
+        var input = JsonNode.Parse((await Console.In.ReadLineAsync())!)!;
+        string Arg(string name) => args[Array.IndexOf(args, name) + 1];
+        var sessionArgument = args.Single(a => a.StartsWith("--session-id=") || a.StartsWith("--resume="));
+        var session = sessionArgument[(sessionArgument.IndexOf('=') + 1)..];
+        var resume = sessionArgument.StartsWith("--resume=");
+        // Claude Code 2.1.284's start-up failure: one error result before init, with no model turn.
+        string EarlyResult(string sessionId, string error, string subtype = "error_during_execution", bool isError = true) => new JsonObject
+        {
+            ["type"] = "result", ["subtype"] = subtype, ["is_error"] = isError, ["num_turns"] = 0, ["session_id"] = sessionId,
+            ["total_cost_usd"] = 0, ["errors"] = new JsonArray(error)
+        }.ToJsonString();
+        if (mode.StartsWith("vm-"))
+        {
+            // The view model's turns: each start is logged, so a test can count them; nothing calls the relay.
+            File.AppendAllText(Environment.GetEnvironmentVariable("DDISTRO_FAKE_LOG")!, (resume ? "resume " : "session ") + session + "\n");
+            var early = !resume ? null : mode switch
+            {
+                "vm-missing" => EarlyResult(session, "No conversation found with session ID: " + session),
+                "vm-missing-other" => EarlyResult(Guid.NewGuid().ToString("D"), "No conversation found with session ID: " + session),
+                "vm-auth" => EarlyResult(session, "Not logged in · Please run /login"),
+                "vm-model" => EarlyResult(session, "There's an issue with the selected model."),
+                "vm-success" => EarlyResult(session, "No conversation found with session ID: " + session, "success", false),
+                _ => null
+            };
+            if (mode == "vm-hang" && resume) await Task.Delay(Timeout.Infinite);
+            if (mode == "vm-refuse")
+            {
+                // The original failure: an init the gate refuses, after which the launcher kills the CLI.
+                Console.WriteLine(new JsonObject
+                {
+                    ["type"] = "system", ["subtype"] = "init", ["session_id"] = session, ["permissionMode"] = "dontAsk",
+                    ["tools"] = new JsonArray("Bash"), ["mcp_servers"] = new JsonArray(new JsonObject { ["name"] = "ddistro", ["status"] = "connected" })
+                }.ToJsonString());
+                await Task.Delay(Timeout.Infinite);
+            }
+            if (early is not null)
+            {
+                Console.WriteLine(early);
+                return 1;
+            }
+            Console.WriteLine(new JsonObject
+            {
+                ["type"] = "system", ["subtype"] = "init", ["session_id"] = session, ["permissionMode"] = "dontAsk",
+                ["tools"] = new JsonArray(Arg("--allowedTools").Split(',').Select(tool => (JsonNode)tool).ToArray()),
+                ["mcp_servers"] = new JsonArray(new JsonObject { ["name"] = "ddistro", ["status"] = "connected" })
+            }.ToJsonString());
+            Console.WriteLine("{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"Fresh reply\",\"session_id\":\"" + session + "\"}");
+            return 0;
+        }
+        if (input["message"]!["content"]![0]!["text"]!.GetValue<string>() != "hello" || await Console.In.ReadLineAsync() is not null) return 5;
+        if (mode == "missing")
+        {
+            // Printed, then left running: the launcher ends it.
+            Console.WriteLine(EarlyResult(session, "No conversation found with session ID: " + session));
+            await Task.Delay(Timeout.Infinite);
+        }
+        var server = JsonNode.Parse(File.ReadAllText(Arg("--mcp-config")))!["mcpServers"]!["ddistro"]!;
+        var tools = Arg("--allowedTools").Split(',').Select(tool => (JsonNode)tool).ToList();
+        if (mode == "refuse") tools.Add("Bash");
+        Console.WriteLine(new JsonObject
+        {
+            ["type"] = "system", ["subtype"] = "init", ["session_id"] = session, ["permissionMode"] = "dontAsk",
+            ["tools"] = new JsonArray(tools.ToArray()),
+            ["mcp_servers"] = new JsonArray(new JsonObject { ["name"] = "ddistro", ["status"] = "connected" })
+        }.ToJsonString());
+        if (mode == "refuse")
+        {
+            await Task.Delay(Timeout.Infinite);
+            return 0;
+        }
+
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, server["url"]!.GetValue<string>())
+        {
+            Content = new StringContent("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ddistro_read\",\"arguments\":{}}}",
+                System.Text.Encoding.UTF8, "application/json")
+        };
+        request.Headers.TryAddWithoutValidation("Authorization", server["headers"]!["Authorization"]!.GetValue<string>());
+        request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+        var reply = await (await http.SendAsync(request)).Content.ReadAsStringAsync();
+        if (!reply.Contains("\"isError\":false")) return 4;
+        foreach (var line in new[]
+        {
+            "{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\",\"message\":{\"id\":\"msg_f\"}}}",
+            "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}}",
+            "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Done\"}}}",
+            "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_stop\",\"index\":0}}",
+            "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"Done\",\"session_id\":\"" + session + "\"}"
+        })
+            Console.WriteLine(line);
+        return mode == "badexit" ? 7 : 0;
     }
 }

@@ -55,6 +55,13 @@ public interface IAssistantCli
 
     /// <summary>Attaches this UI to Core's authenticated Assistant API through its root-local relay.</summary>
     Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The same session, saying whether the Windows Codex sign-in may be offered to Core first. Only a ChatGPT (Codex) session
+    /// wants it; a Claude or OpenRouter session never reads or imports it. Root probe and attestation are unchanged either way.
+    /// </summary>
+    Task<IAssistantTransport> StartServeAsync(string taskId, bool reuseCodexSignIn, CancellationToken cancellationToken) =>
+        StartServeAsync(taskId, cancellationToken);
 }
 
 public interface IAssistantTransport : IAsyncDisposable
@@ -289,10 +296,13 @@ public sealed partial class AssistantCliService : IAssistantCli
         return parsed;
     }
 
-    public async Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken)
+    public Task<IAssistantTransport> StartServeAsync(string taskId, CancellationToken cancellationToken) =>
+        StartServeAsync(taskId, reuseCodexSignIn: true, cancellationToken);
+
+    public async Task<IAssistantTransport> StartServeAsync(string taskId, bool reuseCodexSignIn, CancellationToken cancellationToken)
     {
         if (!AssistantCliCommands.IsValidTaskId(taskId)) throw new ArgumentException("Invalid assistant task id.", nameof(taskId));
-        await TryReuseCodexSignInAsync(cancellationToken).ConfigureAwait(false);
+        if (reuseCodexSignIn) await TryReuseCodexSignInAsync(cancellationToken).ConfigureAwait(false);
         var pidFile = NewPidFile();
         string[] cli = ["/usr/local/bin/ddistro_api", "bridge", "--task",
             AssistantCliCommands.IsValidTaskId(taskId) ? taskId : throw new ArgumentException("Invalid assistant task id.", nameof(taskId))];
