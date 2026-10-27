@@ -17,7 +17,12 @@ public sealed partial class MainWindowViewModel : IAssistantHost
 
     private AssistantViewModel CreateAssistant()
     {
-        var assistant = new AssistantViewModel(new AssistantCliService(_wsl, _processRunner), this, new AssistantStateStore(), new AssistantCatalogStore());
+        var claudeLocator = new ClaudeCodeLocator(_processRunner);
+        var assistant = new AssistantViewModel(new AssistantCliService(_wsl, _processRunner), this, new AssistantStateStore(), new AssistantCatalogStore(),
+            new AssistantStateStore(fileName: AssistantStateStore.ClaudeFileName), new ClaudeChatStore(), claudeLocator.GetStatusAsync, _processRunner,
+            new AssistantStateStore(fileName: AssistantStateStore.OpenRouterFileName), new OpenRouterChatStore(),
+            // Key metadata only (global-status), read on Connect or when the page is shown again without a usable key; the secret stays in DwemerDistro.
+            _ => CreateApiKeysService().RunAsync("global-status"));
         // Whether an idle session can be closed for maintenance follows its state, so the maintenance buttons do too.
         assistant.PropertyChanged += Assistant_PropertyChanged;
         return assistant;
@@ -152,6 +157,11 @@ public sealed partial class MainWindowViewModel : IAssistantHost
     }
 
     void IAssistantHost.OpenUrl(string url) => _processRunner.OpenExternalUrl(url);
+
+    /// <summary>Raised when the assistant asks for the API Keys page; the window selects its navigation entry.</summary>
+    public event EventHandler? ApiKeysPageRequested;
+
+    void IAssistantHost.OpenApiKeys() => ApiKeysPageRequested?.Invoke(this, EventArgs.Empty);
 
     string? IAssistantHost.GetDistroInstallationId() => _wsl.GetDistroRegistrationId();
 

@@ -41,6 +41,7 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
         SourceInitialized += MainWindow_SourceInitialized;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _viewModel.ApiKeysPageRequested += (_, _) => ApiKeysNavButton.IsChecked = true;
         SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
     }
 
