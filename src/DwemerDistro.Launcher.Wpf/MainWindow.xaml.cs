@@ -43,6 +43,10 @@ public partial class MainWindow : Window
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         _viewModel.ApiKeysPageRequested += (_, _) => ApiKeysNavButton.IsChecked = true;
         SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
+        Activated += (_, _) => UpdateLmStudioRefresh();
+        Deactivated += (_, _) => UpdateLmStudioRefresh();
+        StateChanged += (_, _) => UpdateLmStudioRefresh();
+        IsVisibleChanged += (_, _) => UpdateLmStudioRefresh();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -142,6 +146,11 @@ public partial class MainWindow : Window
             _ = Dispatcher.BeginInvoke(UpdateSelectedGameDetails);
         }
 
+        if (e.PropertyName == nameof(MainWindowViewModel.IsLmStudioView))
+        {
+            UpdateLmStudioRefresh();
+        }
+
         if (e.PropertyName == nameof(MainWindowViewModel.CompactDistroStatusText))
         {
             _ = Dispatcher.BeginInvoke(AnnounceCompactDistroStatus);
@@ -202,6 +211,7 @@ public partial class MainWindow : Window
         }
 
         UpdateComponentsPageLifetime();
+        UpdateLmStudioRefresh();
         if (MainTabs.SelectedIndex == 5 && ApiKeysHost.Content is null)
             ApiKeysHost.Content = new ApiKeysView(_viewModel.CreateApiKeysService());
         if (MainTabs.SelectedIndex == 3)
@@ -385,7 +395,32 @@ public partial class MainWindow : Window
 
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        // SelectedItem binds one way so the empty selection while LLM Studio shows never reaches SelectedGame.
+        if (GameRail.SelectedItem is Models.GameProfile game)
+        {
+            _viewModel.SelectedGame = game;
+            _viewModel.IsLmStudioSelected = false;
+        }
+
         UpdateSelectedGameDetails();
+    }
+
+    // One rail selection is visible at a time. The item's IsSelected is bound to IsLmStudioSelected, which a
+    // game selection clears; clearing GameRail leaves SelectedGame on the last game.
+    private void LmStudioRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LmStudioRail.SelectedIndex == 0)
+        {
+            GameRail.SelectedIndex = -1;
+        }
+    }
+
+    // Polls only while the LLM Studio panel is actually in front of the user.
+    private void UpdateLmStudioRefresh()
+    {
+        _viewModel.SetLmStudioPanelActive(
+            MainTabs.SelectedIndex == 0 && _viewModel.IsLmStudioView &&
+            IsActive && IsVisible && WindowState != WindowState.Minimized);
     }
 
     private void UpdateSelectedGameDetails()
@@ -597,7 +632,7 @@ public partial class MainWindow : Window
             3 => LogsLandmark,
             4 => AssistantLandmark,
             5 => ApiKeysHost,
-            _ => LibraryLandmark
+            _ => _viewModel.IsLmStudioView ? LmStudioLandmark : LibraryLandmark
         };
         // Visual order: the full-width header, the sidebar's game list and utilities, then the page and console.
         var landmarks = new FrameworkElement[]

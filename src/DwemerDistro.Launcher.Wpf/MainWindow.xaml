@@ -360,7 +360,7 @@
                 <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                               Focusable="False">
                     <StackPanel>
-                        <ListBox x:Name="GameRail" ItemsSource="{Binding GameProfiles}" SelectedItem="{Binding SelectedGame}"
+                        <ListBox x:Name="GameRail" ItemsSource="{Binding GameProfiles}" SelectedItem="{Binding SelectedGame, Mode=OneWay}"
                                  ItemContainerStyle="{StaticResource GameCenter.RailItem}" Background="Transparent" BorderThickness="0" Padding="0"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
                                  KeyboardNavigation.DirectionalNavigation="Contained" SelectionChanged="GameRail_SelectionChanged"
@@ -392,6 +392,30 @@
                                     </DataTemplate.Triggers>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
+                        </ListBox>
+                        <!-- LLM Studio sits with the official games but is not a game: its own list, so SelectedGame
+                             keeps a game while this entry is selected. -->
+                        <ListBox x:Name="LmStudioRail" Background="Transparent" BorderThickness="0" Padding="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                 SelectionChanged="LmStudioRail_SelectionChanged"
+                                 PreviewMouseLeftButtonUp="ModRail_PreviewMouseLeftButtonUp" PreviewKeyDown="ModRail_PreviewKeyDown"
+                                 Visibility="{Binding IsOfficialModsView, Converter={StaticResource BoolToVisibility}}"
+                                 AutomationProperties.Name="Local AI">
+                            <ListBoxItem Style="{StaticResource GameCenter.RailItem}" IsSelected="{Binding IsLmStudioSelected, Mode=TwoWay}"
+                                         AutomationProperties.Name="LLM Studio">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="&#xE99A;" FontFamily="Segoe MDL2 Assets" FontSize="20" Width="26" Margin="0,0,10,0"
+                                               TextAlignment="Center" VerticalAlignment="Center"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" />
+                                    <TextBlock Grid.Column="1" Text="LLM Studio" FontSize="13" FontWeight="SemiBold"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
+                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                </Grid>
+                            </ListBoxItem>
                         </ListBox>
                         <StackPanel Visibility="{Binding IsCustomModsView, Converter={StaticResource BoolToVisibility}}"
                                     IsEnabled="{Binding IsComponentInteractionEnabled}">
@@ -506,7 +530,7 @@
             <TabItem Header="Mods">
                 <Grid>
                 <Grid x:Name="LibraryLandmark" Margin="18,16,18,12"
-                      Visibility="{Binding IsOfficialModsView, Converter={StaticResource BoolToVisibility}}">
+                      Visibility="{Binding IsOfficialGameView, Converter={StaticResource BoolToVisibility}}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2.15*" />
                         <ColumnDefinition Width="14" />
@@ -747,7 +771,10 @@
                                                         AutomationProperties.Name="Open LORKHAN Logs"
                                                         AutomationProperties.HelpText="Show the local OpenMW log in File Explorer. Does not start the game or server." />
                                             </WrapPanel>
-                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                            <Button Content="Rollback LorkhanServer" Command="{Binding OpenLorkhanRollbackCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,6,0,0"
+                                                    AutomationProperties.Name="Rollback LorkhanServer"
+                                                    AutomationProperties.HelpText="Choose a previous server version. Backs up the database before redeploying; older versions may be incompatible with current data." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ModAction.UninstallButton}"
                                                     AutomationProperties.Name="Uninstall LORKHAN"
@@ -1157,6 +1184,128 @@
                         </Grid>
                     </Border>
                 </Grid>
+
+                <!-- LLM Studio detail: engine state and controls, the language models LM Studio reports as loaded right now,
+                     and the saved startup models (which may differ). Loading, testing and downloads stay on the LLM Studio page. -->
+                <Border x:Name="LmStudioLandmark" Margin="18,16,18,12" Style="{StaticResource GameCenter.Card}"
+                        Visibility="{Binding IsLmStudioView, Converter={StaticResource BoolToVisibility}}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                        <StackPanel MaxWidth="760" HorizontalAlignment="Left" KeyboardNavigation.TabNavigation="Local">
+                            <TextBlock Text="LLM Studio" Style="{StaticResource GameCenter.ModTitle}" />
+                            <TextBlock Text="Local language models for Dwemer Dynamics mods, running inside Dwemer Distro."
+                                       Foreground="{DynamicResource GameCenter.TextMuted}" TextWrapping="Wrap" Margin="0,4,0,14" />
+                            <Grid Margin="0,0,0,14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="Engine install" Foreground="{DynamicResource GameCenter.TextMuted}" Margin="0,0,18,4" />
+                                <TextBlock Grid.Column="1" Text="{Binding LmStudioInstalledText}" FontWeight="SemiBold"
+                                           AutomationProperties.Name="LLM Studio install state" />
+                                <TextBlock Grid.Row="1" Text="Engine" Foreground="{DynamicResource GameCenter.TextMuted}" Margin="0,0,18,0" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LmStudioEngineText}" FontWeight="SemiBold"
+                                           AutomationProperties.Name="LLM Studio engine state" />
+                            </Grid>
+                            <WrapPanel>
+                                <Button Content="Start engine" Command="{Binding StartLmStudioCommand}" Visibility="{Binding HasLmStudioEngine, Converter={StaticResource BoolToVisibility}}"
+                                        Style="{StaticResource GameCenter.PrimaryButton}" Height="34" Padding="18,0" Margin="0,0,8,6"
+                                        AutomationProperties.HelpText="Start the engine and load the saved startup models." />
+                                <Button Content="Stop engine" Command="{Binding StopLmStudioCommand}" Visibility="{Binding HasLmStudioEngine, Converter={StaticResource BoolToVisibility}}"
+                                        Style="{StaticResource GameCenter.Button}" Height="34" Padding="18,0" Margin="0,0,8,6"
+                                        AutomationProperties.HelpText="Unload the models and stop the engine after any running operation finishes." />
+                                <Button Content="Force stop engine" Command="{Binding ForceStopLmStudioCommand}" Visibility="{Binding HasLmStudioEngine, Converter={StaticResource BoolToVisibility}}"
+                                        Style="{StaticResource GameCenter.DangerButton}" Height="34" Padding="14,0" Margin="0,0,8,6"
+                                        ToolTip="Emergency stop for a stuck LLM Studio engine or operation. Asks first. Game servers are not affected."
+                                        AutomationProperties.HelpText="Emergency stop. Immediately ends LLM Studio and interrupts any running load, download or reply. Asks for confirmation." />
+                                <Button Content="Open LLM Studio page" Command="{Binding OpenLmStudioCommand}"
+                                        Style="{StaticResource GameCenter.Button}" Height="34" Padding="16,0" Margin="0,0,8,6"
+                                        AutomationProperties.HelpText="Open the LLM Studio page in your browser to load, test or manage models." />
+                                <Button Content="Open Quickstart" Command="{Binding OpenFirstRunSetupCommand}"
+                                        Style="{StaticResource GameCenter.Button}" Height="34" Padding="16,0" Margin="0,0,8,6"
+                                        Visibility="{Binding IsLmStudioMissing, Converter={StaticResource BoolToVisibility}}"
+                                        AutomationProperties.HelpText="Set up LLM Studio from Quickstart." />
+                                <Button Content="Refresh" Command="{Binding RefreshLmStudioCommand}"
+                                        Style="{StaticResource GameCenter.Button}" Height="34" Padding="12,0" Margin="0,0,8,6"
+                                        AutomationProperties.HelpText="Read the LLM Studio status again." />
+                            </WrapPanel>
+                            <StackPanel Margin="0,0,0,10" Visibility="{Binding HasLmStudioEngine, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="{Binding LmStudioStartHint}" TextWrapping="Wrap" FontSize="11"
+                                           Foreground="{DynamicResource GameCenter.TextMuted}"
+                                           Visibility="{Binding HasLmStudioStartHint, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="{Binding LmStudioActionText}" TextWrapping="Wrap" Margin="0,4,0,0" FontWeight="SemiBold"
+                                           Visibility="{Binding HasLmStudioActionText, Converter={StaticResource BoolToVisibility}}"
+                                           AutomationProperties.Name="LLM Studio action result"
+                                           AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                            <TextBlock Text="Loaded models" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,6" />
+                            <ItemsControl ItemsSource="{Binding LmStudioModels}" Focusable="False"
+                                          Visibility="{Binding HasLmStudioModels, Converter={StaticResource BoolToVisibility}}"
+                                          AutomationProperties.Name="Loaded models">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4"
+                                                Padding="10,7" Margin="0,0,0,6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                                               ToolTip="{Binding Name}" />
+                                                    <TextBlock Text="{Binding Details}" Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="11"
+                                                               Visibility="{Binding HasDetails, Converter={StaticResource BoolToVisibility}}" />
+                                                </StackPanel>
+                                                <Border Grid.Column="1" Background="{DynamicResource GameCenter.GoldTint}" CornerRadius="3"
+                                                        Padding="8,2" Margin="10,0,0,0" VerticalAlignment="Center"
+                                                        Visibility="{Binding HasRole, Converter={StaticResource BoolToVisibility}}">
+                                                    <TextBlock Text="{Binding Role}" FontSize="11" FontWeight="SemiBold"
+                                                               Foreground="{DynamicResource GameCenter.Gold}" />
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Text="{Binding LmStudioMessage}" TextWrapping="Wrap" Margin="0,2,0,12"
+                                       Foreground="{DynamicResource GameCenter.TextMuted}"
+                                       Visibility="{Binding HasLmStudioMessage, Converter={StaticResource BoolToVisibility}}"
+                                       AutomationProperties.Name="LLM Studio status"
+                                       AutomationProperties.LiveSetting="Polite" />
+                            <StackPanel Margin="0,0,0,12" Visibility="{Binding HasLmStudioEngine, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="Startup models" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,2" />
+                                <TextBlock Text="Saved models that Start and Dwemer Distro startup load. Saving does not change what is loaded now."
+                                           Foreground="{DynamicResource GameCenter.TextMuted}" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8" />
+                                <CheckBox Content="Start with Dwemer Distro" IsChecked="{Binding LmStudioAutostart}"
+                                          Style="{StaticResource GameCenter.CheckBox}" Margin="0,0,0,8"
+                                          AutomationProperties.HelpText="When on, the engine starts and loads the startup models whenever Dwemer Distro starts." />
+                                <WrapPanel>
+                                    <StackPanel Width="260" Margin="0,0,12,8">
+                                        <TextBlock x:Name="LmStudioDialogueLabel" Text="Dialogue model" Foreground="{DynamicResource GameCenter.TextMuted}" Margin="0,0,0,3" />
+                                        <ComboBox ItemsSource="{Binding LmStudioStartupChoices}" DisplayMemberPath="Name" SelectedValuePath="Key"
+                                                  SelectedValue="{Binding LmStudioStartupDialogue}" Style="{StaticResource GameCenter.ComboBox}"
+                                                  AutomationProperties.LabeledBy="{Binding ElementName=LmStudioDialogueLabel}" />
+                                    </StackPanel>
+                                    <StackPanel Width="260" Margin="0,0,12,8">
+                                        <TextBlock x:Name="LmStudioDecisionLabel" Text="Decision model (optional)" Foreground="{DynamicResource GameCenter.TextMuted}" Margin="0,0,0,3" />
+                                        <ComboBox ItemsSource="{Binding LmStudioStartupChoices}" DisplayMemberPath="Name" SelectedValuePath="Key"
+                                                  SelectedValue="{Binding LmStudioStartupDecision}" Style="{StaticResource GameCenter.ComboBox}"
+                                                  AutomationProperties.LabeledBy="{Binding ElementName=LmStudioDecisionLabel}" />
+                                    </StackPanel>
+                                </WrapPanel>
+                                <TextBlock Text="{Binding LmStudioStartupNote}" TextWrapping="Wrap" FontSize="11" Margin="0,0,0,8"
+                                           Foreground="{DynamicResource GameCenter.TextMuted}" AutomationProperties.LiveSetting="Polite" />
+                                <Button Content="Save startup models" Command="{Binding SaveLmStudioStartupCommand}" HorizontalAlignment="Left"
+                                        Style="{StaticResource GameCenter.Button}" Height="34" Padding="16,0"
+                                        AutomationProperties.HelpText="Save autostart and the startup models. No model is loaded or unloaded." />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
 
                 <!-- The catalog and release details share this center panel; neither opens a window. -->
                 <views:CommunityModsBrowser x:Name="CustomModBrowser" Margin="18,16,18,12"

@@ -48,6 +48,7 @@ public sealed partial class MainWindowViewModel
             }
 
             OnPropertyChanged(nameof(IsOfficialModsView));
+            RaiseLmStudioViewChanged();
             OnPropertyChanged(nameof(IsShowingCustomModBrowser));
             OnPropertyChanged(nameof(IsShowingCommunityModDetails));
             OnPropertyChanged(nameof(IsShowingInstalledCustomMod));
