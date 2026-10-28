@@ -16,6 +16,7 @@ public partial class App : Application
 {
     private Mutex? _instanceMutex;
     private bool _ownsInstanceMutex;
+    private InstanceActivationChannel? _activationChannel;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -43,14 +44,25 @@ public partial class App : Application
 
         var mutexName = BuildInstallScopedMutexName();
         _instanceMutex = new Mutex(initiallyOwned: true, mutexName, out _ownsInstanceMutex);
+        var activationName = InstanceActivationChannel.BuildName(mutexName);
         if (!_ownsInstanceMutex)
         {
-            LauncherLogService.Startup($"Launcher startup stopped because another instance owns '{mutexName}'.");
-            MessageBox.Show(
-                "DwemerDistro is already running from this installation.",
-                "DwemerDistro Launcher",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            // Bring the running launcher forward; only one that cannot be reached (an older build) gets the message.
+            if (await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.FromSeconds(3),
+                    InstanceActivationChannel.AllowForegroundToRunningInstance))
+            {
+                LauncherLogService.Startup($"Launcher startup handed over to the instance that owns '{mutexName}'.");
+            }
+            else
+            {
+                LauncherLogService.Startup($"Launcher startup stopped because another instance owns '{mutexName}'.");
+                MessageBox.Show(
+                    "DwemerDistro is already running from this installation.",
+                    "DwemerDistro Launcher",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+
             Shutdown();
             return;
         }
@@ -65,6 +77,24 @@ public partial class App : Application
         var window = new MainWindow();
         MainWindow = window;
         window.Show();
+        _activationChannel = InstanceActivationChannel.Listen(activationName, () => Dispatcher.BeginInvoke(ActivateMainWindow));
+    }
+
+    /// <summary>Another start from this installation asked for the launcher: show and restore the window it already has.</summary>
+    private void ActivateMainWindow()
+    {
+        if (MainWindow is not { } window)
+        {
+            return;
+        }
+
+        if (window.WindowState == WindowState.Minimized)
+        {
+            window.WindowState = WindowState.Normal;
+        }
+
+        window.Show();
+        window.Activate();
     }
 
     // Runs diagnostic collection without opening the launcher window or taking its instance mutex.
@@ -135,6 +165,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _activationChannel?.Dispose();
         if (_ownsInstanceMutex)
         {
             _instanceMutex?.ReleaseMutex();

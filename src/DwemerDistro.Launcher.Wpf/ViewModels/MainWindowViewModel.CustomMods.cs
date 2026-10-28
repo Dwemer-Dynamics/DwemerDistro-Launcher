@@ -19,6 +19,8 @@ public sealed partial class MainWindowViewModel
 {
     private CustomModService _customModService = null!;
     private bool _isCustomModsView;
+    private bool _isBrowsingCustomMods = true;
+    private CommunityModDetails? _communityDetails;
     private bool _isCustomModBusy;
     private bool _isCustomModMutationInProgress;
     private bool _isCustomModListLoaded;
@@ -47,12 +49,47 @@ public sealed partial class MainWindowViewModel
 
             OnPropertyChanged(nameof(IsOfficialModsView));
             RaiseLmStudioViewChanged();
+            OnPropertyChanged(nameof(IsShowingCustomModBrowser));
+            OnPropertyChanged(nameof(IsShowingCommunityModDetails));
+            OnPropertyChanged(nameof(IsShowingInstalledCustomMod));
             if (value)
             {
-                _ = RefreshCustomModsAsync(checkHealth: false);
+                IsBrowsingCustomMods = true;
+                // Catalog browsing must not start a stopped distro just to populate the installed rail.
+                if (IsServerRunning) _ = RefreshCustomModsAsync(checkHealth: false);
             }
         }
     }
+
+    public bool IsBrowsingCustomMods
+    {
+        get => _isBrowsingCustomMods;
+        set
+        {
+            if (CommunityDetails?.IsInstalling == true) return;
+            CloseCommunityModDetails();
+            if (!SetProperty(ref _isBrowsingCustomMods, value)) return;
+            if (value) SelectedCustomMod = null;
+            OnPropertyChanged(nameof(IsShowingCustomModBrowser));
+            OnPropertyChanged(nameof(IsShowingCommunityModDetails));
+            OnPropertyChanged(nameof(IsShowingInstalledCustomMod));
+        }
+    }
+
+    public CommunityModDetails? CommunityDetails
+    {
+        get => _communityDetails;
+        private set
+        {
+            if (!SetProperty(ref _communityDetails, value)) return;
+            OnPropertyChanged(nameof(IsShowingCustomModBrowser));
+            OnPropertyChanged(nameof(IsShowingCommunityModDetails));
+        }
+    }
+
+    public bool IsShowingCustomModBrowser => IsCustomModsView && IsBrowsingCustomMods && CommunityDetails is null;
+    public bool IsShowingCommunityModDetails => IsCustomModsView && IsBrowsingCustomMods && CommunityDetails is not null;
+    public bool IsShowingInstalledCustomMod => IsCustomModsView && !IsBrowsingCustomMods;
 
     /// <summary>Second radio button of the Official/Custom switch.</summary>
     public bool IsOfficialModsView
@@ -72,14 +109,20 @@ public sealed partial class MainWindowViewModel
         get => _selectedCustomMod;
         set
         {
+            if (CommunityDetails?.IsInstalling == true) return;
             if (!SetProperty(ref _selectedCustomMod, value))
             {
                 return;
             }
 
+            if (value is not null) IsBrowsingCustomMods = false;
+
             OnPropertyChanged(nameof(HasSelectedCustomMod));
             OnPropertyChanged(nameof(SelectedCustomModStateText));
             OnPropertyChanged(nameof(SelectedCustomModRepositoryActionName));
+            OnPropertyChanged(nameof(SelectedCustomModUnregisterActionName));
+            OnPropertyChanged(nameof(SelectedCustomModUsesBranches));
+            OnPropertyChanged(nameof(SelectedCustomModVersionText));
             OnPropertyChanged(nameof(SelectedCustomModBranchOptions));
             OnPropertyChanged(nameof(SelectedCustomModBranchNotice));
             OnPropertyChanged(nameof(HasSelectedCustomModBranchNotice));
@@ -129,6 +172,12 @@ public sealed partial class MainWindowViewModel
     public string SelectedCustomModRepositoryActionName =>
         CustomModService.TryGetGitHubArtworkUrls(_selectedCustomMod?.Repository, out _) ? "GitHub Page" : "Repository Page";
 
+    public string SelectedCustomModUnregisterActionName => _selectedCustomMod?.InstallMode == "release" ? "Remove installation" : "Unregister";
+    public bool SelectedCustomModUsesBranches => _selectedCustomMod?.InstallMode != "release";
+    public string SelectedCustomModVersionText => _selectedCustomMod is null ? string.Empty
+        : _selectedCustomMod.InstallMode == "release" ? "Release " + _selectedCustomMod.ReleaseVersion + " · " + _selectedCustomMod.ShortCommit
+        : "Branch " + _selectedCustomMod.Branch + " · Version " + _selectedCustomMod.ShortCommit;
+
     /// <summary>True only for a list the distro reported as empty, never for an unread or failed one.</summary>
     public bool HasNoCustomMods => IsConfirmedEmptyCustomModList(_isCustomModListLoaded, CustomMods.Count);
 
@@ -171,6 +220,9 @@ public sealed partial class MainWindowViewModel
         : DescribeCustomModState(_selectedCustomMod);
 
     public AsyncRelayCommand AddCustomModCommand { get; private set; } = null!;
+    public AsyncRelayCommand BrowseCommunityModsCommand { get; private set; } = null!;
+    public AsyncRelayCommand ShowInstalledCustomModsCommand { get; private set; } = null!;
+    public AsyncRelayCommand AddCommunityModCommand { get; private set; } = null!;
 
     public AsyncRelayCommand CheckCustomModHealthCommand { get; private set; } = null!;
 
@@ -193,6 +245,17 @@ public sealed partial class MainWindowViewModel
         _customModService = new CustomModService(_wsl);
         CustomMods.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoCustomMods));
         AddCustomModCommand = new AsyncRelayCommand(AddCustomModAsync, CanStartCustomModOperation);
+        AddCommunityModCommand = new AsyncRelayCommand(() => BrowseCommunityModsAsync(), () => !IsCustomModBusy);
+        BrowseCommunityModsCommand = new AsyncRelayCommand(() =>
+        {
+            IsBrowsingCustomMods = true;
+            return Task.CompletedTask;
+        });
+        ShowInstalledCustomModsCommand = new AsyncRelayCommand(async () =>
+        {
+            IsBrowsingCustomMods = false;
+            await RefreshCustomModsAsync(checkHealth: false);
+        }, () => !IsCustomModBusy);
         CheckCustomModHealthCommand = new AsyncRelayCommand(
             () => RunCustomModStatusCheckAsync(), () => CanStartCustomModOperation() && HasSelectedCustomMod);
         OpenCustomModDashboardCommand = new RelayCommand(
@@ -200,7 +263,9 @@ public sealed partial class MainWindowViewModel
         OpenCustomModRepositoryCommand = new RelayCommand(
             OpenCustomModRepository, () => CustomModService.ValidateRepositoryUrl(_selectedCustomMod?.Repository) is null);
         UpdateCustomModCommand = new AsyncRelayCommand(
-            () => RunSelectedCustomModOperationAsync("Update", _customModService.UpdateAsync),
+            () => _selectedCustomMod?.InstallMode == "release"
+                ? BrowseCommunityModsAsync(_selectedCustomMod.Repository)
+                : RunSelectedCustomModOperationAsync("Update", _customModService.UpdateAsync),
             () => CanStartCustomModOperation() && HasSelectedCustomMod);
         BackupCustomModCommand = new AsyncRelayCommand(
             () => RunSelectedCustomModOperationAsync("Backup", _customModService.BackupAsync),
@@ -208,7 +273,7 @@ public sealed partial class MainWindowViewModel
         UnregisterCustomModCommand = new AsyncRelayCommand(
             UnregisterSelectedCustomModAsync, () => CanStartCustomModOperation() && HasSelectedCustomMod);
         CheckCustomModBranchesCommand = new AsyncRelayCommand(
-            CheckSelectedCustomModBranchesAsync, () => CanStartCustomModOperation() && HasSelectedCustomMod);
+            CheckSelectedCustomModBranchesAsync, () => CanStartCustomModOperation() && HasSelectedCustomMod && _selectedCustomMod?.InstallMode != "release");
         SwitchCustomModBranchCommand = new AsyncRelayCommand(
             SwitchSelectedCustomModBranchAsync,
             () => CanStartCustomModOperation() && CanSwitchCustomModBranch(_selectedCustomMod, _selectedCustomModBranch));
@@ -222,6 +287,9 @@ public sealed partial class MainWindowViewModel
     private void RaiseCustomModCommandStates()
     {
         AddCustomModCommand?.RaiseCanExecuteChanged();
+        BrowseCommunityModsCommand?.RaiseCanExecuteChanged();
+        ShowInstalledCustomModsCommand?.RaiseCanExecuteChanged();
+        AddCommunityModCommand?.RaiseCanExecuteChanged();
         CheckCustomModHealthCommand?.RaiseCanExecuteChanged();
         OpenCustomModDashboardCommand?.RaiseCanExecuteChanged();
         OpenCustomModRepositoryCommand?.RaiseCanExecuteChanged();
@@ -258,6 +326,7 @@ public sealed partial class MainWindowViewModel
 
     internal static string DescribeCustomModBranches(CustomModInfo? mod)
     {
+        if (mod?.InstallMode == "release") return "Release " + mod.ReleaseVersion + ". Update reviews the matching client and server packages.";
         if (mod is null)
         {
             return string.Empty;
@@ -301,6 +370,13 @@ public sealed partial class MainWindowViewModel
 
     internal static string DescribeCustomModState(CustomModInfo mod)
     {
+        if (mod.InstallMode == "release")
+        {
+            var server = mod.State == CustomModState.Ready ? "Server installed" : "Server needs attention";
+            if (mod.Health == "ok") server += " · Healthy";
+            else if (mod.Health == "failed") server += " · Not responding";
+            return server + " · " + mod.ClientState + (mod.State != CustomModState.Ready && mod.Message.Length != 0 ? "\n" + mod.Message : string.Empty);
+        }
         var state = mod.State switch
         {
             CustomModState.Ready => "Installed",
@@ -382,7 +458,8 @@ public sealed partial class MainWindowViewModel
             CustomMods.Add(mod);
         }
 
-        SelectedCustomMod = CustomMods.FirstOrDefault(mod => mod.Id == selectedId) ?? CustomMods.FirstOrDefault();
+        SelectedCustomMod = IsBrowsingCustomMods ? null
+            : CustomMods.FirstOrDefault(mod => mod.Id == selectedId) ?? CustomMods.FirstOrDefault();
         OnPropertyChanged(nameof(SelectedCustomModStateText));
         // An unchanged selection skips the setter, so a banner missed earlier is retried here too.
         ShowSelectedCustomModHero();
@@ -427,7 +504,7 @@ public sealed partial class MainWindowViewModel
             return urls;
         }
 
-        if (CustomModService.IsSafeModAssetUrl(mod.BannerUrl, mod.Id))
+        if (CustomModService.IsSafeModAssetUrl(mod.BannerUrl, mod.Id, mod.ServerFolder))
         {
             urls.Add(mod.BannerUrl!);
         }
@@ -459,7 +536,7 @@ public sealed partial class MainWindowViewModel
 
         _customModHeroImages[key] = null;
         SelectedCustomModHeroImage = null;
-        var hasInstalledBanner = CustomModService.IsSafeModAssetUrl(mod!.BannerUrl, mod.Id);
+        var hasInstalledBanner = CustomModService.IsSafeModAssetUrl(mod!.BannerUrl, mod.Id, mod.ServerFolder);
         _ = LoadCustomModHeroAsync(mod.Id, key, artworkUrls, hasInstalledBanner);
     }
 
@@ -505,8 +582,10 @@ public sealed partial class MainWindowViewModel
     /// <summary>Attaches each mod's installed icon, fetched once per installed revision; a failure keeps the name alone.</summary>
     private async Task<IReadOnlyList<CustomModInfo>> WithCustomModIconsAsync(IReadOnlyList<CustomModInfo> mods)
     {
+        using var community = new CommunityModService(_wsl);
+        mods = mods.Select(mod => mod.InstallMode == "release" ? mod with { ClientState = community.ClientState(mod.Id, mod.Repository) } : mod).ToList();
         var pending = mods
-            .Where(mod => CustomModService.IsSafeModAssetUrl(mod.IconUrl, mod.Id))
+            .Where(mod => CustomModService.IsSafeModAssetUrl(mod.IconUrl, mod.Id, mod.ServerFolder))
             .Select(mod => mod.ShortCommit + "\n" + mod.IconUrl)
             .Distinct(StringComparer.Ordinal)
             .Where(key => !_customModIconImages.ContainsKey(key))
@@ -611,6 +690,39 @@ public sealed partial class MainWindowViewModel
         {
             await RefreshCustomModsAsync(checkHealth: false).ConfigureAwait(true);
         }
+    }
+
+    public async Task BrowseCommunityModsAsync(string? repository = null)
+    {
+        if (_isCustomModMutationInProgress) return;
+        IsBrowsingCustomMods = true;
+        var service = new CommunityModService(_wsl);
+        var details = new CommunityModDetails(service, () =>
+        {
+            if (IsCustomModBusy || !CanAccessDistro() || !TryBeginCustomModMutation()) return false;
+            IsCustomModBusy = true;
+            return true;
+        }, () =>
+        {
+            IsCustomModBusy = false;
+            EndCustomModMutation();
+        }, () => RefreshCustomModsAsync(checkHealth: false), async (release, cancellation) =>
+        {
+            if (!TryBeginPassiveDistroActivity()) throw new IOException(CustomModsMaintenanceMessage);
+            try { return await service.IsServerInstalledAsync(release, cancellation); }
+            finally { EndPassiveDistroActivity(); }
+        });
+        details.BackRequested += (_, _) => IsBrowsingCustomMods = true;
+        CommunityDetails = details;
+        await details.OpenAsync(repository);
+    }
+
+    // The inline view owns its preview requests and transport until it is left or the launcher closes.
+    public void CloseCommunityModDetails()
+    {
+        if (CommunityDetails?.IsInstalling == true) return;
+        CommunityDetails?.Dispose();
+        CommunityDetails = null;
     }
 
     private async Task RunSelectedCustomModOperationAsync(
@@ -773,7 +885,9 @@ public sealed partial class MainWindowViewModel
 
         var confirmed = MessageBox.Show(
             $"Remove {mod.Name} from the Custom mods list?\n\n" +
-            "Its files and database are kept in the distro. Nothing is deleted.",
+            (mod.InstallMode == "release"
+                ? "Owned game client files will be removed. Private configs, server files, database and unknown files are kept. Close the game first."
+                : "Its files and database are kept in the distro. Nothing is deleted."),
             "Unregister custom mod",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question,
@@ -783,6 +897,15 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        await RunSelectedCustomModOperationAsync("Unregister", _customModService.UnregisterAsync).ConfigureAwait(true);
+        if (mod.InstallMode == "release")
+        {
+            await RunSelectedCustomModOperationAsync("Remove", async (id, output, ct) =>
+            {
+                using var service = new CommunityModService(_wsl);
+                var message = await service.RemoveAsync(id, mod.Repository, ct).ConfigureAwait(false);
+                return new Models.CommandResult(0, message, string.Empty);
+            }).ConfigureAwait(true);
+        }
+        else await RunSelectedCustomModOperationAsync("Unregister", _customModService.UnregisterAsync).ConfigureAwait(true);
     }
 }

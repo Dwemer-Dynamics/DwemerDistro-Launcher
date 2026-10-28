@@ -2,7 +2,7 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public static class LauncherConstants
 {
-    public const string LauncherVersion = "3.3.38";
+    public const string LauncherVersion = "3.3.39";
     public const string LauncherRepoUrl = "https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher";
     public const string LauncherLatestReleaseApiUrl = "https://api.github.com/repos/Dwemer-Dynamics/DwemerDistro-Launcher/releases/latest";
     public const string LauncherExeName = "DwemerDistro.exe";
@@ -21,7 +21,7 @@ public static class LauncherConstants
     public const int LorkhanServerPort = 8090;
 
     public const string WikiUrl = "https://dwemerdynamics.com/index.html";
-    public const string CustomModCreationGuideUrl = "https://dwemerdynamics.com/custom-mods/index.html";
+    public const string CustomModCreationGuideUrl = "https://github.com/Dwemer-Dynamics/Kagrenac";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";
     public const string PatreonUrl = "https://www.patreon.com/DwemerDynamics";
     public const string ChimServerUiUrl = "http://127.0.0.1:8081/HerikaServer/ui/";
