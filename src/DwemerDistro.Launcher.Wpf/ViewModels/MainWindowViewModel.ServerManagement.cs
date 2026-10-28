@@ -76,6 +76,7 @@ public sealed partial class MainWindowViewModel
             OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
             OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
             OpenReignRollbackCommand?.RaiseCanExecuteChanged();
+            OpenLorkhanRollbackCommand?.RaiseCanExecuteChanged();
         }
     }
 
@@ -254,6 +255,7 @@ public sealed partial class MainWindowViewModel
         OpenStobeRollbackCommand.RaiseCanExecuteChanged();
         OpenDialecticRollbackCommand.RaiseCanExecuteChanged();
         OpenReignRollbackCommand.RaiseCanExecuteChanged();
+        OpenLorkhanRollbackCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>Feeds the existing version status into the matching product's status line.</summary>

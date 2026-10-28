@@ -771,7 +771,10 @@
                                                         AutomationProperties.Name="Open LORKHAN Logs"
                                                         AutomationProperties.HelpText="Show the local OpenMW log in File Explorer. Does not start the game or server." />
                                             </WrapPanel>
-                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" Margin="0,6,0,8" />
+                                            <Button Content="Rollback LorkhanServer" Command="{Binding OpenLorkhanRollbackCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,6,0,0"
+                                                    AutomationProperties.Name="Rollback LorkhanServer"
+                                                    AutomationProperties.HelpText="Choose a previous server version. Backs up the database before redeploying; older versions may be incompatible with current data." />
+                                            <Border Style="{StaticResource GameCenter.ModAction.Separator}" />
                                             <Button Content="Uninstall LORKHAN" Command="{Binding LorkhanManager.UninstallCommand}"
                                                     Style="{StaticResource GameCenter.ModAction.UninstallButton}"
                                                     AutomationProperties.Name="Uninstall LORKHAN"
