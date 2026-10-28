@@ -6026,7 +6026,7 @@ fi
         return "all";
     }
 
-    // LORKHAN's checkout is read as root but owned by dwemer; trust that one repo for each git call only.
+    // The LORKHAN-managed checkout is read as root; trust only that repo, per git call.
     private static string RollbackGit(string repoPath) =>
         repoPath == "/opt/dwemerdistro/sources/LorkhanServer" ? $"git -c safe.directory={repoPath}" : "git";
 
