@@ -73,9 +73,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     /// <summary>Restated on every mod update while the option is on.</summary>
     internal const string ForceGitUpdatesUpdateWarning =
-        "Force Updates is ON: manual edits to Git-tracked files in these servers will be " +
-        "permanently discarded. Databases, uploads, profiles, memories, voices, and other untracked " +
-        "data are not deleted.";
+        "Force Updates is ON: manual edits to Git-tracked files in managed servers will be " +
+        "permanently discarded, and Git may also replace untracked or ignored files that conflict " +
+        "with the update. Back up custom files first.";
 
     /// <summary>The Settings label, reused as the title of every Compact Distro message.</summary>
     internal const string CompactDistroSettingName = "Compact Distro";
@@ -163,6 +163,8 @@ echo "CHIM-MCP installed and enabled."
     private Process? _serverProcess;
     private string? _wslIp;
     private CancellationTokenSource? _connectionDetailsCts;
+    private readonly CancellationTokenSource _shutdownCts = new();
+    private Task<CommandResult>? _distroUpdateTask;
     private bool _connectionDetailsClosed;
     private string _thisPcAddressText = "Not checked";
     private string _wslAddressText = "Not checked";
@@ -234,6 +236,7 @@ echo "CHIM-MCP installed and enabled."
         _wsl = new WslService(_processRunner);
         // The three server items back command CanExecute below, so they exist before any command.
         InitializeServerManagement();
+        InitializeCustomMods();
         _launcherUpdateService = new LauncherUpdateService(_httpClient, _processRunner);
         _launcherReleaseNoticeService = new LauncherReleaseNoticeService();
         _updatePreferences = new UpdatePreferencesService();
@@ -256,8 +259,8 @@ echo "CHIM-MCP installed and enabled."
         _selectedGame = GameProfiles[0];
 
         StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsCriticalMaintenanceInProgress && !IsServerRunning && !IsServerStarting);
-        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && (IsServerRunning || IsServerStarting));
-        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress);
+        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress && (IsServerRunning || IsServerStarting));
+        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
         // Update Distro is also the recovery action, so it stays available whether the distro
         // reports itself as current, out of date, or not at all.
         UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
@@ -285,14 +288,16 @@ echo "CHIM-MCP installed and enabled."
         OpenLorkhanLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("LORKHAN"));
         OpenStobeLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("STOBE"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
+        OpenCustomModCreationGuideCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.CustomModCreationGuideUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
+        OpenPatreonCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.PatreonUrl));
 
         OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"), CanAccessDistro);
 
         OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"), CanAccessDistro);
         ViewMemoryUsageCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- htop"), CanAccessDistro);
-        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync, CanRunExclusiveDistroOperation);
-        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync, CanRunExclusiveDistroOperation);
+        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync, CanStartExclusiveDistroOperation);
+        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync, CanStartExclusiveDistroOperation);
         OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
         OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
         OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
@@ -302,16 +307,16 @@ echo "CHIM-MCP installed and enabled."
         ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"), CanAccessDistro);
         ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""), CanAccessDistro);
         ViewOmniVoiceLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/omnivoice-tts/logs/server.log"), CanAccessDistro);
-        ViewMeloTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/MeloTTS/melo/log.txt"), CanAccessDistro);
         ViewPiperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/piper/log.txt"), CanAccessDistro);
         ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"), CanAccessDistro);
         ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"), CanAccessDistro);
         ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"), CanAccessDistro);
-        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanRunExclusiveDistroOperation);
+        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanStartExclusiveDistroOperation);
         DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
-        CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanRunExclusiveDistroOperation);
+        CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanStartExclusiveDistroOperation);
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
-        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress);
+        OpenApiKeysCommand = new RelayCommand(OpenApiKeysWindow, CanAccessDistro);
+        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
         CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
         GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
         RefreshConnectionDetailsCommand = new AsyncRelayCommand(RefreshConnectionDetailsAsync);
@@ -659,7 +664,8 @@ echo "CHIM-MCP installed and enabled."
         !IsDistroUpdateInProgress &&
         !_isComponentsOperationInProgress &&
         !IsCriticalMaintenanceInProgress &&
-        !ServerManagers.Any(manager => manager.IsBusy);
+        !ServerManagers.Any(manager => manager.IsBusy) &&
+        !_isCustomModBusy;
 
     public bool IsCriticalMaintenanceInProgress => _isExclusiveDistroOperationInProgress;
 
@@ -824,7 +830,9 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenLorkhanLogsCommand { get; }
     public RelayCommand OpenStobeLogsCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
+    public RelayCommand OpenCustomModCreationGuideCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
+    public RelayCommand OpenPatreonCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand ViewMemoryUsageCommand { get; }
@@ -839,7 +847,6 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand ViewChatterboxLogsCommand { get; }
     public RelayCommand ViewPocketTtsLogsCommand { get; }
     public RelayCommand ViewOmniVoiceLogsCommand { get; }
-    public RelayCommand ViewMeloTtsLogsCommand { get; }
     public RelayCommand ViewPiperLogsCommand { get; }
     public RelayCommand ViewLocalWhisperLogsCommand { get; }
     public RelayCommand ViewParakeetLogsCommand { get; }
@@ -848,6 +855,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand DistroDoctorCommand { get; }
     public AsyncRelayCommand CompactDistroCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
+    public RelayCommand OpenApiKeysCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
     public AsyncRelayCommand CleanLogsCommand { get; }
     public AsyncRelayCommand GenerateDiagnosticsCommand { get; }
@@ -975,6 +983,14 @@ echo "CHIM-MCP installed and enabled."
 
     public async Task ShutdownAsync()
     {
+        // Stops only the assistant's own Linux process group; nothing else in the distro.
+        if (_assistant is { } assistant) await assistant.ShutdownAsync().ConfigureAwait(true);
+        _shutdownCts.Cancel();
+        if (_distroUpdateTask is { } updateTask)
+        {
+            try { await updateTask.ConfigureAwait(false); }
+            catch (Exception ex) { LauncherLogService.Operation($"Distro update stopped during shutdown: {ex.GetType().Name}"); }
+        }
         _connectionDetailsClosed = true;
         _connectionDetailsCts?.Cancel();
         LauncherLogService.Startup("Launcher shutdown started.");
@@ -1067,13 +1083,24 @@ echo "CHIM-MCP installed and enabled."
 
     /// <summary>
     /// Runs the automatic launcher-version system sync on the shared background-task path, so a slow
-    /// or failing update is logged rather than blocking startup.
+    /// or failing update is logged rather than blocking startup. The assistant connects only after it
+    /// settles, so the session never starts while the sync is updating DwemerDistro.
     /// </summary>
     private void QueueLauncherVersionSync()
     {
         QueueBackgroundTask(
             "Launcher version sync",
-            cancellationToken => SyncLauncherVersionAsync(cancellationToken),
+            async cancellationToken =>
+            {
+                try
+                {
+                    await SyncLauncherVersionAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    QueueAssistantStartupConnect();
+                }
+            },
             LauncherVersionSyncTimeout,
             accessesDistro: true);
     }
@@ -1309,6 +1336,7 @@ echo "CHIM-MCP installed and enabled."
         }
 
         _wslIp = null;
+        ResetStartupPocketTtsState();
         IsServerStarting = true;
         StartButtonText = "Server is Starting";
         StartStartAnimation();
@@ -1320,6 +1348,11 @@ echo "CHIM-MCP installed and enabled."
                 new[] { "-d", LauncherConstants.DistroName, "--", "/etc/start_env" },
                 line =>
                 {
+                    if (TryCaptureStartupPocketTtsLine(line))
+                    {
+                        return;
+                    }
+
                     AppendLog(line);
                     if (line.Contains("AIAgent.ini Network Settings:", StringComparison.OrdinalIgnoreCase))
                     {
@@ -1332,6 +1365,7 @@ echo "CHIM-MCP installed and enabled."
                         });
                         AppendLog("Server is ready." + Environment.NewLine);
                         _ = Task.Run(() => GetWslIpAsync(forceRefresh: true));
+                        HandleServerReadyForPocketTts();
                     }
                 },
                 redirectInput: true);
@@ -1612,7 +1646,7 @@ echo "CHIM-MCP installed and enabled."
 
     internal static string BuildSystemReleaseMarkerWriteCommand()
     {
-        return "printf '%s\\n' 'dwemer' | sudo -S install -D -m 0644 " +
+        return "printf '%s\\n' 'dwemer' | sudo -S -p '' install -D -m 0644 " +
                $"/home/dwemer/dwemerdistro/system-release.json {InstalledSystemReleaseManifestPath}";
     }
 
@@ -1829,6 +1863,8 @@ echo "CHIM-MCP installed and enabled."
         SetSystemUpdateState(SystemUpdateAvailability.Updating);
         var systemSucceeded = false;
         var modsAttempted = false;
+        var skippedMods = new List<string>();
+        var modsFailed = false;
 
         try
         {
@@ -1847,16 +1883,38 @@ echo "CHIM-MCP installed and enabled."
                     systemSucceeded = await RunSharedDistroUpdateAsync().ConfigureAwait(true);
                     return systemSucceeded;
                 },
-                (product, branch) =>
+                async (product, branch) =>
                 {
                     modsAttempted = true;
                     SetSystemUpdateRunningButtonText(null);
-                    return RunServerOperationAsync(product, ServerOperation.Update, branch, forceGitUpdates);
+                    var outcome = await RunServerOperationAsync(product, ServerOperation.Update, branch, forceGitUpdates)
+                        .ConfigureAwait(true);
+                    if (outcome == ServerOperationOutcome.Skipped)
+                    {
+                        skippedMods.Add(product.DisplayName);
+                    }
+                    else if (outcome == ServerOperationOutcome.Failed)
+                    {
+                        modsFailed = true;
+                    }
+
+                    return outcome == ServerOperationOutcome.Succeeded;
                 }).ConfigureAwait(true);
             var completionMessage = "System and mod updates completed successfully.";
+            var skippedNote = skippedMods.Count > 0
+                ? $" Skipped to keep local edits: {string.Join(", ", skippedMods)}."
+                : string.Empty;
             if (!systemSucceeded)
             {
                 completionMessage = "System update failed. No mods were updated. Check the log above.";
+            }
+            else if (modsFailed)
+            {
+                completionMessage = "At least one mod update failed. Check the log above." + skippedNote;
+            }
+            else if (skippedMods.Count > 0)
+            {
+                completionMessage = "System and shared components updated." + skippedNote;
             }
             else if (!succeeded)
             {
@@ -1868,7 +1926,13 @@ echo "CHIM-MCP installed and enabled."
                     "System and shared components updated successfully. The selected mod was no longer eligible, so no mod was changed.";
             }
 
-            AppendLog(completionMessage + Environment.NewLine, succeeded ? "green" : "red");
+            var completionColor = succeeded ? "green" : "red";
+            if (systemSucceeded && !modsFailed && skippedMods.Count > 0)
+            {
+                completionColor = "yellow";
+            }
+
+            AppendLog(completionMessage + Environment.NewLine, completionColor);
             ReportSystemUpdateOutcome(systemSucceeded);
         }
         catch (Exception ex)
@@ -1994,6 +2058,8 @@ echo "CHIM-MCP installed and enabled."
         ImportDistroCommand?.RaiseCanExecuteChanged();
         FixWslDnsCommand?.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(UpdateSystemHelpText));
+        // Custom mod actions share these gates through IsComponentInteractionEnabled.
+        RaiseCustomModCommandStates();
     }
 
     private void RaiseDistroAccessCommandStates()
@@ -2017,13 +2083,13 @@ echo "CHIM-MCP installed and enabled."
         ViewChatterboxLogsCommand?.RaiseCanExecuteChanged();
         ViewPocketTtsLogsCommand?.RaiseCanExecuteChanged();
         ViewOmniVoiceLogsCommand?.RaiseCanExecuteChanged();
-        ViewMeloTtsLogsCommand?.RaiseCanExecuteChanged();
         ViewPiperLogsCommand?.RaiseCanExecuteChanged();
         ViewLocalWhisperLogsCommand?.RaiseCanExecuteChanged();
         ViewParakeetLogsCommand?.RaiseCanExecuteChanged();
         ViewApacheLogsCommand?.RaiseCanExecuteChanged();
         DistroDoctorCommand?.RaiseCanExecuteChanged();
         OpenCudaConfigCommand?.RaiseCanExecuteChanged();
+        OpenApiKeysCommand?.RaiseCanExecuteChanged();
         UpdateLauncherCommand?.RaiseCanExecuteChanged();
         CleanLogsCommand?.RaiseCanExecuteChanged();
         GenerateDiagnosticsCommand?.RaiseCanExecuteChanged();
@@ -2257,22 +2323,32 @@ echo "CHIM-MCP installed and enabled."
             IsDistroUpdateInProgress,
             _isComponentsOperationInProgress,
             _isExclusiveDistroOperationInProgress,
-            ServerManagers.Select(manager => manager.IsBusy));
+            ServerManagers.Select(manager => manager.IsBusy),
+            IsLiveFileMutationInProgress);
     }
 
     internal static bool CanRunUpdateOperation(
         bool isGlobalUpdateRunning,
         bool isComponentsOperationRunning,
         bool isExclusiveDistroOperationRunning,
-        IEnumerable<bool> serverBusyStates)
+        IEnumerable<bool> serverBusyStates,
+        bool isCustomModMutationRunning = false)
     {
         return !isGlobalUpdateRunning &&
                !isComponentsOperationRunning &&
                !isExclusiveDistroOperationRunning &&
+               !isCustomModMutationRunning &&
                !serverBusyStates.Any(isBusy => isBusy);
     }
 
-    private bool CanRunExclusiveDistroOperation()
+    /// <summary>
+    /// Whether Compact, Export, Import or DNS repair can be offered. An idle assistant session is the one passive
+    /// lease looked past here: the operation closes it before claiming the slot, which still counts every lease.
+    /// </summary>
+    private bool CanStartExclusiveDistroOperation() =>
+        CanRunExclusiveDistroOperation(YieldablePassiveDistroActivityCount());
+
+    private bool CanRunExclusiveDistroOperation(int yieldablePassiveActivities = 0)
     {
         lock (_distroOperationGate)
         {
@@ -2281,9 +2357,10 @@ echo "CHIM-MCP installed and enabled."
                 _isComponentsOperationInProgress,
                 _isExclusiveDistroOperationInProgress,
                 _quickstartDistroActivityCount > 0,
-                _passiveDistroActivityCount > 0,
+                _passiveDistroActivityCount - yieldablePassiveActivities > 0,
                 IsServerStarting,
-                ServerManagers.Select(manager => manager.IsBusy));
+                ServerManagers.Select(manager => manager.IsBusy),
+                IsLiveFileMutationInProgress);
         }
     }
 
@@ -2294,7 +2371,8 @@ echo "CHIM-MCP installed and enabled."
         bool isQuickstartDistroActivityRunning,
         bool isPassiveDistroActivityRunning,
         bool isServerStarting,
-        IEnumerable<bool> serverBusyStates)
+        IEnumerable<bool> serverBusyStates,
+        bool isCustomModMutationRunning = false)
     {
         return !isServerStarting &&
                !isQuickstartDistroActivityRunning &&
@@ -2303,7 +2381,8 @@ echo "CHIM-MCP installed and enabled."
                    isGlobalUpdateRunning,
                    isComponentsOperationRunning,
                    isExclusiveDistroOperationRunning,
-                   serverBusyStates);
+                   serverBusyStates,
+                   isCustomModMutationRunning);
     }
 
     /// <summary>
@@ -2462,18 +2541,17 @@ echo "CHIM-MCP installed and enabled."
     }
 
     /// <summary>
-    /// The enable confirmation. It has to be exact about scope: forcing an update rewrites the files
-    /// Git tracks, and leaves everything Git does not track - databases, uploads, profiles, memories
-    /// and voices - untouched.
+    /// The enable confirmation. It has to be exact about scope: forcing an update discards edits to
+    /// files Git tracks, and Git may also replace untracked or ignored files that conflict with the
+    /// update, so it must not promise that anything outside Git is safe.
     /// </summary>
     internal static string BuildForceGitUpdatesConfirmation()
     {
         return $"{ForceGitUpdatesSettingName} is destructive.\n\n" +
-               "While it is on, updating HerikaServer, StobeServer, or DialecticServer overwrites the files " +
-               "those servers track in Git. Any edit you made to a tracked file by hand is permanently " +
-               "discarded, with no undo.\n\n" +
-               "Nothing untracked is removed: databases, uploads, profiles, memories, voices, and other " +
-               "runtime data are left in place.\n\n" +
+               "While it is on, updating a managed server overwrites the files that server tracks in Git. " +
+               "Any edit you made to a tracked file by hand is permanently discarded, with no undo.\n\n" +
+               "Git may also replace untracked or ignored files that conflict with the update. " +
+               "Back up custom files first.\n\n" +
                "Leave this off unless an update keeps failing because an installed server has manual edits.\n\n" +
                $"Turn {ForceGitUpdatesSettingName} on?";
     }
@@ -2504,13 +2582,15 @@ echo "CHIM-MCP installed and enabled."
     /// </summary>
     private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default)
     {
+        using var updateCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
+        updateCts.CancelAfter(LauncherVersionSyncTimeout);
         var bashCommand = BuildSystemUpdateCommand();
 
         var sharedComponentsStarted = false;
         LauncherLogService.Operation("START distro and shared components update");
         try
         {
-            var result = await _wsl.RunBashAsync(bashCommand, line =>
+            _distroUpdateTask = DistroUpdateRunner.RunAsync(_wsl, bashCommand, line =>
             {
                 LauncherLogService.Operation(line);
                 if (line.Contains(SharedComponentsMarker, StringComparison.OrdinalIgnoreCase))
@@ -2521,7 +2601,8 @@ echo "CHIM-MCP installed and enabled."
                 }
 
                 AppendLog(line);
-            }, loginShell: false, lineBuffered: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+            }, updateCts.Token);
+            var result = await _distroUpdateTask.ConfigureAwait(false);
 
             LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; shared components started={sharedComponentsStarted}");
             return result.Succeeded && sharedComponentsStarted;
@@ -2549,7 +2630,7 @@ echo "CHIM-MCP installed and enabled."
             $"if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin {DistroRepositoryUrl}; " +
             $"else git remote add origin {DistroRepositoryUrl}; fi && " +
             "git -c credential.helper= fetch origin && git reset --hard origin/main && " +
-            "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
+            "chmod +x update.sh && echo 'dwemer' | sudo -S -p '' ./update.sh && " +
             $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand() + " && " +
             BuildSystemReleaseMarkerWriteCommand();
     }
@@ -2956,12 +3037,19 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
+        if (!await PauseAssistantForMaintenanceAsync("Fix WSL DNS").ConfigureAwait(true))
+        {
+            return;
+        }
+
         if (!TryBeginExclusiveDistroOperation())
         {
+            ResumeAssistantAfterMaintenance(reconnect: true);
             ReportExclusiveDistroOperationBusy("Fix WSL DNS");
             return;
         }
 
+        var completed = false;
         try
         {
             AppendLog("Starting WSL DNS repair..." + Environment.NewLine);
@@ -2981,6 +3069,7 @@ echo "CHIM-MCP installed and enabled."
             AppendLog("Restarting WSL to apply DNS settings..." + Environment.NewLine);
             await _wsl.RunWslAsync(new[] { "--shutdown" }).ConfigureAwait(false);
             var verify = await _wsl.RunBashAsync("getent hosts github.com | head -n 1").ConfigureAwait(false);
+            completed = true;
             if (verify.Succeeded && !string.IsNullOrWhiteSpace(verify.StandardOutput))
             {
                 AppendLog("WSL DNS repair completed successfully." + Environment.NewLine, "green");
@@ -2994,6 +3083,7 @@ echo "CHIM-MCP installed and enabled."
         finally
         {
             SetExclusiveDistroOperationInProgress(false);
+            ResumeAssistantAfterMaintenance(completed);
         }
     }
 
@@ -4091,7 +4181,7 @@ fi
 
     private async Task CompactDistroAsync()
     {
-        if (!CanRunExclusiveDistroOperation())
+        if (!CanStartExclusiveDistroOperation())
         {
             ReportExclusiveDistroOperationBusy(CompactDistroSettingName);
             return;
@@ -4127,8 +4217,15 @@ fi
 
         var serverStopWasAttempted = false;
         var serverWasStopped = false;
+        if (!await PauseAssistantForMaintenanceAsync(CompactDistroSettingName).ConfigureAwait(true))
+        {
+            SetCompactDistroStatus(AssistantBusyForMaintenanceMessage, CompactDistroWarningColor);
+            return;
+        }
+
         if (!TryBeginExclusiveDistroOperation())
         {
+            ResumeAssistantAfterMaintenance(reconnect: true);
             SetCompactDistroStatus(ExclusiveDistroOperationBusyMessage, CompactDistroWarningColor);
             ReportExclusiveDistroOperationBusy(CompactDistroSettingName);
             return;
@@ -4137,6 +4234,7 @@ fi
         // The row says it is working before the first WSL round trip, so an earlier run's terminal
         // status can never be mistaken for this one's result.
         SetCompactDistroStatus(CompactDistroPreparingStatus, CompactDistroBusyColor);
+        var endedSafely = true;
         try
         {
             var vhdxPath = NormalizeDistroVhdxPath(_wsl.GetDistroVhdxPath());
@@ -4306,6 +4404,7 @@ fi
         }
         catch (Exception ex)
         {
+            endedSafely = false;
             AppendLog($"Compact Distro error: {ex.Message}{Environment.NewLine}", "red");
             SetCompactDistroStatus(
                 serverWasStopped
@@ -4331,6 +4430,7 @@ fi
             // Passive checks were held off for the whole run. Restarting the timer lets an unknown
             // status be re-read on its own schedule instead of forcing the distro back open here.
             QueueServerStatusRefresh();
+            ResumeAssistantAfterMaintenance(endedSafely);
         }
     }
 
@@ -4447,12 +4547,19 @@ fi
             return;
         }
 
+        if (!await PauseAssistantForMaintenanceAsync("Export Full Distro").ConfigureAwait(true))
+        {
+            return;
+        }
+
         if (!TryBeginExclusiveDistroOperation())
         {
+            ResumeAssistantAfterMaintenance(reconnect: true);
             ReportExclusiveDistroOperationBusy("Export Full Distro");
             return;
         }
 
+        var endedSafely = true;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
@@ -4487,6 +4594,7 @@ fi
         }
         catch (Exception ex)
         {
+            endedSafely = false;
             AppendLog($"Full distro export error: {ex.Message}{Environment.NewLine}", "red");
             MessageBox.Show(
                 $"Full distro export failed.\n\n{ex.Message}",
@@ -4498,6 +4606,7 @@ fi
         {
             SetExclusiveDistroOperationInProgress(false);
             QueueServerStatusRefresh(immediate: true);
+            ResumeAssistantAfterMaintenance(endedSafely);
         }
     }
 
@@ -4623,8 +4732,14 @@ fi
             }
         }
 
+        if (!await PauseAssistantForMaintenanceAsync("Import Full Distro").ConfigureAwait(true))
+        {
+            return;
+        }
+
         if (!TryBeginExclusiveDistroOperation())
         {
+            ResumeAssistantAfterMaintenance(reconnect: true);
             ReportExclusiveDistroOperationBusy("Import Full Distro");
             return;
         }
@@ -4721,6 +4836,8 @@ fi
         {
             SetExclusiveDistroOperationInProgress(false);
             QueueServerStatusRefresh(immediate: true);
+            // An import can replace the distro the assistant's task lived in, so it waits for Connect.
+            ResumeAssistantAfterMaintenance(reconnect: false);
         }
     }
 
@@ -4743,6 +4860,9 @@ fi
             "Warning: Rolling back to much older versions can cause data/config incompatibility\n" +
             "and may result in data loss if migrations or files are not backward compatible.\n\n" +
             "Any local changes will be auto-stashed first.\n" +
+            (serverKey == "lorkhan"
+                ? "The lorkhan database is backed up to /var/backups first; the rollback stops if the backup fails.\n"
+                : string.Empty) +
             "Continue?",
             "Confirm Rollback",
             MessageBoxButton.YesNo,
@@ -5556,6 +5676,19 @@ fi
         }
     }
 
+    internal ApiKeysService CreateApiKeysService() => new(_wsl, TryBeginPassiveDistroActivity, EndPassiveDistroActivity);
+
+    private void OpenApiKeysWindow()
+    {
+        if (!TryBeginPassiveDistroActivity()) return;
+        try
+        {
+            var window = new ApiKeysWindow(new ApiKeysService(_wsl)) { Owner = Application.Current.MainWindow };
+            window.ShowDialog();
+        }
+        finally { EndPassiveDistroActivity(); }
+    }
+
     private async Task OpenCudaConfigWindowAsync()
     {
         try
@@ -5581,7 +5714,8 @@ fi
         }
     }
 
-    public async Task InstallComponentAsync(string componentKey)
+    /// <summary>Returns true only when the installer ran and exited successfully.</summary>
+    public async Task<bool> InstallComponentAsync(string componentKey)
     {
         var definition = GetComponentInstallDefinition(componentKey);
         if (!await _componentInstallGate.WaitAsync(0).ConfigureAwait(true))
@@ -5591,7 +5725,7 @@ fi
                 "Component Install In Progress",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
-            return;
+            return false;
         }
 
         try
@@ -5609,6 +5743,7 @@ fi
                 $"{definition.DisplayName} installer exited with code {exitCode}.{Environment.NewLine}",
                 exitCode == 0 ? "green" : "red");
             LauncherLogService.Operation($"END component installer: {definition.DisplayName}; exit code {exitCode}");
+            return exitCode == 0;
         }
         catch (Exception ex)
         {
@@ -5619,6 +5754,7 @@ fi
                 "Component Install Failed",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
+            return false;
         }
         finally
         {
@@ -5681,9 +5817,10 @@ fi
     private async Task<(string? Branch, string? Sha)> GetServerHeadInfoAsync(string serverKey)
     {
         var config = GetRollbackServerConfig(serverKey);
+        var git = RollbackGit(config.RepoPath);
         var result = await _wsl.RunBashAsync(
-                $"cd {config.RepoPath} && git rev-parse --abbrev-ref HEAD && git rev-parse --short HEAD",
-                user: config.Key == "lorkhan" ? "root" : "dwemer")
+                $"cd {config.RepoPath} && {git} rev-parse --abbrev-ref HEAD && {git} rev-parse --short HEAD",
+                user: RollbackUser(config.RepoPath))
             .ConfigureAwait(false);
 
         if (!result.Succeeded)
@@ -5702,8 +5839,9 @@ fi
         var versionHistoryFiles = config.VersionNumberFiles.Concat(config.VersionTextFiles).ToArray();
         var historyFilesArg = string.Join(" ", versionHistoryFiles);
 
+        var git = RollbackGit(config.RepoPath);
         var historyResult = await _wsl.RunBashAsync(
-                $"cd {config.RepoPath} && git fetch --all --tags --quiet && git log --date=short --pretty=format:'%H\t%h\t%cd' -n 40 -- {historyFilesArg}", user: config.Key == "lorkhan" ? "root" : "dwemer")
+                $"cd {config.RepoPath} && {git} fetch --all --tags --quiet && {git} log --date=short --pretty=format:'%H\t%h\t%cd' -n 40 -- {historyFilesArg}", user: RollbackUser(config.RepoPath))
             .ConfigureAwait(false);
 
         if (!historyResult.Succeeded)
@@ -5758,8 +5896,8 @@ fi
         foreach (var fileName in fileCandidates)
         {
             var result = await _wsl.RunBashAsync(
-                    $"cd {repoPath} && git show {commitSha}:{fileName} 2>/dev/null | sed -n '1p'",
-                    user: repoPath == "/opt/dwemerdistro/sources/LorkhanServer" ? "root" : "dwemer")
+                    $"cd {repoPath} && {RollbackGit(repoPath)} show {commitSha}:{fileName} 2>/dev/null | sed -n '1p'",
+                    user: RollbackUser(repoPath))
                 .ConfigureAwait(false);
 
             if (!result.Succeeded)
@@ -5811,12 +5949,25 @@ fi
                 // LORKHAN runs a deployed copy, not its Git checkout. Back up its database first.
                 var preflight = $"git -C {config.RepoPath} cat-file -e {EscapeForSingleQuotedBash(target.Ref + ":scripts/deploy-local-wsl.sh")}; " +
                     "backup=$(mktemp /var/backups/lorkhan-rollback-XXXXXXXX.sql); " +
-                    "chmod 600 \"$backup\"; runuser -u postgres -- pg_dump lorkhan > \"$backup\"; ";
+                    // A failed dump must not leave a file that looks like a backup, or reach the checkout.
+                    "if ! { chmod 600 \"$backup\" && runuser -u postgres -- pg_dump lorkhan > \"$backup\"; }; then " +
+                    "if [ -f \"$backup\" ] && [ ! -L \"$backup\" ]; then rm -f -- \"$backup\"; fi; " +
+                    "echo 'Database backup failed; rollback stopped before checkout.' >&2; exit 1; fi; " +
+                    "echo \"LORKHAN_DB_BACKUP:$backup\"; ";
                 bashCommand = "set -e; export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=/opt/dwemerdistro/sources/LorkhanServer; " + preflight + bashCommand +
                     $"; bash {config.RepoPath}/scripts/deploy-local-wsl.sh {config.RepoPath}";
             }
             var result = await _wsl.RunBashAsync(bashCommand, text => AppendLog(text),
-                user: serverKey == "lorkhan" ? "root" : "dwemer").ConfigureAwait(true);
+                user: RollbackUser(config.RepoPath)).ConfigureAwait(true);
+            var backupPath = result.StandardOutput
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(line => line.StartsWith("LORKHAN_DB_BACKUP:", StringComparison.Ordinal))
+                ?.Split(':', 2)[1];
+            if (backupPath is not null)
+            {
+                AppendLog($"Database backup saved: {backupPath}{Environment.NewLine}", "green");
+            }
+
             if (!result.Succeeded)
             {
                 AppendLog("Rollback failed. Review output above for details." + Environment.NewLine, "red");
@@ -5874,6 +6025,13 @@ fi
 
         return "all";
     }
+
+    // LORKHAN's checkout is read as root but owned by dwemer; trust that one repo for each git call only.
+    private static string RollbackGit(string repoPath) =>
+        repoPath == "/opt/dwemerdistro/sources/LorkhanServer" ? $"git -c safe.directory={repoPath}" : "git";
+
+    private static string RollbackUser(string repoPath) =>
+        repoPath == "/opt/dwemerdistro/sources/LorkhanServer" ? "root" : "dwemer";
 
     private static RollbackServerConfig GetRollbackServerConfig(string serverKey)
     {
@@ -6014,6 +6172,12 @@ fi
                 rm -f /home/dwemer/audio.cpp/start.sh
                 """,
                 "[ -x /home/dwemer/pocket-tts/venv/bin/python ] && [ -e /home/dwemer/pocket-tts/start.sh ]"),
+            "lmstudio" => new(
+                "lmstudio",
+                "LLM Studio",
+                "/usr/local/bin/install_lmstudio",
+                "[ -x /home/dwemer/.lmstudio/bin/lms ] && [ -f /etc/sudoers.d/dwemerdistro-lmstudio ]",
+                "root"),
             "higgs" => new(
                 "higgs",
                 "Higgs TTS 3",
@@ -6066,7 +6230,19 @@ fi
                     rm -rf parakeet-api-server
                     git clone --depth 1 https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
                 fi
-                /home/dwemer/parakeet-api-server/ddistro_install.sh
+                cd /home/dwemer/parakeet-api-server
+                # Older checkouts track the scripts ddistro_install.sh and start.sh execute directly as 100644.
+                # Mark them in the index too, so a later fast-forward to the executable upstream modes is not blocked.
+                for script in install.sh conf.sh start-cpu.sh start-gpu.sh start_native.sh; do
+                    [ -f "$script" ] || continue
+                    if [ ! -O . ] || [ ! -O "$script" ]; then
+                        echo "Cannot repair Parakeet script permissions: $PWD/$script must be owned by $(id -un)."
+                        exit 24
+                    fi
+                    chmod u+x "$script"
+                    git update-index --chmod=+x -- "$script"
+                done
+                bash ./ddistro_install.sh
                 """,
                 "[ -x /home/dwemer/parakeet-api-server/venv/bin/python ]"),
             "localwhisper" => new(

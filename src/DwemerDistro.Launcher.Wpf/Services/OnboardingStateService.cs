@@ -56,7 +56,7 @@ public sealed class OnboardingStateService
         await JsonSerializer.SerializeAsync(stream, state, JsonOptions, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task MarkCompletedAsync(
+    public async Task MarkCompletedAsync(
         SetupPresetKey preset,
         string voiceEngine,
         bool openRouterConfigured,
@@ -65,8 +65,11 @@ public sealed class OnboardingStateService
         IReadOnlyDictionary<string, string>? productInstallResults = null,
         CancellationToken cancellationToken = default)
     {
+        var previous = await LoadAsync(cancellationToken).ConfigureAwait(false);
         var state = new OnboardingState
         {
+            LocalAiChoice = previous.LocalAiChoice,
+            LocalAiCompletedChoice = previous.LocalAiCompletedChoice,
             Version = CurrentVersion,
             Completed = true,
             CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -81,17 +84,20 @@ public sealed class OnboardingStateService
                 : new Dictionary<string, string>(productInstallResults, StringComparer.OrdinalIgnoreCase)
         };
 
-        return SaveAsync(state, cancellationToken);
+        await SaveAsync(state, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task MarkSkippedAsync(
+    public async Task MarkSkippedAsync(
         SetupPresetKey preset,
         IReadOnlyList<string>? selectedProducts = null,
         IReadOnlyDictionary<string, string>? productInstallResults = null,
         CancellationToken cancellationToken = default)
     {
+        var previous = await LoadAsync(cancellationToken).ConfigureAwait(false);
         var state = new OnboardingState
         {
+            LocalAiChoice = previous.LocalAiChoice,
+            LocalAiCompletedChoice = previous.LocalAiCompletedChoice,
             Version = CurrentVersion,
             Skipped = true,
             SkippedAtUtc = DateTimeOffset.UtcNow,
@@ -102,12 +108,81 @@ public sealed class OnboardingStateService
                 : new Dictionary<string, string>(productInstallResults, StringComparer.OrdinalIgnoreCase)
         };
 
-        return SaveAsync(state, cancellationToken);
+        await SaveAsync(state, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Records the Quickstart voice setup that must run once the voice service is up.</summary>
+    public async Task SetPendingVoiceApplyAsync(
+        string engineKey,
+        string? pocketTtsBackend,
+        CancellationToken cancellationToken = default)
+    {
+        var state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+        state.PendingVoiceApply = new PendingVoiceApplyState
+        {
+            EngineKey = engineKey,
+            PocketTtsBackend = pocketTtsBackend,
+            RequestedAtUtc = DateTimeOffset.UtcNow
+        };
+        await SaveAsync(state, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the saved Quickstart voice setup through <paramref name="apply"/> and clears it only when
+    /// <see cref="VoiceEngineService.IsInitialApplyComplete"/> holds. Returns null, without calling
+    /// apply, when no completed onboarding has a request saved.
+    /// </summary>
+    public async Task<IReadOnlyList<VoiceEngineApplyTargetStatus>?> RunPendingVoiceApplyAsync(
+        Func<string, string?, Task<IReadOnlyList<VoiceEngineApplyTargetStatus>>> apply,
+        CancellationToken cancellationToken = default)
+    {
+        var state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+        var pending = state.PendingVoiceApply;
+        if (!state.Completed || pending is null || string.IsNullOrWhiteSpace(pending.EngineKey))
+        {
+            return null;
+        }
+
+        var targets = await apply(pending.EngineKey, pending.PocketTtsBackend).ConfigureAwait(false);
+        if (VoiceEngineService.IsInitialApplyComplete(targets))
+        {
+            await ClearPendingVoiceApplyAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return targets;
+    }
+
+    /// <summary>Clears the pending voice setup; call only after it succeeded.</summary>
+    public async Task ClearPendingVoiceApplyAsync(CancellationToken cancellationToken = default)
+    {
+        var state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (state.PendingVoiceApply is null)
+        {
+            return;
+        }
+
+        state.PendingVoiceApply = null;
+        await SaveAsync(state, cancellationToken).ConfigureAwait(false);
+    }
+}
+
+/// <summary>An explicit Quickstart voice setup waiting for the voice service to start.</summary>
+public sealed class PendingVoiceApplyState
+{
+    public string? EngineKey { get; set; }
+
+    /// <summary>"audiocpp" or "python" when the Quickstart preset chose one; null lets Core decide.</summary>
+    public string? PocketTtsBackend { get; set; }
+
+    public DateTimeOffset? RequestedAtUtc { get; set; }
 }
 
 public sealed class OnboardingState
 {
+    public string? LocalAiChoice { get; set; }
+
+    public string? LocalAiCompletedChoice { get; set; }
+
     /// <summary>
     /// Defaults to 1 so a version 1 file that predates the field, and one that states it, both read
     /// back as version 1 rather than claiming to carry the product keys.
@@ -137,4 +212,10 @@ public sealed class OnboardingState
 
     /// <summary>Product key to install outcome ("installed", "failed", "skipped"). Null on version 1.</summary>
     public Dictionary<string, string>? ProductInstallResults { get; set; }
+
+    /// <summary>
+    /// Quickstart voice setup deferred until DwemerDistro starts. Kept until it succeeds, so closing
+    /// the launcher before the voice service is ready does not lose it. Null when nothing is pending.
+    /// </summary>
+    public PendingVoiceApplyState? PendingVoiceApply { get; set; }
 }

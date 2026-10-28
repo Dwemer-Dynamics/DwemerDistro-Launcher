@@ -238,6 +238,18 @@ public sealed class ProcessRunner
         return process;
     }
 
+    /// <summary>
+    /// Starts a hidden process whose stdin, stdout and stderr all stay with the caller, for
+    /// long-lived line protocols where the caller owns every read and write.
+    /// </summary>
+    public Process StartHiddenDuplexProcess(string fileName, IEnumerable<string> arguments)
+    {
+        var process = CreateHiddenProcess(fileName, arguments, redirectInput: true);
+        process.StartInfo.StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        process.Start();
+        return process;
+    }
+
     public void RunInNewConsole(string command)
     {
         _ = StartInNewConsole(command);

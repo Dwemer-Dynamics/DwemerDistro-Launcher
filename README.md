@@ -1,10 +1,28 @@
 # DwemerDistro Launcher WPF
 
+Community mod releases: see [publishing and installation](docs/COMMUNITY_MODS.md).
+
 This workspace is the C# WPF launcher rewrite for DwemerDistro.
 
 It keeps WSL distro management in the launcher, but separates launcher binary updates from WSL distro updates. The launcher updates itself from GitHub Releases using a helper updater executable.
 
 - `https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher`
+
+## Which Download Do I Need?
+
+> **First install? Download `DwemerDistroInstaller.exe`, not the ZIP.** `DwemerDistro-win-x64.zip` contains only the launcher. It does not contain the DwemerDistro WSL distro, so extracting it on a PC without DwemerDistro ends in `WSL_E_DISTRO_NOT_FOUND`.
+
+**First install (no DwemerDistro yet):**
+
+1. Open the [latest GitHub release](https://github.com/Dwemer-Dynamics/DwemerDistro-Launcher/releases/latest) and download **`DwemerDistroInstaller.exe`** from its Assets. It is a single file containing the DwemerDistro WSL distro and that release's launcher. Optional: compare `Get-FileHash .\DwemerDistroInstaller.exe` with the release's `SHA256SUMS`.
+2. Run it (it asks for administrator rights) and keep WSL setup/import enabled.
+3. Open the installed DwemerDistro launcher and pick your mods (for example **CHIM**) in Quickstart.
+
+Alternatives: the **Dwemer Distro installer** on the [CHIM Nexus files page](https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files), and the full walkthrough in the [official CHIM installation guide](https://dwemerdynamics.com/chim/installation.html).
+
+Having Ubuntu (or any other WSL distro) installed does not supply DwemerDistro. If the launcher reports that the DwemerDistro distro is missing (`WSL_E_DISTRO_NOT_FOUND`), run `DwemerDistroInstaller.exe`. **Update Distro** cannot create a missing distro, and installing Ubuntu does not fix it.
+
+**Existing install (DwemerDistro already set up):** the launcher updates itself automatically. `DwemerDistro-win-x64.zip` from GitHub Releases is only a manual launcher replacement for an existing install.
 
 ## Scope
 
@@ -104,13 +122,15 @@ Published output:
 
 ## Release Updates
 
-Push a git tag like `v2.5.3`.
+Release CI has been removed. Build and validate candidates locally; see
+[Assistant release preparation](docs/ASSISTANT_RELEASE.md) and
+[Launcher updates](docs/UPDATES.md).
 
-The GitHub Actions workflow in `.github/workflows/release.yml` will:
+After separate release approval, synchronize the release version, publish the
+launcher and updater locally, package the exact output as
+`DwemerDistro-win-x64.zip`, build the installer from that ZIP and the verified
+clean distro payload, and record `SHA256SUMS`. Create the approved tag and upload
+the installer, ZIP and checksums to GitHub Releases manually.
 
-1. publish the launcher
-2. publish the updater helper
-3. zip both executables into `DwemerDistro-win-x64.zip`
-4. upload that zip to GitHub Releases
-
-Installed launchers then detect updates from that repo in the bottom `Launcher` section of the app.
+Installed launchers detect newer releases in the bottom `Launcher` section.
+Local candidates do not create releases or update users automatically.

@@ -1,0 +1,101 @@
+<UserControl x:Class="DwemerDistro.Launcher.Wpf.Views.CommunityModDetails"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Background="{DynamicResource GameCenter.Window}" Foreground="{DynamicResource GameCenter.Text}">
+    <UserControl.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        </Style>
+        <!-- Missing game or author metadata collapses instead of leaving a blank row. -->
+        <Style x:Key="OptionalText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+            <Style.Triggers>
+                <Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+                <Trigger Property="Text" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="Background" Value="{DynamicResource GameCenter.Panel}" />
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+        </Style>
+        <Style TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Padding" Value="12,5" />
+        </Style>
+    </UserControl.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Button x:Name="BackButton" Content="← Browse mods" HorizontalAlignment="Left" Margin="0,0,0,12"
+                Click="Back_Click" AutomationProperties.Name="Back to mod grid" />
+        <Expander x:Name="RepositoryEditor" Grid.Row="1" Header="Repository URL" Margin="0,0,0,12"
+                  Foreground="{DynamicResource GameCenter.Text}">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBox x:Name="RepositoryBox" AutomationProperties.Name="GitHub repository URL"
+                         TextChanged="Repository_Changed" KeyDown="Repository_KeyDown" Margin="0,8,0,0" />
+                <Button x:Name="CheckButton" Grid.Column="1" Content="Check release" Margin="8,8,0,0" Click="Check_Click" />
+            </Grid>
+        </Expander>
+        <Grid Grid.Row="2">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Padding="0,0,8,0">
+                <StackPanel>
+                    <Grid Margin="0,0,0,20">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="256" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border Background="{DynamicResource GameCenter.Panel}" Width="256" Height="256" ClipToBounds="True" VerticalAlignment="Top">
+                            <Grid>
+                                <Image Source="../Assets/DwemerDistro.png" Width="96" Height="96" Opacity="0.25">
+                                    <Image.Style>
+                                        <Style TargetType="Image">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Source, ElementName=BannerImage}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Image.Style>
+                                </Image>
+                                <Image x:Name="BannerImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Mod image" />
+                            </Grid>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="20,0,0,0">
+                            <!-- Title, the game directly below it, then the quieter author credit; plain text only. -->
+                            <TextBlock x:Name="ModTitle" Text="Choose a mod" FontSize="23" FontWeight="SemiBold" />
+                            <TextBlock x:Name="ReleaseText" Style="{StaticResource OptionalText}" Margin="0,2,0,0"
+                                       Foreground="{DynamicResource GameCenter.TextMuted}" FontSize="14" />
+                            <TextBlock x:Name="AuthorText" Style="{StaticResource OptionalText}" Margin="0,5,0,0"
+                                       Foreground="{DynamicResource GameCenter.TextMuted}" Opacity="0.75" FontSize="12" />
+                            <TextBlock x:Name="DescriptionText" Text="Select a mod to see what it adds to your game." Margin="0,16,0,20" FontSize="14" />
+                            <WrapPanel>
+                                <Button x:Name="InstallButton" Content="Install server" Style="{StaticResource GameCenter.PrimaryButton}"
+                                        IsEnabled="False" Click="Install_Click" Height="40" MinWidth="160" />
+                                <Button x:Name="DownloadButton" Content="Download mod release" Style="{StaticResource GameCenter.PrimaryButton}"
+                                        Visibility="Collapsed" Click="Download_Click" Height="40" MinWidth="180" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Grid>
+                    <StackPanel Margin="0,0,0,12">
+                        <TextBlock Text="Setup" FontWeight="SemiBold" Margin="0,0,0,10" />
+                        <TextBlock x:Name="SetupText" Text="Install the server here, then download the mod and add it to your game." FontSize="13" />
+                        <TextBlock x:Name="CompatibilityText" FontSize="13" Margin="0,8,0,0" />
+                        <WrapPanel Margin="0,16,0,0">
+                            <Button x:Name="SourceButton" Content="Mod page" IsEnabled="False" Margin="0,0,6,6" Click="Source_Click" />
+                            <Button x:Name="NotesButton" Content="What's new" IsEnabled="False" Margin="0,0,6,6" Click="Notes_Click" />
+                        </WrapPanel>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+        <StackPanel Grid.Row="3" Margin="0,12,0,0">
+            <ProgressBar x:Name="BusyProgress" Height="3" Margin="0,0,0,6" Visibility="Collapsed" />
+            <TextBlock x:Name="StatusText" FontSize="12" Foreground="{DynamicResource GameCenter.TextMuted}"
+                       AutomationProperties.Name="Community mod status" AutomationProperties.LiveSetting="Polite" />
+        </StackPanel>
+    </Grid>
+</UserControl>

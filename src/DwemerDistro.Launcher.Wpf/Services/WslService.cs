@@ -189,7 +189,15 @@ public sealed class WslService(ProcessRunner processRunner)
             .FirstOrDefault();
     }
 
-    public string? GetDistroBasePath()
+    public string? GetDistroBasePath() => ReadDistroRegistration((_, distroKey) => distroKey.GetValue("BasePath") as string);
+
+    /// <summary>
+    /// The WSL registration GUID of the DwemerDistro distro. A reinstall or re-import registers a new
+    /// one, so it identifies this installation without asking WSL anything.
+    /// </summary>
+    public string? GetDistroRegistrationId() => ReadDistroRegistration((subKeyName, _) => subKeyName);
+
+    private static string? ReadDistroRegistration(Func<string, RegistryKey, string?> read)
     {
         using var lxssKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Lxss");
         if (lxssKey is null)
@@ -211,7 +219,7 @@ public sealed class WslService(ProcessRunner processRunner)
                 continue;
             }
 
-            return distroKey.GetValue("BasePath") as string;
+            return read(subKeyName, distroKey);
         }
 
         return null;

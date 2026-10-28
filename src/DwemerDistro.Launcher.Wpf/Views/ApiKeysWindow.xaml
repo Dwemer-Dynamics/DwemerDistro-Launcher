@@ -1,0 +1,6 @@
+<Window x:Class="DwemerDistro.Launcher.Wpf.Views.ApiKeysWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="Shared API Keys" Width="720" Height="760" MinWidth="440" MinHeight="440" Background="#202020"
+ WindowStartupLocation="CenterOwner" Closing="Window_Closing">
+ <ContentControl x:Name="EditorHost"/>
+</Window>

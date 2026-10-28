@@ -28,19 +28,18 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private static readonly TimeSpan HuggingFaceTokenStatusTimeout = TimeSpan.FromSeconds(30);
     private static readonly IReadOnlyList<ConfigurableComponentDefinition> ConfigurableComponentDefinitions =
     [
-        new("text2vec", "Text2Vec", "/home/dwemer/text2vec-api", "/home/dwemer/text2vec-api/conf.sh", "Path('/home/dwemer/text2vec-api').is_dir()", "start"),
-        new("localwhisper", "LocalWhisper", "/home/dwemer/remote-faster-whisper", "/home/dwemer/remote-faster-whisper/conf.sh", "Path('/home/dwemer/python-stt').is_dir()", "whisper"),
-        new("xtts", "Dwemer Distro XTTS", "/home/dwemer/xtts-api-server", "/home/dwemer/xtts-api-server/conf.sh", "Path('/home/dwemer/python-tts').is_dir()", "start"),
-        new("llamacpp", "llama.cpp", "/home/dwemer/llama-cpp", "/home/dwemer/llama-cpp/conf.sh", "Path('/home/dwemer/llama-cpp').is_dir()", "start"),
-        new("minime", "Minime and TXT2VEC", "/home/dwemer/minime-t5", "/home/dwemer/minime-t5/conf.sh", "Path('/home/dwemer/python-minime').is_dir()", "start"),
-        new("melotts", "MeloTTS", "/home/dwemer/MeloTTS", "/home/dwemer/MeloTTS/conf.sh", "Path('/home/dwemer/python-melotts').is_dir()", "start"),
-        new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))", "start"),
-        new("parakeet", "Parakeet STT", "/home/dwemer/parakeet-api-server", "/home/dwemer/parakeet-api-server/conf.sh", "Path('/home/dwemer/parakeet-api-server/venv').is_dir()", "start"),
-        new("higgs", "Higgs TTS 3", "/home/dwemer/higgs-tts", "/home/dwemer/higgs-tts/conf.sh", "Path('/home/dwemer/higgs-tts/runtime/audiocpp_server').is_file()", "higgs"),
-        new("chatterbox", "Chatterbox", "/home/dwemer/chatterbox", "/home/dwemer/chatterbox/conf.sh", "Path('/home/dwemer/chatterbox/venv').is_dir()", "start"),
-        new("audiocpp", "Pocket-TTS (GPU / audio.cpp)", "/home/dwemer/audio.cpp", "/home/dwemer/audio.cpp/conf.sh", "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file()", "start"),
-        new("pockettts", "Pocket-TTS (CPU / Python)", "/home/dwemer/pocket-tts", "/home/dwemer/pocket-tts/conf.sh", "Path('/home/dwemer/pocket-tts/venv').is_dir()", "start"),
-        new("omnivoice", "Multilingual OmniVoice TTS", "/home/dwemer/omnivoice-tts", "/home/dwemer/omnivoice-tts/conf.sh", "Path('/home/dwemer/omnivoice-tts/venv').is_dir()", "omnivoice")
+        new("text2vec", "Text2Vec", "/home/dwemer/text2vec-api", "/home/dwemer/text2vec-api/conf.sh", "start", CardKey: "minime"),
+        new("localwhisper", "LocalWhisper", "/home/dwemer/remote-faster-whisper", "/home/dwemer/remote-faster-whisper/conf.sh", "whisper"),
+        new("xtts", "Dwemer Distro XTTS", "/home/dwemer/xtts-api-server", "/home/dwemer/xtts-api-server/conf.sh", "start"),
+        new("llamacpp", "llama.cpp", "/home/dwemer/llama-cpp", "/home/dwemer/llama-cpp/conf.sh", "start", CardKey: "lmstudio"),
+        new("minime", "Minime and TXT2VEC", "/home/dwemer/minime-t5", "/home/dwemer/minime-t5/conf.sh", "start"),
+        new("pipertts", "Piper-TTS", "/home/dwemer/piper", "/home/dwemer/piper/conf.sh", "start"),
+        new("parakeet", "Parakeet STT", "/home/dwemer/parakeet-api-server", "/home/dwemer/parakeet-api-server/conf.sh", "start"),
+        new("higgs", "Higgs TTS 3", "/home/dwemer/higgs-tts", "/home/dwemer/higgs-tts/conf.sh", "higgs"),
+        new("chatterbox", "Chatterbox", "/home/dwemer/chatterbox", "/home/dwemer/chatterbox/conf.sh", "start"),
+        new("audiocpp", "Pocket-TTS (GPU / audio.cpp)", "/home/dwemer/audio.cpp", "/home/dwemer/audio.cpp/conf.sh", "start"),
+        new("pockettts", "Pocket-TTS (CPU / Python)", "/home/dwemer/pocket-tts", "/home/dwemer/pocket-tts/conf.sh", "start"),
+        new("omnivoice", "Multilingual OmniVoice TTS", "/home/dwemer/omnivoice-tts", "/home/dwemer/omnivoice-tts/conf.sh", "omnivoice")
     ];
     private static readonly IReadOnlyDictionary<string, ConfigurableComponentDefinition> ConfigurableComponentsByKey =
         ConfigurableComponentDefinitions.ToDictionary(definition => definition.Key, StringComparer.OrdinalIgnoreCase);
@@ -460,7 +459,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
         try
         {
-            ConfigurableComponentsStatusText = "Checking installed components...";
+            // Each card shows its own Checking state, so the page-level line stays for failures only.
+            ConfigurableComponentsStatusText = string.Empty;
             foreach (var item in _allItems)
             {
                 item.SetCheckingState();
@@ -533,7 +533,12 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
 
         ConfigurableComponents.Clear();
-        ConfigurableComponentsStatusText = "Unable to check installed components.";
+        foreach (var item in _allItems)
+        {
+            item.SetConfigurations([]);
+        }
+
+        ConfigurableComponentsStatusText = "Unable to check installed components. Open Components again to retry.";
     }
 
     private void ApplyConfigurableComponents(IReadOnlyList<ConfigurableComponentProbeState> states)
@@ -552,12 +557,22 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 definition.Key,
                 definition.Title,
                 state.ConfigurationText ?? "Unknown",
-                () => ConfigureComponentAsync(definition)));
+                () => ConfigureComponentAsync(definition),
+                isCompanion: definition.CardKey is not null));
         }
 
-        ConfigurableComponentsStatusText = ConfigurableComponents.Count == 0
-            ? "No configurable components are currently installed."
-            : string.Empty;
+        foreach (var item in _allItems)
+        {
+            item.SetConfigurations(ConfigurableComponents
+                .Where(configuration => string.Equals(
+                    ConfigurableComponentsByKey[configuration.Key].CardKey ?? configuration.Key,
+                    item.Key,
+                    StringComparison.OrdinalIgnoreCase))
+                .OrderBy(configuration => configuration.IsCompanion));
+        }
+
+        // Every installed configurable component now shows its configuration on its card.
+        ConfigurableComponentsStatusText = string.Empty;
     }
 
     private async Task ConfigureComponentAsync(ConfigurableComponentDefinition definition)
@@ -571,21 +586,282 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             $"wsl.exe -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"{definition.ScriptPath}\"";
         await TrackOperationAsync(async () =>
         {
+            // A closed console or failed configuration exits non-zero; connectors stay as they were.
+            var configured = false;
             try
             {
-                await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true);
+                configured = await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true) == 0;
             }
             finally
             {
                 await RefreshInstalledStatesAsync().ConfigureAwait(true);
             }
+
+            if (configured)
+            {
+                await SyncPocketTtsConnectorsAsync(definition.Key).ConfigureAwait(true);
+            }
         }).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// After a Pocket-TTS install or configure, point managed game connectors at that backend.
+    /// The Core helper writes nothing unless that backend is the only one enabled and it is running.
+    /// </summary>
+    private async Task SyncPocketTtsConnectorsAsync(string componentKey)
+    {
+        var backend = PocketTtsConnectorService.BackendForComponent(componentKey);
+        var item = _allItems.FirstOrDefault(candidate => string.Equals(candidate.Key, componentKey, StringComparison.OrdinalIgnoreCase));
+        if (backend is null || item is null)
+        {
+            return;
+        }
+
+        item.SetConnectorStatus("Checking game voice connectors...");
+        var result = await _mainWindowViewModel.SyncPocketTtsConnectorsAsync(backend).ConfigureAwait(true);
+        item.SetConnectorStatus(result.State == "not_enabled" ? $"{result.Message} Connectors were not changed." : result.Summary);
     }
 
     internal static string BuildMeloTtsProbeEntry()
     {
         return ": provider_status(Path('/home/dwemer/python-melotts/bin/python').exists(), Path('/home/dwemer/MeloTTS/start.sh').exists(), Path('/home/dwemer/MeloTTS'), 8084, 'melotts', 'MeloTTS'),";
     }
+
+    /// <summary>
+    /// The catalog's installed and startup states alone, as the same fixed probe code computes them for this page. It
+    /// prints <c>{"catalog_version", "sha256", "items": [{"id", "installed", "installed_reason", "startup",
+    /// "startup_reason"}]}</c>, comparable field by field with <c>ddistro inventory --json</c>'s <c>catalog</c> section.
+    /// </summary>
+    internal static string BuildCatalogProbeScript(ComponentCatalog catalog)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("python3 - <<'PY'");
+        builder.AppendLine("from pathlib import Path");
+        builder.AppendLine("import json");
+        builder.Append(BuildCatalogProbeFunctions(catalog));
+        builder.AppendLine("print(json.dumps(catalog_report()))");
+        builder.AppendLine("PY");
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Fixed Python that evaluates the catalog's installed rules with Core's semantics (bin/ddistro catalog_walk and
+    /// inventory_marker), followed by the validated rules as plain literals. Nothing from the catalog becomes code: every
+    /// rendered value is a validated id, path or version made only of safe characters.
+    /// </summary>
+    internal static string BuildCatalogProbeFunctions(ComponentCatalog catalog)
+    {
+        var builder = new StringBuilder(CatalogProbeFunctions);
+        builder.AppendLine($"CATALOG_VERSION = {PythonText(catalog.CatalogVersion)}");
+        builder.AppendLine($"CATALOG_SHA256 = {PythonText(catalog.Sha256)}");
+        builder.AppendLine("CATALOG = {");
+        foreach (var entry in catalog.Entries)
+        {
+            builder.AppendLine($"    {PythonText(entry.Id)}: ({PythonRule(entry.Installed)}, {(entry.Startup is null ? "None" : PythonRule(entry.Startup))}),");
+        }
+
+        builder.AppendLine("}");
+        builder.AppendLine("CATALOG_STATE = {key: catalog_installed(rules[0]) for key, rules in CATALOG.items()}");
+        builder.AppendLine();
+        return builder.ToString();
+    }
+
+    private static string PythonRule(ComponentPredicate rule) =>
+        $"({PythonText(rule.Mode)}, ({string.Join(" ", rule.Leaves.Select(leaf => $"({PythonText(leaf.Kind)}, {PythonText(leaf.Argument)}),"))}))";
+
+    private static string PythonText(string value) =>
+        value.Length > 0 && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '+' or '-' or '/' or '*')
+            ? $"'{value}'"
+            : throw new InvalidOperationException("A component catalog value is not a plain id, path or version.");
+
+    private const string CatalogProbeFunctions = """
+        import errno
+        import os
+        import pwd
+        import stat
+
+        CATALOG_LINK_HOPS = 8
+        CATALOG_GLOB_SCAN = 256
+        CATALOG_SEGMENT_CHARS = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._+-')
+        CATALOG_WHICH_PATH = ('/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin', '/usr/local/cuda/bin')
+
+        def catalog_segment(name):
+            return 1 <= len(name) <= 64 and all(c in CATALOG_SEGMENT_CHARS for c in name)
+
+        def catalog_uid(account):
+            try:
+                return pwd.getpwnam(account).pw_uid
+            except KeyError:
+                return None
+
+        def catalog_zone(parts):
+            if parts[:1] == ['usr'] or parts[:2] == ['etc', 'alternatives'] or len(parts) == 1 and parts[0] in ('bin', 'sbin', 'lib', 'lib32', 'lib64'):
+                return ('system',)
+            if parts[:2] == ['home', 'dwemer'] and len(parts) > 2:
+                return ('home', parts[2])
+            if parts[:3] == ['var', 'www', 'html'] and len(parts) > 3:
+                return ('www', parts[3])
+            return None
+
+        def catalog_owners(parts):
+            if parts[:2] == ['home', 'dwemer']:
+                return {0, catalog_uid('dwemer')}
+            if parts[:3] == ['var', 'www', 'html']:
+                return {0, catalog_uid('dwemer'), catalog_uid('www-data')}
+            return {0}
+
+        def catalog_walk(path):
+            pending, done, hops = path.strip('/').split('/'), [], 0
+            try:
+                info = os.lstat('/')
+            except OSError:
+                return 'unknown', 'unreadable'
+            if info.st_uid != 0 or info.st_mode & 0o002:
+                return 'unknown', 'unsafe'
+            while pending:
+                current = done + [pending.pop(0)]
+                try:
+                    info = os.lstat('/' + '/'.join(current))
+                except OSError as error:
+                    if error.errno in (errno.ENOENT, errno.ENOTDIR):
+                        return 'absent', ''
+                    return 'unknown', 'unreadable'
+                if stat.S_ISLNK(info.st_mode):
+                    hops += 1
+                    if hops > CATALOG_LINK_HOPS:
+                        return 'unknown', 'redirect_limit'
+                    if info.st_uid not in catalog_owners(current):
+                        return 'unknown', 'unsafe'
+                    try:
+                        target = os.readlink('/' + '/'.join(current))
+                    except OSError:
+                        return 'unknown', 'unreadable'
+                    resolved = [] if target.startswith('/') else list(done)
+                    for part in target.split('/'):
+                        if part == '..':
+                            if not resolved:
+                                return 'unknown', 'unsafe_redirect'
+                            resolved.pop()
+                        elif part not in ('', '.'):
+                            resolved.append(part)
+                    zone = catalog_zone(current)
+                    if zone is None or len(resolved) > 32 or not resolved or catalog_zone(resolved) not in (('system',), zone):
+                        return 'unknown', 'unsafe_redirect'
+                    pending, done = resolved + pending, []
+                    continue
+                if info.st_mode & 0o002 or info.st_uid not in catalog_owners(current):
+                    return 'unknown', 'unsafe'
+                if pending and not stat.S_ISDIR(info.st_mode):
+                    return 'absent', ''
+                done = current
+            return 'present', info
+
+        def catalog_leaf_path(kind, path):
+            state, detail = catalog_walk(path)
+            if state != 'present':
+                return state, detail
+            mode = detail.st_mode
+            found = {'exists': True, 'file': stat.S_ISREG(mode), 'dir': stat.S_ISDIR(mode),
+                     'program': stat.S_ISREG(mode) and bool(mode & 0o111)}[kind]
+            return ('present', '') if found else ('absent', '')
+
+        def catalog_combine(mode, results):
+            deciding = 'absent' if mode == 'all' else 'present'
+            if any(state == deciding for state, _ in results):
+                return deciding, ''
+            unknown = next((result for result in results if result[0] == 'unknown'), None)
+            if unknown:
+                return unknown
+            return ('present' if mode == 'all' else 'absent'), ''
+
+        def catalog_glob(path):
+            parts = path.strip('/').split('/')
+            index = next(i for i, part in enumerate(parts) if '*' in part)
+            prefix, _, suffix = parts[index].partition('*')
+            parent = '/' + '/'.join(parts[:index])
+            state, detail = catalog_walk(parent)
+            if state != 'present':
+                return state, detail
+            if not stat.S_ISDIR(detail.st_mode):
+                return 'absent', ''
+            names, truncated = [], False
+            try:
+                with os.scandir(parent) as scan:
+                    for entry in scan:
+                        if len(names) >= CATALOG_GLOB_SCAN:
+                            truncated = True
+                            break
+                        names.append(entry.name)
+            except OSError:
+                return 'unknown', 'unreadable'
+            results = [catalog_leaf_path('exists', '/'.join([parent, name] + parts[index + 1:]))
+                       for name in sorted(names) if catalog_segment(name) and name not in ('.', '..')
+                       and len(name) >= len(prefix) + len(suffix) and name.startswith(prefix) and name.endswith(suffix)]
+            return catalog_combine('any', results + ([('unknown', 'scan_limit')] if truncated else []))
+
+        def catalog_installed(predicate):
+            mode, leaves = predicate
+            results = []
+            for kind, arg in leaves:
+                if kind == 'which':
+                    results.append(catalog_combine('any', [catalog_leaf_path('program', folder + '/' + arg) for folder in CATALOG_WHICH_PATH]))
+                elif kind == 'glob':
+                    results.append(catalog_glob(arg))
+                else:
+                    results.append(catalog_leaf_path(kind, arg))
+            return catalog_combine(mode, results)
+
+        def catalog_marker(path):
+            parts = path.strip('/').split('/')
+            for index in range(len(parts)):
+                try:
+                    info = os.lstat('/' + '/'.join(parts[:index + 1]))
+                except OSError as error:
+                    if error.errno in (errno.ENOENT, errno.ENOTDIR):
+                        return 'absent'
+                    return 'unreadable'
+                if stat.S_ISLNK(info.st_mode):
+                    return 'redirected'
+                if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
+                    return 'absent'
+            return 'present' if stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode) else 'unreadable'
+
+        def catalog_startup(predicate):
+            if predicate is None:
+                return 'n/a', ''
+            mode, leaves = predicate
+            states = [catalog_marker(path) for _, path in leaves]
+            if (all if mode == 'all' else any)(state == 'present' for state in states):
+                return 'present', ''
+            state = next((s for s in states if s not in ('present', 'absent')), 'absent')
+            return (state, '') if state == 'absent' else ('unknown', state)
+
+        def installed_status(key, rich=None):
+            state, reason = CATALOG_STATE[key]
+            if state == 'unknown':
+                return make_status(False, 'Unknown', 'Installed state could not be confirmed (' + reason + ').', UNKNOWN)
+            if rich is not None:
+                return rich(state == 'present')
+            return make_status(state == 'present')
+
+        def startup_exists(key):
+            rule = CATALOG[key][1]
+            if rule is None:
+                return False
+            mode, leaves = rule
+            return (all if mode == 'all' else any)(Path(path).exists() for _, path in leaves)
+
+        def catalog_report():
+            items = []
+            for key, rules in CATALOG.items():
+                installed, installed_reason = CATALOG_STATE[key]
+                startup, startup_reason = catalog_startup(rules[1])
+                items.append({'id': key, 'installed': installed, 'installed_reason': installed_reason,
+                              'startup': startup, 'startup_reason': startup_reason})
+            return {'catalog_version': CATALOG_VERSION, 'sha256': CATALOG_SHA256, 'items': items}
+
+
+        """;
 
     private string BuildProbeScript()
     {
@@ -684,9 +960,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("            return line[:180]");
         builder.AppendLine("    return ''");
         builder.AppendLine();
-        builder.AppendLine("def omnivoice_status():");
+        builder.AppendLine("def omnivoice_status(installed):");
         builder.AppendLine("    base = Path('/home/dwemer/omnivoice-tts')");
-        builder.AppendLine("    installed = (base / 'venv' / 'bin' / 'python').exists()");
         builder.AppendLine("    log_error = last_omnivoice_error(base / 'logs' / 'server.log')");
         builder.AppendLine("    if not installed:");
         builder.AppendLine("        return make_status(False, 'Not installed', 'Separate optional service on 127.0.0.1:8021.', WARN)");
@@ -770,23 +1045,30 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("        return omnivoice_configuration(base)");
         builder.AppendLine("    return start_configuration(base)");
         builder.AppendLine();
+        builder.Append(BuildCatalogProbeFunctions(ComponentCatalog.Embedded));
         builder.AppendLine("status = {");
 
         foreach (var item in _allItems)
         {
+            // An item the catalog does not know is left out, so it shows Unknown rather than a guess.
+            if (ComponentCatalog.Embedded.Find(item.Key) is not { } entry)
+            {
+                continue;
+            }
+
             builder.Append("    ");
             builder.Append(JsonSerializer.Serialize(item.Key));
             if (string.Equals(item.Key, "omnivoice", StringComparison.OrdinalIgnoreCase))
             {
-                builder.AppendLine(": omnivoice_status(),");
+                builder.AppendLine($": installed_status('{entry.Id}', omnivoice_status),");
             }
             else if (string.Equals(item.Key, "chatterbox", StringComparison.OrdinalIgnoreCase))
             {
-                builder.AppendLine(": provider_status(Path('/home/dwemer/chatterbox/venv/bin/python').exists(), Path('/home/dwemer/chatterbox/start.sh').exists(), Path('/home/dwemer/chatterbox'), 8023, 'chatterbox', 'Chatterbox'),");
+                builder.AppendLine($": installed_status('{entry.Id}', lambda installed: provider_status(installed, startup_exists('{entry.Id}'), Path('/home/dwemer/chatterbox'), 8023, 'chatterbox', 'Chatterbox')),");
             }
             else if (string.Equals(item.Key, "pockettts", StringComparison.OrdinalIgnoreCase))
             {
-                builder.AppendLine(": provider_status(Path('/home/dwemer/pocket-tts/venv/bin/python').exists(), Path('/home/dwemer/pocket-tts/start.sh').exists(), Path('/home/dwemer/pocket-tts'), 8024, 'pockettts', 'PocketTTS Python'),");
+                builder.AppendLine($": installed_status('{entry.Id}', lambda installed: provider_status(installed, startup_exists('{entry.Id}'), Path('/home/dwemer/pocket-tts'), 8024, 'pockettts', 'PocketTTS Python')),");
             }
             else if (string.Equals(item.Key, "melotts", StringComparison.OrdinalIgnoreCase))
             {
@@ -794,9 +1076,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             }
             else
             {
-                builder.Append(": make_status(bool(");
-                builder.Append(item.InstallCheckExpression);
-                builder.AppendLine(")),");
+                builder.AppendLine($": installed_status('{entry.Id}'),");
             }
         }
 
@@ -804,9 +1084,12 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("configurable = []");
         foreach (var definition in ConfigurableComponentDefinitions)
         {
-            builder.Append("if bool(");
-            builder.Append(definition.InstallCheckExpression);
-            builder.Append(") and Path(");
+            if (ComponentCatalog.Embedded.Find(definition.Key) is not { } entry)
+            {
+                continue;
+            }
+
+            builder.Append($"if CATALOG_STATE['{entry.Id}'][0] == 'present' and Path(");
             builder.Append(JsonSerializer.Serialize(definition.ScriptPath));
             builder.AppendLine(").is_file():");
             builder.Append("    configurable.append({'key': ");
@@ -818,7 +1101,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
             builder.AppendLine(")})");
         }
 
-        builder.AppendLine("print(json.dumps({'install': status, 'configurable': configurable}))");
+        builder.AppendLine("print(json.dumps({'install': status, 'configurable': configurable, 'catalog': catalog_report()}))");
         builder.AppendLine("PY");
 
         return builder.ToString();
@@ -851,13 +1134,14 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         public string? ConfigurationText { get; set; }
     }
 
+    // CardKey places a companion service that has no card of its own on the card it ships beside.
     private sealed record ConfigurableComponentDefinition(
         string Key,
         string Title,
         string BasePath,
         string ScriptPath,
-        string InstallCheckExpression,
-        string ConfigurationKind);
+        string ConfigurationKind,
+        string? CardKey = null);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -868,10 +1152,17 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     {
         return new AsyncRelayCommand(() => TrackOperationAsync(async () =>
         {
-            await _mainWindowViewModel.InstallComponentAsync(componentKey).ConfigureAwait(true);
+            var installed = await _mainWindowViewModel.InstallComponentAsync(componentKey).ConfigureAwait(true);
             await RefreshInstalledStatesAsync().ConfigureAwait(true);
+            if (installed)
+            {
+                await SyncPocketTtsConnectorsAsync(componentKey).ConfigureAwait(true);
+            }
         }));
     }
+
+    // Project or creator marks shown for identification only; provenance is recorded in LICENSING.md.
+    private const string ArtworkRoot = "pack://application:,,,/DwemerDistro;component/Assets/";
 
     private IEnumerable<InstallComponentSectionViewModel> BuildSections(
         List<InstallComponentItemViewModel> allItems)
@@ -879,126 +1170,134 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         var sections = new List<InstallComponentSectionViewModel>();
 
         sections.Add(CreateSection(
-            "Core",
-            allItems,
-            CreateItem(
-                key: "cuda",
-                title: "CUDA",
-                description: "Install the NVIDIA CUDA stack used by GPU-backed services. Run this first on NVIDIA systems.\nPort: None",
-                installCheckExpression: "shutil.which('nvcc') is not None or Path('/usr/bin/nvcc').exists() or Path('/usr/local/cuda/bin/nvcc').exists()",
-                primaryCommand: CreateInstallCommand("cuda"),
-                supportsNvidiaCuda: true)));
-
-        sections.Add(CreateSection(
-            "Service Extensions",
-            allItems,
-            CreateItem(
-                key: "minime",
-                title: "Minime and TXT2VEC",
-                description: "Installs the small helper LLM and vector service used to improve NPC responses and retrieval.\nPort: 8082",
-                installCheckExpression: "Path('/home/dwemer/python-minime').exists()",
-                primaryCommand: CreateInstallCommand("minime"),
-                supportsNvidiaCuda: true,
-                supportsAmdCpu: true),
-            CreateItem(
-                key: "chimmcp",
-                title: "CHIM-MCP",
-                description: "Optional MCP integration for CHIM tooling. Install this only when you want MCP support.\nPort: None",
-                installCheckExpression: "Path('/home/dwemer/CHIM-MCP/dist/index.js').exists()",
-                primaryCommand: CreateInstallCommand("chimmcp"))));
-
-        sections.Add(CreateSection(
-            "Text-to-Speech Engines",
+            "Text to Speech",
             allItems,
             CreateItem(
                 key: "audiocpp",
                 title: "Pocket-TTS (GPU / audio.cpp)",
-                description: "Recommended Pocket-TTS runtime for NVIDIA GPUs.\nPort: 8086",
-                installCheckExpression: "Path('/home/dwemer/audio.cpp/build/bin/audiocpp_server').is_file() and Path('/home/dwemer/audio.cpp/start.sh').exists()",
+                description: "Recommended Pocket-TTS runtime for NVIDIA GPUs.",
                 primaryCommand: CreateInstallCommand("audiocpp"),
-                supportsNvidiaCuda: true),
+                supportsNvidiaCuda: true,
+                artwork: "component-pocket-tts.png",
+                port: 8086),
             CreateItem(
                 key: "pockettts",
                 title: "Pocket-TTS (CPU / Python)",
-                description: "Python Pocket-TTS runtime for AMD or CPU-only systems.\nPort: 8024",
-                installCheckExpression: "Path('/home/dwemer/pocket-tts/venv/bin/python').exists()",
+                description: "Python Pocket-TTS runtime for AMD or CPU-only systems.",
                 primaryCommand: CreateInstallCommand("pockettts"),
-                supportsAmdCpu: true),
+                supportsAmdCpu: true,
+                artwork: "component-pocket-tts.png",
+                port: 8024),
             CreateItem(
                 key: "higgs",
                 title: "Higgs TTS 3",
-                description: "Very powerful TTS. Choose Higgs — Full or Higgs — Compact (Q8) during installation.\nCompact uses less memory. Its 5.1 GB download size is not its VRAM requirement.\nPort: 8025",
-                installCheckExpression: "Path('/home/dwemer/higgs-tts/runtime/audiocpp_server').is_file() and Path('/home/dwemer/higgs-tts/server.json').is_file()",
+                description: "Very powerful TTS.",
                 primaryCommand: CreateInstallCommand("higgs"),
-                supportsNvidiaCuda: true),
+                supportsNvidiaCuda: true,
+                artwork: "component-higgs.png",
+                details:
+                [
+                    "Choose Higgs — Full or Higgs — Compact (Q8) during installation.",
+                    "Compact uses less memory. Its 5.1 GB download size is not its VRAM requirement."
+                ],
+                port: 8025),
             CreateItem(
                 key: "chatterbox",
                 title: "Chatterbox",
-                description: "High-quality multilingual TTS with voice cloning.\nPort: 8023",
-                installCheckExpression: "Path('/home/dwemer/chatterbox/venv').exists()",
+                description: "High-quality multilingual TTS with voice cloning.",
                 primaryCommand: CreateInstallCommand("chatterbox"),
                 supportsNvidiaCuda: true,
-                supportsAmdCpu: true),
+                supportsAmdCpu: true,
+                artwork: "component-chatterbox.png",
+                port: 8023),
             CreateItem(
                 key: "omnivoice",
                 title: "Multilingual OmniVoice TTS",
-                description: "Optional local OmniVoice TTS for CHIM voice libraries.\nPort: 8021",
-                installCheckExpression: "Path('/home/dwemer/omnivoice-tts/venv').exists()",
+                description: "Optional local OmniVoice TTS for CHIM voice libraries.",
                 primaryCommand: CreateInstallCommand("omnivoice"),
                 supportsNvidiaCuda: true,
                 secondaryActionText: "View Logs",
-                secondaryActionCommand: _mainWindowViewModel.ViewOmniVoiceLogsCommand),
+                secondaryActionCommand: _mainWindowViewModel.ViewOmniVoiceLogsCommand,
+                artwork: "component-omnivoice.png",
+                port: 8021),
             CreateItem(
                 key: "xtts",
                 title: "Dwemer Distro XTTS",
-                description: "High-quality XTTS deployment for cloned Skyrim voices. Requires the shared XTTS Python environment.\nPort: 8020",
-                installCheckExpression: "Path('/home/dwemer/python-tts').exists()",
+                description: "High-quality XTTS deployment for cloned Skyrim voices.",
                 primaryCommand: CreateInstallCommand("xtts"),
-                supportsNvidiaCuda: true),
-            CreateItem(
-                key: "melotts",
-                title: "MeloTTS",
-                description: "Fast TTS option for lightweight setups with low overhead and strong CPU support.\nPort: 8084",
-                installCheckExpression: "Path('/home/dwemer/python-melotts').exists()",
-                primaryCommand: CreateInstallCommand("melotts"),
                 supportsNvidiaCuda: true,
-                supportsAmdCpu: true),
+                artwork: "component-xtts.png",
+                details: ["Requires the shared XTTS Python environment."],
+                port: 8020),
             CreateItem(
                 key: "pipertts",
                 title: "Piper-TTS",
-                description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.\nPort: 5000",
-                installCheckExpression: "any(Path('/home/dwemer/python-piper/lib').glob('python*/site-packages/piper/const.py'))",
+                description: "Fast local TTS with separate downloadable voice packs. Good when you want simple CPU speech output.",
                 primaryCommand: CreateInstallCommand("pipertts"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true,
                 secondaryActionText: "Open Piper Voice Folder",
-                secondaryActionCommand: _mainWindowViewModel.OpenPiperVoicesFolderCommand),
-            CreateItem(
-                key: "mimic3",
-                title: "Mimic3",
-                description: "Older local TTS service that is still useful when you want a simple, lightweight fallback.\nPort: 59125",
-                installCheckExpression: "Path('/home/dwemer/python-mimic3/bin/python').is_file()",
-                primaryCommand: CreateInstallCommand("mimic3"))));
+                secondaryActionCommand: _mainWindowViewModel.OpenPiperVoicesFolderCommand,
+                artwork: "component-piper.png",
+                port: 5000)));
 
         sections.Add(CreateSection(
-            "Speech-to-Text Engines",
+            "Speech to Text",
             allItems,
             CreateItem(
                 key: "parakeet",
                 title: "Parakeet STT",
-                description: "Offline speech-to-text service with GPU and CPU modes for local transcription.\nPort: 8022",
-                installCheckExpression: "Path('/home/dwemer/parakeet-api-server/venv').exists()",
+                description: "Offline speech-to-text service with GPU and CPU modes for local transcription.",
                 primaryCommand: CreateInstallCommand("parakeet"),
                 supportsNvidiaCuda: true,
-                supportsAmdCpu: true),
+                supportsAmdCpu: true,
+                artwork: "nvidia.png",
+                port: 8022),
             CreateItem(
                 key: "localwhisper",
                 title: "LocalWhisper",
-                description: "Offline Whisper-based speech-to-text service for local microphone and transcription workflows.\nPort: 9876",
-                installCheckExpression: "Path('/home/dwemer/python-stt').exists()",
+                description: "Offline Whisper-based speech-to-text service for local microphone and transcription workflows.",
                 primaryCommand: CreateInstallCommand("localwhisper"),
                 supportsNvidiaCuda: true,
-                supportsAmdCpu: true)));
+                supportsAmdCpu: true,
+                artwork: "component-whisper.png",
+                port: 9876)));
+
+        // Core, local language model, and service-extension components share one Services section.
+        sections.Add(CreateSection(
+            "Services",
+            allItems,
+            CreateItem(
+                key: "lmstudio",
+                title: "LM Studio",
+                description: "LM Studio built into the distro. Run local models directly in the distro.",
+                primaryCommand: CreateInstallCommand("lmstudio"),
+                supportsNvidiaCuda: true,
+                supportsAmdCpu: true,
+                secondaryActionText: "Open Manager",
+                secondaryActionCommand: new AsyncRelayCommand(async () =>
+                {
+                    try { await new LmStudioService(_wsl).OpenManagerAsync(); }
+                    catch (Exception error) { System.Windows.MessageBox.Show(error.Message, "LLM Studio"); }
+                }),
+                artwork: "component-lmstudio.png",
+                port: 1234),
+            CreateItem(
+                key: "cuda",
+                title: "CUDA",
+                description: "Install the NVIDIA CUDA stack used by GPU-backed services. Run this first on NVIDIA systems.",
+                primaryCommand: CreateInstallCommand("cuda"),
+                supportsNvidiaCuda: true,
+                artwork: "nvidia.png"),
+            CreateItem(
+                key: "minime",
+                title: "Minime and TXT2VEC",
+                description: "Installs the small helper LLM and vector service used to improve NPC responses and retrieval.",
+                primaryCommand: CreateInstallCommand("minime"),
+                supportsNvidiaCuda: true,
+                supportsAmdCpu: true,
+                artwork: "DwemerDistro.png",
+                port: 8082)));
 
         return sections;
     }
@@ -1016,27 +1315,33 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         string key,
         string title,
         string description,
-        string installCheckExpression,
         ICommand primaryCommand,
         bool supportsNvidiaCuda = false,
         bool supportsAmdCpu = false,
         string? secondaryActionText = null,
         ICommand? secondaryActionCommand = null,
         string? tertiaryActionText = null,
-        ICommand? tertiaryActionCommand = null)
+        ICommand? tertiaryActionCommand = null,
+        string? artwork = null,
+        IReadOnlyList<string>? details = null,
+        int? port = null)
     {
         return new InstallComponentItemViewModel(
             key,
             title,
             description,
-            installCheckExpression,
+            // Installed state comes from the shared component catalog, never from an expression on the item.
+            string.Empty,
             primaryCommand,
             supportsNvidiaCuda,
             supportsAmdCpu,
             secondaryActionText,
             secondaryActionCommand,
             tertiaryActionText,
-            tertiaryActionCommand);
+            tertiaryActionCommand,
+            artwork is null ? null : ArtworkRoot + artwork,
+            details,
+            port);
     }
 }
 
@@ -1050,10 +1355,12 @@ public sealed class ConfigurableComponentItemViewModel : ObservableObject
         string key,
         string title,
         string configurationText,
-        Func<Task> configure)
+        Func<Task> configure,
+        bool isCompanion = false)
     {
         Key = key;
         Title = title;
+        IsCompanion = isCompanion;
         _configurationText = configurationText;
         _configure = configure;
         ConfigureCommand = new AsyncRelayCommand(ConfigureAsync, () => !IsConfiguring);
@@ -1062,6 +1369,11 @@ public sealed class ConfigurableComponentItemViewModel : ObservableObject
     public string Key { get; }
 
     public string Title { get; }
+
+    /// <summary>True when this configuration is listed on another component's card, so it is named in full there.</summary>
+    public bool IsCompanion { get; }
+
+    public string ConfigurationLabel => IsCompanion ? $"{Title}:" : "Current:";
 
     public AsyncRelayCommand ConfigureCommand { get; }
 
@@ -1084,7 +1396,18 @@ public sealed class ConfigurableComponentItemViewModel : ObservableObject
         }
     }
 
-    public string ConfigureButtonText => IsConfiguring ? "Configuring..." : "Configure";
+    public string ConfigureButtonText
+    {
+        get
+        {
+            if (IsConfiguring)
+            {
+                return "Configuring...";
+            }
+
+            return IsCompanion ? $"Configure {Title}" : "Configure";
+        }
+    }
 
     private async Task ConfigureAsync()
     {
