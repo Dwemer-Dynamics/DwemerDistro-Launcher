@@ -826,6 +826,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         IsLocalAiReady = false;
         LocalAiModels.Clear();
         LocalAiDecisionModels.Clear();
+        OnLocalAiSelectionChanged();
         LocalAiStatus = string.Empty;
         try
         {
