@@ -79,7 +79,7 @@ Python read the local files through `\\wsl$\DwemerAI4Skyrim3\...`. Current sourc
 
 ## Component Installers
 
-The current component list is in `Resources/dwemerdistro-components.json`. The install commands are in `MainWindowViewModel.GetComponentInstallDefinition`.
+The current visible component list is the **Components** page cards in `InstallComponentsWindowViewModel`. `Resources/dwemerdistro-components.json` is a compatibility catalog that also tracks entries with no card. The install commands are in `MainWindowViewModel.GetComponentInstallDefinition`.
 
 | UI action | Python-era command (the Pocket-TTS rows describe current Quickstart) |
 | --- | --- |
@@ -95,7 +95,7 @@ The current component list is in `Resources/dwemerdistro-components.json`. The i
 | Pocket-TTS (GPU / audio.cpp) | Current Quickstart runs `/usr/local/bin/install_audiocpp_pockettts auto` and links `/home/dwemer/audio.cpp/start.sh`; the Core installer serves it on port `8086`. |
 | Pocket-TTS (CPU / Python) | AMD / CPU Quickstart installs `/home/dwemer/pocket-tts` and enables its CPU start script on dedicated port `8024`. |
 
-Components added after the Python launcher: LLM Studio, CHIM-MCP, Higgs TTS 3, Multilingual OmniVoice TTS, Text2Vec, llama.cpp, and Dwemer Dashboard.
+Components page cards added after the Python launcher: LLM Studio, Higgs TTS 3, and Multilingual OmniVoice TTS. Python's Minime-T5 is now the Minime and TXT2VEC card, which also configures Text2Vec. The catalog also tracks CHIM-MCP, llama.cpp, and Dwemer Dashboard, which have no Components card.
 
 ## Configuration
 
@@ -104,7 +104,7 @@ Components added after the Python launcher: LLM Studio, CHIM-MCP, Higgs TTS 3, M
 | Configure components | install and configure from the **Components** page (Python used `/usr/local/bin/conf_services`) |
 | Open server folder | `\\wsl.localhost\DwemerAI4Skyrim3\var\www\html` |
 | Open Piper voices folder | `\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices` |
-| MCP flag | `/home/dwemer/.mcp_enabled` |
+| MCP flag (Python-only/historical; no current launcher UI) | `/home/dwemer/.mcp_enabled` |
 | Update preferences | `%LOCALAPPDATA%\DwemerDistro\update-preferences.json` (Python wrote WSL flag files as root) |
 | CUDA GPU setting | `/home/dwemer/.cuda_config` |
 

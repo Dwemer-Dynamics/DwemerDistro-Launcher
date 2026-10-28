@@ -45,8 +45,8 @@ Items are kept for reference. Where the current source behaves differently, the 
 - Server configuration:
   - open server folder
   - install and configure components from the **Components** page
-  - MCP enable flag load/save (`/home/dwemer/.mcp_enabled`)
-- Component installer commands (the current list is in `Resources/dwemerdistro-components.json`):
+  - Python-only/historical: MCP enable flag load/save (`/home/dwemer/.mcp_enabled`). The current launcher has no MCP flag UI.
+- Component installer commands (the current visible list is the **Components** page cards in `InstallComponentsWindowViewModel`; `Resources/dwemerdistro-components.json` is a compatibility catalog that also tracks entries with no card):
   - CUDA/full packages
   - XTTS
   - Chatterbox
@@ -58,7 +58,7 @@ Items are kept for reference. Where the current source behaves differently, the 
   - Parakeet
   - Pocket-TTS
   - Piper voices folder
-  - added after the Python launcher: LLM Studio, CHIM-MCP, Higgs TTS 3, Multilingual OmniVoice TTS, Text2Vec, llama.cpp, and Dwemer Dashboard
+  - Components page cards added after the Python launcher: LLM Studio, Higgs TTS 3, and Multilingual OmniVoice TTS. Python's Minime-T5 is now the Minime and TXT2VEC card, which also configures Text2Vec. The catalog also tracks CHIM-MCP, llama.cpp, and Dwemer Dashboard, which have no Components card.
 - Settings and Logs commands:
   - open terminal
   - view memory usage
