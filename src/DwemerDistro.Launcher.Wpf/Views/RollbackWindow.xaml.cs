@@ -27,6 +27,11 @@ public partial class RollbackWindow : Window
         Title = $"Rollback {displayName}";
         TitleTextBlock.Text = $"{displayName} Rollback";
         CurrentTextBlock.Text = $"Current: {currentBranch ?? "unknown"} @ {currentSha ?? "unknown"}";
+        if (serverKey == "reign")
+        {
+            CurrentTextBlock.Text = $"Current retained build: {currentSha ?? "unknown"}";
+            InstructionsTextBlock.Text = "Select a compatible retained server build.\nCampaigns, settings and the database remain in place.";
+        }
 
         TargetsListBox.ItemsSource = targets;
         if (targets.Count > 0)

@@ -1,7 +1,9 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
+using System.Windows.Interop;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
 using Application = System.Windows.Application;
@@ -14,6 +16,7 @@ public partial class App : Application
 {
     private Mutex? _instanceMutex;
     private bool _ownsInstanceMutex;
+    private InstanceActivationChannel? _activationChannel;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -21,24 +24,45 @@ public partial class App : Application
 
         LauncherLogService.Startup($"Launcher startup {LauncherConstants.LauncherVersion}.");
 
-        if (e.Args.Contains("--generate-diagnostics", StringComparer.OrdinalIgnoreCase))
+        try
+        {
+            DiagnosticProtocolRegistrationService.EnsureRegistered();
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Diagnostic browser protocol registration failed.", ex);
+        }
+
+        var downloadDiagnostics = e.Args.Contains("--download-diagnostics", StringComparer.OrdinalIgnoreCase);
+        if (downloadDiagnostics || e.Args.Contains("--generate-diagnostics", StringComparer.OrdinalIgnoreCase))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             var openOutputFolder = e.Args.Contains("--open-output-folder", StringComparer.OrdinalIgnoreCase);
-            await GenerateDiagnosticsAndExitAsync(openOutputFolder);
+            await GenerateDiagnosticsAndExitAsync(openOutputFolder, downloadDiagnostics);
             return;
         }
 
         var mutexName = BuildInstallScopedMutexName();
         _instanceMutex = new Mutex(initiallyOwned: true, mutexName, out _ownsInstanceMutex);
+        var activationName = InstanceActivationChannel.BuildName(mutexName);
         if (!_ownsInstanceMutex)
         {
-            LauncherLogService.Startup($"Launcher startup stopped because another instance owns '{mutexName}'.");
-            MessageBox.Show(
-                "DwemerDistro is already running from this installation.",
-                "DwemerDistro Launcher",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            // Bring the running launcher forward; only one that cannot be reached (an older build) gets the message.
+            if (await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.FromSeconds(3),
+                    InstanceActivationChannel.AllowForegroundToRunningInstance))
+            {
+                LauncherLogService.Startup($"Launcher startup handed over to the instance that owns '{mutexName}'.");
+            }
+            else
+            {
+                LauncherLogService.Startup($"Launcher startup stopped because another instance owns '{mutexName}'.");
+                MessageBox.Show(
+                    "DwemerDistro is already running from this installation.",
+                    "DwemerDistro Launcher",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+
             Shutdown();
             return;
         }
@@ -47,13 +71,34 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
         TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
 
+        // This mostly static launcher avoids a large per-process D3D allocation by rendering in software.
+        System.Windows.Media.RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+
         var window = new MainWindow();
         MainWindow = window;
         window.Show();
+        _activationChannel = InstanceActivationChannel.Listen(activationName, () => Dispatcher.BeginInvoke(ActivateMainWindow));
+    }
+
+    /// <summary>Another start from this installation asked for the launcher: show and restore the window it already has.</summary>
+    private void ActivateMainWindow()
+    {
+        if (MainWindow is not { } window)
+        {
+            return;
+        }
+
+        if (window.WindowState == WindowState.Minimized)
+        {
+            window.WindowState = WindowState.Normal;
+        }
+
+        window.Show();
+        window.Activate();
     }
 
     // Runs diagnostic collection without opening the launcher window or taking its instance mutex.
-    private async Task GenerateDiagnosticsAndExitAsync(bool openOutputFolder)
+    private async Task GenerateDiagnosticsAndExitAsync(bool openOutputFolder, bool downloadInBrowser)
     {
         const string semaphoreName = "Local\\DwemerDistro.Diagnostics";
         using var diagnosticSemaphore = new Semaphore(initialCount: 1, maximumCount: 1, semaphoreName);
@@ -66,11 +111,39 @@ public partial class App : Application
 
         try
         {
+            // CHIM's MO2 hooks reach this helper and crash its WSL children. Detach
+            // this diagnostics process only; the game and MO2 instance stay hooked.
+            var vfs = GetModuleHandle("usvfs_x64.dll");
+            if (vfs != IntPtr.Zero)
+            {
+                var disconnect = NativeLibrary.GetExport(vfs, "usvfsDisconnectVFS");
+                Marshal.GetDelegateForFunctionPointer<DisconnectVfs>(disconnect)();
+                LauncherLogService.Startup("Diagnostic process disconnected from Mod Organizer hooks.");
+            }
+
             var viewModel = new MainWindowViewModel();
+            var temporaryPath = downloadInBrowser
+                ? DiagnosticReportPaths.CreateTemporaryPath("diagnostics")
+                : null;
             var outputPath = await viewModel.GenerateDiagnosticsAsync(
                 requireConfirmation: false,
-                openOutputFolder: openOutputFolder);
+                openOutputFolder: openOutputFolder,
+                destinationPath: temporaryPath);
             LauncherLogService.Startup($"Diagnostic file created: {outputPath}");
+
+            if (downloadInBrowser && !string.IsNullOrWhiteSpace(outputPath))
+            {
+                try
+                {
+                    await BrowserDownloadService.DownloadOnceAsync(outputPath);
+                    LauncherLogService.Startup("Diagnostic file sent to the browser download manager.");
+                }
+                finally
+                {
+                    File.Delete(outputPath);
+                }
+            }
+
             Shutdown(string.IsNullOrWhiteSpace(outputPath) ? 1 : 0);
         }
         catch (Exception ex)
@@ -84,8 +157,15 @@ public partial class App : Application
         }
     }
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetModuleHandleW")]
+    private static extern IntPtr GetModuleHandle(string moduleName);
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate void DisconnectVfs();
+
     protected override void OnExit(ExitEventArgs e)
     {
+        _activationChannel?.Dispose();
         if (_ownsInstanceMutex)
         {
             _instanceMutex?.ReleaseMutex();

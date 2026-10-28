@@ -238,6 +238,18 @@ public sealed class ProcessRunner
         return process;
     }
 
+    /// <summary>
+    /// Starts a hidden process whose stdin, stdout and stderr all stay with the caller, for
+    /// long-lived line protocols where the caller owns every read and write.
+    /// </summary>
+    public Process StartHiddenDuplexProcess(string fileName, IEnumerable<string> arguments)
+    {
+        var process = CreateHiddenProcess(fileName, arguments, redirectInput: true);
+        process.StartInfo.StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        process.Start();
+        return process;
+    }
+
     public void RunInNewConsole(string command)
     {
         _ = StartInNewConsole(command);
@@ -309,6 +321,28 @@ public sealed class ProcessRunner
             UseShellExecute = true
         };
         startInfo.ArgumentList.Add(path);
+        Process.Start(startInfo);
+    }
+
+    /// <summary>
+    /// Explorer's select switch and the file as discrete arguments, so paths with spaces or
+    /// quotes never need hand-built quoting.
+    /// </summary>
+    internal static string[] BuildExplorerSelectArguments(string filePath) =>
+        new[] { "/select,", Path.GetFullPath(filePath) };
+
+    public void RevealFileInExplorer(string filePath)
+    {
+        var startInfo = new ProcessStartInfo("explorer.exe")
+        {
+            UseShellExecute = true
+        };
+
+        foreach (var argument in BuildExplorerSelectArguments(filePath))
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
         Process.Start(startInfo);
     }
 

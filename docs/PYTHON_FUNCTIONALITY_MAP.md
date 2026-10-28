@@ -1,34 +1,36 @@
-# Python Launcher Functionality Map
+# Python Launcher Functionality Map (Historical)
 
-Source: `../DwemerDistro-Launcher/chim_launcher.py`
+Source: `../DwemerDistro-Launcher/chim_launcher.py` (retired Python launcher)
 
-Current launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
+Python launcher version constant: `CHIM_LAUNCHER_VERSION = "2.5.1.0"`
 
-This is a historical map from the retired Python interface to the released WPF launcher. In WPF launcher 3.3.0, the main workflow is organized under the top-level **MODS**, **COMPONENTS**, **SETTINGS**, and **LOGS** pages.
+This is a historical map from the retired Python interface to the WPF launcher. The port shipped with WPF launcher 3.3.0. The map has been refreshed while preparing launcher 3.4.0 so that its WPF targets match the current source in `src/DwemerDistro.Launcher.Wpf`. Python names and commands are kept for reference.
+
+The current source has six top-level destinations: **Mods**, **Components**, **Settings**, **API Keys**, **Assistant**, and **Logs**.
 
 ## App Services
 
-| Python area | WPF/C# target |
+| Python area | Current WPF/C# source |
 | --- | --- |
-| `SimpleTCPProxy` | `TcpProxyService` |
-| `DiscoveryHTTPServer` | `DiscoveryService` |
-| `append_output`, URL detection, ANSI cleanup | `LogViewModel` + `AnsiLogFormatter` |
-| `run_command_in_new_window` | `ExternalTerminalService` |
-| `run_wsl_bash_capture` | `WslCommandRunner` |
+| `SimpleTCPProxy` | `Services/TcpProxyService.cs` |
+| `DiscoveryHTTPServer` | `Services/DiscoveryService.cs` |
+| `append_output`, URL detection, ANSI cleanup | `MainWindowViewModel.AppendLog` (strips ANSI sequences; no URL detection) |
+| `run_command_in_new_window` | `MainWindowViewModel.RunCommandInNewWindow` via `ProcessRunner.RunInNewConsole` |
+| `run_wsl_bash_capture` | `Services/WslService.cs` (`RunBashAsync`) via `Services/ProcessRunner.cs` |
 
 ## Main Window UI
 
-| Python UI group | WPF view model area |
+| Python UI group | Current WPF location |
 | --- | --- |
-| Server Controls | persistent top action bar in `MainWindowViewModel` |
-| Updater | **MODS** page and `MainWindowViewModel` |
-| Server Configuration | **SETTINGS** and **COMPONENTS** pages |
-| External Links | left sidebar commands in `MainWindowViewModel` |
-| Install Components menu | top-level **COMPONENTS** page |
-| Debugging menu | **SETTINGS** tools and top-level **LOGS** page |
-| Rollback menu | product rollback actions on the **MODS** page |
-| CUDA config menu | **Configure CUDA** on the **COMPONENTS** page |
-| Update settings menu | branch selectors and per-mod **Updates** checkboxes on the **MODS** page |
+| Server Controls | persistent header actions (**Update Distro**, **Start Server**, **Force Stop**) |
+| Updater | **Update Distro** in the header, plus per-mod branch and **Update** controls on each **Mods** card |
+| Server Configuration | **Settings** and **Components** pages |
+| External Links | left sidebar on **Mods** (Server Folder, Terminal, Wiki, Discord, Patreon) and each mod card's webpage link |
+| Install Components menu | top-level **Components** page |
+| Debugging menu | **Settings** tools and the top-level **Logs** page |
+| Rollback menu | rollback action on each server's **Mods** card |
+| CUDA config menu | **Configure CUDA** on the **Components** page |
+| Update settings menu | per-mod branch selector on the **Mods** cards; launcher-side preferences in `%LOCALAPPDATA%\DwemerDistro\update-preferences.json` |
 
 ## Server Lifecycle
 
@@ -40,40 +42,46 @@ This is a historical map from the retired Python interface to the released WPF l
 | Force stop | `wsl -t DwemerAI4Skyrim3` and kill tracked process if needed |
 | Get WSL IP | `wsl -d DwemerAI4Skyrim3 hostname -I` |
 | Proxy target | WSL IP port `8081` |
-| Local proxy listen | `127.0.0.1:7513` |
+| Local proxy listen | `127.0.0.1:7513` (LORKHAN uses `127.0.0.1:7514`) |
 | Discovery listen | port `7135` |
 
 ## Distro and Server Updates
 
-| Behavior | Current command/logic |
-| --- | --- |
-| Distro repo bootstrap | create `/home/dwemer/dwemerdistro`, clone `https://github.com/abeiro/dwemerdistro.git` if missing |
-| Distro repo update | `cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main` |
-| Distro apply | `chmod +x update.sh && echo 'dwemer' \| sudo -S ./update.sh` |
-| HerikaServer update | `/usr/local/bin/update_gws` |
-| Full update | distro update, then `/usr/local/bin/update_gws` with optional skip flags |
-| Skip HerikaServer | `/usr/local/bin/update_gws --skip-herika` |
-| Skip StobeServer | `/usr/local/bin/update_gws --skip-stobe` |
-| StobeServer repo bootstrap | clone `https://github.com/Dwemer-Dynamics/StobeServer.git` |
-| HerikaServer target branches | `aiagent`, `dev` |
-| StobeServer target branches | `stobe`, `dev` |
+| Behavior | Python command/logic | Current source |
+| --- | --- | --- |
+| Distro repo bootstrap | create `/home/dwemer/dwemerdistro`, clone `https://github.com/Dwemer-Dynamics/DwemerDistro-Core.git` if missing | `git init` in `/home/dwemer/dwemerdistro` if needed, then set `origin` to the Core repo |
+| Distro repo update | `cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main` | same, with credential helpers disabled for the fetch |
+| Distro apply | `chmod +x update.sh && echo 'dwemer' \| sudo -S ./update.sh` | same |
+| Shared services update | `/usr/local/bin/update_gws` with optional skip flags | `/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic --skip-reign --skip-lorkhan` (shared services only) |
+| Server install, update, repair, uninstall | `update_gws`, plus StobeServer clone from `https://github.com/Dwemer-Dynamics/StobeServer.git` | `/usr/local/bin/ddistro_server <install\|update\|repair\|uninstall> <herika\|stobe\|dialectic\|reign\|lorkhan>` |
+| HerikaServer target branches | `aiagent`, `dev` | **Main** / **Dev** (Core maps **Main** to `aiagent`) |
+| StobeServer target branches | `stobe`, `dev` | **Main** / **Dev** (Core maps **Main** to `stobe`) |
+| DialecticServer target branches | not in Python | **Main** / **Dev** (Core maps **Main** to `dialectic`) |
+| ReignServer and LorkhanServer target branches | not in Python | **Dev** only in the launcher |
 
 ## Version Checks
 
 | Behavior | Current source |
 | --- | --- |
-| Distro latest version | `https://raw.githubusercontent.com/abeiro/dwemerdistro/main/.version.txt` |
-| Distro local version | `/home/dwemer/dwemerdistro/.version.txt` or `/etc/.version.txt` |
-| HerikaServer local date version | `\\wsl$\DwemerAI4Skyrim3\var\www\html\HerikaServer\.version.txt` |
-| HerikaServer local semantic version | `\\wsl$\DwemerAI4Skyrim3\var\www\html\HerikaServer\.version_number.txt` |
-| StobeServer local date version | `\\wsl$\DwemerAI4Skyrim3\var\www\html\StobeServer\.version.txt` |
+| Distro latest version | `https://raw.githubusercontent.com/Dwemer-Dynamics/DwemerDistro-Core/main/system-release.json` (Python used `.version.txt`) |
+| HerikaServer local date version | `/var/www/html/HerikaServer/.version.txt` |
+| HerikaServer local semantic version | `/var/www/html/HerikaServer/.version_number.txt` |
+| StobeServer local date version | `/var/www/html/StobeServer/.version.txt` |
 | StobeServer local semantic version | `.version_number.txt` or `versionnumber.txt` |
+| DialecticServer local versions | `/var/www/html/DialecticServer/.version.txt` and `.version_number.txt` |
+| ReignServer local versions | `/var/www/html/ReignServer/runtime/current/.version.txt` and `.version_number.txt` |
+| Remote server date version | `https://raw.githubusercontent.com/Dwemer-Dynamics/<Server>/<branch>/.version.txt` |
 | CHIM Nexus page | `https://www.nexusmods.com/skyrimspecialedition/mods/126330` |
-| STOBE Nexus page | `https://www.nexusmods.com/kenshi/mods/1891?tab=description` |
+| STOBE Nexus page | `https://www.nexusmods.com/kenshi/mods/1891` |
+| DIALECTIC Nexus page | `https://www.nexusmods.com/newvegas/mods/99233` |
+
+Python read the local files through `\\wsl$\DwemerAI4Skyrim3\...`. Current source reads them inside the distro.
 
 ## Component Installers
 
-| UI action | Current command |
+The current component list is in `Resources/dwemerdistro-components.json`. The install commands are in `MainWindowViewModel.GetComponentInstallDefinition`.
+
+| UI action | Python-era command (the Pocket-TTS rows describe current Quickstart) |
 | --- | --- |
 | CUDA/full packages | `wsl -d DwemerAI4Skyrim3 -- /usr/local/bin/install_full_packages` |
 | XTTS | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/xtts-api-server/ddistro_install.sh` |
@@ -84,18 +92,20 @@ This is a historical map from the retired Python interface to the released WPF l
 | Piper-TTS | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/piper/ddistro_install.sh` |
 | Local Whisper | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/remote-faster-whisper/ddistro_install.sh` |
 | Parakeet | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /home/dwemer/parakeet-api-server/ddistro_install.sh` |
-| Pocket-TTS (GPU / audio.cpp) | NVIDIA Quickstart runs `/usr/local/bin/install_audiocpp_pockettts 12.8` and enables `/home/dwemer/audio.cpp/start.sh` on port `8086`. |
+| Pocket-TTS (GPU / audio.cpp) | Current Quickstart runs `/usr/local/bin/install_audiocpp_pockettts auto` and links `/home/dwemer/audio.cpp/start.sh`; the Core installer serves it on port `8086`. |
 | Pocket-TTS (CPU / Python) | AMD / CPU Quickstart installs `/home/dwemer/pocket-tts` and enables its CPU start script on dedicated port `8024`. |
+
+Components added after the Python launcher: LLM Studio, CHIM-MCP, Higgs TTS 3, Multilingual OmniVoice TTS, Text2Vec, llama.cpp, and Dwemer Dashboard.
 
 ## Configuration
 
 | Behavior | Current storage/command |
 | --- | --- |
-| Configure a component from the **COMPONENTS** page | `wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/conf_services` |
+| Configure components | install and configure from the **Components** page (Python used `/usr/local/bin/conf_services`) |
 | Open server folder | `\\wsl.localhost\DwemerAI4Skyrim3\var\www\html` |
 | Open Piper voices folder | `\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices` |
 | MCP flag | `/home/dwemer/.mcp_enabled` |
-| Update include flags | WSL flag files written as root by Python launcher |
+| Update preferences | `%LOCALAPPDATA%\DwemerDistro\update-preferences.json` (Python wrote WSL flag files as root) |
 | CUDA GPU setting | `/home/dwemer/.cuda_config` |
 
 ## Debugging and Diagnostics
@@ -114,8 +124,10 @@ This is a historical map from the retired Python interface to the released WPF l
 | Piper log | `/home/dwemer/piper/log.txt` |
 | Parakeet log | `/home/dwemer/parakeet-api-server/log.txt` |
 | Apache error log | `/var/log/apache2/error.log` |
-| Clean logs | rotate selected files under `\\wsl.localhost\DwemerAI4Skyrim3\var\log` and HerikaServer logs |
+| Clean logs | Python rotated files under `\\wsl.localhost\DwemerAI4Skyrim3\var\log`; current source renames selected Apache and HerikaServer logs to `.bak` from inside the distro |
+| Diagnostic bundle | **Generate Distro Debugging Logs** on the **Logs** page, saved to `Desktop\DwemerDistro-Diagnostics` |
+| Distro Doctor | **Settings** page |
 
 ## Launcher Auto-Update
 
-The Python launcher had only a version constant. The released WPF launcher now checks GitHub Releases, downloads the launcher package, starts the helper updater, replaces the launcher files, and restarts into the new version. The launcher-only update control remains in the bottom-left corner and reads **Up To Date** when no release is waiting.
+The Python launcher had only a version constant. The WPF launcher checks GitHub Releases, downloads the launcher package, starts the helper updater, replaces the launcher files, and restarts into the new version. The launcher update button is in the bottom-left corner. It reads **Check Update** by default and **Up To Date** when no release is waiting. See `docs/UPDATES.md`.

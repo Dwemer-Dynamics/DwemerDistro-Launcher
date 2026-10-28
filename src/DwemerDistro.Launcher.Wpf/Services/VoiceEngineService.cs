@@ -4,6 +4,21 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public sealed class VoiceEngineService(WslService wsl)
 {
+    public const string ServiceUnavailableStatus = "Voice service unavailable";
+
+    /// <summary>
+    /// True when a pending Quickstart voice setup is finished: every game was set up or is simply not
+    /// installed. A stopped voice service, an unavailable database, or any error keeps it pending.
+    /// </summary>
+    public static bool IsInitialApplyComplete(IReadOnlyList<VoiceEngineApplyTargetStatus> targets)
+    {
+        return targets.Count > 0 && targets.All(target =>
+            target.Applied
+            || (target.Skipped && target.StatusText == "TTS table not found")
+            || (target.Skipped && target.StatusText == "Database unavailable"
+                && (target.Error ?? string.Empty).Contains("does not exist", StringComparison.OrdinalIgnoreCase)));
+    }
+
     public async Task<VoiceEngineStatus> GetStatusAsync(
         SetupPreset preset,
         CancellationToken cancellationToken = default)
@@ -63,15 +78,24 @@ public sealed class VoiceEngineService(WslService wsl)
             installed);
     }
 
+    /// <summary>
+    /// Full first-time voice setup: creates or rewrites the managed connector and assigns it to
+    /// default profiles. Only explicit user setup may call this; routine port repair uses
+    /// <see cref="PocketTtsConnectorService"/>. <paramref name="pocketTtsBackend"/> is
+    /// "audiocpp" or "python" when the user picked one; either way Core's sync_pockettts_connectors
+    /// --resolve-only supplies the verified endpoint and model, and only one enabled backend is accepted.
+    /// </summary>
     public async Task<IReadOnlyList<VoiceEngineApplyTargetStatus>> ApplyVoiceEngineAsync(
         string engineKey,
+        string? pocketTtsBackend = null,
         CancellationToken cancellationToken = default)
     {
         await EnsurePostgresStartedAsync(cancellationToken).ConfigureAwait(false);
         var normalizedEngine = NormalizeEngineKey(engineKey);
+        var backend = pocketTtsBackend is "audiocpp" or "python" ? pocketTtsBackend : "auto";
         var result = await wsl.RunDistroAsUserAsync(
                 LauncherConstants.DistroUser,
-                new[] { "python3", "-c", ApplyScript, normalizedEngine },
+                new[] { "python3", "-c", ApplyScript, normalizedEngine, backend },
                 cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
@@ -122,6 +146,7 @@ public sealed class VoiceEngineService(WslService wsl)
     {
         return NormalizeEngineKey(engineKey) switch
         {
+            "higgs" => "Higgs TTS 3",
             "chatterbox" => "Chatterbox",
             "omnivoice" => "Multilingual OmniVoice",
             "pockettts" => "Pocket-TTS",
@@ -133,6 +158,7 @@ public sealed class VoiceEngineService(WslService wsl)
     {
         return (engineKey ?? string.Empty).Trim().ToLowerInvariant() switch
         {
+            "higgs" => "higgs",
             "chatterbox" => "chatterbox",
             "omnivoice" or "omni_voice" or "omni-voice" => "omnivoice",
             "pocket_tts" or "pocket-tts" or "pockettts" => "pockettts",
@@ -142,7 +168,7 @@ public sealed class VoiceEngineService(WslService wsl)
 
     private static bool IsClonedVoiceEngine(string key)
     {
-        return NormalizeEngineKey(key) is "pockettts" or "chatterbox" or "omnivoice";
+        return NormalizeEngineKey(key) is "pockettts" or "chatterbox" or "omnivoice" or "higgs";
     }
 
     private async Task EnsurePostgresStartedAsync(CancellationToken cancellationToken)
@@ -173,7 +199,7 @@ public sealed class VoiceEngineService(WslService wsl)
 from pathlib import Path
 import json
 
-audio_cpp = Path("/home/dwemer/audio.cpp/build/bin/audiocpp_server").is_file() and Path("/home/dwemer/audio.cpp/start.sh").exists()
+audio_cpp = any(Path("/home/dwemer/audio.cpp", folder, "audiocpp_server").is_file() for folder in ("runtime/bin", "build/bin")) and Path("/home/dwemer/audio.cpp/start.sh").exists()
 python_pockettts = Path("/home/dwemer/pocket-tts/venv/bin/python").exists() and Path("/home/dwemer/pocket-tts/start.sh").exists()
 
 status = {
@@ -196,7 +222,7 @@ import urllib.request
 from pathlib import Path
 
 engine = (sys.argv[1] if len(sys.argv) > 1 else "pockettts").strip().lower()
-if engine not in ("pockettts", "chatterbox", "omnivoice"):
+if engine not in ("pockettts", "chatterbox", "omnivoice", "higgs"):
     engine = "pockettts"
 
 def read_omnivoice_language():
@@ -209,21 +235,51 @@ def read_omnivoice_language():
     return language or "en"
 
 active_language = read_omnivoice_language() if engine == "omnivoice" else "en"
-def audio_cpp_available():
-    if not (
-        Path("/home/dwemer/audio.cpp/build/bin/audiocpp_server").is_file()
-        and Path("/home/dwemer/audio.cpp/start.sh").exists()
-    ):
-        return False
-    try:
-        for path in ("/health", "/v1/models"):
-            with urllib.request.urlopen("http://127.0.0.1:8086" + path, timeout=3) as response:
-                json.loads(response.read().decode("utf-8", errors="replace"))
-        return True
-    except Exception:
-        return False
+pockettts_backend = (sys.argv[2] if len(sys.argv) > 2 else "auto").strip().lower()
+if pockettts_backend not in ("auto", "audiocpp", "python"):
+    pockettts_backend = "auto"
+# Default per-target status when the voice service is not ready; the launcher retries after start.
+service_status_text, service_skipped = "Voice service unavailable", True
 
-pockettts_audio_cpp = engine == "pockettts" and audio_cpp_available()
+def resolve_pockettts():
+    """Ask Core which Pocket-TTS backend is enabled and verified. It applies the same rules as
+    connector sync (one backend enabled, an explicit choice must match it, provider identity)
+    and never touches a database. Returns (target or None, status text, skipped, error)."""
+    update = ("DwemerDistro update required", False,
+              "Update DwemerDistro so Quickstart can connect Pocket-TTS. Connectors were not changed.")
+    try:
+        result = subprocess.run(
+            ["/usr/local/bin/sync_pockettts_connectors", "--resolve-only", "--json", "--backend", pockettts_backend],
+            text=True, capture_output=True, timeout=60)
+    except FileNotFoundError:
+        return (None,) + update
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, "Needs attention", False, f"Pocket-TTS check did not finish: {error}"
+    try:
+        target = json.loads(result.stdout.strip().splitlines()[-1])
+        if not isinstance(target, dict) or target.get("contract", 0) < 1 or not target.get("resolve_only"):
+            raise ValueError
+    except (IndexError, ValueError, TypeError, AttributeError):
+        # An older helper rejects --resolve-only as a usage error.
+        if result.returncode in (2, 127):
+            return (None,) + update
+        return None, "Needs attention", False, "Pocket-TTS check returned no readable result."
+    state = target.get("state")
+    message = str(target.get("message") or "Pocket-TTS is not ready.")
+    if state == "ok" and target.get("backend") in ("audiocpp", "python") and target.get("endpoint"):
+        return target, None, False, None
+    if state == "service_unavailable":
+        return None, "Voice service unavailable", True, message
+    # Both backends enabled, wrong provider on the port, or the chosen backend is not enabled.
+    return None, "Needs attention", False, message
+
+pockettts_target = None
+if engine == "pockettts":
+    pockettts_target, pocket_status, pocket_skipped, pocket_error = resolve_pockettts()
+    if pockettts_target is None:
+        service_status_text, service_skipped = pocket_status, pocket_skipped
+pockettts_audio_cpp = bool(pockettts_target) and pockettts_target["backend"] == "audiocpp"
+pockettts_model = str((pockettts_target or {}).get("model") or "pocket-tts")
 
 def read_saved_port(path, fallback):
     try:
@@ -280,6 +336,22 @@ if engine == "chatterbox":
     stobe_name = "Chatterbox Default"
     stobe_url = herika_url
     display = "Chatterbox"
+elif engine == "higgs":
+    herika_driver = stobe_type = "higgs"
+    herika_label = stobe_name = "Higgs TTS 3 (DwemerDistro)"
+    display = "Higgs TTS 3"
+    herika_url = stobe_url = "http://127.0.0.1:8025"
+    service_error = "Higgs is not ready; start it under service controls."
+    try:
+        config = json.loads(Path("/home/dwemer/higgs-tts/server.json").read_text())
+        port = int(config["port"])
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=3) as response:
+            models = json.load(response).get("data", [])
+        if any(m.get("id") == "higgs-v3" and m.get("family") == "higgs_audio_tts" for m in models):
+            herika_url = stobe_url = f"http://127.0.0.1:{port}"
+            service_error = None
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
 elif engine == "omnivoice":
     service_error = None if identify_provider(8021) == "omnivoice" else "omnivoice is not running on port 8021"
     herika_driver = "omnivoice"
@@ -290,12 +362,11 @@ elif engine == "omnivoice":
     stobe_url = "http://127.0.0.1:8021"
     display = "Multilingual OmniVoice"
 else:
-    selected_port, service_error = (8086, None) if pockettts_audio_cpp else resolve_local_provider(
-        "pockettts", "/home/dwemer/pocket-tts/.dwemerdistro-port", 8024
-    )
+    service_error = pocket_error
     herika_driver = "pockettts"
     herika_label = "Pocket TTS audio.cpp" if pockettts_audio_cpp else "ddistro pockettts"
-    herika_url = f"http://127.0.0.1:{selected_port}"
+    # Core's endpoint already carries the audio.cpp speech path the servers need.
+    herika_url = str((pockettts_target or {}).get("endpoint") or "")
     stobe_type = "pocket_tts"
     stobe_name = "Pocket TTS audio.cpp" if pockettts_audio_cpp else "Pocket TTS Default"
     stobe_url = herika_url
@@ -338,9 +409,9 @@ def apply_herika_style(db):
     driver = sql_literal(herika_driver)
     label = sql_literal(herika_label)
     url = sql_literal(herika_url)
-    fallback_male = "default_male" if engine == "omnivoice" and db == "dialectic" else "malenord"
-    fallback_female = "default_female" if engine == "omnivoice" and db == "dialectic" else "femalenord"
-    if engine == "omnivoice":
+    fallback_male = "default_male" if engine in ("omnivoice", "higgs") and db == "dialectic" else "malenord"
+    fallback_female = "default_female" if engine in ("omnivoice", "higgs") and db == "dialectic" else "femalenord"
+    if engine in ("omnivoice", "higgs"):
         metadata = sql_literal(json.dumps({
             "language": active_language,
             "voicelogic": "voicetype",
@@ -359,8 +430,10 @@ def apply_herika_style(db):
         if engine == "pockettts":
             metadata_data["api_format"] = "audio_cpp" if pockettts_audio_cpp else "legacy"
             if pockettts_audio_cpp:
-                metadata_data["model"] = "pocket-tts"
+                metadata_data["model"] = pockettts_model
         metadata = sql_literal(json.dumps(metadata_data))
+    if engine == "higgs":
+        metadata = sql_literal(json.dumps({"model": "higgs-v3", "voicelogic": "voicetype", "fallback_male": fallback_male, "fallback_female": fallback_female}))
     managed_labels = {
         "pockettts": ["ddistro pockettts", "pocket tts audio.cpp", "pocket tts default"],
         "chatterbox": ["ddistro chatterbox", "chatterbox default"],
@@ -409,7 +482,7 @@ WHERE {" OR ".join(player_conditions)};
 """)
 
     sql = "\n".join(statements)
-    return psql(db, sql)
+    return psql(db, "BEGIN;\n" + sql + "\nCOMMIT;" if engine == "higgs" else sql)
 
 def apply_stobe_style(db):
     provider = sql_literal(stobe_type)
@@ -433,7 +506,9 @@ def apply_stobe_style(db):
     if engine == "pockettts":
         config_data["api_format"] = "audio_cpp" if pockettts_audio_cpp else "legacy"
         if pockettts_audio_cpp:
-            config_data["model"] = "pocket-tts"
+            config_data["model"] = pockettts_model
+    if engine == "higgs":
+        config_data = {"model": "higgs-v3", "fallback_male": fallback_male, "fallback_female": fallback_female}
     config = sql_literal(json.dumps(config_data))
     managed_names = {
         "pocket_tts": ["Pocket TTS Default", "Pocket TTS audio.cpp"],
@@ -446,7 +521,7 @@ def apply_stobe_style(db):
     statements = [f"""
 UPDATE core_tts_connector
 SET is_default = FALSE
-WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'cartesia', 'inworld');
+WHERE connector_type IN ('pocket_tts', 'xtts', 'chatterbox', 'omnivoice', 'higgs', 'cartesia', 'inworld');
 
 INSERT INTO core_tts_connector(name, connector_type, base_url, is_default, config)
 SELECT {name}, {provider}, {url}, TRUE, {config}::jsonb
@@ -477,7 +552,7 @@ WHERE {" OR ".join(profile_conditions)};
 """)
 
     sql = "\n".join(statements)
-    return psql(db, sql)
+    return psql(db, "BEGIN;\n" + sql + "\nCOMMIT;" if engine == "higgs" else sql)
 
 statuses = []
 for target in TARGETS:
@@ -487,11 +562,18 @@ for target in TARGETS:
             "targetName": target["targetName"],
             "databaseName": db,
             "applied": False,
-            "skipped": True,
-            "statusText": "Voice service unavailable",
+            "skipped": service_skipped,
+            "statusText": service_status_text,
             "error": service_error,
         })
         continue
+    if engine == "higgs":
+        server = {"dwemer": "HerikaServer", "stobe": "StobeServer", "dialectic": "DialecticServer"}.get(db)
+        if server and not (Path("/var/www/html") / server / "tts/tts-higgs.php").is_file():
+            statuses.append({"targetName": target["targetName"], "databaseName": db,
+                "applied": False, "skipped": True, "statusText": "Server update required",
+                "error": "Update this mod server to a version with the Higgs provider before selecting it."})
+            continue
     columns, error = columns_for(db, "core_tts_connector")
     if error:
         statuses.append({

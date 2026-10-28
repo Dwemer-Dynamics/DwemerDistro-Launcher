@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
@@ -40,6 +41,7 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
         SourceInitialized += MainWindow_SourceInitialized;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
+        _viewModel.ApiKeysPageRequested += (_, _) => ApiKeysNavButton.IsChecked = true;
         SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
     }
 
@@ -65,9 +67,71 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void CommunityMod_Requested(object? sender, string repository)
+    {
+        try
+        {
+            await _viewModel.BrowseCommunityModsAsync(repository);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, error.Message, "Community mods", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (ApiKeysHost.Content is ApiKeysView { IsBusy: true } keys)
+        {
+            e.Cancel = true;
+            ApiKeysNavButton.IsChecked = true;
+            keys.ShowCloseBlocked();
+            return;
+        }
+        if (_viewModel.IsCriticalMaintenanceInProgress)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                "Compact Distro or another critical distro operation is still running. Wait for it to finish before closing the launcher.",
+                "Dwemer Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        if (_viewModel.IsCustomModMutationInProgress)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                "A custom mod operation is still running in the distro. Wait for it to finish before closing the launcher.",
+                "Dwemer Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        if (_viewModel.IsAssistantLiveChangeInProgress)
+        {
+            e.Cancel = true;
+            // Explain inline on the Assistant page; the apply or rollback keeps running.
+            AssistantNavButton.IsChecked = true;
+            _viewModel.Assistant.ShowCloseBlocked();
+            _ = Dispatcher.BeginInvoke(AssistantLandmark.RevealStatus, System.Windows.Threading.DispatcherPriority.Loaded);
+            return;
+        }
+
+        // Closing ends the assistant session, which stops its live commands; it waits until they end or the user presses Stop.
+        if (_viewModel.IsAssistantLiveCommandRunning)
+        {
+            e.Cancel = true;
+            AssistantNavButton.IsChecked = true;
+            _viewModel.Assistant.ShowCloseBlockedByJobs();
+            _ = Dispatcher.BeginInvoke(AssistantLandmark.RevealStatus, System.Windows.Threading.DispatcherPriority.Loaded);
+            return;
+        }
+
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
+        _viewModel.CloseCommunityModDetails();
         await _viewModel.ShutdownAsync();
     }
 
@@ -76,6 +140,24 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainWindowViewModel.SelectedGame))
         {
             _ = Dispatcher.BeginInvoke(UpdateSelectedGameDetails);
+        }
+
+        if (e.PropertyName == nameof(MainWindowViewModel.CompactDistroStatusText))
+        {
+            _ = Dispatcher.BeginInvoke(AnnounceCompactDistroStatus);
+        }
+
+        if (e.PropertyName == nameof(MainWindowViewModel.ConnectionDetailsStatus))
+        {
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (MainTabs.SelectedIndex == 3 && AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+                {
+                    var peer = UIElementAutomationPeer.FromElement(ConnectionDetailsStatusTextBlock)
+                               ?? UIElementAutomationPeer.CreatePeerForElement(ConnectionDetailsStatusTextBlock);
+                    peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+                }
+            });
         }
 
         if (e.PropertyName != nameof(MainWindowViewModel.OutputText))
@@ -91,6 +173,24 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// AutomationProperties.LiveSetting only marks the region as polite. The change still has to be
+    /// raised for a screen reader to speak each Compact Distro stage while the row is on screen.
+    /// </summary>
+    private void AnnounceCompactDistroStatus()
+    {
+        if (CompactDistroStatusTextBlock is null ||
+            !_viewModel.HasCompactDistroStatus ||
+            !AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+        {
+            return;
+        }
+
+        var peer = UIElementAutomationPeer.FromElement(CompactDistroStatusTextBlock)
+                   ?? UIElementAutomationPeer.CreatePeerForElement(CompactDistroStatusTextBlock);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
     private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         // Branch combo boxes and other nested selectors bubble their own SelectionChanged
@@ -102,6 +202,12 @@ public partial class MainWindow : Window
         }
 
         UpdateComponentsPageLifetime();
+        if (MainTabs.SelectedIndex == 5 && ApiKeysHost.Content is null)
+            ApiKeysHost.Content = new ApiKeysView(_viewModel.CreateApiKeysService());
+        if (MainTabs.SelectedIndex == 3)
+        {
+            _viewModel.RefreshConnectionDetailsCommand.Execute(null);
+        }
     }
 
     private void ComponentsViewModel_ActiveOperationsCompleted(object? sender, EventArgs e)
@@ -208,6 +314,75 @@ public partial class MainWindow : Window
         MainTabs.SelectedIndex = index;
     }
 
+    /// <summary>
+    /// The Official/Custom switch belongs to the Mods page, so a user's click (mouse, Space, or
+    /// access key) on either view shows it. Click is not raised by binding updates.
+    /// </summary>
+    private void ModsView_Click(object sender, RoutedEventArgs e)
+    {
+        LibraryNavButton.IsChecked = true;
+    }
+
+    /// <summary>
+    /// Swallows the second press of a double-click on the header's Start/Stop Server button.
+    /// </summary>
+    // Start runs synchronously into the starting state, which swaps this button to Stop Server, so the
+    // second press of a double-click or an auto-repeated Enter would stop the server just started.
+    private void ServerRuntimeButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount > 1)
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void ServerRuntimeButton_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.IsRepeat && e.Key == Key.Enter)
+        {
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// A user's click on a sidebar mod shows it on the Mods page, including a click on the mod
+    /// that is already selected. Binding and refresh selection changes never raise this.
+    /// </summary>
+    private void ModRail_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is ItemsControl rail &&
+            e.OriginalSource is DependencyObject source &&
+            ItemsControl.ContainerFromElement(rail, source) is ListBoxItem)
+        {
+            LibraryNavButton.IsChecked = true;
+        }
+    }
+
+    private void ModRail_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.None ||
+            sender is not ItemsControl rail ||
+            e.OriginalSource is not DependencyObject source ||
+            (!ReferenceEquals(source, rail) && ItemsControl.ContainerFromElement(rail, source) is not ListBoxItem))
+        {
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.Up:
+            case Key.Down:
+            case Key.Home:
+            case Key.End:
+            case Key.PageUp:
+            case Key.PageDown:
+            case Key.Space:
+            case Key.Enter:
+                LibraryNavButton.IsChecked = true;
+                break;
+        }
+    }
+
     private void GameRail_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateSelectedGameDetails();
@@ -222,23 +397,10 @@ public partial class MainWindow : Window
 
         var key = _viewModel.SelectedGame.Key;
         ChimDetails.Visibility = key == "CHIM" ? Visibility.Visible : Visibility.Collapsed;
+        LorkhanDetails.Visibility = key == "LORKHAN" ? Visibility.Visible : Visibility.Collapsed;
         StobeDetails.Visibility = key == "STOBE" ? Visibility.Visible : Visibility.Collapsed;
         DialecticDetails.Visibility = key == "DIALECTIC" ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void UpdateCheckBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not System.Windows.Controls.CheckBox { IsEnabled: true } checkBox)
-        {
-            return;
-        }
-
-        e.Handled = true;
-        checkBox.IsChecked = !(checkBox.IsChecked ?? false);
-        if (checkBox.Command?.CanExecute(checkBox.CommandParameter) == true)
-        {
-            checkBox.Command.Execute(checkBox.CommandParameter);
-        }
+        ReignDetails.Visibility = key == "REIGN" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ToggleConsoleButton_Click(object sender, RoutedEventArgs e)
@@ -388,14 +550,20 @@ public partial class MainWindow : Window
             case Key.D1:
             case Key.NumPad1:
                 GameRail.SelectedIndex = 0;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.D2:
             case Key.NumPad2:
                 GameRail.SelectedIndex = 1;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.D3:
             case Key.NumPad3:
                 GameRail.SelectedIndex = 2;
+                LibraryNavButton.IsChecked = true;
+                _viewModel.IsOfficialModsView = true;
                 return true;
             case Key.M:
                 LibraryNavButton.IsChecked = true;
@@ -408,6 +576,9 @@ public partial class MainWindow : Window
                 return true;
             case Key.G:
                 LogsNavButton.IsChecked = true;
+                return true;
+            case Key.A:
+                AssistantNavButton.IsChecked = true;
                 return true;
             case Key.Space:
                 SystemCommands.ShowSystemMenu(this, PointToScreen(new System.Windows.Point(8, 36)));
@@ -424,14 +595,17 @@ public partial class MainWindow : Window
             1 => (FrameworkElement)SetupLandmark,
             2 => SettingsLandmark,
             3 => LogsLandmark,
+            4 => AssistantLandmark,
+            5 => ApiKeysHost,
             _ => LibraryLandmark
         };
+        // Visual order: the full-width header, the sidebar's game list and utilities, then the page and console.
         var landmarks = new FrameworkElement[]
         {
-            UtilityLandmark,
             NavigationLandmark,
-            activePage,
             GameRail,
+            UtilityLandmark,
+            activePage,
             _isConsoleExpanded && _outputRichTextBox is not null ? _outputRichTextBox : ToggleConsoleButton
         };
 

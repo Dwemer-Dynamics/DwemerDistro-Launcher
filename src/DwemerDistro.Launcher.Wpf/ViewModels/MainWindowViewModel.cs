@@ -4,7 +4,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Threading;
@@ -27,17 +30,86 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static readonly TimeSpan StartupFirstRunProbeTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan StartupLauncherUpdateTimeout = TimeSpan.FromSeconds(25);
     private static readonly TimeSpan StartupVersionCheckTimeout = TimeSpan.FromSeconds(20);
+    // The automatic sync runs a full system update, so it is bounded far above a status probe.
+    private static readonly TimeSpan LauncherVersionSyncTimeout = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan ServerWebPageProbeTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan ServerWebPageStartupTimeout = TimeSpan.FromSeconds(150);
     private static readonly TimeSpan ServerWebPageStartupPollInterval = TimeSpan.FromSeconds(3);
+    // How long a critical operation waits for an already-running passive status check to finish
+    // before it gives up rather than risk running DiskPart against a distro something reopened.
+    private static readonly TimeSpan PassiveStatusDrainTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PassiveStatusDrainPollInterval = TimeSpan.FromMilliseconds(200);
     private const string DashboardAutoOpenFlagPath = "/home/dwemer/.dashboard_autoopen";
+    /// <summary>Records the launcher build that last synchronized this distro.</summary>
+    private const string LauncherSyncMarkerPath = "/home/dwemer/.launcher_synced_version";
+    private const string DistroRepositoryUrl = "https://github.com/Dwemer-Dynamics/DwemerDistro-Core.git";
+    private const string SystemReleaseManifestUrl =
+        "https://raw.githubusercontent.com/Dwemer-Dynamics/DwemerDistro-Core/main/system-release.json";
+    private const string InstalledSystemReleaseManifestPath = "/var/lib/dwemerdistro/system-release.json";
     private const string DashboardAutoOpenNeutralColor = "#C8C8C8";
     private const string DashboardAutoOpenSuccessColor = "#8FD694";
     private const string DashboardAutoOpenWarningColor = "#FFB641";
     private const string DashboardAutoOpenErrorColor = "#FF8A80";
-    private const string UpdateIncludeNeutralColor = "#C8C8C8";
-    private const string UpdateIncludeSuccessColor = "#8FD694";
-    private const string UpdateIncludeErrorColor = "#FF8A80";
+    private const string ForceGitUpdatesNeutralColor = "#C8C8C8";
+    // Force Updates rests on a warning colour whenever it is on, so the destructive state is
+    // never reported in the same tone as an ordinary saved preference.
+    private const string ForceGitUpdatesWarningColor = "#FFB641";
+    private const string ForceGitUpdatesErrorColor = "#FF8A80";
+    private const string CompactDistroNeutralColor = "#C8C8C8";
+    private const string CompactDistroBusyColor = "#F4D8A6";
+    private const string CompactDistroSuccessColor = "#8FD694";
+    private const string CompactDistroWarningColor = "#FFB641";
+    private const string CompactDistroErrorColor = "#FF8A80";
+    private const string SystemStatusNeutralColor = "#C8C8C8";
+    private const string SystemStatusBusyColor = "#F4D8A6";
+    private const string SystemStatusSuccessColor = "#8FD694";
+    private const string SystemStatusAttentionColor = "#FFB641";
+    private const string SystemStatusErrorColor = "#FF8A80";
+    /// <summary>Appended to a mod's version line, and only when the comparison confirmed it.</summary>
+    internal const string UpdateAvailableStatusSuffix = "Update Available";
+
+    /// <summary>The Settings label, reused by every message about the option.</summary>
+    internal const string ForceGitUpdatesSettingName = "Force Updates";
+
+    /// <summary>Restated on every mod update while the option is on.</summary>
+    internal const string ForceGitUpdatesUpdateWarning =
+        "Force Updates is ON: manual edits to Git-tracked files in managed servers will be " +
+        "permanently discarded, and Git may also replace untracked or ignored files that conflict " +
+        "with the update. Back up custom files first.";
+
+    /// <summary>The Settings label, reused as the title of every Compact Distro message.</summary>
+    internal const string CompactDistroSettingName = "Compact Distro";
+
+    // The four stages the row reports while it runs, in order. Each one names the user-visible
+    // effect rather than the tool that produces it, so the status line reads the same way as the
+    // row description above it.
+    internal const string CompactDistroCleaningCachesStatus =
+        "Deleting installer caches the launcher can download again...";
+    internal const string CompactDistroFreeingSpaceStatus =
+        "Freeing the unused space inside the distro...";
+    internal const string CompactDistroStoppingWslStatus =
+        "Stopping the server and all running WSL distributions...";
+    internal const string CompactDistroCompactingStatus =
+        "Handing the freed space back to Windows. Approve the administrator prompt...";
+    // Shown the moment the exclusive lock is taken, so the row never keeps showing an earlier
+    // run's outcome while this one is already working.
+    internal const string CompactDistroPreparingStatus = "Preparing Compact Distro...";
+
+    /// <summary>The one line every exclusive distro operation uses when the shared gate refuses it.</summary>
+    internal const string ExclusiveDistroOperationBusyMessage =
+        "Another server, component, or system operation is already running.";
+    private const string DistroStorageProbeCommand = "command -v ddistro_storage >/dev/null 2>&1";
+    private const string DistroStorageCleanupCommand = "ddistro_storage safe-cleanup";
+
+    // The top button says what it does; only a confirmed available update says so instead.
+    internal const string SystemUpdateDefaultButtonText = "Update Distro";
+    internal const string SystemUpdateAvailableButtonText = "Distro Update Available";
+
+    // Segoe MDL2 Assets, the icon font the rail and caption buttons already use. The badge is a
+    // shape, so the top button's signal never rests on colour alone.
+    internal const string SystemUpdateAvailableGlyph = "\uE896";
+    internal const string SystemUpdateFailedGlyph = "\uE7BA";
+    internal const string SystemUpdateUnknownGlyph = "\uE9CE";
     private const string ChimMcpInstallScript = """
 set -e
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
@@ -54,7 +126,7 @@ fi
 
 if [ ! -d CHIM-MCP/.git ]; then
     rm -rf CHIM-MCP
-    git clone https://github.com/Dwemer-Dynamics/CHIM-MCP.git CHIM-MCP
+    git clone --depth 1 https://github.com/Dwemer-Dynamics/CHIM-MCP.git CHIM-MCP
 else
     git -C CHIM-MCP reset --hard HEAD
     git -C CHIM-MCP pull --ff-only
@@ -66,6 +138,7 @@ if [ -f package-lock.json ]; then
 else
     npm install
 fi
+npm cache clean --force || echo "CHIM-MCP installed, but the npm download cache could not be removed."
 
 npm run build
 test -f dist/index.js
@@ -81,13 +154,21 @@ echo "CHIM-MCP installed and enabled."
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(15) };
     private readonly LauncherUpdateService _launcherUpdateService;
     private readonly LauncherReleaseNoticeService _launcherReleaseNoticeService;
+    private readonly UpdatePreferencesService _updatePreferences;
     private readonly SemaphoreSlim _componentInstallGate = new(1, 1);
-    private readonly object _updateIncludeSaveSync = new();
 
     private TcpProxyService? _tcpProxyService;
+    private TcpProxyService? _lorkhanProxyService;
     private DiscoveryService? _discoveryService;
     private Process? _serverProcess;
     private string? _wslIp;
+    private CancellationTokenSource? _connectionDetailsCts;
+    private readonly CancellationTokenSource _shutdownCts = new();
+    private Task<CommandResult>? _distroUpdateTask;
+    private bool _connectionDetailsClosed;
+    private string _thisPcAddressText = "Not checked";
+    private string _wslAddressText = "Not checked";
+    private string _connectionDetailsStatus = string.Empty;
     private Window? _firstRunSetupWindow;
 
     private string _outputText = string.Empty;
@@ -105,30 +186,47 @@ echo "CHIM-MCP installed and enabled."
     private string _launcherUpdateStatusText = "Launcher update: checking...";
     private string _launcherUpdateStatusColor = "White";
     private string _launcherUpdateButtonText = "Check Update";
-    private string _distroUpdateButtonText = "Update Mods";
+    // Null whenever no run owns the button. The idle label is derived from the availability state
+    // rather than stored, so a background check that confirms an update relabels the button without
+    // anything else having to remember to.
+    private string? _systemUpdateRunningButtonText;
+    // Unknown until the system-version check reports. The launcher never claims that a distro it
+    // has not inspected is current.
+    private SystemUpdateAvailability _systemUpdateState = SystemUpdateAvailability.Unknown;
+    private string? _installedSystemVersion;
+    private string? _availableSystemVersion;
     private bool _isDistroUpdateInProgress;
-    private bool _includeHerikaServerUpdate = true;
-    private bool _includeStobeServerUpdate = true;
-    private bool _includeDialecticServerUpdate = true;
-    private bool _lastSavedIncludeHerikaServerUpdate = true;
-    private bool _lastSavedIncludeStobeServerUpdate = true;
-    private bool _lastSavedIncludeDialecticServerUpdate = true;
-    private bool _isUpdateIncludeReady;
-    private bool _isUpdateIncludeSaveRunning;
-    private bool _updateIncludeSaveRequested;
-    private string _updateIncludeStatusText = "Checking saved update preferences...";
-    private string _updateIncludeStatusColor = UpdateIncludeNeutralColor;
+    private bool _isComponentsOperationInProgress;
+    private bool _isExclusiveDistroOperationInProgress;
+    // Quickstart is modeless, so its open window and any still-finishing distro work claim the
+    // shared gate used by exclusive distro operations. A counter lets an install remain protected
+    // if the window closes before that install has finished.
+    private int _quickstartDistroActivityCount;
+    // Claim and check happen together under this gate, so neither window can slip an operation
+    // in between another one's guard check and its flag being set.
+    private readonly object _distroOperationGate = new();
     private bool _dashboardAutoOpenEnabled = true;
     private bool _lastSavedDashboardAutoOpenEnabled = true;
     private bool _isDashboardAutoOpenReady;
     private string _dashboardAutoOpenStatusText = "Checking saved preference...";
     private string _dashboardAutoOpenStatusColor = DashboardAutoOpenNeutralColor;
+    // Off until a saved preference says otherwise, so an unreadable file can never force an update.
+    private bool _forceGitUpdatesEnabled;
+    private bool _lastSavedForceGitUpdatesEnabled;
+    private string _forceGitUpdatesStatusText = string.Empty;
+    private string _forceGitUpdatesStatusColor = ForceGitUpdatesNeutralColor;
+    // Empty until the row has actually run something, so it collapses out of the layout at rest.
+    private string _compactDistroStatusText = string.Empty;
+    private string _compactDistroStatusColor = CompactDistroNeutralColor;
     private bool _canUpdateLauncher;
     private string _targetHerikaBranch = "Main";
     private string _targetStobeBranch = "Main";
     private string _targetDialecticBranch = "Main";
     private int _startAnimationDots;
-    private bool _isServerStatusRefreshInProgress;
+    // Passive startup and retry checks can run together, so count every WSL-using task under the
+    // same gate rather than relying on a single check/set flag.
+    private int _passiveDistroActivityCount;
+    private bool _isServerStatusRetryInProgress;
     private LauncherReleaseInfo? _pendingLauncherUpdate;
     private GameProfile _selectedGame;
 
@@ -136,8 +234,13 @@ echo "CHIM-MCP installed and enabled."
     {
         _dispatcher = Application.Current.Dispatcher;
         _wsl = new WslService(_processRunner);
+        // The three server items back command CanExecute below, so they exist before any command.
+        InitializeServerManagement();
+        InitializeCustomMods();
         _launcherUpdateService = new LauncherUpdateService(_httpClient, _processRunner);
         _launcherReleaseNoticeService = new LauncherReleaseNoticeService();
+        _updatePreferences = new UpdatePreferencesService();
+        LoadForceGitUpdates();
         _startAnimationTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(500)
@@ -155,45 +258,68 @@ echo "CHIM-MCP installed and enabled."
         GameProfiles = new ObservableCollection<GameProfile>(GameProfile.CreateCatalog());
         _selectedGame = GameProfiles[0];
 
-        StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsServerRunning && !IsServerStarting);
-        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => IsServerRunning || IsServerStarting);
-        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync);
-        UpdateAllCommand = new AsyncRelayCommand(UpdateAllAsync, () => !IsDistroUpdateInProgress);
-        OpenServerFolderCommand = new RelayCommand(OpenServerFolder);
-        OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow);
-        SaveUpdateIncludeCommand = new RelayCommand(QueueUpdateIncludeSave, () => IsUpdateIncludeReady);
-        SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady);
-        OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"));
-        OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"));
-        OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"));
+        StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsCriticalMaintenanceInProgress && !IsServerRunning && !IsServerStarting);
+        StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress && (IsServerRunning || IsServerStarting));
+        ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
+        // Update Distro is also the recovery action, so it stays available whether the distro
+        // reports itself as current, out of date, or not at all.
+        UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
+        OpenServerFolderCommand = new RelayCommand(OpenServerFolder, CanAccessDistro);
+        OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow, CanAccessDistro);
+        SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady && CanAccessDistro());
+        ConfirmForceGitUpdatesCommand = new RelayCommand(ConfirmForceGitUpdates);
+        // Webpage and rollback are meaningless for a product that is not installed.
+        OpenChimCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("CHIM"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
+        OpenStobeCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("STOBE"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
+        OpenDialecticCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("DIALECTIC"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        OpenLorkhanCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("LORKHAN"), () => CanAccessDistro() && LorkhanManager.CanUseInstalledFeatures);
+        OpenReignCommand = new AsyncRelayCommand(() => OpenServerWebPageAsync("REIGN"), () => CanAccessDistro() && ReignManager.CanUseInstalledFeatures);
+        // Nexus pages are plain external links: they never probe WSL, never start a server, and
+        // stay usable whatever the local server is doing.
+        OpenChimNexusCommand = new RelayCommand(() => OpenModNexusPage("CHIM"));
+        OpenStobeNexusCommand = new RelayCommand(() => OpenModNexusPage("STOBE"));
+        OpenDialecticNexusCommand = new RelayCommand(() => OpenModNexusPage("DIALECTIC"));
+        // Local game plugin logs live on the Windows side. Like the Nexus links these never probe
+        // or start WSL, so they stay usable in every install state and during server operations.
+        OpenChimSkyrimLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM"));
+        OpenChimSkyrimVrLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("CHIM_VR"));
+        OpenDialecticLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("DIALECTIC"));
+        OpenReignLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("REIGN"));
+        OpenLorkhanLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("LORKHAN"));
+        OpenStobeLogsCommand = new RelayCommand(() => OpenLocalGameLogLocation("STOBE"));
         OpenWikiCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.WikiUrl));
+        OpenCustomModCreationGuideCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.CustomModCreationGuideUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
+        OpenPatreonCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.PatreonUrl));
 
-        OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"));
+        OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"), CanAccessDistro);
 
-        OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"));
-        ViewMemoryUsageCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- htop"));
-        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync);
-        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync);
-        OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"));
-        OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"));
-        OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"));
-        ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"));
-        ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"));
-        ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""));
-        ViewOmniVoiceLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/omnivoice-tts/logs/server.log"));
-        ViewMeloTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/MeloTTS/melo/log.txt"));
-        ViewPiperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/piper/log.txt"));
-        ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"));
-        ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"));
-        ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"));
-        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync);
-        DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow);
-        ReclaimDistroDiskSpaceCommand = new AsyncRelayCommand(ReclaimDistroDiskSpaceAsync);
-        OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync());
-        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher);
-        CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync);
-        GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync);
+        OpenTerminalCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- /usr/local/bin/terminal"), CanAccessDistro);
+        ViewMemoryUsageCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -- htop"), CanAccessDistro);
+        ExportDistroCommand = new AsyncRelayCommand(ExportDistroAsync, CanStartExclusiveDistroOperation);
+        ImportDistroCommand = new AsyncRelayCommand(ImportDistroAsync, CanStartExclusiveDistroOperation);
+        OpenHerikaRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("herika"), () => CanAccessDistro() && HerikaManager.CanUseInstalledFeatures);
+        OpenStobeRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("stobe"), () => CanAccessDistro() && StobeManager.CanUseInstalledFeatures);
+        OpenDialecticRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("dialectic"), () => CanAccessDistro() && DialecticManager.CanUseInstalledFeatures);
+        OpenReignRollbackCommand = new RelayCommand(() => _ = OpenRollbackWindowAsync("reign"), () => CanAccessDistro() && ReignManager.CanUseInstalledFeatures);
+        ViewXttsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/xtts-api-server/log.txt"), CanAccessDistro);
+        ViewChatterboxLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/chatterbox/log.txt"), CanAccessDistro);
+        ViewPocketTtsLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- bash -lc \"if [ -f /home/dwemer/audio.cpp/server.log ]; then tail -n 100 -f /home/dwemer/audio.cpp/server.log; else tail -n 100 -f /home/dwemer/pocket-tts/log.txt; fi\""), CanAccessDistro);
+        ViewOmniVoiceLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/omnivoice-tts/logs/server.log"), CanAccessDistro);
+        ViewPiperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/piper/log.txt"), CanAccessDistro);
+        ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"), CanAccessDistro);
+        ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"), CanAccessDistro);
+        ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"), CanAccessDistro);
+        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanStartExclusiveDistroOperation);
+        DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
+        CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanStartExclusiveDistroOperation);
+        OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
+        OpenApiKeysCommand = new RelayCommand(OpenApiKeysWindow, CanAccessDistro);
+        UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
+        CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
+        GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
+        RefreshConnectionDetailsCommand = new AsyncRelayCommand(RefreshConnectionDetailsAsync);
+        CopyConnectionDetailsCommand = new RelayCommand(CopyConnectionDetails, () => _connectionDetailsCts is null);
     }
 
     public string OutputText
@@ -224,6 +350,7 @@ echo "CHIM-MCP installed and enabled."
             if (SetProperty(ref _isServerStarting, value))
             {
                 RaiseServerCommandStates();
+                RaiseUpdateCommandStates();
             }
         }
     }
@@ -294,10 +421,266 @@ echo "CHIM-MCP installed and enabled."
         private set => SetProperty(ref _launcherUpdateButtonText, value);
     }
 
-    public string DistroUpdateButtonText
+    public string SystemUpdateButtonText =>
+        _systemUpdateRunningButtonText ?? BuildSystemUpdateIdleButtonText(SystemUpdateState);
+
+    /// <summary>
+    /// A running label owns the button for as long as the run lasts. Passing null hands the button
+    /// back to the availability state.
+    /// </summary>
+    private void SetSystemUpdateRunningButtonText(string? runningText)
     {
-        get => _distroUpdateButtonText;
-        private set => SetProperty(ref _distroUpdateButtonText, value);
+        if (string.Equals(_systemUpdateRunningButtonText, runningText, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _systemUpdateRunningButtonText = runningText;
+        OnPropertyChanged(nameof(SystemUpdateButtonText));
+        OnPropertyChanged(nameof(SystemUpdateAccessibleName));
+    }
+
+    /// <summary>
+    /// What the launcher currently knows about the shared system. Availability never depends on it:
+    /// Update Distro is also the recovery action, so it stays live while the state is current or
+    /// unknown.
+    /// </summary>
+    public SystemUpdateAvailability SystemUpdateState
+    {
+        get => _systemUpdateState;
+        private set
+        {
+            if (SetProperty(ref _systemUpdateState, value))
+            {
+                RaiseSystemUpdateStatusChanged();
+            }
+        }
+    }
+
+    /// <summary>The compact line under the Components caption. Words first; colour only echoes them.</summary>
+    public string SystemStatusText =>
+        BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion);
+
+    public string SystemStatusColor => BuildSystemStatusColor(SystemUpdateState);
+
+    public string SystemStatusHelpText =>
+        BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion) +
+        " Update Distro updates DwemerDistro and shared components. Installed mods are not changed.";
+
+    public string SystemUpdateBadgeGlyph => BuildSystemUpdateBadgeGlyph(SystemUpdateState);
+
+    public string SystemUpdateBadgeColor => BuildSystemStatusColor(SystemUpdateState);
+
+    /// <summary>
+    /// The badge overlays the button's right gutter, which the button reserves symmetrically, so
+    /// the label stays centred in the frame whether or not the badge is up. Showing it widens the
+    /// frame by that gutter, but the surrounding slot reserves the widest state, so nothing else
+    /// in the action row moves.
+    /// </summary>
+    public bool IsSystemUpdateBadgeVisible => BuildSystemUpdateBadgeGlyph(SystemUpdateState).Length > 0;
+
+    public string SystemUpdateAccessibleName =>
+        BuildSystemUpdateAccessibleName(SystemUpdateButtonText, SystemUpdateState);
+
+    public string UpdateSystemHelpText => BuildUpdateSystemHelpText(
+        CanRunUpdateOperation(), SystemUpdateState, _installedSystemVersion, _availableSystemVersion);
+
+    /// <summary>
+    /// Every state is spelled out, so someone who cannot see the status line or the badge colour
+    /// still reads which one it is.
+    /// </summary>
+    internal static string BuildSystemStatusText(
+        SystemUpdateAvailability state,
+        string? installedVersion,
+        string? availableVersion)
+    {
+        var installed = NormalizeSystemVersion(installedVersion);
+        var available = NormalizeSystemVersion(availableVersion);
+
+        return state switch
+        {
+            SystemUpdateAvailability.Checking => "System: checking for updates...",
+            SystemUpdateAvailability.Updating => "System: updating now...",
+            SystemUpdateAvailability.Current => installed is null
+                ? "Distro is up to date."
+                : $"Distro is up to date (version {installed}).",
+            SystemUpdateAvailability.UpdateAvailable => (installed, available) switch
+            {
+                (not null, not null) => $"System: update available (installed {installed}, latest {available}).",
+                (null, not null) => $"System: update available (latest {available}).",
+                _ => "System: update available."
+            },
+            SystemUpdateAvailability.Failed => "System: last update failed. Run Update Distro to retry.",
+            // Unknown is also the recovery state: a distro that cannot report its version is exactly
+            // the one Update Distro exists to repair.
+            _ => "System: version unknown. Update Distro also repairs a distro that cannot report it."
+        };
+    }
+
+    internal static string BuildSystemStatusColor(SystemUpdateAvailability state)
+    {
+        return state switch
+        {
+            SystemUpdateAvailability.Checking => SystemStatusNeutralColor,
+            SystemUpdateAvailability.Updating => SystemStatusBusyColor,
+            SystemUpdateAvailability.Current => SystemStatusSuccessColor,
+            SystemUpdateAvailability.UpdateAvailable => SystemStatusAttentionColor,
+            SystemUpdateAvailability.Failed => SystemStatusErrorColor,
+            _ => SystemStatusNeutralColor
+        };
+    }
+
+    /// <summary>
+    /// An empty glyph means no badge. Checking and Updating already say so in the button label and
+    /// the status line, so they add nothing on top of the button.
+    /// </summary>
+    internal static string BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability state)
+    {
+        return state switch
+        {
+            SystemUpdateAvailability.UpdateAvailable => SystemUpdateAvailableGlyph,
+            SystemUpdateAvailability.Failed => SystemUpdateFailedGlyph,
+            SystemUpdateAvailability.Unknown => SystemUpdateUnknownGlyph,
+            _ => string.Empty
+        };
+    }
+
+    /// <summary>
+    /// The label the top button carries whenever no run owns it. Only the confirmed UpdateAvailable
+    /// state advertises an update - the status colour never decides this - so checking, current,
+    /// unknown and failed all keep the plain action label.
+    /// </summary>
+    internal static string BuildSystemUpdateIdleButtonText(SystemUpdateAvailability state)
+    {
+        return state == SystemUpdateAvailability.UpdateAvailable
+            ? SystemUpdateAvailableButtonText
+            : SystemUpdateDefaultButtonText;
+    }
+
+    internal static string BuildSystemUpdateAccessibleName(string? buttonText, SystemUpdateAvailability state)
+    {
+        var label = string.IsNullOrWhiteSpace(buttonText) ? SystemUpdateDefaultButtonText : buttonText.Trim();
+
+        return state switch
+        {
+            SystemUpdateAvailability.Checking => $"{label}, checking for system updates",
+            SystemUpdateAvailability.Updating => $"{label}, system update running",
+            SystemUpdateAvailability.Current => $"{label}, system up to date",
+            SystemUpdateAvailability.UpdateAvailable => $"{label}, system update available",
+            SystemUpdateAvailability.Failed => $"{label}, last system update failed",
+            _ => $"{label}, system version unknown"
+        };
+    }
+
+    internal static string BuildUpdateSystemHelpText(
+        bool canRunUpdateOperation,
+        SystemUpdateAvailability state,
+        string? installedVersion,
+        string? availableVersion)
+    {
+        if (!canRunUpdateOperation)
+        {
+            return "Unavailable while another server, component, or system operation is running.";
+        }
+
+        return "Update DwemerDistro and shared components. Installed mods are not changed. " +
+               BuildSystemStatusText(state, installedVersion, availableVersion);
+    }
+
+    internal static string? NormalizeSystemVersion(string? version)
+    {
+        var trimmed = version?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    /// <summary>
+    /// Backend seam. The approved system-version check - a versioned distro manifest compared with
+    /// the local successful-update marker - is the only thing that may report Checking, Current or
+    /// UpdateAvailable. Nothing in the UI infers availability, and no Git SHA is consulted here.
+    /// </summary>
+    internal void ApplySystemUpdateCheckResult(
+        SystemUpdateAvailability state,
+        string? installedVersion,
+        string? availableVersion)
+    {
+        RunOnUi(() =>
+        {
+            // A slow startup check must not overwrite the Updating state after a user starts the
+            // recovery action. CompleteUpdateOperation queues a fresh check when the run finishes.
+            if (IsDistroUpdateInProgress)
+            {
+                return;
+            }
+
+            _installedSystemVersion = NormalizeSystemVersion(installedVersion);
+            _availableSystemVersion = NormalizeSystemVersion(availableVersion);
+            _systemUpdateState = state;
+            RaiseSystemUpdateStatusChanged();
+        });
+    }
+
+    /// <summary>Moves the state without discarding versions a check has already reported.</summary>
+    internal void SetSystemUpdateState(SystemUpdateAvailability state)
+    {
+        RunOnUi(() =>
+        {
+            _systemUpdateState = state;
+            RaiseSystemUpdateStatusChanged();
+        });
+    }
+
+    /// <summary>
+    /// A finished update makes whatever the check advertised the version now on disk, so the line
+    /// never reports the version it just replaced. The real check re-confirms this next time it runs.
+    /// </summary>
+    private void MarkSystemUpdateSucceeded()
+    {
+        RunOnUi(() =>
+        {
+            _installedSystemVersion = _availableSystemVersion ?? _installedSystemVersion;
+            _availableSystemVersion = null;
+            _systemUpdateState = SystemUpdateAvailability.Current;
+            RaiseSystemUpdateStatusChanged();
+        });
+    }
+
+    private void RaiseSystemUpdateStatusChanged()
+    {
+        OnPropertyChanged(nameof(SystemUpdateState));
+        // The idle label is derived from the state, so it moves with it.
+        OnPropertyChanged(nameof(SystemUpdateButtonText));
+        OnPropertyChanged(nameof(SystemStatusText));
+        OnPropertyChanged(nameof(SystemStatusColor));
+        OnPropertyChanged(nameof(SystemStatusHelpText));
+        OnPropertyChanged(nameof(SystemUpdateBadgeGlyph));
+        OnPropertyChanged(nameof(SystemUpdateBadgeColor));
+        OnPropertyChanged(nameof(IsSystemUpdateBadgeVisible));
+        OnPropertyChanged(nameof(SystemUpdateAccessibleName));
+        OnPropertyChanged(nameof(UpdateSystemHelpText));
+    }
+
+    public bool IsComponentInteractionEnabled =>
+        !IsDistroUpdateInProgress &&
+        !_isComponentsOperationInProgress &&
+        !IsCriticalMaintenanceInProgress &&
+        !ServerManagers.Any(manager => manager.IsBusy) &&
+        !_isCustomModBusy;
+
+    public bool IsCriticalMaintenanceInProgress => _isExclusiveDistroOperationInProgress;
+
+    /// <summary>
+    /// True while Quickstart is open or still finishing distro work. It does not disable the rest
+    /// of the launcher; it only holds off the exclusive distro operations.
+    /// </summary>
+    public bool IsQuickstartDistroActivityInProgress
+    {
+        get
+        {
+            lock (_distroOperationGate)
+            {
+                return _quickstartDistroActivityCount > 0;
+            }
+        }
     }
 
     public bool IsDistroUpdateInProgress
@@ -307,51 +690,13 @@ echo "CHIM-MCP installed and enabled."
         {
             if (SetProperty(ref _isDistroUpdateInProgress, value))
             {
-                UpdateAllCommand.RaiseCanExecuteChanged();
+                RaiseUpdateCommandStates();
+                OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+                // Mod and system updates share the same WSL resources as the per-product actions,
+                // so those actions have to stand down for as long as either update runs.
+                RefreshServerUpdateConflictState();
             }
         }
-    }
-
-    public bool IncludeHerikaServerUpdate
-    {
-        get => _includeHerikaServerUpdate;
-        set => SetProperty(ref _includeHerikaServerUpdate, value);
-    }
-
-    public bool IncludeStobeServerUpdate
-    {
-        get => _includeStobeServerUpdate;
-        set => SetProperty(ref _includeStobeServerUpdate, value);
-    }
-
-    public bool IncludeDialecticServerUpdate
-    {
-        get => _includeDialecticServerUpdate;
-        set => SetProperty(ref _includeDialecticServerUpdate, value);
-    }
-
-    public bool IsUpdateIncludeReady
-    {
-        get => _isUpdateIncludeReady;
-        private set
-        {
-            if (SetProperty(ref _isUpdateIncludeReady, value))
-            {
-                SaveUpdateIncludeCommand.RaiseCanExecuteChanged();
-            }
-        }
-    }
-
-    public string UpdateIncludeStatusText
-    {
-        get => _updateIncludeStatusText;
-        private set => SetProperty(ref _updateIncludeStatusText, value);
-    }
-
-    public string UpdateIncludeStatusColor
-    {
-        get => _updateIncludeStatusColor;
-        private set => SetProperty(ref _updateIncludeStatusColor, value);
     }
 
     public bool DashboardAutoOpenEnabled
@@ -371,6 +716,53 @@ echo "CHIM-MCP installed and enabled."
         get => _dashboardAutoOpenStatusColor;
         private set => SetProperty(ref _dashboardAutoOpenStatusColor, value);
     }
+
+    /// <summary>
+    /// Two-way for the Settings checkbox, which flips it before
+    /// <see cref="ConfirmForceGitUpdatesCommand"/> runs; that command is what confirms, saves, or
+    /// puts it back.
+    /// </summary>
+    public bool ForceGitUpdatesEnabled
+    {
+        get => _forceGitUpdatesEnabled;
+        set => SetProperty(ref _forceGitUpdatesEnabled, value);
+    }
+
+    public string ForceGitUpdatesStatusText
+    {
+        get => _forceGitUpdatesStatusText;
+        private set => SetProperty(ref _forceGitUpdatesStatusText, value);
+    }
+
+    public string ForceGitUpdatesStatusColor
+    {
+        get => _forceGitUpdatesStatusColor;
+        private set => SetProperty(ref _forceGitUpdatesStatusColor, value);
+    }
+
+    /// <summary>
+    /// The Compact Distro row's live status line. Empty means "nothing to report", which
+    /// <see cref="HasCompactDistroStatus"/> turns into a collapsed, heightless line.
+    /// </summary>
+    public string CompactDistroStatusText
+    {
+        get => _compactDistroStatusText;
+        private set
+        {
+            if (SetProperty(ref _compactDistroStatusText, value))
+            {
+                OnPropertyChanged(nameof(HasCompactDistroStatus));
+            }
+        }
+    }
+
+    public string CompactDistroStatusColor
+    {
+        get => _compactDistroStatusColor;
+        private set => SetProperty(ref _compactDistroStatusColor, value);
+    }
+
+    public bool HasCompactDistroStatus => !string.IsNullOrWhiteSpace(CompactDistroStatusText);
 
     public bool CanUpdateLauncher
     {
@@ -416,16 +808,30 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand StartServerCommand { get; }
     public AsyncRelayCommand StopServerCommand { get; }
     public AsyncRelayCommand ForceStopServerCommand { get; }
-    public AsyncRelayCommand UpdateAllCommand { get; }
+    public AsyncRelayCommand UpdateSystemCommand { get; }
     public RelayCommand OpenServerFolderCommand { get; }
     public RelayCommand OpenFirstRunSetupCommand { get; }
-    public RelayCommand SaveUpdateIncludeCommand { get; }
     public AsyncRelayCommand SaveDashboardAutoOpenCommand { get; }
+    public RelayCommand ConfirmForceGitUpdatesCommand { get; }
     public AsyncRelayCommand OpenChimCommand { get; }
     public AsyncRelayCommand OpenStobeCommand { get; }
     public AsyncRelayCommand OpenDialecticCommand { get; }
+    public AsyncRelayCommand OpenReignCommand { get; }
+
+    public AsyncRelayCommand OpenLorkhanCommand { get; }
+    public RelayCommand OpenChimNexusCommand { get; }
+    public RelayCommand OpenStobeNexusCommand { get; }
+    public RelayCommand OpenDialecticNexusCommand { get; }
+    public RelayCommand OpenChimSkyrimLogsCommand { get; }
+    public RelayCommand OpenChimSkyrimVrLogsCommand { get; }
+    public RelayCommand OpenDialecticLogsCommand { get; }
+    public RelayCommand OpenReignLogsCommand { get; }
+    public RelayCommand OpenLorkhanLogsCommand { get; }
+    public RelayCommand OpenStobeLogsCommand { get; }
     public RelayCommand OpenWikiCommand { get; }
+    public RelayCommand OpenCustomModCreationGuideCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
+    public RelayCommand OpenPatreonCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand ViewMemoryUsageCommand { get; }
@@ -434,42 +840,162 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenHerikaRollbackCommand { get; }
     public RelayCommand OpenStobeRollbackCommand { get; }
     public RelayCommand OpenDialecticRollbackCommand { get; }
+    public RelayCommand OpenReignRollbackCommand { get; }
     public RelayCommand ViewXttsLogsCommand { get; }
     public RelayCommand ViewChatterboxLogsCommand { get; }
     public RelayCommand ViewPocketTtsLogsCommand { get; }
     public RelayCommand ViewOmniVoiceLogsCommand { get; }
-    public RelayCommand ViewMeloTtsLogsCommand { get; }
     public RelayCommand ViewPiperLogsCommand { get; }
     public RelayCommand ViewLocalWhisperLogsCommand { get; }
     public RelayCommand ViewParakeetLogsCommand { get; }
     public RelayCommand ViewApacheLogsCommand { get; }
     public AsyncRelayCommand FixWslDnsCommand { get; }
     public RelayCommand DistroDoctorCommand { get; }
-    public AsyncRelayCommand ReclaimDistroDiskSpaceCommand { get; }
+    public AsyncRelayCommand CompactDistroCommand { get; }
     public RelayCommand OpenCudaConfigCommand { get; }
+    public RelayCommand OpenApiKeysCommand { get; }
     public AsyncRelayCommand UpdateLauncherCommand { get; }
     public AsyncRelayCommand CleanLogsCommand { get; }
     public AsyncRelayCommand GenerateDiagnosticsCommand { get; }
+    public AsyncRelayCommand RefreshConnectionDetailsCommand { get; }
+    public RelayCommand CopyConnectionDetailsCommand { get; }
+    public string ThisPcAddressText { get => _thisPcAddressText; private set => SetProperty(ref _thisPcAddressText, value); }
+    public string WslAddressText { get => _wslAddressText; private set => SetProperty(ref _wslAddressText, value); }
+    public string ConnectionDetailsStatus { get => _connectionDetailsStatus; private set => SetProperty(ref _connectionDetailsStatus, value); }
+
+    // An on-demand snapshot only: never poll, use the discovery cache, or enter a stopped distro.
+    private async Task RefreshConnectionDetailsAsync()
+    {
+        if (_connectionDetailsClosed) return;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        _connectionDetailsCts = timeout;
+        CopyConnectionDetailsCommand.RaiseCanExecuteChanged();
+        ThisPcAddressText = "Checking...";
+        WslAddressText = "Checking...";
+        ConnectionDetailsStatus = string.Empty;
+        var ownsPassiveActivity = false;
+        try
+        {
+            ThisPcAddressText = await Task.Run(() =>
+            {
+                var addresses = NetworkInterface.GetAllNetworkInterfaces()
+                    .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up &&
+                        adapter.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)
+                    .SelectMany(adapter =>
+                    {
+                        var properties = adapter.GetIPProperties();
+                        // Ignore isolated virtual switches. Name every remaining adapter so a VPN
+                        // or second network is not silently advertised as the user's home network.
+                        if (!properties.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork &&
+                            !g.Address.Equals(IPAddress.Any))) return Array.Empty<string>();
+                        return properties.UnicastAddresses
+                            .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork &&
+                                !IPAddress.IsLoopback(a.Address) && !a.Address.Equals(IPAddress.Any) &&
+                                !a.Address.ToString().StartsWith("169.254.", StringComparison.Ordinal))
+                            .Select(a => $"{a.Address} ({adapter.Name})").ToArray();
+                    }).Distinct().OrderBy(address => address).ToArray();
+                return addresses.Length == 0 ? "No active network address" : string.Join(Environment.NewLine, addresses);
+            }, timeout.Token);
+
+            ownsPassiveActivity = TryBeginPassiveDistroActivity();
+            if (!ownsPassiveActivity)
+            {
+                WslAddressText = "Unavailable during maintenance";
+                return;
+            }
+
+            var running = await _wsl.RunWslAsync(new[] { "-l", "-q", "--running" }, cancellationToken: timeout.Token);
+            if (!running.Succeeded)
+            {
+                WslAddressText = "Unavailable";
+                return;
+            }
+            static bool ContainsDistro(string text) => text.Replace("\0", string.Empty)
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Contains(LauncherConstants.DistroName, StringComparer.OrdinalIgnoreCase);
+
+            if (!ContainsDistro(running.StandardOutput))
+            {
+                var installed = await _wsl.RunWslAsync(new[] { "-l", "-q" }, cancellationToken: timeout.Token);
+                if (!installed.Succeeded)
+                {
+                    WslAddressText = "Unavailable";
+                }
+                else
+                {
+                    WslAddressText = ContainsDistro(installed.StandardOutput) ? "Distro stopped" : "Distro not installed";
+                }
+                return;
+            }
+
+            var address = await _wsl.GetWslIpAsync(timeout.Token);
+            WslAddressText = IPAddress.TryParse(address, out var parsed) ? parsed.ToString() : "Unavailable";
+        }
+        catch (OperationCanceledException)
+        {
+            if (ThisPcAddressText == "Checking...") ThisPcAddressText = "Unavailable";
+            WslAddressText = "Unavailable";
+            ConnectionDetailsStatus = "Check cancelled or timed out. Refresh to try again.";
+        }
+        catch (Exception ex)
+        {
+            if (ThisPcAddressText == "Checking...") ThisPcAddressText = "Unavailable";
+            WslAddressText = "Unavailable";
+            ConnectionDetailsStatus = "Could not read connection details. Refresh to try again.";
+            LauncherLogService.Startup("Connection details check failed.", ex);
+        }
+        finally
+        {
+            if (ownsPassiveActivity) EndPassiveDistroActivity();
+            _connectionDetailsCts = null;
+            CopyConnectionDetailsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private void CopyConnectionDetails()
+    {
+        try
+        {
+            System.Windows.Clipboard.SetText($"This PC: {ThisPcAddressText}{Environment.NewLine}WSL address: {WslAddressText}");
+            ConnectionDetailsStatus = "Copied connection details.";
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            ConnectionDetailsStatus = "Clipboard is busy. Try Copy details again.";
+        }
+    }
 
     public async Task InitializeAsync()
     {
         LauncherLogService.Startup("MainWindowViewModel initialization started.");
         StartProxyAndDiscovery();
-        await RunStartupStepAsync("Load update include settings", LoadUpdateIncludeSettingsAsync, StartupSettingsTimeout).ConfigureAwait(true);
         await RunStartupStepAsync("Load dashboard auto-open setting", LoadDashboardAutoOpenAsync, StartupSettingsTimeout).ConfigureAwait(true);
-        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueSystemUpdateCheck();
         QueueServerStatusRefresh();
         LauncherLogService.Startup("MainWindowViewModel initialization completed.");
     }
 
     public async Task ShutdownAsync()
     {
+        // Stops only the assistant's own Linux process group; nothing else in the distro.
+        if (_assistant is { } assistant) await assistant.ShutdownAsync().ConfigureAwait(true);
+        _shutdownCts.Cancel();
+        if (_distroUpdateTask is { } updateTask)
+        {
+            try { await updateTask.ConfigureAwait(false); }
+            catch (Exception ex) { LauncherLogService.Operation($"Distro update stopped during shutdown: {ex.GetType().Name}"); }
+        }
+        _connectionDetailsClosed = true;
+        _connectionDetailsCts?.Cancel();
         LauncherLogService.Startup("Launcher shutdown started.");
         _startAnimationTimer.Stop();
         _serverStatusRetryTimer.Stop();
         await (_tcpProxyService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
+        await (_lorkhanProxyService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         await (_discoveryService?.StopAsync() ?? Task.CompletedTask).ConfigureAwait(false);
         _processRunner.TryKill(_serverProcess);
         LauncherLogService.Startup("Launcher shutdown completed.");
@@ -489,6 +1015,9 @@ echo "CHIM-MCP installed and enabled."
                 LauncherLogService.Startup("First-time setup startup check completed: not needed.");
                 QueueLauncherUpdateCheck();
                 ShowPendingDedicatedTtsPortsNotice();
+                // Queued last, and only on this branch: the automatic system update must never race
+                // Quickstart's own install and update steps, or the release notice it would sit behind.
+                QueueLauncherVersionSync();
                 return;
             }
         }
@@ -539,6 +1068,39 @@ echo "CHIM-MCP installed and enabled."
             "Launcher update check",
             cancellationToken => CheckLauncherUpdatesAsync(cancellationToken),
             StartupVersionCheckTimeout);
+    }
+
+    private void QueueSystemUpdateCheck()
+    {
+        QueueBackgroundTask(
+            "System update check",
+            cancellationToken => CheckSystemUpdatesAsync(cancellationToken),
+            StartupVersionCheckTimeout,
+            accessesDistro: true);
+    }
+
+    /// <summary>
+    /// Runs the automatic launcher-version system sync on the shared background-task path, so a slow
+    /// or failing update is logged rather than blocking startup. The assistant connects only after it
+    /// settles, so the session never starts while the sync is updating DwemerDistro.
+    /// </summary>
+    private void QueueLauncherVersionSync()
+    {
+        QueueBackgroundTask(
+            "Launcher version sync",
+            async cancellationToken =>
+            {
+                try
+                {
+                    await SyncLauncherVersionAsync(cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    QueueAssistantStartupConnect();
+                }
+            },
+            LauncherVersionSyncTimeout,
+            accessesDistro: true);
     }
 
     private void ShowPendingDedicatedTtsPortsNotice()
@@ -675,8 +1237,15 @@ echo "CHIM-MCP installed and enabled."
     private void QueueBackgroundTask(
         string name,
         Func<CancellationToken, Task> action,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        bool accessesDistro = false)
     {
+        if (accessesDistro && !TryBeginPassiveDistroActivity())
+        {
+            LauncherLogService.Startup($"{name} deferred because critical distro maintenance is running.");
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             using var timeoutCts = new CancellationTokenSource(timeout);
@@ -693,6 +1262,13 @@ echo "CHIM-MCP installed and enabled."
                 LauncherLogService.Startup($"{name} failed.", ex);
                 AppendLog($"{name} failed: {ex.Message}{Environment.NewLine}", "yellow");
             }
+            finally
+            {
+                if (accessesDistro)
+                {
+                    EndPassiveDistroActivity();
+                }
+            }
         });
     }
 
@@ -700,7 +1276,7 @@ echo "CHIM-MCP installed and enabled."
     {
         try
         {
-            _tcpProxyService = new TcpProxyService(async cancellationToken =>
+            _tcpProxyService = new TcpProxyService(LauncherConstants.SkyrimProxyPort, "CHIM", async cancellationToken =>
             {
                 var ip = await GetWslIpAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
                 return ip is null ? null : new IPEndPoint(IPAddress.Parse(ip), LauncherConstants.SkyrimServerPort);
@@ -716,9 +1292,29 @@ echo "CHIM-MCP installed and enabled."
 
         try
         {
+            _lorkhanProxyService = new TcpProxyService(LauncherConstants.LorkhanProxyPort, "LORKHAN", async cancellationToken =>
+            {
+                var ip = await GetWslIpAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
+                return ip is null ? null : new IPEndPoint(IPAddress.Parse(ip), LauncherConstants.LorkhanServerPort);
+            }, text => AppendLog(text));
+            _lorkhanProxyService.Start();
+        }
+        catch (Exception ex)
+        {
+            _lorkhanProxyService = null;
+            LauncherLogService.Startup("LORKHAN TCP proxy failed to start.", ex);
+            AppendLog($"LORKHAN TCP proxy failed to start: {ex.Message}{Environment.NewLine}", "yellow");
+        }
+
+        try
+        {
             _discoveryService = new DiscoveryService(
                 cancellationToken => GetWslIpAsync(forceRefresh: false, cancellationToken),
-                text => AppendLog(text));
+                text => AppendLog(text),
+                (destinationPath, _) => GenerateDiagnosticsAsync(
+                    requireConfirmation: false,
+                    openOutputFolder: false,
+                    destinationPath: destinationPath));
             _discoveryService.Start();
         }
         catch (Exception ex)
@@ -738,6 +1334,7 @@ echo "CHIM-MCP installed and enabled."
         }
 
         _wslIp = null;
+        ResetStartupPocketTtsState();
         IsServerStarting = true;
         StartButtonText = "Server is Starting";
         StartStartAnimation();
@@ -749,6 +1346,11 @@ echo "CHIM-MCP installed and enabled."
                 new[] { "-d", LauncherConstants.DistroName, "--", "/etc/start_env" },
                 line =>
                 {
+                    if (TryCaptureStartupPocketTtsLine(line))
+                    {
+                        return;
+                    }
+
                     AppendLog(line);
                     if (line.Contains("AIAgent.ini Network Settings:", StringComparison.OrdinalIgnoreCase))
                     {
@@ -761,6 +1363,7 @@ echo "CHIM-MCP installed and enabled."
                         });
                         AppendLog("Server is ready." + Environment.NewLine);
                         _ = Task.Run(() => GetWslIpAsync(forceRefresh: true));
+                        HandleServerReadyForPocketTts();
                     }
                 },
                 redirectInput: true);
@@ -790,8 +1393,259 @@ echo "CHIM-MCP installed and enabled."
             "CHIM" => LauncherConstants.ChimServerUiUrl,
             "STOBE" => LauncherConstants.StobeServerUiUrl,
             "DIALECTIC" => LauncherConstants.DialecticServerUiUrl,
+            "REIGN" => "http://127.0.0.1:8089/",
+            "LORKHAN" => "http://127.0.0.1:7514/LorkhanServer/ui/home.php",
             _ => null
         };
+    }
+
+    /// <summary>
+    /// The public mod page for a product. Deliberately separate from
+    /// <see cref="ResolveServerWebPageUrl"/>: this one is an external link with no local server,
+    /// no WSL probe, and no running-state condition behind it.
+    /// </summary>
+    internal static string? ResolveNexusPageUrl(string? gameKey)
+    {
+        return gameKey switch
+        {
+            "CHIM" => LauncherConstants.ChimNexusUrl,
+            "STOBE" => LauncherConstants.StobeNexusUrl,
+            "DIALECTIC" => LauncherConstants.DialecticNexusUrl,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Opens the mod's Nexus page in the default browser straight away. A browser that refuses to
+    /// start is reported in the console; it must never take the launcher down with it.
+    /// </summary>
+    private void OpenModNexusPage(string gameKey)
+    {
+        var url = ResolveNexusPageUrl(gameKey);
+        if (url is null)
+        {
+            AppendLog($"No Nexus page is configured for {gameKey}.{Environment.NewLine}", "yellow");
+            return;
+        }
+
+        try
+        {
+            _processRunner.OpenExternalUrl(url);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Could not open the {gameKey} Nexus page: {ex.Message}{Environment.NewLine}", "red");
+        }
+    }
+
+    /// <summary>
+    /// Everything the log buttons need to reveal a product's local game plugin log: the file name
+    /// shown to the user, the game to run when the log does not exist yet, and the ordered
+    /// absolute candidate paths.
+    /// </summary>
+    internal sealed record LocalGameLogTarget(string LogFileName, string GameName, string[] Candidates);
+
+    internal static LocalGameLogTarget? ResolveLocalGameLogTarget(string? gameKey, string? documentsFolder)
+    {
+        return gameKey switch
+        {
+            "CHIM" => new LocalGameLogTarget("AIAgent.log", "Skyrim",
+                BuildChimSkyrimAgentLogButtonCandidates(documentsFolder)),
+            "CHIM_VR" => new LocalGameLogTarget("AIAgent.log", "Skyrim VR",
+                BuildChimSkyrimVrAgentLogCandidates(documentsFolder)),
+            "DIALECTIC" => new LocalGameLogTarget("dialectic.log", "Fallout New Vegas",
+                BuildDialecticPluginLogCandidates(documentsFolder)),
+            "STOBE" => new LocalGameLogTarget("Stobe.log", "Kenshi",
+                BuildStobeModLogCandidates()),
+            "LORKHAN" => new LocalGameLogTarget("openmw.log", "LORKHAN / OpenMW",
+                BuildLorkhanLogCandidates(documentsFolder)),
+            "REIGN" => new LocalGameLogTarget("reignbeta.log", "Mount & Blade II: Bannerlord",
+                BuildReignModLogCandidates()),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Reveals the product's local game plugin log in File Explorer. This is purely Windows-side:
+    /// it never probes or starts WSL, never creates folders or files, and an Explorer that refuses
+    /// to start is reported in the console rather than taking the launcher down.
+    /// </summary>
+    private void OpenLocalGameLogLocation(string gameKey)
+    {
+        var target = ResolveLocalGameLogTarget(gameKey, GetWindowsDocumentsFolder());
+        if (target is null)
+        {
+            AppendLog($"No local game log is configured for {gameKey}.{Environment.NewLine}", "yellow");
+            return;
+        }
+
+        try
+        {
+            var existingLog = target.Candidates.FirstOrDefault(File.Exists);
+            if (existingLog is not null)
+            {
+                _processRunner.RevealFileInExplorer(existingLog);
+                return;
+            }
+
+            if (gameKey == "STOBE")
+            {
+                var reKenshiLog = BuildStobeReKenshiLogCandidates(target.Candidates).FirstOrDefault(File.Exists);
+                if (reKenshiLog is not null)
+                {
+                    MessageBox.Show(
+                        "Stobe.log was not found.\n\nFile Explorer will select RE_Kenshi_log.txt instead. STOBE may not have loaded.",
+                        "STOBE Logs",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    _processRunner.RevealFileInExplorer(reKenshiLog);
+                    AppendLog(
+                        $"Stobe.log was not found, so RE_Kenshi_log.txt is selected instead. STOBE may not have loaded.{Environment.NewLine}",
+                        "yellow");
+                    return;
+                }
+            }
+
+            var fallbackFolder = FindBestExistingLogParentFolder(
+                target.Candidates, Directory.Exists, Environment.CurrentDirectory);
+            if (fallbackFolder is not null)
+            {
+                ShowMissingLocalGameLogMessage(target, fallbackFolder);
+                _processRunner.OpenFolder(fallbackFolder);
+                AppendLog(
+                    $"{target.LogFileName} has not been created yet; opened {fallbackFolder} instead. Run {target.GameName} with the mod enabled to generate the log.{Environment.NewLine}",
+                    "yellow");
+                return;
+            }
+
+            ShowMissingLocalGameLogMessage(target, null);
+            AppendLog(
+                $"{target.LogFileName} has not been created yet and its folder does not exist. Expected location: {target.Candidates[0]}. Run {target.GameName} with the mod enabled to generate the log.{Environment.NewLine}",
+                "yellow");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Could not open the {target.LogFileName} location: {ex.Message}{Environment.NewLine}", "red");
+        }
+    }
+
+    private static void ShowMissingLocalGameLogMessage(LocalGameLogTarget target, string? openedFolder)
+    {
+        var location = openedFolder is null
+            ? $"Expected location: {target.Candidates[0]}"
+            : $"File Explorer will open the expected folder: {openedFolder}";
+        MessageBox.Show(
+            $"{target.LogFileName} was not found.\n\n{location}\n\nRun {target.GameName} with the mod enabled, then try again.",
+            $"{target.GameName} Log",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    private static string? GetWindowsDocumentsFolder()
+    {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        return string.IsNullOrWhiteSpace(documents) ? null : documents;
+    }
+
+    /// <summary>Compares the published system release with the last fully successful local update.</summary>
+    private async Task CheckSystemUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        ApplySystemUpdateCheckResult(SystemUpdateAvailability.Checking, null, null);
+
+        try
+        {
+            var availablePayload = await _httpClient
+                .GetStringAsync(SystemReleaseManifestUrl, cancellationToken)
+                .ConfigureAwait(false);
+            var availableVersion = ParseSystemReleaseVersion(availablePayload);
+
+            var installedResult = await _wsl.RunBashAsync(
+                    BuildSystemReleaseMarkerReadCommand(),
+                    loginShell: false,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var installedVersion = installedResult.Succeeded
+                ? ParseSystemReleaseVersion(installedResult.StandardOutput)
+                : null;
+
+            ApplySystemUpdateCheckResult(
+                ResolveSystemUpdateAvailability(installedVersion, availableVersion),
+                installedVersion,
+                availableVersion);
+        }
+        catch (OperationCanceledException)
+        {
+            ApplySystemUpdateCheckResult(SystemUpdateAvailability.Unknown, null, null);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("System update check failed.", ex);
+            ApplySystemUpdateCheckResult(SystemUpdateAvailability.Unknown, null, null);
+        }
+    }
+
+    internal static string? ParseSystemReleaseVersion(string? payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("schema_version", out var schemaVersion)
+                || !schemaVersion.TryGetInt32(out var schema)
+                || schema != 1
+                || !root.TryGetProperty("version", out var versionElement))
+            {
+                return null;
+            }
+
+            var version = NormalizeSystemVersion(versionElement.GetString());
+            var segments = version?.Split('.');
+            return segments is { Length: 3 }
+                   && segments.All(segment => segment.Length > 0 && segment.All(char.IsAsciiDigit))
+                    ? version
+                    : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    internal static SystemUpdateAvailability ResolveSystemUpdateAvailability(
+        string? installedVersion,
+        string? availableVersion)
+    {
+        var installed = NormalizeSystemVersion(installedVersion);
+        var available = NormalizeSystemVersion(availableVersion);
+        if (available is null)
+        {
+            return SystemUpdateAvailability.Unknown;
+        }
+
+        return string.Equals(installed, available, StringComparison.Ordinal)
+            ? SystemUpdateAvailability.Current
+            : SystemUpdateAvailability.UpdateAvailable;
+    }
+
+    internal static string BuildSystemReleaseMarkerReadCommand()
+    {
+        return $"cat {InstalledSystemReleaseManifestPath} 2>/dev/null || true";
+    }
+
+    internal static string BuildSystemReleaseMarkerWriteCommand()
+    {
+        return "printf '%s\\n' 'dwemer' | sudo -S -p '' install -D -m 0644 " +
+               $"/home/dwemer/dwemerdistro/system-release.json {InstalledSystemReleaseManifestPath}";
     }
 
     // A page that answers at all is good enough to open; only a server-side failure
@@ -982,413 +1836,800 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private async Task UpdateAllAsync()
+    /// <summary>
+    /// Keeps one operation lock across the shared system update and the mod that asked for it. Each
+    /// mod's own Update button is the only caller: a single product update stays a single product
+    /// update, so status is never re-read to pull other mods into the run.
+    /// </summary>
+    private async Task RunModUpdatesAsync(
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate,
+        bool forceGitUpdates)
     {
-        await RunDistroUpdateAsync(requireConfirmation: true, sourceLabel: "Distro Updates").ConfigureAwait(true);
+        if (!CanRunUpdateOperation())
+        {
+            return;
+        }
+
+        // Status can refresh while a confirmation dialog pumps the dispatcher. An empty selection is
+        // still a valid run: the system stage is the whole point of the recovery path.
+        var eligibleProducts = productsToUpdate
+            .Where(update => ShouldUpdateProduct(update.Product.State))
+            .ToArray();
+
+        IsDistroUpdateInProgress = true;
+        SetSystemUpdateRunningButtonText("Updating Distro...");
+        SetSystemUpdateState(SystemUpdateAvailability.Updating);
+        var systemSucceeded = false;
+        var modsAttempted = false;
+        var skippedMods = new List<string>();
+        var modsFailed = false;
+
+        try
+        {
+            AppendLog(
+                eligibleProducts.Length > 0
+                    ? $"Updating DwemerDistro and shared components before {string.Join(", ", eligibleProducts.Select(update => update.Product.DisplayName))}." +
+                      Environment.NewLine
+                    : "Updating DwemerDistro and shared components. The selected mod is no longer eligible, so only the system is updated." +
+                      Environment.NewLine);
+
+            var succeeded = await UpdateInstalledServersAsync(
+                eligibleProducts,
+                async () =>
+                {
+                    await FlushUpdateUiAsync().ConfigureAwait(true);
+                    systemSucceeded = await RunSharedDistroUpdateAsync().ConfigureAwait(true);
+                    return systemSucceeded;
+                },
+                async (product, branch) =>
+                {
+                    modsAttempted = true;
+                    SetSystemUpdateRunningButtonText(null);
+                    var outcome = await RunServerOperationAsync(product, ServerOperation.Update, branch, forceGitUpdates)
+                        .ConfigureAwait(true);
+                    if (outcome == ServerOperationOutcome.Skipped)
+                    {
+                        skippedMods.Add(product.DisplayName);
+                    }
+                    else if (outcome == ServerOperationOutcome.Failed)
+                    {
+                        modsFailed = true;
+                    }
+
+                    return outcome == ServerOperationOutcome.Succeeded;
+                }).ConfigureAwait(true);
+            var completionMessage = "System and mod updates completed successfully.";
+            var skippedNote = skippedMods.Count > 0
+                ? $" Skipped to keep local edits: {string.Join(", ", skippedMods)}."
+                : string.Empty;
+            if (!systemSucceeded)
+            {
+                completionMessage = "System update failed. No mods were updated. Check the log above.";
+            }
+            else if (modsFailed)
+            {
+                completionMessage = "At least one mod update failed. Check the log above." + skippedNote;
+            }
+            else if (skippedMods.Count > 0)
+            {
+                completionMessage = "System and shared components updated." + skippedNote;
+            }
+            else if (!succeeded)
+            {
+                completionMessage = "At least one mod update failed. Check the log above.";
+            }
+            else if (!modsAttempted)
+            {
+                completionMessage =
+                    "System and shared components updated successfully. The selected mod was no longer eligible, so no mod was changed.";
+            }
+
+            var completionColor = succeeded ? "green" : "red";
+            if (systemSucceeded && !modsFailed && skippedMods.Count > 0)
+            {
+                completionColor = "yellow";
+            }
+
+            AppendLog(completionMessage + Environment.NewLine, completionColor);
+            ReportSystemUpdateOutcome(systemSucceeded);
+        }
+        catch (Exception ex)
+        {
+            var message = systemSucceeded ? "Error during mod update" : "System update failed. No mods were updated";
+            AppendLog($"{message}: {ex.Message}{Environment.NewLine}", "red");
+            ReportSystemUpdateOutcome(systemSucceeded);
+        }
+        finally
+        {
+            CompleteUpdateOperation();
+        }
     }
 
+    internal void SetComponentsOperationInProgress(bool value)
+    {
+        if (_isComponentsOperationInProgress == value)
+        {
+            return;
+        }
+
+        _isComponentsOperationInProgress = value;
+        RaiseUpdateCommandStates();
+        RefreshServerUpdateConflictState();
+        OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+    }
+
+    /// <summary>
+    /// Claims the exclusive distro slot in one atomic step. Every critical operation goes through
+    /// this instead of checking and then setting, because Quickstart is modeless and can start an
+    /// install on the same dispatcher between those two moments.
+    /// </summary>
+    private bool TryBeginExclusiveDistroOperation()
+    {
+        lock (_distroOperationGate)
+        {
+            if (!CanRunExclusiveDistroOperation())
+            {
+                return false;
+            }
+
+            _isExclusiveDistroOperationInProgress = true;
+        }
+
+        NotifyDistroOperationGateChanged();
+        return true;
+    }
+
+    private void SetExclusiveDistroOperationInProgress(bool value)
+    {
+        lock (_distroOperationGate)
+        {
+            if (_isExclusiveDistroOperationInProgress == value)
+            {
+                return;
+            }
+
+            _isExclusiveDistroOperationInProgress = value;
+        }
+
+        NotifyDistroOperationGateChanged();
+    }
+
+    /// <summary>
+    /// Registers the Quickstart window or one of its distro operations with the shared gate so
+    /// Compact Distro, Export, Import, and Fix WSL DNS cannot start underneath it. Returns false
+    /// when a critical operation already holds the gate, which is the caller's cue to do nothing.
+    /// </summary>
+    internal bool TryBeginQuickstartDistroActivity()
+    {
+        lock (_distroOperationGate)
+        {
+            if (_isExclusiveDistroOperationInProgress)
+            {
+                return false;
+            }
+
+            _quickstartDistroActivityCount++;
+        }
+
+        NotifyDistroOperationGateChanged();
+        return true;
+    }
+
+    internal void EndQuickstartDistroActivity()
+    {
+        lock (_distroOperationGate)
+        {
+            if (_quickstartDistroActivityCount == 0)
+            {
+                return;
+            }
+
+            _quickstartDistroActivityCount--;
+        }
+
+        NotifyDistroOperationGateChanged();
+    }
+
+    /// <summary>
+    /// Marshals to the UI thread because Quickstart releases the gate from whichever thread its
+    /// install finished on, and every listener below touches command state.
+    /// </summary>
+    private void NotifyDistroOperationGateChanged()
+    {
+        RunOnUi(() =>
+        {
+            OnPropertyChanged(nameof(IsCriticalMaintenanceInProgress));
+            OnPropertyChanged(nameof(IsQuickstartDistroActivityInProgress));
+            OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+            RaiseUpdateCommandStates();
+            RaiseServerCommandStates();
+            RefreshServerUpdateConflictState();
+            RaiseDistroAccessCommandStates();
+        });
+    }
+
+    private void RaiseUpdateCommandStates()
+    {
+        UpdateSystemCommand?.RaiseCanExecuteChanged();
+        CompactDistroCommand?.RaiseCanExecuteChanged();
+        ExportDistroCommand?.RaiseCanExecuteChanged();
+        ImportDistroCommand?.RaiseCanExecuteChanged();
+        FixWslDnsCommand?.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(UpdateSystemHelpText));
+        // Custom mod actions share these gates through IsComponentInteractionEnabled.
+        RaiseCustomModCommandStates();
+    }
+
+    private void RaiseDistroAccessCommandStates()
+    {
+        OpenServerFolderCommand?.RaiseCanExecuteChanged();
+        OpenFirstRunSetupCommand?.RaiseCanExecuteChanged();
+        SaveDashboardAutoOpenCommand?.RaiseCanExecuteChanged();
+        OpenChimCommand?.RaiseCanExecuteChanged();
+        OpenStobeCommand?.RaiseCanExecuteChanged();
+        OpenDialecticCommand?.RaiseCanExecuteChanged();
+        OpenReignCommand?.RaiseCanExecuteChanged();
+        OpenPiperVoicesFolderCommand?.RaiseCanExecuteChanged();
+        OpenTerminalCommand?.RaiseCanExecuteChanged();
+        ViewMemoryUsageCommand?.RaiseCanExecuteChanged();
+        OpenHerikaRollbackCommand?.RaiseCanExecuteChanged();
+        OpenStobeRollbackCommand?.RaiseCanExecuteChanged();
+        OpenDialecticRollbackCommand?.RaiseCanExecuteChanged();
+        OpenReignRollbackCommand?.RaiseCanExecuteChanged();
+        ViewXttsLogsCommand?.RaiseCanExecuteChanged();
+        ViewChatterboxLogsCommand?.RaiseCanExecuteChanged();
+        ViewPocketTtsLogsCommand?.RaiseCanExecuteChanged();
+        ViewOmniVoiceLogsCommand?.RaiseCanExecuteChanged();
+        ViewPiperLogsCommand?.RaiseCanExecuteChanged();
+        ViewLocalWhisperLogsCommand?.RaiseCanExecuteChanged();
+        ViewParakeetLogsCommand?.RaiseCanExecuteChanged();
+        ViewApacheLogsCommand?.RaiseCanExecuteChanged();
+        DistroDoctorCommand?.RaiseCanExecuteChanged();
+        OpenCudaConfigCommand?.RaiseCanExecuteChanged();
+        OpenApiKeysCommand?.RaiseCanExecuteChanged();
+        UpdateLauncherCommand?.RaiseCanExecuteChanged();
+        CleanLogsCommand?.RaiseCanExecuteChanged();
+        GenerateDiagnosticsCommand?.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// The one place a run's own result is turned into a state. A success reports Current because
+    /// the shared system was just brought forward; a failure reports Failed so the line offers a
+    /// retry instead of going quiet.
+    /// </summary>
+    private void ReportSystemUpdateOutcome(bool succeeded)
+    {
+        if (succeeded)
+        {
+            MarkSystemUpdateSucceeded();
+            return;
+        }
+
+        SetSystemUpdateState(SystemUpdateAvailability.Failed);
+    }
+
+    private async Task UpdateSystemAsync()
+    {
+        await RunSystemUpdateAsync(requireConfirmation: true, sourceLabel: "System").ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Quickstart updates the shared core only. Application servers are installed and updated from
+    /// the Choose Your Mods step and the Mods page, never as a side effect of the distro update.
+    /// </summary>
     public Task<bool> UpdateDistroFromQuickstartAsync()
     {
-        return RunDistroUpdateAsync(requireConfirmation: false, sourceLabel: "Quickstart");
+        return RunSystemUpdateAsync(requireConfirmation: false, sourceLabel: "Quickstart");
     }
 
-    private async Task<bool> RunDistroUpdateAsync(bool requireConfirmation, string sourceLabel)
+    /// <summary>
+    /// Updates DwemerDistro and shared services without touching any application-server repository.
+    /// Quickstart uses the same path without a second confirmation prompt.
+    /// </summary>
+    private async Task<bool> RunSystemUpdateAsync(
+        bool requireConfirmation,
+        string sourceLabel,
+        CancellationToken cancellationToken = default)
     {
-        if (IsDistroUpdateInProgress)
+        if (!CanRunUpdateOperation())
         {
-            AppendLog("Distro update is already running." + Environment.NewLine, "yellow");
+            AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
             return false;
         }
 
-        var includeHerika = IncludeHerikaServerUpdate;
-        var includeStobe = IncludeStobeServerUpdate;
-        var includeDialectic = IncludeDialecticServerUpdate;
-        var targetHerika = ResolveServerBranchChoice(TargetHerikaBranch, "aiagent");
-        var targetStobe = ResolveServerBranchChoice(TargetStobeBranch, "stobe");
-        var targetDialectic = ResolveServerBranchChoice(TargetDialecticBranch, "dialectic");
-
-        var confirmText = includeHerika || includeStobe || includeDialectic
-            ? "This will update the Dwemer Distro and selected server components.\n\n" +
-              (includeHerika ? $"HerikaServer target branch: {targetHerika}\n" : "HerikaServer update: disabled\n") +
-              (includeStobe ? $"StobeServer target branch: {targetStobe}\n" : "StobeServer update: disabled\n") +
-              (includeDialectic ? $"DialecticServer target branch: {targetDialectic}\n" : "DialecticServer update: disabled\n") +
-              "\nAre you sure?"
-            : "This will update Dwemer Distro only.\n\nAll server updates are disabled in the Distro Updates section.\n\nAre you sure?";
-
         if (requireConfirmation &&
-            MessageBox.Show(confirmText, "Update System", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            MessageBox.Show(
+                BuildSystemUpdateConfirmation(),
+                "Update Distro",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
-            AppendLog("Update canceled." + Environment.NewLine);
+            AppendLog("System update canceled." + Environment.NewLine);
             return false;
         }
 
         IsDistroUpdateInProgress = true;
-        DistroUpdateButtonText = sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
+        SetSystemUpdateRunningButtonText(sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
             ? "Quickstart Updating..."
-            : "Updating...";
+            : "Updating Distro...");
+        SetSystemUpdateState(SystemUpdateAvailability.Updating);
 
         try
         {
-            SetHerikaStatus("Updating...", "White");
-            if (includeStobe)
-            {
-                SetStobeStatus("Updating...", "White");
-            }
-            if (includeDialectic)
-            {
-                SetDialecticStatus("Updating...", "White");
-            }
-
-            AppendLog("Starting system update for the selected server components..." + Environment.NewLine);
-            AppendLog("Preparing update steps..." + Environment.NewLine);
+            AppendLog("Starting the DwemerDistro core and shared components update." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            if (includeHerika)
-            {
-                AppendLog(Environment.NewLine + "STEP 1: Prepare HerikaServer branch" + Environment.NewLine, "green");
-                if (!await SwitchHerikaServerBranchAsync(targetHerika).ConfigureAwait(false))
-                {
-                    return false;
-                }
-            }
-
-            if (includeStobe)
-            {
-                AppendLog(Environment.NewLine + (includeHerika ? "STEP 2: Prepare StobeServer branch" : "STEP 1: Prepare StobeServer branch") + Environment.NewLine, "green");
-                if (!await SwitchStobeServerBranchAsync(targetStobe).ConfigureAwait(false))
-                {
-                    return false;
-                }
-            }
-
-            if (includeDialectic)
-            {
-                AppendLog(Environment.NewLine + "Prepare DialecticServer branch" + Environment.NewLine, "green");
-                if (!await SwitchDialecticServerBranchAsync(targetDialectic).ConfigureAwait(false))
-                {
-                    return false;
-                }
-            }
-
-            AppendLog(Environment.NewLine + (includeHerika || includeStobe || includeDialectic
-                ? "STEP 3: Run DwemerDistro core update and component update"
-                : "STEP 1: Run DwemerDistro core update") + Environment.NewLine, "green");
-            AppendLog("Executing update script..." + Environment.NewLine);
-            await FlushUpdateUiAsync().ConfigureAwait(true);
-
-            var serverUpdateRequested = includeHerika || includeStobe || includeDialectic;
-            var gwsFlags = new List<string>();
-            if (!includeHerika)
-            {
-                gwsFlags.Add("--skip-herika");
-            }
-            if (!includeStobe)
-            {
-                gwsFlags.Add("--skip-stobe");
-            }
-            if (!includeDialectic)
-            {
-                gwsFlags.Add("--skip-dialectic");
-            }
-
-            var gwsCommand = "/usr/local/bin/update_gws";
-            if (gwsFlags.Count > 0)
-            {
-                gwsCommand += " " + string.Join(" ", gwsFlags);
-            }
-
-            var bashCommand = serverUpdateRequested
-                ? "cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main && " +
-                  "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh && " +
-                  "echo '=====MARKER:BEGIN_SERVER_UPDATE=====' && " + gwsCommand
-                : "cd /home/dwemer/dwemerdistro && git fetch origin && git reset --hard origin/main && " +
-                  "chmod +x update.sh && echo 'dwemer' | sudo -S ./update.sh";
-
-            var distroUpdateComplete = false;
-            var serverUpdateStarted = false;
-            var serverUpdateComplete = false;
-            var branchErrorDetected = false;
-
-            var result = await _wsl.RunBashAsync(bashCommand, line =>
-            {
-                if (serverUpdateRequested && line.Contains("=====MARKER:BEGIN_SERVER_UPDATE=====", StringComparison.OrdinalIgnoreCase))
-                {
-                    distroUpdateComplete = true;
-                    serverUpdateStarted = true;
-                    AppendLog(Environment.NewLine + "STEP 4: Dwemer Distro Server & Components Update" + Environment.NewLine, "green");
-                    return;
-                }
-
-                AppendLog(line);
-                var lowered = line.ToLowerInvariant();
-                if (serverUpdateRequested &&
-                    (lowered.Contains("you are not currently on a branch") ||
-                     lowered.Contains("please specify which branch you want to merge with")))
-                {
-                    branchErrorDetected = true;
-                }
-
-                if (serverUpdateRequested && serverUpdateStarted && (line.Contains("Successfully") || line.Contains("Completed")))
-                {
-                    serverUpdateComplete = true;
-                }
-            }, loginShell: false, lineBuffered: true).ConfigureAwait(false);
-
-            if (!serverUpdateRequested)
-            {
-                distroUpdateComplete = result.Succeeded;
-            }
-
-            var updateSucceeded = result.Succeeded && distroUpdateComplete && (!serverUpdateRequested || !branchErrorDetected);
-            if (updateSucceeded)
-            {
-                var statusParts = new List<string>();
-                if (includeHerika)
-                {
-                    statusParts.Add($"HerikaServer: {await GetCurrentBranchAsync().ConfigureAwait(false) ?? "unknown"}");
-                }
-                if (includeStobe)
-                {
-                    statusParts.Add($"StobeServer: {await GetStobeServerCurrentBranchAsync().ConfigureAwait(false) ?? "unknown"}");
-                }
-                if (includeDialectic)
-                {
-                    statusParts.Add($"DialecticServer: {await GetDialecticServerCurrentBranchAsync().ConfigureAwait(false) ?? "unknown"}");
-                }
-
-                if (serverUpdateRequested && serverUpdateComplete)
-                {
-                    AppendLog($"System update completed successfully! {string.Join(" | ", statusParts)}{Environment.NewLine}", "green");
-                }
-                else if (serverUpdateRequested)
-                {
-                    AppendLog($"Update completed. {string.Join(" | ", statusParts)}{Environment.NewLine}", "green");
-                }
-                else
-                {
-                    AppendLog("Distro update completed successfully. Server updates were skipped." + Environment.NewLine, "green");
-                }
-            }
-            else
-            {
-                AppendLog("Update may have encountered issues. Check logs above." + Environment.NewLine, "red");
-            }
-
-            return updateSucceeded;
+            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken).ConfigureAwait(true);
+            AppendLog(
+                succeeded
+                    ? "System update completed successfully." + Environment.NewLine
+                    : "System update may have encountered issues. Check the log above." + Environment.NewLine,
+                succeeded ? "green" : "red");
+            ReportSystemUpdateOutcome(succeeded);
+            return succeeded;
         }
         catch (Exception ex)
         {
-            AppendLog($"Error during update: {ex.Message}{Environment.NewLine}", "red");
+            AppendLog($"Error during system update: {ex.Message}{Environment.NewLine}", "red");
+            ReportSystemUpdateOutcome(false);
             return false;
         }
         finally
         {
-            RunOnUi(() =>
+            CompleteUpdateOperation();
+        }
+    }
+
+    // --- Automatic launcher-version system sync --------------------------------------------
+
+    /// <summary>
+    /// Runs the system-only update once after the launcher executable changes version, so a distro
+    /// left behind by an older build is brought forward without the user having to find a button.
+    /// No prompt is shown; the console carries the whole story. The marker is written only after a
+    /// successful update, so a failed or blocked attempt simply retries on a later launch. Game
+    /// server repositories are never touched: this reuses the same server-free system update.
+    /// </summary>
+    private async Task SyncLauncherVersionAsync(CancellationToken cancellationToken = default)
+    {
+        var currentVersion = SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion);
+        if (currentVersion is null)
+        {
+            LauncherLogService.Startup("Launcher version sync skipped: the launcher version is not a plain version string.");
+            return;
+        }
+
+        CommandResult marker;
+        try
+        {
+            marker = await _wsl.RunBashAsync(
+                    BuildLauncherSyncMarkerReadCommand(),
+                    loginShell: false,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Launcher version sync could not read its marker.", ex);
+            return;
+        }
+
+        if (!marker.Succeeded)
+        {
+            // A distro that cannot answer has nothing to synchronize yet; first-time setup owns that case.
+            LauncherLogService.Startup("Launcher version sync skipped: the distro did not answer.");
+            return;
+        }
+
+        if (!ShouldSyncLauncherVersion(marker.StandardOutput, currentVersion))
+        {
+            LauncherLogService.Startup($"Launcher version sync skipped: {currentVersion} is already recorded.");
+            return;
+        }
+
+        AppendLog(
+            $"{Environment.NewLine}Launcher {currentVersion} has not updated this distro yet. " +
+            $"Updating DwemerDistro and its shared components automatically. Installed mods are not changed.{Environment.NewLine}",
+            "yellow");
+
+        // Marshalled to the UI thread because the update drives button text, the operation lock, and
+        // command states, exactly as the Components button does.
+        var succeeded = await _dispatcher
+            .InvokeAsync(() => RunSystemUpdateAsync(
+                requireConfirmation: false,
+                sourceLabel: "Launcher sync",
+                cancellationToken))
+            .Task
+            .Unwrap()
+            .ConfigureAwait(false);
+
+        if (!succeeded)
+        {
+            AppendLog(
+                "Automatic launcher update sync did not complete. It will run again on the next launch." + Environment.NewLine,
+                "yellow");
+            return;
+        }
+
+        CommandResult write;
+        try
+        {
+            write = await _wsl.RunBashAsync(
+                    BuildLauncherSyncMarkerWriteCommand(currentVersion),
+                    loginShell: false,
+                    cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Launcher version sync could not record its marker.", ex);
+            AppendLog(
+                "Automatic launcher update sync finished, but it could not be recorded, so it runs again on the next launch." +
+                Environment.NewLine,
+                "yellow");
+            return;
+        }
+
+        AppendLog(
+            write.Succeeded
+                ? $"Automatic launcher update sync finished. Launcher {currentVersion} will not repeat it." + Environment.NewLine
+                : "Automatic launcher update sync finished, but it could not be recorded, so it runs again on the next launch." +
+                  Environment.NewLine,
+            write.Succeeded ? "green" : "yellow");
+    }
+
+    /// <summary>
+    /// Only a plain dotted version may reach the marker command; anything else is refused rather than
+    /// quoted into a shell.
+    /// </summary>
+    internal static string? SanitizeLauncherSyncVersion(string? version)
+    {
+        var trimmed = version?.Trim();
+        if (string.IsNullOrEmpty(trimmed) || trimmed.Length > 32)
+        {
+            return null;
+        }
+
+        return trimmed.All(character => char.IsAsciiDigit(character) || character == '.') ? trimmed : null;
+    }
+
+    /// <summary>
+    /// True when this launcher build has not recorded a successful sync yet. A missing, empty, or
+    /// different marker all mean "run it once".
+    /// </summary>
+    internal static bool ShouldSyncLauncherVersion(string? recordedVersion, string currentVersion)
+    {
+        return !string.Equals(recordedVersion?.Trim(), currentVersion, StringComparison.Ordinal);
+    }
+
+    internal static string BuildLauncherSyncMarkerReadCommand()
+    {
+        return $"cat {LauncherSyncMarkerPath} 2>/dev/null || true";
+    }
+
+    internal static string BuildLauncherSyncMarkerWriteCommand(string version)
+    {
+        var safeVersion = SanitizeLauncherSyncVersion(version)
+            ?? throw new ArgumentException("The launcher sync marker only accepts a plain version.", nameof(version));
+        return $"mkdir -p /home/dwemer && printf '%s' '{safeVersion}' > {LauncherSyncMarkerPath}";
+    }
+
+    /// <summary>Prevents mod, component, and system operations from competing for the same WSL files.</summary>
+    private bool CanRunUpdateOperation()
+    {
+        return CanRunUpdateOperation(
+            IsDistroUpdateInProgress,
+            _isComponentsOperationInProgress,
+            _isExclusiveDistroOperationInProgress,
+            ServerManagers.Select(manager => manager.IsBusy),
+            IsLiveFileMutationInProgress);
+    }
+
+    internal static bool CanRunUpdateOperation(
+        bool isGlobalUpdateRunning,
+        bool isComponentsOperationRunning,
+        bool isExclusiveDistroOperationRunning,
+        IEnumerable<bool> serverBusyStates,
+        bool isCustomModMutationRunning = false)
+    {
+        return !isGlobalUpdateRunning &&
+               !isComponentsOperationRunning &&
+               !isExclusiveDistroOperationRunning &&
+               !isCustomModMutationRunning &&
+               !serverBusyStates.Any(isBusy => isBusy);
+    }
+
+    /// <summary>
+    /// Whether Compact, Export, Import or DNS repair can be offered. An idle assistant session is the one passive
+    /// lease looked past here: the operation closes it before claiming the slot, which still counts every lease.
+    /// </summary>
+    private bool CanStartExclusiveDistroOperation() =>
+        CanRunExclusiveDistroOperation(YieldablePassiveDistroActivityCount());
+
+    private bool CanRunExclusiveDistroOperation(int yieldablePassiveActivities = 0)
+    {
+        lock (_distroOperationGate)
+        {
+            return CanRunExclusiveDistroOperation(
+                IsDistroUpdateInProgress,
+                _isComponentsOperationInProgress,
+                _isExclusiveDistroOperationInProgress,
+                _quickstartDistroActivityCount > 0,
+                _passiveDistroActivityCount - yieldablePassiveActivities > 0,
+                IsServerStarting,
+                ServerManagers.Select(manager => manager.IsBusy),
+                IsLiveFileMutationInProgress);
+        }
+    }
+
+    internal static bool CanRunExclusiveDistroOperation(
+        bool isGlobalUpdateRunning,
+        bool isComponentsOperationRunning,
+        bool isExclusiveDistroOperationRunning,
+        bool isQuickstartDistroActivityRunning,
+        bool isPassiveDistroActivityRunning,
+        bool isServerStarting,
+        IEnumerable<bool> serverBusyStates,
+        bool isCustomModMutationRunning = false)
+    {
+        return !isServerStarting &&
+               !isQuickstartDistroActivityRunning &&
+               !isPassiveDistroActivityRunning &&
+               CanRunUpdateOperation(
+                   isGlobalUpdateRunning,
+                   isComponentsOperationRunning,
+                   isExclusiveDistroOperationRunning,
+                   serverBusyStates,
+                   isCustomModMutationRunning);
+    }
+
+    /// <summary>
+    /// Reports the shared gate refusing an operation the user already confirmed. The console is
+    /// collapsed by default, so the answer has to be visible on its own.
+    /// </summary>
+    private void ReportExclusiveDistroOperationBusy(string title)
+    {
+        AppendLog(ExclusiveDistroOperationBusyMessage + Environment.NewLine, "yellow");
+        RunOnUi(() => MessageBox.Show(
+            ExclusiveDistroOperationBusyMessage + "\n\nWait for it to finish, then try again.",
+            title,
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning));
+    }
+
+    /// <summary>
+    /// Waits for an already-running passive status check to finish. A passive check runs WSL
+    /// commands, so one still in flight would reopen the distro between the stopped-state
+    /// verification and DiskPart. New checks are already held off by the gate, so only the
+    /// in-flight one has to drain, and the wait never blocks the UI thread it needs.
+    /// </summary>
+    private async Task<bool> WaitForPassiveDistroActivityIdleAsync()
+    {
+        if (!IsPassiveDistroActivityInProgress())
+        {
+            return true;
+        }
+
+        AppendLog("Waiting for the background status check to finish..." + Environment.NewLine);
+        var deadline = DateTime.UtcNow + PassiveStatusDrainTimeout;
+        while (IsPassiveDistroActivityInProgress())
+        {
+            if (DateTime.UtcNow >= deadline)
             {
-                IsDistroUpdateInProgress = false;
-                DistroUpdateButtonText = "Update Mods";
-            });
-            QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-        }
-    }
+                return false;
+            }
 
-    private async Task<bool> SwitchHerikaServerBranchAsync(string targetBranch)
-    {
-        if (targetBranch is not ("aiagent" or "dev"))
-        {
-            AppendLog($"Invalid branch selection: '{targetBranch}'. Expected aiagent or dev.{Environment.NewLine}", "red");
-            return false;
-        }
-
-        var currentBranch = await GetCurrentBranchAsync().ConfigureAwait(false);
-        if (currentBranch == targetBranch)
-        {
-            AppendLog($"HerikaServer already on branch '{targetBranch}'." + Environment.NewLine);
-            return true;
-        }
-
-        AppendLog($"Switching HerikaServer branch to '{targetBranch}'..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "cd /var/www/html/HerikaServer && " +
-            "git stash save 'Auto-stash before switching branch' && " +
-            "git fetch origin && " +
-            $"git checkout -B {targetBranch} origin/{targetBranch}",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog($"Failed to switch HerikaServer branch to '{targetBranch}'." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        AppendLog($"Successfully switched HerikaServer to '{targetBranch}'." + Environment.NewLine, "green");
-        return true;
-    }
-
-    private async Task<bool> SwitchStobeServerBranchAsync(string targetBranch)
-    {
-        if (targetBranch is not ("stobe" or "dev"))
-        {
-            AppendLog($"Invalid StobeServer branch selection: '{targetBranch}'. Expected stobe or dev.{Environment.NewLine}", "red");
-            return false;
-        }
-
-        if (!await EnsureStobeServerRepoExistsAsync(targetBranch).ConfigureAwait(false))
-        {
-            return false;
-        }
-
-        var currentBranch = await GetStobeServerCurrentBranchAsync().ConfigureAwait(false);
-        if (currentBranch == targetBranch)
-        {
-            AppendLog($"StobeServer already on branch '{targetBranch}'." + Environment.NewLine);
-            return true;
-        }
-
-        AppendLog($"Switching StobeServer branch to '{targetBranch}'..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "cd /var/www/html/StobeServer && " +
-            "git stash save 'Auto-stash before switching branch' && " +
-            "git fetch origin && " +
-            $"git checkout -B {targetBranch} origin/{targetBranch}",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog($"Failed to switch StobeServer branch to '{targetBranch}'." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        AppendLog($"Successfully switched StobeServer to '{targetBranch}'." + Environment.NewLine, "green");
-        return true;
-    }
-
-    private async Task<bool> EnsureStobeServerRepoExistsAsync(string targetBranch)
-    {
-        AppendLog("Checking StobeServer repository state..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "base_dir=/var/www/html; repo_path=/var/www/html/StobeServer; state=EXISTS; " +
-            "mkdir -p \"$base_dir\" || { echo ERROR:BASE_DIR_CREATE_FAILED >&2; exit 1; }; " +
-            "if [ ! -d \"$repo_path/.git\" ]; then " +
-            "state=CLONED; " +
-            "for legacy_path in /var/www/html/stobeserver /var/www/html/stoberser; do " +
-            "if [ -d \"$legacy_path/.git\" ]; then rm -rf \"$repo_path\" && mv \"$legacy_path\" \"$repo_path\" && state=MIGRATED:${legacy_path}; break; fi; " +
-            "done; " +
-            "if [ ! -d \"$repo_path/.git\" ]; then rm -rf \"$repo_path\" && " +
-            $"git clone -b {targetBranch} https://github.com/Dwemer-Dynamics/StobeServer.git \"$repo_path\" 1>&2 && state=CLONED:{targetBranch}; " +
-            "fi; fi; " +
-            "mkdir -p \"$repo_path/log\"; : > \"$repo_path/log/stobe_import.log\"; : > \"$repo_path/log/stobeserver.log\"; echo \"$state\"",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog("Failed to prepare StobeServer repository for branch switch." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        var output = result.StandardOutput.Trim();
-        if (output.StartsWith("CLONED:", StringComparison.OrdinalIgnoreCase))
-        {
-            AppendLog($"StobeServer was missing and has been cloned on branch '{output.Split(':').Last()}'." + Environment.NewLine, "yellow");
-        }
-        else if (output.StartsWith("MIGRATED:", StringComparison.OrdinalIgnoreCase))
-        {
-            AppendLog($"Recovered StobeServer from legacy path '{output.Split(':').Last()}' and migrated to /var/www/html/StobeServer." + Environment.NewLine, "yellow");
+            await Task.Delay(PassiveStatusDrainPollInterval).ConfigureAwait(false);
         }
 
         return true;
     }
 
-    private async Task<bool> SwitchDialecticServerBranchAsync(string targetBranch)
+    /// <summary>
+    /// Atomically registers a passive refresh unless critical maintenance already owns the gate.
+    /// This closes the check/set gap where a timer tick could start after compaction had begun.
+    /// </summary>
+    private bool TryBeginPassiveDistroActivity()
     {
-        if (targetBranch is not ("dialectic" or "dev"))
+        lock (_distroOperationGate)
         {
-            AppendLog($"Invalid DialecticServer branch selection: '{targetBranch}'. Expected dialectic or dev.{Environment.NewLine}", "red");
-            return false;
+            if (_isExclusiveDistroOperationInProgress)
+            {
+                return false;
+            }
+
+            _passiveDistroActivityCount++;
         }
 
-        if (!await EnsureDialecticServerRepoExistsAsync(targetBranch).ConfigureAwait(false))
-        {
-            return false;
-        }
-
-        var currentBranch = await GetDialecticServerCurrentBranchAsync().ConfigureAwait(false);
-        if (currentBranch == targetBranch)
-        {
-            AppendLog($"DialecticServer already on branch '{targetBranch}'." + Environment.NewLine);
-            return true;
-        }
-
-        AppendLog($"Switching DialecticServer branch to '{targetBranch}'..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "cd /var/www/html/DialecticServer && " +
-            "git stash push -u -m 'Auto-stash before switching branch' >/dev/null 2>&1 || true; " +
-            "git fetch origin && " +
-            $"git checkout -B {targetBranch} origin/{targetBranch}",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
-        {
-            AppendLog($"Failed to switch DialecticServer branch to '{targetBranch}'." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
-        }
-
-        AppendLog($"Successfully switched DialecticServer to '{targetBranch}'." + Environment.NewLine, "green");
+        NotifyDistroOperationGateChanged();
         return true;
     }
 
-    private async Task<bool> EnsureDialecticServerRepoExistsAsync(string targetBranch)
+    private void EndPassiveDistroActivity()
     {
-        AppendLog("Checking DialecticServer repository state..." + Environment.NewLine);
-        var result = await _wsl.RunBashAsync(
-            "set -e; repo_path=/var/www/html/DialecticServer; backup_path=''; state=EXISTS; mkdir -p /var/www/html; " +
-            "if [ -d \"$repo_path\" ] && [ ! -d \"$repo_path/.git\" ]; then " +
-            "backup_path=\"${repo_path}.pre-git-$(date -u +%Y%m%d%H%M%S)\"; mv \"$repo_path\" \"$backup_path\"; state=MIGRATED:$backup_path; fi; " +
-            "if [ ! -d \"$repo_path/.git\" ]; then " +
-            $"if ! git clone -b {targetBranch} https://github.com/Dwemer-Dynamics/DialecticServer.git \"$repo_path\" 1>&2; then " +
-            "rm -rf \"$repo_path\"; if [ -n \"$backup_path\" ]; then mv \"$backup_path\" \"$repo_path\"; fi; exit 1; fi; " +
-            "if [ -z \"$backup_path\" ]; then state=CLONED; fi; fi; " +
-            "if [ -n \"$backup_path\" ] && [ -d \"$backup_path\" ]; then " +
-            "for relative_path in conf/conf.php conf/character_map.json; do " +
-            "if [ -e \"$backup_path/$relative_path\" ]; then mkdir -p \"$repo_path/$(dirname \"$relative_path\")\"; cp -a \"$backup_path/$relative_path\" \"$repo_path/$relative_path\"; fi; done; " +
-            "for relative_path in uploads data/voices soundcache log; do if [ -d \"$backup_path/$relative_path\" ]; then mkdir -p \"$repo_path/$relative_path\"; cp -a \"$backup_path/$relative_path/.\" \"$repo_path/$relative_path/\"; fi; done; " +
-            "find \"$backup_path/conf\" -maxdepth 1 -type f -name 'conf_*.php' -exec cp -a {} \"$repo_path/conf/\" \\; 2>/dev/null || true; fi; " +
-            "echo \"$state\"",
-            line => AppendLog(line),
-            loginShell: false,
-            lineBuffered: true).ConfigureAwait(false);
-
-        if (!result.Succeeded)
+        lock (_distroOperationGate)
         {
-            AppendLog("Failed to prepare DialecticServer repository." + Environment.NewLine, "red");
-            AppendLog((result.StandardError + result.StandardOutput).Trim() + Environment.NewLine, "red");
-            return false;
+            if (_passiveDistroActivityCount == 0)
+            {
+                return;
+            }
+
+            _passiveDistroActivityCount--;
         }
 
-        if (result.StandardOutput.Contains("MIGRATED:", StringComparison.OrdinalIgnoreCase))
+        NotifyDistroOperationGateChanged();
+    }
+
+    /// <summary>Registers the timer retry once while still counting it as passive distro work.</summary>
+    private bool TryBeginServerStatusRetry()
+    {
+        lock (_distroOperationGate)
         {
-            AppendLog("Migrated the existing DialecticServer deployment into a managed Git checkout while preserving runtime data." + Environment.NewLine, "yellow");
-        }
-        else if (result.StandardOutput.Contains("CLONED", StringComparison.OrdinalIgnoreCase))
-        {
-            AppendLog($"Installed DialecticServer on branch '{targetBranch}'." + Environment.NewLine, "green");
+            if (_isServerStatusRetryInProgress || _isExclusiveDistroOperationInProgress)
+            {
+                return false;
+            }
+
+            _isServerStatusRetryInProgress = true;
+            _passiveDistroActivityCount++;
         }
 
+        NotifyDistroOperationGateChanged();
         return true;
+    }
+
+    private void EndServerStatusRetry()
+    {
+        lock (_distroOperationGate)
+        {
+            if (!_isServerStatusRetryInProgress)
+            {
+                return;
+            }
+
+            _isServerStatusRetryInProgress = false;
+            _passiveDistroActivityCount--;
+        }
+
+        NotifyDistroOperationGateChanged();
+    }
+
+    private bool IsPassiveDistroActivityInProgress()
+    {
+        lock (_distroOperationGate)
+        {
+            return _passiveDistroActivityCount > 0;
+        }
+    }
+
+    private bool CanAccessDistro()
+    {
+        return !IsCriticalMaintenanceInProgress;
+    }
+
+    internal static string BuildModsUpdateConfirmation(
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate,
+        bool forceGitUpdates = false)
+    {
+        // If status changed after the button became available, describe the system-only recovery
+        // accurately rather than promising a mod update that this empty selection cannot perform.
+        if (productsToUpdate.Count == 0)
+        {
+            return "This will update DwemerDistro and its shared components only. " +
+                   "The selected mod cannot currently be detected as installed, so it will not be updated.\n\n" +
+                   "Missing mods are never installed.\n\n" +
+                   "Are you sure?";
+        }
+
+        var branchLines = productsToUpdate
+            .Select(update => $"{update.Product.DisplayName} target branch: {ServerManagementService.ToBranchChoice(update.Branch)}")
+            .ToArray();
+
+        // The setting is confirmed once in Settings but applies to every later update, so the
+        // destructive part is restated here rather than relying on the user remembering it.
+        var forceWarning = forceGitUpdates
+            ? "\n\n" + ForceGitUpdatesUpdateWarning
+            : string.Empty;
+
+        return "This will update DwemerDistro and shared components first, then the selected installed mods below. " +
+               "If the system update fails, no mods are updated.\n\n" +
+               string.Join("\n", branchLines) +
+               forceWarning +
+               "\n\nAre you sure?";
+    }
+
+    /// <summary>
+    /// The enable confirmation. It has to be exact about scope: forcing an update discards edits to
+    /// files Git tracks, and Git may also replace untracked or ignored files that conflict with the
+    /// update, so it must not promise that anything outside Git is safe.
+    /// </summary>
+    internal static string BuildForceGitUpdatesConfirmation()
+    {
+        return $"{ForceGitUpdatesSettingName} is destructive.\n\n" +
+               "While it is on, updating a managed server overwrites the files that server tracks in Git. " +
+               "Any edit you made to a tracked file by hand is permanently discarded, with no undo.\n\n" +
+               "Git may also replace untracked or ignored files that conflict with the update. " +
+               "Back up custom files first.\n\n" +
+               "Leave this off unless an update keeps failing because an installed server has manual edits.\n\n" +
+               $"Turn {ForceGitUpdatesSettingName} on?";
+    }
+
+    internal static string BuildSystemUpdateConfirmation()
+    {
+        return "This will update DwemerDistro and its shared components. Installed mods will not be changed.\n\n" +
+               "Are you sure?";
+    }
+
+    private void CompleteUpdateOperation()
+    {
+        RunOnUi(() =>
+        {
+            IsDistroUpdateInProgress = false;
+            SetSystemUpdateRunningButtonText(null);
+        });
+        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+        QueueSystemUpdateCheck();
+    }
+
+    /// <summary>
+    /// Pulls the distro scripts, runs update.sh, then runs update_gws with every application-server
+    /// skip flag so only shared services are touched.
+    /// </summary>
+    private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default)
+    {
+        using var updateCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
+        updateCts.CancelAfter(LauncherVersionSyncTimeout);
+        var bashCommand = BuildSystemUpdateCommand();
+
+        var sharedComponentsStarted = false;
+        LauncherLogService.Operation("START distro and shared components update");
+        try
+        {
+            _distroUpdateTask = DistroUpdateRunner.RunAsync(_wsl, bashCommand, line =>
+            {
+                LauncherLogService.Operation(line);
+                if (line.Contains(SharedComponentsMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    sharedComponentsStarted = true;
+                    AppendLog(Environment.NewLine + "Shared components update" + Environment.NewLine, "green");
+                    return;
+                }
+
+                AppendLog(line);
+            }, updateCts.Token);
+            var result = await _distroUpdateTask.ConfigureAwait(false);
+
+            LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; shared components started={sharedComponentsStarted}");
+            return result.Succeeded && sharedComponentsStarted;
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Operation($"END distro and shared components update; no exit code: {ex.GetType().Name}");
+            throw;
+        }
+    }
+
+    /// <summary>Bootstraps the distro checkout when an empty-base installer ships source files without Git metadata.</summary>
+    internal static string BuildSystemUpdateCommand()
+    {
+        return
+            "export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null " +
+            "GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= " +
+            "GIT_CONFIG_KEY_1=http.extraHeader GIT_CONFIG_VALUE_1= " +
+            "GIT_CONFIG_KEY_2=http.https://github.com/.extraheader GIT_CONFIG_VALUE_2= && " +
+            "cd /home/dwemer/dwemerdistro && " +
+            "if [ ! -d .git ]; then git init; fi && " +
+            "if [ -f /home/dwemer/.gitconfig ] && ! command -v git-credential-manager >/dev/null 2>&1 && " +
+            "git config --file /home/dwemer/.gitconfig --get-all credential.helper 2>/dev/null | grep -Fxq manager; then " +
+            "git config --file /home/dwemer/.gitconfig --unset-all credential.helper '^manager$'; fi && " +
+            $"if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin {DistroRepositoryUrl}; " +
+            $"else git remote add origin {DistroRepositoryUrl}; fi && " +
+            "git -c credential.helper= fetch origin && git reset --hard origin/main && " +
+            "chmod +x update.sh && echo 'dwemer' | sudo -S -p '' ./update.sh && " +
+            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand() + " && " +
+            BuildSystemReleaseMarkerWriteCommand();
     }
 
     private async Task<string?> GetCurrentBranchAsync(CancellationToken cancellationToken = default)
@@ -1420,7 +2661,7 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task CheckForUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        SetHerikaStatus("Checking...", "White");
+        SetHerikaStatus("Checking...", "White", false);
         var currentBranch = await GetCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         var branchChoice = MapServerBranchToChoice(currentBranch, "aiagent");
         if (branchChoice is not null)
@@ -1432,32 +2673,37 @@ echo "CHIM-MCP installed and enabled."
         var semanticVersion = await ReadWslFileFirstLineAsync("/var/www/html/HerikaServer/.version_number.txt", cancellationToken).ConfigureAwait(false);
         var gitVersion = currentBranch is null
             ? null
-            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/abeiro/HerikaServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
-
-        var statusText = BuildServerVersionStatusText(
-            "herika",
-            currentBranch,
-            FormatDateVersion(currentVersion),
-            semanticVersion);
+            : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/HerikaServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
-            var comparison = CompareVersions(currentVersion, gitVersion);
-            SetHerikaStatus(statusText, comparison < 0 ? "Yellow" : "LimeGreen");
+            // The only place a mod update is confirmed: the installed version is behind the branch
+            // that is actually checked out. Every other arm below leaves the flag false.
+            var updateAvailable = CompareVersions(currentVersion, gitVersion) < 0;
+            SetHerikaStatus(
+                BuildServerVersionStatusText(
+                    "herika", currentBranch, FormatDateVersion(currentVersion), semanticVersion, updateAvailable),
+                updateAvailable ? "Yellow" : "LimeGreen",
+                updateAvailable);
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
-            SetHerikaStatus(statusText, "LimeGreen");
+            SetHerikaStatus(
+                BuildServerVersionStatusText(
+                    "herika", currentBranch, FormatDateVersion(currentVersion), semanticVersion),
+                "LimeGreen",
+                false);
         }
         else
         {
-            SetHerikaStatus(BuildServerVersionStatusText("herika", currentBranch, null, null), "Yellow");
+            // Yellow here means "version unknown", not "behind" - so it must not turn a button green.
+            SetHerikaStatus(BuildServerVersionStatusText("herika", currentBranch, null, null), "Yellow", false);
         }
     }
 
     private async Task CheckStobeServerUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        SetStobeStatus("Checking...", "White");
+        SetStobeStatus("Checking...", "White", false);
         var currentBranch = await GetStobeServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         var branchChoice = MapServerBranchToChoice(currentBranch, "stobe");
         if (branchChoice is not null)
@@ -1473,24 +2719,26 @@ echo "CHIM-MCP installed and enabled."
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/StobeServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
-        var statusText = BuildServerVersionStatusText(
-            "stobe",
-            currentBranch,
-            FormatDateVersion(currentVersion),
-            semanticVersion);
-
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
-            var comparison = CompareVersions(currentVersion, gitVersion);
-            SetStobeStatus(statusText, comparison < 0 ? "Yellow" : "LimeGreen");
+            var updateAvailable = CompareVersions(currentVersion, gitVersion) < 0;
+            SetStobeStatus(
+                BuildServerVersionStatusText(
+                    "stobe", currentBranch, FormatDateVersion(currentVersion), semanticVersion, updateAvailable),
+                updateAvailable ? "Yellow" : "LimeGreen",
+                updateAvailable);
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
-            SetStobeStatus(statusText, "LimeGreen");
+            SetStobeStatus(
+                BuildServerVersionStatusText(
+                    "stobe", currentBranch, FormatDateVersion(currentVersion), semanticVersion),
+                "LimeGreen",
+                false);
         }
         else
         {
-            SetStobeStatus(BuildServerVersionStatusText("stobe", currentBranch, null, null), "Yellow");
+            SetStobeStatus(BuildServerVersionStatusText("stobe", currentBranch, null, null), "Yellow", false);
         }
     }
 
@@ -1575,216 +2823,6 @@ echo "CHIM-MCP installed and enabled."
                 "Retry Update");
             AppendLog($"Launcher update failed: {ex.Message}{Environment.NewLine}", "red");
         }
-    }
-
-    private async Task LoadUpdateIncludeSettingsAsync(CancellationToken cancellationToken = default)
-    {
-        RunOnUi(() =>
-        {
-            IsUpdateIncludeReady = false;
-            SetUpdateIncludeStatus("Checking saved update preferences...", UpdateIncludeNeutralColor);
-        });
-
-        CommandResult result;
-        try
-        {
-            result = await _wsl.RunBashAsync(
-                    "set -e; mkdir -p /home/dwemer; " +
-                    "read_setting() { key=\"$1\"; file=\"$2\"; if [ ! -f \"$file\" ]; then printf '1\\n' > \"$file\"; fi; value=$(sed -n '1p' \"$file\"); case \"$value\" in 0|1) ;; *) value=1; printf '1\\n' > \"$file\" ;; esac; printf '%s=%s\\n' \"$key\" \"$value\"; }; " +
-                    "read_setting herika /home/dwemer/.update_include_herika; " +
-                    "read_setting stobe /home/dwemer/.update_include_stobe; " +
-                    "read_setting dialectic /home/dwemer/.update_include_dialectic",
-                    user: "root",
-                    cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch
-        {
-            ApplyUpdateIncludeLoadFailure();
-            throw;
-        }
-
-        if (!result.Succeeded)
-        {
-            ApplyUpdateIncludeLoadFailure();
-            throw new InvalidOperationException(
-                string.IsNullOrWhiteSpace(result.StandardError)
-                    ? "The update preferences could not be read."
-                    : result.StandardError.Trim());
-        }
-
-        var settings = ParseUpdateIncludeSettings(result.StandardOutput);
-        RunOnUi(() =>
-        {
-            _lastSavedIncludeHerikaServerUpdate = settings.Herika;
-            _lastSavedIncludeStobeServerUpdate = settings.Stobe;
-            _lastSavedIncludeDialecticServerUpdate = settings.Dialectic;
-            IncludeHerikaServerUpdate = settings.Herika;
-            IncludeStobeServerUpdate = settings.Stobe;
-            IncludeDialecticServerUpdate = settings.Dialectic;
-            IsUpdateIncludeReady = true;
-            SetUpdateIncludeStatus(string.Empty, UpdateIncludeNeutralColor);
-        });
-    }
-
-    public static (bool Herika, bool Stobe, bool Dialectic) ParseUpdateIncludeSettings(string output)
-    {
-        var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var line in output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.TrimEntries))
-        {
-            var separator = line.IndexOf('=');
-            if (separator <= 0)
-            {
-                continue;
-            }
-
-            settings[line[..separator].Trim()] = line[(separator + 1)..].Trim();
-        }
-
-        return (
-            ReadUpdateIncludeValue(settings, "herika"),
-            ReadUpdateIncludeValue(settings, "stobe"),
-            ReadUpdateIncludeValue(settings, "dialectic"));
-    }
-
-    private static bool ReadUpdateIncludeValue(IReadOnlyDictionary<string, string> settings, string key)
-    {
-        return !settings.TryGetValue(key, out var value) || value != "0";
-    }
-
-    private void ApplyUpdateIncludeLoadFailure()
-    {
-        RunOnUi(() =>
-        {
-            _lastSavedIncludeHerikaServerUpdate = true;
-            _lastSavedIncludeStobeServerUpdate = true;
-            _lastSavedIncludeDialecticServerUpdate = true;
-            IncludeHerikaServerUpdate = true;
-            IncludeStobeServerUpdate = true;
-            IncludeDialecticServerUpdate = true;
-            IsUpdateIncludeReady = false;
-            SetUpdateIncludeStatus(
-                "Update preferences are unavailable. Start the distro, then reopen the launcher.",
-                UpdateIncludeErrorColor);
-        });
-    }
-
-    private void QueueUpdateIncludeSave()
-    {
-        if (!IsUpdateIncludeReady)
-        {
-            return;
-        }
-
-        lock (_updateIncludeSaveSync)
-        {
-            _updateIncludeSaveRequested = true;
-            if (_isUpdateIncludeSaveRunning)
-            {
-                return;
-            }
-
-            _isUpdateIncludeSaveRunning = true;
-        }
-
-        _ = ProcessUpdateIncludeSaveQueueAsync();
-    }
-
-    // Coalesce rapid checkbox changes while guaranteeing the newest state is written last.
-    private async Task ProcessUpdateIncludeSaveQueueAsync()
-    {
-        try
-        {
-            while (IsUpdateIncludeReady)
-            {
-                lock (_updateIncludeSaveSync)
-                {
-                    if (!_updateIncludeSaveRequested)
-                    {
-                        return;
-                    }
-
-                    _updateIncludeSaveRequested = false;
-                }
-
-                var desiredHerika = IncludeHerikaServerUpdate;
-                var desiredStobe = IncludeStobeServerUpdate;
-                var desiredDialectic = IncludeDialecticServerUpdate;
-                RunOnUi(() => SetUpdateIncludeStatus("Saving update preferences...", UpdateIncludeNeutralColor));
-
-                CommandResult result;
-                try
-                {
-                    var herika = desiredHerika ? "1" : "0";
-                    var stobe = desiredStobe ? "1" : "0";
-                    var dialectic = desiredDialectic ? "1" : "0";
-                    result = await _wsl.RunDistroAsUserAsync(
-                            "root",
-                            new[] { "bash", "-lc", $"printf '%s\\n' {herika} > /home/dwemer/.update_include_herika && printf '%s\\n' {stobe} > /home/dwemer/.update_include_stobe && printf '%s\\n' {dialectic} > /home/dwemer/.update_include_dialectic" })
-                        .ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    RestoreUpdateIncludeAfterSaveFailure(ex.Message);
-                    return;
-                }
-
-                if (!result.Succeeded)
-                {
-                    RestoreUpdateIncludeAfterSaveFailure(result.StandardError);
-                    return;
-                }
-
-                RunOnUi(() =>
-                {
-                    _lastSavedIncludeHerikaServerUpdate = desiredHerika;
-                    _lastSavedIncludeStobeServerUpdate = desiredStobe;
-                    _lastSavedIncludeDialecticServerUpdate = desiredDialectic;
-                    SetUpdateIncludeStatus("Update preferences saved.", UpdateIncludeSuccessColor);
-                });
-            }
-        }
-        finally
-        {
-            var restart = false;
-            lock (_updateIncludeSaveSync)
-            {
-                _isUpdateIncludeSaveRunning = false;
-                restart = _updateIncludeSaveRequested && IsUpdateIncludeReady;
-                if (restart)
-                {
-                    _isUpdateIncludeSaveRunning = true;
-                }
-            }
-
-            if (restart)
-            {
-                _ = ProcessUpdateIncludeSaveQueueAsync();
-            }
-        }
-    }
-
-    private void RestoreUpdateIncludeAfterSaveFailure(string? details)
-    {
-        lock (_updateIncludeSaveSync)
-        {
-            _updateIncludeSaveRequested = false;
-        }
-        RunOnUi(() =>
-        {
-            IncludeHerikaServerUpdate = _lastSavedIncludeHerikaServerUpdate;
-            IncludeStobeServerUpdate = _lastSavedIncludeStobeServerUpdate;
-            IncludeDialecticServerUpdate = _lastSavedIncludeDialecticServerUpdate;
-            SetUpdateIncludeStatus("Could not save. Reverted to the last saved choices.", UpdateIncludeErrorColor);
-        });
-        var reason = string.IsNullOrWhiteSpace(details) ? string.Empty : $": {details.Trim()}";
-        AppendLog($"Failed to save update preferences{reason}{Environment.NewLine}", "red");
-    }
-
-    private void SetUpdateIncludeStatus(string text, string color)
-    {
-        UpdateIncludeStatusText = text;
-        UpdateIncludeStatusColor = color;
     }
 
     private async Task LoadDashboardAutoOpenAsync(CancellationToken cancellationToken = default)
@@ -1890,6 +2928,100 @@ echo "CHIM-MCP installed and enabled."
         DashboardAutoOpenStatusColor = color;
     }
 
+    /// <summary>
+    /// Reads the saved Force Updates preference at startup. The service already fails closed, so
+    /// a missing or malformed file simply leaves the option off and says so in the row.
+    /// </summary>
+    private void LoadForceGitUpdates()
+    {
+        var enabled = _updatePreferences.GetForceGitUpdates();
+        _lastSavedForceGitUpdatesEnabled = enabled;
+        ForceGitUpdatesEnabled = enabled;
+        ApplyForceGitUpdatesSavedStatus(enabled);
+    }
+
+    /// <summary>
+    /// The toggle rule, kept away from the dialog so it can be exercised without one: only turning
+    /// the option on is destructive, so only that asks, and a cancelled prompt leaves it off.
+    /// </summary>
+    internal static bool ResolveForceGitUpdatesToggle(bool requestedEnabled, Func<bool> confirmEnable)
+    {
+        return requestedEnabled && confirmEnable();
+    }
+
+    /// <summary>
+    /// Runs after the checkbox has already flipped itself, and is what puts it back: a cancelled
+    /// enable reverts to unchecked and saves nothing, while any resolved state is persisted.
+    /// </summary>
+    private void ConfirmForceGitUpdates()
+    {
+        var desired = ResolveForceGitUpdatesToggle(ForceGitUpdatesEnabled, ConfirmForceGitUpdatesEnable);
+        if (desired != ForceGitUpdatesEnabled)
+        {
+            ForceGitUpdatesEnabled = desired;
+            ApplyForceGitUpdatesSavedStatus(_lastSavedForceGitUpdatesEnabled);
+            AppendLog($"{ForceGitUpdatesSettingName} was left off.{Environment.NewLine}");
+            return;
+        }
+
+        if (!_updatePreferences.TrySetForceGitUpdates(desired, out var error))
+        {
+            ForceGitUpdatesEnabled = _lastSavedForceGitUpdatesEnabled;
+            SetForceGitUpdatesStatus(
+                "Could not save. Reverted to the last saved value.",
+                ForceGitUpdatesErrorColor);
+            var reason = string.IsNullOrWhiteSpace(error) ? string.Empty : $": {error.Trim()}";
+            AppendLog($"Failed to save the {ForceGitUpdatesSettingName} setting{reason}{Environment.NewLine}", "red");
+            return;
+        }
+
+        _lastSavedForceGitUpdatesEnabled = desired;
+        ApplyForceGitUpdatesSavedStatus(desired);
+        AppendLog(
+            desired
+                ? $"{ForceGitUpdatesSettingName} is ON. Mod updates will discard manual edits to tracked files.{Environment.NewLine}"
+                : $"{ForceGitUpdatesSettingName} is OFF.{Environment.NewLine}",
+            desired ? "yellow" : "green");
+    }
+
+    private bool ConfirmForceGitUpdatesEnable()
+    {
+        return MessageBox.Show(
+            BuildForceGitUpdatesConfirmation(),
+            ForceGitUpdatesSettingName,
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    }
+
+    /// <summary>Reports the saved state, in a warning colour whenever the option is on.</summary>
+    private void ApplyForceGitUpdatesSavedStatus(bool enabled)
+    {
+        SetForceGitUpdatesStatus(
+            enabled
+                ? "On. Mod updates discard manual edits to tracked files in the installed servers."
+                : "Off. An update stops when an installed server has manual edits to tracked files.",
+            enabled ? ForceGitUpdatesWarningColor : ForceGitUpdatesNeutralColor);
+    }
+
+    private void SetForceGitUpdatesStatus(string text, string color)
+    {
+        ForceGitUpdatesStatusText = text;
+        ForceGitUpdatesStatusColor = color;
+    }
+
+    /// <summary>
+    /// Marshals to the UI thread because the Compact Distro run awaits with
+    /// <c>ConfigureAwait(false)</c> in places, so a stage can report from a pool thread.
+    /// </summary>
+    private void SetCompactDistroStatus(string text, string color)
+    {
+        RunOnUi(() =>
+        {
+            CompactDistroStatusText = text;
+            CompactDistroStatusColor = color;
+        });
+    }
+
     private async Task FixWslDnsAsync()
     {
         if (MessageBox.Show(
@@ -1902,31 +3034,53 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
-        AppendLog("Starting WSL DNS repair..." + Environment.NewLine);
-        var dnsFixCommand =
-            "echo 'dwemer' | sudo -S sh -c 'printf \"[network]\\ngenerateResolvConf = false\\n\" > /etc/wsl.conf' && " +
-            "echo 'dwemer' | sudo -S rm -f /etc/resolv.conf && " +
-            "echo 'dwemer' | sudo -S sh -c 'printf \"nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n\" > /etc/resolv.conf' && " +
-            "echo 'dwemer' | sudo -S chmod 644 /etc/resolv.conf && echo 'DNS_FIX_APPLIED'";
-
-        var result = await _wsl.RunBashAsync(dnsFixCommand, text => AppendLog(text)).ConfigureAwait(false);
-        if (!result.Succeeded)
+        if (!await PauseAssistantForMaintenanceAsync("Fix WSL DNS").ConfigureAwait(true))
         {
-            AppendLog("WSL DNS repair failed." + Environment.NewLine, "red");
             return;
         }
 
-        AppendLog("Restarting WSL to apply DNS settings..." + Environment.NewLine);
-        await _wsl.RunWslAsync(new[] { "--shutdown" }).ConfigureAwait(false);
-        var verify = await _wsl.RunBashAsync("getent hosts github.com | head -n 1").ConfigureAwait(false);
-        if (verify.Succeeded && !string.IsNullOrWhiteSpace(verify.StandardOutput))
+        if (!TryBeginExclusiveDistroOperation())
         {
-            AppendLog("WSL DNS repair completed successfully." + Environment.NewLine, "green");
-            AppendLog($"github.com resolves to: {verify.StandardOutput.Trim()}{Environment.NewLine}", "green");
+            ResumeAssistantAfterMaintenance(reconnect: true);
+            ReportExclusiveDistroOperationBusy("Fix WSL DNS");
+            return;
         }
-        else
+
+        var completed = false;
+        try
         {
-            AppendLog("WSL DNS settings updated, but github.com still does not resolve." + Environment.NewLine, "yellow");
+            AppendLog("Starting WSL DNS repair..." + Environment.NewLine);
+            var dnsFixCommand =
+                "echo 'dwemer' | sudo -S sh -c 'printf \"[network]\\ngenerateResolvConf = false\\n\" > /etc/wsl.conf' && " +
+                "echo 'dwemer' | sudo -S rm -f /etc/resolv.conf && " +
+                "echo 'dwemer' | sudo -S sh -c 'printf \"nameserver 1.1.1.1\\nnameserver 8.8.8.8\\n\" > /etc/resolv.conf' && " +
+                "echo 'dwemer' | sudo -S chmod 644 /etc/resolv.conf && echo 'DNS_FIX_APPLIED'";
+
+            var result = await _wsl.RunBashAsync(dnsFixCommand, text => AppendLog(text)).ConfigureAwait(false);
+            if (!result.Succeeded)
+            {
+                AppendLog("WSL DNS repair failed." + Environment.NewLine, "red");
+                return;
+            }
+
+            AppendLog("Restarting WSL to apply DNS settings..." + Environment.NewLine);
+            await _wsl.RunWslAsync(new[] { "--shutdown" }).ConfigureAwait(false);
+            var verify = await _wsl.RunBashAsync("getent hosts github.com | head -n 1").ConfigureAwait(false);
+            completed = true;
+            if (verify.Succeeded && !string.IsNullOrWhiteSpace(verify.StandardOutput))
+            {
+                AppendLog("WSL DNS repair completed successfully." + Environment.NewLine, "green");
+                AppendLog($"github.com resolves to: {verify.StandardOutput.Trim()}{Environment.NewLine}", "green");
+            }
+            else
+            {
+                AppendLog("WSL DNS settings updated, but github.com still does not resolve." + Environment.NewLine, "yellow");
+            }
+        }
+        finally
+        {
+            SetExclusiveDistroOperationInProgress(false);
+            ResumeAssistantAfterMaintenance(completed);
         }
     }
 
@@ -1963,7 +3117,10 @@ echo "CHIM-MCP installed and enabled."
     }
 
     // Creates the same support report for both the launcher UI and the headless CHIM command.
-    internal async Task<string?> GenerateDiagnosticsAsync(bool requireConfirmation, bool openOutputFolder)
+    internal async Task<string?> GenerateDiagnosticsAsync(
+        bool requireConfirmation,
+        bool openOutputFolder,
+        string? destinationPath = null)
     {
         if (requireConfirmation)
         {
@@ -1989,18 +3146,33 @@ echo "CHIM-MCP installed and enabled."
             ""
         };
 
-        await AddServerVersionDiagnosticsAsync(lines).ConfigureAwait(false);
+        var summary = new DiagnosticEvidenceService.CollectionSummary();
+        await AddConnectionEvidenceAsync(lines, summary).ConfigureAwait(false);
+        await AddUpdateInstallEvidenceAsync(lines, summary).ConfigureAwait(false);
+        await AddServerVersionDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddServerPluginDiagnosticsAsync(lines, summary).ConfigureAwait(false);
 
-        var diagnosticCommands = new (string Display, Func<Task<CommandResult>> Run)[]
+        var diagnosticCommands = new List<(string Display, Func<Task<CommandResult>> Run)>
         {
-            ("wsl -l -v", () => _wsl.RunWslAsync(new[] { "-l", "-v" })),
-            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/HerikaServer && git status --short --branch\"",
-                () => _wsl.RunBashAsync("cd /var/www/html/HerikaServer && git status --short --branch")),
-            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/StobeServer && git status --short --branch\"",
-                () => _wsl.RunBashAsync("cd /var/www/html/StobeServer && git status --short --branch")),
-            ($"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd /var/www/html/DialecticServer && git status --short --branch\"",
-                () => _wsl.RunBashAsync("cd /var/www/html/DialecticServer && git status --short --branch"))
+            ("wsl -l -v", () => _wsl.RunWslAsync(new[] { "-l", "-v" }))
         };
+
+        // Only probe repositories that exist. A git status against a missing optional server would
+        // fill the report with errors that read like faults.
+        foreach (var serverKey in new[] { "herika", "stobe", "dialectic" })
+        {
+            var config = GetRollbackServerConfig(serverKey);
+            var manager = FindServerManagerByKey(config.Key);
+            if (manager?.IsNotInstalled == true)
+            {
+                continue;
+            }
+
+            var repoPath = config.RepoPath;
+            diagnosticCommands.Add((
+                $"wsl -d {LauncherConstants.DistroName} -u {LauncherConstants.DistroUser} -- bash -lc \"cd {repoPath} && git status --short --branch\"",
+                () => _wsl.RunBashAsync($"cd {repoPath} && git status --short --branch")));
+        }
 
         foreach (var (display, run) in diagnosticCommands)
         {
@@ -2009,6 +3181,7 @@ echo "CHIM-MCP installed and enabled."
             {
                 var result = await run().ConfigureAwait(false);
                 lines.Add(result.StandardOutput);
+                if (!result.Succeeded) summary.Problems.Add(display + ": command failed (" + result.ExitCode + ")");
                 if (!string.IsNullOrWhiteSpace(result.StandardError))
                 {
                     lines.Add(result.StandardError);
@@ -2017,18 +3190,21 @@ echo "CHIM-MCP installed and enabled."
             catch (Exception ex)
             {
                 lines.Add(ex.ToString());
+                summary.Problems.Add(display + ": " + ex.GetType().Name);
             }
             lines.Add("");
         }
 
-        await AddPermissionDiagnosticsAsync(lines).ConfigureAwait(false);
-        await AddLogDiagnosticsAsync(lines).ConfigureAwait(false);
-        await AddDatabaseSchemaDiagnosticsAsync(lines).ConfigureAwait(false);
-        await AddConnectorDiagnosticsAsync(lines).ConfigureAwait(false);
+        await AddPermissionDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddLogDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddDatabaseSchemaDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddConnectorDiagnosticsAsync(lines, summary).ConfigureAwait(false);
 
-        var outputDir = DiagnosticReportPaths.OutputDirectory;
+        var outputPath = destinationPath ?? DiagnosticReportPaths.CreateTimestampedPath("diagnostics");
+        var outputDir = Path.GetDirectoryName(outputPath)
+            ?? throw new InvalidOperationException("The diagnostic output path has no directory.");
         Directory.CreateDirectory(outputDir);
-        var outputPath = DiagnosticReportPaths.CreateTimestampedPath("diagnostics");
+        lines.InsertRange(4, summary.Format());
         await File.WriteAllLinesAsync(outputPath, lines).ConfigureAwait(false);
         AppendLog($"Diagnostic file created: {outputPath}{Environment.NewLine}", "green");
         if (openOutputFolder)
@@ -2039,7 +3215,7 @@ echo "CHIM-MCP installed and enabled."
         return outputPath;
     }
 
-    private async Task AddServerVersionDiagnosticsAsync(List<string> lines)
+    private async Task AddServerVersionDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Installed Server Versions");
         lines.Add("Release metadata and exact Git commits for the currently installed servers.");
@@ -2049,6 +3225,22 @@ echo "CHIM-MCP installed and enabled."
         {
             var config = GetRollbackServerConfig(serverKey);
             lines.Add($"--- {config.DisplayName} ---");
+
+            // An optional server that was never installed is a normal configuration, not a fault.
+            // Say so plainly and skip the version/commit probes instead of logging them as failures.
+            var manager = FindServerManagerByKey(config.Key);
+            if (manager?.IsNotInstalled == true)
+            {
+                lines.Add("State: Not installed (optional server, nothing to report)");
+                summary.MissingServers.Add(config.DisplayName);
+                lines.Add("");
+                continue;
+            }
+
+            if (manager?.NeedsRepair == true)
+            {
+                lines.Add("State: Needs repair (reported by ddistro_server status)");
+            }
 
             try
             {
@@ -2070,11 +3262,14 @@ echo "CHIM-MCP installed and enabled."
 
                 lines.Add($"Date Version: {dateVersion ?? "[missing or unavailable]"}{FormatVersionSource(dateVersionFile)}");
                 lines.Add($"Release Version: {releaseVersion ?? "[missing or unavailable]"}{FormatVersionSource(releaseVersionFile)}");
+                if (dateVersion is null || releaseVersion is null || gitCommit is null)
+                    summary.Problems.Add(config.DisplayName + ": version or Git metadata unavailable");
                 lines.Add($"Git Commit: {gitCommit ?? "[missing or unavailable]"}");
             }
             catch (Exception ex)
             {
                 lines.Add($"[unavailable] {SanitizeDiagnosticText(ex.Message)}");
+                summary.Problems.Add(config.DisplayName + ": version collection failed");
             }
 
             lines.Add("");
@@ -2102,7 +3297,7 @@ echo "CHIM-MCP installed and enabled."
         return string.IsNullOrWhiteSpace(fileName) ? string.Empty : $" ({fileName})";
     }
 
-    private async Task AddPermissionDiagnosticsAsync(List<string> lines)
+    private async Task AddPermissionDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Distro Doctor Diagnostics");
         lines.Add("Read-only checks for common DwemerDistro runtime, service, port, permission, and log issues.");
@@ -2139,17 +3334,19 @@ echo "CHIM-MCP installed and enabled."
             if (!result.Succeeded)
             {
                 lines.Add($"[exit code {result.ExitCode}]");
+                summary.Problems.Add("Permission checks: command failed");
             }
         }
         catch (Exception ex)
         {
             lines.Add(ex.ToString());
+            summary.Problems.Add("Permission checks: " + ex.GetType().Name);
         }
 
         lines.Add("");
     }
 
-    private async Task AddLogDiagnosticsAsync(List<string> lines)
+    private async Task AddLogDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Log Diagnostics");
         lines.Add($"Each log section contains up to the last {MaxConsoleLines} lines.");
@@ -2157,8 +3354,10 @@ echo "CHIM-MCP installed and enabled."
         lines.Add("");
 
         AddLauncherSessionOutputDiagnostics(lines, MaxConsoleLines);
-        await AddWslLogDiagnosticsAsync(lines, MaxConsoleLines).ConfigureAwait(false);
-        AddLocalGameLogDiagnostics(lines, MaxConsoleLines);
+        if ((OutputText ?? "").Split('\n').Length > MaxConsoleLines)
+            summary.Truncated.Add("Launcher session output");
+        await AddWslLogDiagnosticsAsync(lines, MaxConsoleLines, summary).ConfigureAwait(false);
+        AddLocalGameLogDiagnostics(lines, MaxConsoleLines, summary);
     }
 
     private void AddLauncherSessionOutputDiagnostics(List<string> lines, int maxLogLines)
@@ -2177,7 +3376,7 @@ echo "CHIM-MCP installed and enabled."
         lines.Add("");
     }
 
-    private async Task AddWslLogDiagnosticsAsync(List<string> lines, int maxLogLines)
+    private async Task AddWslLogDiagnosticsAsync(List<string> lines, int maxLogLines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         var logFiles = new (string Name, string Path)[]
         {
@@ -2188,6 +3387,13 @@ echo "CHIM-MCP installed and enabled."
             ("HerikaServer debugStream", "/var/www/html/HerikaServer/log/debugStream.log"),
             ("HerikaServer minai", "/var/www/html/HerikaServer/log/minai.log"),
             ("HerikaServer vision", "/var/www/html/HerikaServer/log/vision.log"),
+            ("LorkhanServer lorkhan", "/var/log/lorkhanserver/lorkhan.log"),
+            ("LorkhanServer context_sent_to_llm", "/var/log/lorkhanserver/context_sent_to_llm.log"),
+            ("LorkhanServer context_sent_to_llm_fast", "/var/log/lorkhanserver/context_sent_to_llm_fast.log"),
+            ("LorkhanServer output_from_llm", "/var/log/lorkhanserver/output_from_llm.log"),
+            ("LorkhanServer output_from_llm_fast", "/var/log/lorkhanserver/output_from_llm_fast.log"),
+            ("LorkhanServer output_to_plugin", "/var/log/lorkhanserver/output_to_plugin.log"),
+            ("LorkhanServer stt", "/var/log/lorkhanserver/stt.log"),
             ("StobeServer stobe", "/var/www/html/StobeServer/log/stobe.log"),
             ("StobeServer stobeserver", "/var/www/html/StobeServer/log/stobeserver.log"),
             ("StobeServer stobe_import", "/var/www/html/StobeServer/log/stobe_import.log"),
@@ -2203,6 +3409,10 @@ echo "CHIM-MCP installed and enabled."
             ("DialecticServer context_sent_to_llm_fast", "/var/www/html/DialecticServer/log/context_sent_to_llm_fast.log"),
             ("DialecticServer debugStream", "/var/www/html/DialecticServer/log/debugStream.log"),
             ("DialecticServer monitor", "/var/www/html/DialecticServer/log/monitor.log"),
+            ("ReignServer process and vector worker", "/var/www/html/ReignServer/data/logs/server.log"),
+            ("ReignServer events", "/var/www/html/ReignServer/data/logs/server-log.jsonl"),
+            ("ReignServer LLM requests", "/var/www/html/ReignServer/data/logs/llm-log.jsonl"),
+            ("ReignServer traces", "/var/www/html/ReignServer/data/logs/otel-traces.ndjson"),
             ("Apache error", "/var/log/apache2/error.log"),
             ("Apache vhost access", "/var/log/apache2/other_vhosts_access.log"),
             ("Dwemer Distro XTTS", "/home/dwemer/xtts-api-server/log.txt"),
@@ -2222,31 +3432,46 @@ echo "CHIM-MCP installed and enabled."
         {
             lines.Add($"--- Start of {name} ({path}) ---");
             var escapedPath = EscapeForSingleQuotedBash(path);
+            // Structured Reign and LORKHAN events can be long single lines; bound bytes as well as lines.
+            var isBoundedLog = path.StartsWith("/var/www/html/ReignServer/data/", StringComparison.Ordinal)
+                || path.StartsWith("/var/log/lorkhanserver/", StringComparison.Ordinal);
+            var tailCommand = isBoundedLog
+                ? $"tail -c 262144 {escapedPath} | tail -n {maxLogLines + 1}"
+                : $"tail -n {maxLogLines + 1} {escapedPath}";
             var command =
-                $"if [ -f {escapedPath} ]; then tail -n {maxLogLines} {escapedPath}; else echo '[missing] {path}'; fi";
+                $"set -o pipefail; if [ -f {escapedPath} ]; then stat -c '%s %Y' -- {escapedPath} && {tailCommand}; else exit 44; fi";
 
             try
             {
                 var result = await _wsl.RunBashAsync(command, user: "root", loginShell: false).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+                if (result.ExitCode == 44)
                 {
-                    lines.Add(SanitizeDiagnosticText(result.StandardOutput.TrimEnd()));
+                    lines.Add("[missing] " + path);
+                    summary.MissingLogs.Add(name);
+                }
+                else if (result.Succeeded)
+                {
+                    DiagnosticEvidenceService.AppendServerLog(lines, summary, name, result.StandardOutput, isBoundedLog, maxLogLines);
                 }
 
                 if (!string.IsNullOrWhiteSpace(result.StandardError))
                 {
                     lines.Add("[stderr]");
-                    lines.Add(SanitizeDiagnosticText(result.StandardError.TrimEnd()));
+                    lines.Add(isBoundedLog
+                        ? DiagnosticEvidenceService.Sanitize(result.StandardError.TrimEnd())
+                        : SanitizeDiagnosticText(result.StandardError.TrimEnd()));
                 }
 
-                if (!result.Succeeded)
+                if (!result.Succeeded && result.ExitCode != 44)
                 {
                     lines.Add($"[exit code {result.ExitCode}]");
+                    summary.Problems.Add(name + ": log collection failed (" + result.ExitCode + ")");
                 }
             }
             catch (Exception ex)
             {
                 lines.Add(ex.ToString());
+                summary.Problems.Add(name + ": " + ex.GetType().Name);
             }
 
             lines.Add($"--- End of {name} ---");
@@ -2309,11 +3534,13 @@ echo "CHIM-MCP installed and enabled."
                 if (!result.Succeeded)
                 {
                     lines.Add($"[exit code {result.ExitCode}]");
+                    summary.Problems.Add(name + ": probe failed");
                 }
             }
             catch (Exception ex)
             {
                 lines.Add(ex.ToString());
+                summary.Problems.Add(name + ": " + ex.GetType().Name);
             }
 
             lines.Add($"--- End of {name} ---");
@@ -2321,64 +3548,211 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private static void AddLocalGameLogDiagnostics(List<string> lines, int maxLogLines)
+    private static void AddLocalGameLogDiagnostics(List<string> lines, int maxLogLines, DiagnosticEvidenceService.CollectionSummary summary)
     {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var stobeCandidates = BuildStobeModLogCandidates();
         var localLogGroups = new List<(string Name, string[] Paths)>
         {
-            ("AIAgent.log",
-            [
-                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\Plugins\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\Plugins\AIAgent.log",
-                @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\Plugins\AIAgent.log"
-            ]),
-            ("Papyrus.0.log",
-            [
-                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\Logs\Script\Papyrus.0.log"
-            ]),
+            ("CHIM Skyrim AIAgent.log", BuildChimSkyrimAgentLogButtonCandidates(documents)),
+            ("CHIM Skyrim VR AIAgent.log", BuildChimSkyrimVrAgentLogCandidates(documents)),
+            ("Skyrim Papyrus.0.log", ExpandDocumentsLogTemplates([
+                @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\Logs\Script\Papyrus.0.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim.INI\Logs\Script\Papyrus.0.log",
+                @"%USERPROFILE%\Documents\My Games\Skyrim\Logs\Script\Papyrus.0.log"
+            ], documents)),
+            ("Skyrim VR Papyrus.0.log", ExpandDocumentsLogTemplates([
+                @"%USERPROFILE%\Documents\My Games\Skyrim VR\Logs\Script\Papyrus.0.log"
+            ], documents)),
             ("Dialectic Fallout New Vegas Plugin Log",
                 BuildDialecticPluginLogCandidates()),
-            ("STOBE Mod Log",
-                BuildStobeModLogCandidates())
+            ("STOBE Mod Log", stobeCandidates),
+            ("LORKHAN OpenMW Log", BuildLorkhanLogCandidates(documents)),
+            ("REIGN Bannerlord Plugin Log", BuildReignModLogCandidates()),
+            ("RE_Kenshi_log.txt", BuildStobeReKenshiLogCandidates(stobeCandidates))
         };
 
         foreach (var (name, paths) in localLogGroups)
         {
-            var selectedTemplate = paths.FirstOrDefault(path => File.Exists(Environment.ExpandEnvironmentVariables(path)));
-            if (selectedTemplate is null)
-            {
-                lines.Add($"--- Start of {name} ---");
-                lines.Add("[missing]");
-                lines.Add("Attempted paths:");
-                lines.AddRange(paths);
-                lines.Add($"--- End of {name} ---");
-                lines.Add("");
-                continue;
-            }
-
-            var selectedPath = Environment.ExpandEnvironmentVariables(selectedTemplate);
-            lines.Add($"--- Start of {selectedTemplate} ---");
-            lines.Add($"# Resolved path: {selectedPath}");
-            try
-            {
-                lines.Add(SanitizeDiagnosticText(ReadTextFileTail(selectedPath, maxLogLines)));
-            }
-            catch (Exception ex)
-            {
-                lines.Add(ex.ToString());
-            }
-
-            lines.Add($"--- End of {selectedTemplate} ---");
-            lines.Add("");
+            DiagnosticEvidenceService.AddNewestLog(lines, name, paths, maxLogLines, summary);
         }
     }
 
-    private static string[] BuildDialecticPluginLogCandidates()
+    // Share OpenMW log discovery between Explorer and the bounded diagnostics collector.
+    internal static string[] BuildLorkhanLogCandidates(string? documentsFolder)
     {
-        var candidates = new List<string>
+        var candidates = new List<string>();
+        var config = Environment.GetEnvironmentVariable("LORKHAN_CLIENT_CONFIG");
+        if (!string.IsNullOrWhiteSpace(config) && Path.IsPathFullyQualified(config)
+            && Path.GetDirectoryName(config) is { } profile)
+            candidates.Add(Path.Combine(profile, "openmw.log"));
+        candidates.AddRange(ExpandDocumentsLogTemplates(
+            [@"%USERPROFILE%\Documents\My Games\OpenMW\openmw.log"], documentsFolder));
+        candidates.Add(@"C:\Modlists\LORKHAN\Config\openmw.log");
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private const string DocumentsTemplatePrefix = @"%USERPROFILE%\Documents\";
+
+    /// <summary>
+    /// The raw AIAgent.log templates embedded in diagnostic reports. Their text and order feed the
+    /// report's "Attempted paths" section verbatim, so they must not change when the log buttons
+    /// evolve; the buttons derive their own candidate list from this one.
+    /// </summary>
+    internal static string[] BuildChimSkyrimAgentLogTemplates() =>
+    [
+        @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\Plugins\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim\SKSE\Plugins\AIAgent.log",
+        @"%USERPROFILE%\Documents\My Games\Skyrim.INI\SKSE\Plugins\AIAgent.log"
+    ];
+
+    /// <summary>
+    /// Candidates for the "Open CHIM Skyrim Logs" button: the same templates the diagnostics scan,
+    /// reordered so the SKSE folders current CHIM builds write to (Skyrim Special Edition and
+    /// Skyrim.INI) win over the legacy and Plugins-subfolder locations.
+    /// </summary>
+    internal static string[] BuildChimSkyrimAgentLogButtonCandidates(string? documentsFolder)
+    {
+        static bool IsPreferred(string template) =>
+            template.EndsWith(@"\Skyrim Special Edition\SKSE\AIAgent.log", StringComparison.OrdinalIgnoreCase)
+            || template.EndsWith(@"\Skyrim.INI\SKSE\AIAgent.log", StringComparison.OrdinalIgnoreCase);
+
+        var templates = BuildChimSkyrimAgentLogTemplates();
+        return ExpandDocumentsLogTemplates(
+            templates.Where(IsPreferred).Concat(templates.Where(template => !IsPreferred(template))),
+            documentsFolder);
+    }
+
+    /// <summary>
+    /// Skyrim VR keeps its own button and candidate list so its log is never mistaken for the
+    /// Special Edition one.
+    /// </summary>
+    internal static string[] BuildChimSkyrimVrAgentLogCandidates(string? documentsFolder) =>
+        ExpandDocumentsLogTemplates(
+            [@"%USERPROFILE%\Documents\My Games\Skyrim VR\SKSE\AIAgent.log"],
+            documentsFolder);
+
+    /// <summary>
+    /// Expands Documents-based templates for the log buttons: the real Windows Documents folder
+    /// first, because it survives OneDrive and other redirection, then the literal
+    /// %USERPROFILE% expansion as a fallback.
+    /// </summary>
+    internal static string[] ExpandDocumentsLogTemplates(IEnumerable<string> templates, string? documentsFolder)
+    {
+        var candidates = new List<string>();
+        foreach (var template in templates)
         {
+            if (!string.IsNullOrWhiteSpace(documentsFolder)
+                && template.StartsWith(DocumentsTemplatePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                candidates.Add(Path.Combine(documentsFolder, template[DocumentsTemplatePrefix.Length..]));
+            }
+
+            candidates.Add(Environment.ExpandEnvironmentVariables(template));
+        }
+
+        return candidates
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// RE_Kenshi's own log beside each Kenshi root implied by the Stobe.log candidates. It is
+    /// revealed when Stobe.log is missing, because RE_Kenshi logging without a Stobe.log usually
+    /// means the STOBE mod never loaded.
+    /// </summary>
+    internal static string[] BuildStobeReKenshiLogCandidates(IEnumerable<string> stobeLogCandidates)
+    {
+        const string stobeLogSuffix = @"\mods\Stobe\Stobe.log";
+        return stobeLogCandidates
+            .Where(candidate => candidate.EndsWith(stobeLogSuffix, StringComparison.OrdinalIgnoreCase))
+            .Select(candidate =>
+            {
+                var gameRoot = candidate[..^stobeLogSuffix.Length];
+                const string reKenshiSuffix = @"\RE_Kenshi";
+                if (gameRoot.EndsWith(reKenshiSuffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    gameRoot = gameRoot[..^reKenshiSuffix.Length];
+                }
+
+                return gameRoot + @"\RE_Kenshi_log.txt";
+            })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The folder a missing log would most plausibly appear in: the first candidate whose exact
+    /// parent exists, otherwise the deepest existing ancestor of any candidate. Drive roots are
+    /// never returned, and candidates under the launcher's own directory are ignored because they
+    /// only mean anything when the launcher itself runs from the game folder.
+    /// </summary>
+    internal static string? FindBestExistingLogParentFolder(
+        IReadOnlyList<string> candidates,
+        Func<string, bool> directoryExists,
+        string? currentDirectory)
+    {
+        var launcherRoot = string.IsNullOrWhiteSpace(currentDirectory)
+            ? null
+            : currentDirectory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        var parents = candidates
+            .Where(candidate => launcherRoot is null
+                || !candidate.StartsWith(launcherRoot, StringComparison.OrdinalIgnoreCase))
+            .Select(Path.GetDirectoryName)
+            .OfType<string>()
+            .ToArray();
+
+        var exactParent = parents.FirstOrDefault(directoryExists);
+        if (exactParent is not null)
+        {
+            return exactParent;
+        }
+
+        string? best = null;
+        var bestDepth = -1;
+        foreach (var parent in parents)
+        {
+            // Stop above drive roots: an ancestor whose own parent is null is a root.
+            for (var ancestor = Path.GetDirectoryName(parent);
+                 ancestor is not null && Path.GetDirectoryName(ancestor) is not null;
+                 ancestor = Path.GetDirectoryName(ancestor))
+            {
+                if (!directoryExists(ancestor))
+                {
+                    continue;
+                }
+
+                var depth = ancestor.Count(ch => ch == Path.DirectorySeparatorChar);
+                if (depth > bestDepth)
+                {
+                    best = ancestor;
+                    bestDepth = depth;
+                }
+
+                // The first existing ancestor is already the deepest one for this candidate.
+                break;
+            }
+        }
+
+        return best;
+    }
+
+    private static string[] BuildDialecticPluginLogCandidates(string? documentsFolder = null)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(documentsFolder))
+        {
+            candidates.Add(Path.Combine(documentsFolder, "My Games", "FalloutNV", "NVSE", "dialectic.log"));
+            candidates.Add(Path.Combine(documentsFolder, "My Games", "FalloutNV", "dialectic.log"));
+        }
+
+        candidates.AddRange(
+        [
             @"%USERPROFILE%\Documents\My Games\FalloutNV\NVSE\dialectic.log",
             @"%USERPROFILE%\Documents\My Games\FalloutNV\dialectic.log",
             @"%ProgramFiles(x86)%\Steam\steamapps\common\Fallout New Vegas\dialectic.log",
@@ -2390,7 +3764,7 @@ echo "CHIM-MCP installed and enabled."
             @"%ProgramFiles%\GOG Galaxy\Games\Fallout New Vegas\dialectic.log",
             @"%ProgramFiles%\GOG Galaxy\Games\Fallout New Vegas\Data\NVSE\Plugins\dialectic.log",
             Path.GetFullPath("dialectic.log")
-        };
+        ]);
 
         var globalInstances = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -2447,6 +3821,38 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
+    // Prefer the module selected by Reign's installer, then discover ordinary Steam installs.
+    private static string[] BuildReignModLogCandidates()
+    {
+        var candidates = new List<string>();
+        var recordPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".reign", "installation.json");
+        try
+        {
+            if (File.Exists(recordPath) && new FileInfo(recordPath).Length <= 65536)
+            {
+                using var record = JsonDocument.Parse(File.ReadAllText(recordPath));
+                if (record.RootElement.ValueKind == JsonValueKind.Object
+                    && record.RootElement.TryGetProperty("moduleRoot", out var root)
+                    && root.ValueKind == JsonValueKind.String
+                    && root.GetString() is { Length: > 2 } moduleRoot
+                    && char.IsLetter(moduleRoot[0]) && moduleRoot[1] == ':'
+                    && Path.IsPathFullyQualified(moduleRoot))
+                    candidates.Add(Path.Combine(moduleRoot, "logs", "reignbeta.log"));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            // An absent or damaged installation record must not prevent Steam discovery.
+        }
+
+        foreach (var library in GetSteamLibraryPaths().Prepend(
+                     Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Steam")))
+            candidates.Add(Path.Combine(library, "steamapps", "common", "Mount & Blade II Bannerlord",
+                "Modules", "ReignBeta", "logs", "reignbeta.log"));
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     private static string[] BuildStobeModLogCandidates()
     {
         var candidates = new List<string>
@@ -2469,9 +3875,17 @@ echo "CHIM-MCP installed and enabled."
             candidates.Add(Path.Combine(root, "Program Files (x86)", "Steam", "steamapps", "common", "Kenshi", "mods", "Stobe", "Stobe.log"));
         }
 
+        // RE_Kenshi can run Kenshi from its child directory, which relocates the plugin log.
+        // Keep the original path as a fallback for installations running from the game root.
+        const string stobeLogSuffix = @"\mods\Stobe\Stobe.log";
         return candidates
             .Select(Environment.ExpandEnvironmentVariables)
             .Where(path => !string.IsNullOrWhiteSpace(path))
+            .SelectMany(path => new[]
+            {
+                path[..^stobeLogSuffix.Length] + @"\RE_Kenshi" + stobeLogSuffix,
+                path
+            })
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -2566,7 +3980,7 @@ echo "CHIM-MCP installed and enabled."
             .Replace("psql -h localhost -U dwemer", "psql -h /var/run/postgresql -U postgres", StringComparison.Ordinal);
     }
 
-    private async Task AddDatabaseSchemaDiagnosticsAsync(List<string> lines)
+    private async Task AddDatabaseSchemaDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Database Schema Diagnostics");
         lines.Add("These checks are read-only and cover HerikaServer, StobeServer, and DialecticServer database state.");
@@ -2644,17 +4058,19 @@ fi
             if (!result.Succeeded)
             {
                 lines.Add($"Database schema diagnostics exited with code {result.ExitCode}.");
+                summary.Problems.Add("Database schema collection failed");
             }
         }
         catch (Exception ex)
         {
             lines.Add(ex.ToString());
+            summary.Problems.Add("Database schema: " + ex.GetType().Name);
         }
 
         lines.Add("");
     }
 
-    private async Task AddConnectorDiagnosticsAsync(List<string> lines)
+    private async Task AddConnectorDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
     {
         lines.Add("Connector Diagnostics");
         lines.Add("These checks are read-only and show active/profile-linked connector IDs plus non-secret connector fields.");
@@ -2748,126 +4164,297 @@ fi
             if (!result.Succeeded)
             {
                 lines.Add($"Connector diagnostics exited with code {result.ExitCode}.");
+                summary.Problems.Add("Connector settings collection failed");
             }
         }
         catch (Exception ex)
         {
             lines.Add(ex.ToString());
+            summary.Problems.Add("Connector settings: " + ex.GetType().Name);
         }
 
         lines.Add("");
     }
 
-    private async Task ReclaimDistroDiskSpaceAsync()
+    private async Task CompactDistroAsync()
     {
+        if (!CanStartExclusiveDistroOperation())
+        {
+            ReportExclusiveDistroOperationBusy(CompactDistroSettingName);
+            return;
+        }
+
         if (!await _wsl.DistroExistsAsync().ConfigureAwait(false))
         {
+            SetCompactDistroStatus(
+                $"{LauncherConstants.DistroName} is not installed, so there is nothing to compact.",
+                CompactDistroWarningColor);
             MessageBox.Show(
                 $"{LauncherConstants.DistroName} is not currently installed.",
-                "Reclaim Distro Disk Space",
+                CompactDistroSettingName,
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
             return;
         }
 
+        // Defaults to No because this stops every WSL distro on the machine.
         var confirmed = MessageBox.Show(
-            $"This will run fstrim inside {LauncherConstants.DistroName}, request a clean server stop, flush filesystem buffers, shut down WSL, and attempt to compact ext4.vhdx using an elevated Windows prompt.\n\n" +
-            $"Close any open \\\\wsl.localhost\\{LauncherConstants.DistroName} Explorer windows first.\n\n" +
-            "This will also stop any other running WSL distros.\n\n" +
-            "This may take a few minutes.\n\nContinue?",
-            "Reclaim Distro Disk Space",
+            BuildCompactDistroConfirmation(),
+            CompactDistroSettingName,
             MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
 
         if (confirmed != MessageBoxResult.Yes)
         {
-            AppendLog("Distro disk reclaim canceled." + Environment.NewLine);
+            SetCompactDistroStatus("Canceled. Nothing was deleted or changed.", CompactDistroNeutralColor);
+            AppendLog("Compact Distro canceled." + Environment.NewLine);
             return;
         }
 
+        var serverStopWasAttempted = false;
+        var serverWasStopped = false;
+        if (!await PauseAssistantForMaintenanceAsync(CompactDistroSettingName).ConfigureAwait(true))
+        {
+            SetCompactDistroStatus(AssistantBusyForMaintenanceMessage, CompactDistroWarningColor);
+            return;
+        }
+
+        if (!TryBeginExclusiveDistroOperation())
+        {
+            ResumeAssistantAfterMaintenance(reconnect: true);
+            SetCompactDistroStatus(ExclusiveDistroOperationBusyMessage, CompactDistroWarningColor);
+            ReportExclusiveDistroOperationBusy(CompactDistroSettingName);
+            return;
+        }
+
+        // The row says it is working before the first WSL round trip, so an earlier run's terminal
+        // status can never be mistaken for this one's result.
+        SetCompactDistroStatus(CompactDistroPreparingStatus, CompactDistroBusyColor);
+        var endedSafely = true;
         try
         {
-            var vhdxPath = _wsl.GetDistroVhdxPath();
-            var beforeSnapshot = vhdxPath is not null ? TryGetFileProgressSnapshot(vhdxPath) : null;
-
-            if (!string.IsNullOrWhiteSpace(vhdxPath))
+            var vhdxPath = NormalizeDistroVhdxPath(_wsl.GetDistroVhdxPath());
+            if (vhdxPath is null || !File.Exists(vhdxPath))
             {
-                AppendLog($"Detected distro VHDX: {vhdxPath}{Environment.NewLine}");
+                SetCompactDistroStatus(
+                    "The distro disk file could not be found. Nothing was deleted or stopped.",
+                    CompactDistroErrorColor);
+                MessageBox.Show(
+                    "The launcher could not safely locate the distro's disk file. Nothing was deleted or stopped.\n\n" +
+                    "Restart Windows and try again. If the problem continues, run Update Distro first.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
             }
 
+            var beforeSnapshot = TryGetFileProgressSnapshot(vhdxPath);
+            AppendLog($"Detected distro VHDX: {vhdxPath}{Environment.NewLine}");
             if (beforeSnapshot is not null)
             {
                 AppendLog($"Current VHDX size: {FormatByteSize(beforeSnapshot.Value.Length)}{Environment.NewLine}");
             }
 
-            AppendLog("Running fstrim inside Dwemer Distro..." + Environment.NewLine);
-            var trimResult = await _wsl.RunBashAsync("fstrim -av", text => AppendLog(text), user: "root").ConfigureAwait(true);
-            if (trimResult.Succeeded)
+            var cleanupProbe = await _wsl.RunBashAsync(DistroStorageProbeCommand, user: "root").ConfigureAwait(true);
+            if (!cleanupProbe.Succeeded)
             {
-                AppendLog("Filesystem trim completed." + Environment.NewLine, "green");
-            }
-            else
-            {
-                AppendLog($"Filesystem trim note: {GetCommandError(trimResult)}{Environment.NewLine}", "yellow");
-            }
-
-            await PrepareDistroForSafeCompactionAsync().ConfigureAwait(true);
-
-            if (string.IsNullOrWhiteSpace(vhdxPath))
-            {
-                AppendLog("Could not locate ext4.vhdx automatically. Immediate Windows compaction was skipped." + Environment.NewLine, "yellow");
+                SetCompactDistroStatus("Update Distro first, then run Compact Distro again.", CompactDistroWarningColor);
                 MessageBox.Show(
-                    "Filesystem trim and WSL shutdown completed, but the launcher could not locate ext4.vhdx for an immediate compact pass.\n\n" +
-                    "Start the server again when you're ready.",
-                    "Disk Reclaim Partial",
+                    "This installation does not have the safe storage cleanup tool yet.\n\n" +
+                    "Run Update Distro, then run Compact Distro again. Nothing was deleted or stopped.",
+                    CompactDistroSettingName,
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
 
-            AppendLog("Running elevated Windows VHDX compact..." + Environment.NewLine);
-            var compactResult = await CompactVhdxAsync(vhdxPath).ConfigureAwait(true);
-            if (!compactResult.Succeeded)
+            var usedBytesBeforeCleanup = await ReadDistroUsedBytesAsync().ConfigureAwait(true);
+            SetCompactDistroStatus(CompactDistroCleaningCachesStatus, CompactDistroBusyColor);
+            AppendLog("Removing reproducible installer caches..." + Environment.NewLine);
+            var cleanupResult = await _wsl.RunBashAsync(
+                    DistroStorageCleanupCommand,
+                    text => AppendLog(text),
+                    user: "root")
+                .ConfigureAwait(true);
+            if (!cleanupResult.Succeeded)
             {
-                var compactError = GetCommandError(compactResult);
-                var compactTag = compactResult.ExitCode == 1223 ? "yellow" : "red";
-                AppendLog($"Disk compaction failed: {compactError}{Environment.NewLine}", compactTag);
-                if (!string.IsNullOrWhiteSpace(compactResult.StandardOutput))
-                {
-                    AppendLog(compactResult.StandardOutput.Trim() + Environment.NewLine, compactTag);
-                }
-
+                var installerActive = cleanupResult.ExitCode == 3;
+                var cleanupError = GetCommandError(cleanupResult);
+                AppendLog($"Safe storage cleanup stopped: {cleanupError}{Environment.NewLine}", "yellow");
+                SetCompactDistroStatus(
+                    installerActive
+                        ? "A component installer is still running. Wait for it to finish and try again."
+                        : "Safe cache cleanup could not finish. Nothing was stopped or compacted.",
+                    installerActive ? CompactDistroWarningColor : CompactDistroErrorColor);
                 MessageBox.Show(
-                    $"Disk compaction did not complete.\n\n{compactError}\n\nStart the server again when you're ready.",
-                    compactResult.ExitCode == 1223 ? "Disk Reclaim Canceled" : "Disk Reclaim Failed",
+                    installerActive
+                        ? "A component installer is still running. Wait for it to finish, then run Compact Distro again.\n\nNothing was stopped or compacted."
+                        : $"Safe cache cleanup could not finish.\n\n{cleanupError}\n\nNothing was stopped or compacted.",
+                    CompactDistroSettingName,
                     MessageBoxButton.OK,
-                    compactResult.ExitCode == 1223 ? MessageBoxImage.Warning : MessageBoxImage.Error);
+                    installerActive ? MessageBoxImage.Warning : MessageBoxImage.Error);
                 return;
             }
 
-            var afterSnapshot = TryGetFileProgressSnapshot(vhdxPath);
-            var summary = BuildDiskReclaimSummary(vhdxPath, beforeSnapshot, afterSnapshot);
+            var usedBytesAfterCleanup = await ReadDistroUsedBytesAsync().ConfigureAwait(true);
+            var cleanedBytes = CalculateReclaimedBytes(usedBytesBeforeCleanup, usedBytesAfterCleanup);
+
+            SetCompactDistroStatus(CompactDistroFreeingSpaceStatus, CompactDistroBusyColor);
+            AppendLog("Marking unused distro space as free..." + Environment.NewLine);
+            var trimResult = await _wsl.RunBashAsync("fstrim -v /", text => AppendLog(text), user: "root").ConfigureAwait(true);
+            if (!trimResult.Succeeded)
+            {
+                var trimError = GetCommandError(trimResult);
+                AppendLog($"Filesystem trim failed: {trimError}{Environment.NewLine}", "red");
+                SetCompactDistroStatus(
+                    "Installer caches were removed, but the freed space could not be prepared for Windows. The server is still running if it was running before.",
+                    CompactDistroWarningColor);
+                MessageBox.Show(
+                    $"Installer caches were removed, but the freed space could not be prepared for Windows.\n\n{trimError}\n\n" +
+                    "The server and WSL were not stopped. Run Compact Distro again after resolving the error.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            AppendLog("Unused distro space is ready for Windows compaction." + Environment.NewLine, "green");
+            SetCompactDistroStatus(CompactDistroStoppingWslStatus, CompactDistroBusyColor);
+            serverStopWasAttempted = true;
+            await PrepareDistroForSafeCompactionAsync().ConfigureAwait(true);
+            serverWasStopped = true;
+
+            var stoppedVhdxPath = NormalizeDistroVhdxPath(_wsl.GetDistroVhdxPath());
+            if (stoppedVhdxPath is null ||
+                !File.Exists(stoppedVhdxPath) ||
+                !string.Equals(vhdxPath, stoppedVhdxPath, StringComparison.OrdinalIgnoreCase))
+            {
+                AppendLog("The registered distro disk path changed or disappeared after WSL shutdown. Windows compaction was skipped." + Environment.NewLine, "yellow");
+                SetCompactDistroStatus(
+                    "Installer caches were removed, but the distro disk could not be verified for Windows compaction. The server is stopped.",
+                    CompactDistroWarningColor);
+                MessageBox.Show(
+                    "Installer caches were removed and the space was freed inside the distro, but the disk file could not be safely verified after WSL stopped. No Windows compaction was attempted.\n\n" +
+                    "Start the server again when you're ready.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            // Nothing may reopen the distro between the stopped-state verification and DiskPart.
+            // A passive status check that was already in flight when the gate closed is the one
+            // thing that still could, so it is drained and the stopped state is confirmed again.
+            if (!await WaitForPassiveDistroActivityIdleAsync().ConfigureAwait(true) ||
+                await _wsl.DistroRunningAsync().ConfigureAwait(true))
+            {
+                AppendLog(
+                    $"{LauncherConstants.DistroName} reopened after it was stopped. Windows compaction was skipped.{Environment.NewLine}",
+                    "yellow");
+                SetCompactDistroStatus(
+                    "Installer caches were removed, but the distro reopened before Windows could compact it. Run Compact Distro again.",
+                    CompactDistroWarningColor);
+                MessageBox.Show(
+                    "Installer caches were removed and the space was freed inside the distro, but the distro reopened before Windows compaction could start. No compaction was attempted.\n\n" +
+                    $"Close any open \\\\wsl.localhost\\{LauncherConstants.DistroName} Explorer windows and run Compact Distro again.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            SetCompactDistroStatus(CompactDistroCompactingStatus, CompactDistroBusyColor);
+            AppendLog("Running elevated Windows VHDX compact..." + Environment.NewLine);
+            var compactResult = await CompactVhdxAsync(stoppedVhdxPath).ConfigureAwait(true);
+            if (!compactResult.Succeeded)
+            {
+                var compactError = GetCommandError(compactResult);
+                var elevationDeclined = compactResult.ExitCode == 1223;
+                AppendLog($"Disk compaction failed: {compactError}{Environment.NewLine}", elevationDeclined ? "yellow" : "red");
+                SetCompactDistroStatus(
+                    elevationDeclined
+                        ? "Stopped at the Windows administrator prompt. Space was freed inside the distro but not handed back to Windows. The server is stopped."
+                        : "Space was freed inside the distro, but Windows could not reclaim it. The server is stopped.",
+                    elevationDeclined ? CompactDistroWarningColor : CompactDistroErrorColor);
+                MessageBox.Show(
+                    (elevationDeclined
+                        ? "The administrator prompt was not approved, so the freed space was not handed back to Windows."
+                        : "Windows could not reclaim the freed space.") +
+                    $"\n\nSpace was still freed inside the distro.\n\n{compactError}\n\nStart the server again when you're ready.",
+                    CompactDistroSettingName,
+                    MessageBoxButton.OK,
+                    elevationDeclined ? MessageBoxImage.Warning : MessageBoxImage.Error);
+                return;
+            }
+
+            var afterSnapshot = TryGetFileProgressSnapshot(stoppedVhdxPath);
+            var summary = BuildCompactDistroSummary(beforeSnapshot, afterSnapshot, cleanedBytes);
             AppendLog(summary + Environment.NewLine, "green");
 
+            SetCompactDistroStatus($"Done. {summary} The server is stopped.", CompactDistroSuccessColor);
             MessageBox.Show(
-                $"Distro disk reclaim completed.\n\n{summary}\n\nStart the server again when you're ready.",
-                "Disk Reclaim Complete",
+                $"Compact Distro finished.\n\n{summary}\n\nStart the server again when you're ready.",
+                CompactDistroSettingName,
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            AppendLog($"Disk reclaim error: {ex.Message}{Environment.NewLine}", "red");
+            endedSafely = false;
+            AppendLog($"Compact Distro error: {ex.Message}{Environment.NewLine}", "red");
+            SetCompactDistroStatus(
+                serverWasStopped
+                    ? "Could not finish. The server is stopped. Open the console for details."
+                    : serverStopWasAttempted
+                        ? "Could not finish. The server may be stopped. Open the console for details."
+                        : "Could not finish. The server and WSL were not stopped.",
+                CompactDistroErrorColor);
             MessageBox.Show(
-                $"Failed to reclaim distro disk space.\n\n{ex.Message}",
-                "Disk Reclaim Failed",
+                $"Compact Distro could not finish.\n\n{ex.Message}\n\n" +
+                (serverWasStopped
+                    ? "The server is stopped. Start it again when you're ready."
+                    : serverStopWasAttempted
+                        ? "The server may be stopped. Check it before playing."
+                        : "The server and WSL were not stopped."),
+                CompactDistroSettingName,
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
+        finally
+        {
+            SetExclusiveDistroOperationInProgress(false);
+            // Passive checks were held off for the whole run. Restarting the timer lets an unknown
+            // status be re-read on its own schedule instead of forcing the distro back open here.
+            QueueServerStatusRefresh();
+            ResumeAssistantAfterMaintenance(endedSafely);
+        }
+    }
+
+    internal static string BuildCompactDistroConfirmation()
+    {
+        return "Compact Distro frees up Windows disk space in three steps:\n\n" +
+               "1. Delete installer caches the launcher can download again.\n" +
+               "2. Release that space inside the distro.\n" +
+               "3. Hand it back to Windows.\n\n" +
+               "Your mods, installed servers and components, models, voices, databases, settings, logs, " +
+               "and Hugging Face sign-in are kept.\n\n" +
+               $"Before it starts, the {LauncherConstants.DistroName} server and every other running WSL " +
+               "distribution are stopped, and Windows asks you to approve an administrator prompt. " +
+               $"Close any open \\\\wsl.localhost\\{LauncherConstants.DistroName} Explorer windows first.\n\n" +
+               "This can take a few minutes, and the server stays stopped when it finishes.\n\nContinue?";
     }
 
     private async Task PrepareDistroForSafeCompactionAsync()
     {
+        // A passive status check that started before the gate closed runs WSL commands of its own,
+        // so it has to finish before the stop sequence begins.
+        if (!await WaitForPassiveDistroActivityIdleAsync().ConfigureAwait(true))
+        {
+            throw new InvalidOperationException(
+                "A background status check is still running, so Windows compaction was not attempted.");
+        }
+
         AppendLog("Stopping Dwemer Distro for disk maintenance..." + Environment.NewLine);
 
         if (_serverProcess is { HasExited: false })
@@ -2907,6 +4494,12 @@ fi
                     AppendLog($"WSL stop note: {note}{Environment.NewLine}", "yellow");
                 }
             }
+        }
+
+        if (await _wsl.DistroRunningAsync().ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(
+                $"{LauncherConstants.DistroName} is still running, so Windows compaction was not attempted.");
         }
 
         _serverProcess = null;
@@ -2951,6 +4544,19 @@ fi
             return;
         }
 
+        if (!await PauseAssistantForMaintenanceAsync("Export Full Distro").ConfigureAwait(true))
+        {
+            return;
+        }
+
+        if (!TryBeginExclusiveDistroOperation())
+        {
+            ResumeAssistantAfterMaintenance(reconnect: true);
+            ReportExclusiveDistroOperationBusy("Export Full Distro");
+            return;
+        }
+
+        var endedSafely = true;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
@@ -2985,6 +4591,7 @@ fi
         }
         catch (Exception ex)
         {
+            endedSafely = false;
             AppendLog($"Full distro export error: {ex.Message}{Environment.NewLine}", "red");
             MessageBox.Show(
                 $"Full distro export failed.\n\n{ex.Message}",
@@ -2994,7 +4601,9 @@ fi
         }
         finally
         {
+            SetExclusiveDistroOperationInProgress(false);
             QueueServerStatusRefresh(immediate: true);
+            ResumeAssistantAfterMaintenance(endedSafely);
         }
     }
 
@@ -3120,6 +4729,18 @@ fi
             }
         }
 
+        if (!await PauseAssistantForMaintenanceAsync("Import Full Distro").ConfigureAwait(true))
+        {
+            return;
+        }
+
+        if (!TryBeginExclusiveDistroOperation())
+        {
+            ResumeAssistantAfterMaintenance(reconnect: true);
+            ReportExclusiveDistroOperationBusy("Import Full Distro");
+            return;
+        }
+
         try
         {
             Directory.CreateDirectory(installPath);
@@ -3210,7 +4831,10 @@ fi
         }
         finally
         {
+            SetExclusiveDistroOperationInProgress(false);
             QueueServerStatusRefresh(immediate: true);
+            // An import can replace the distro the assistant's task lived in, so it waits for Connect.
+            ResumeAssistantAfterMaintenance(reconnect: false);
         }
     }
 
@@ -3219,6 +4843,12 @@ fi
         if (selectedTarget is null)
         {
             MessageBox.Show("Please select a rollback target first.", "No Selection", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (serverKey == "reign")
+        {
+            await RequestReignRollbackAsync(selectedTarget, rollbackWindow).ConfigureAwait(true);
             return;
         }
 
@@ -3401,6 +5031,13 @@ fi
 
     private void QueueServerStatusRefresh(bool immediate = false)
     {
+        // A passive check runs WSL commands, which would reopen the distro a critical operation
+        // just stopped. Callers re-queue once the gate reopens.
+        if (IsCriticalMaintenanceInProgress)
+        {
+            return;
+        }
+
         RunOnUi(() =>
         {
             if (!_serverStatusRetryTimer.IsEnabled)
@@ -3417,21 +5054,26 @@ fi
 
     private async Task RetryServerStatusChecksAsync()
     {
-        if (_isServerStatusRefreshInProgress)
-        {
-            return;
-        }
-
         if (!NeedsServerStatusRefresh())
         {
             RunOnUi(() => _serverStatusRetryTimer.Stop());
             return;
         }
 
-        _isServerStatusRefreshInProgress = true;
+        if (!TryBeginServerStatusRetry())
+        {
+            if (IsCriticalMaintenanceInProgress)
+            {
+                RunOnUi(() => _serverStatusRetryTimer.Stop());
+            }
+
+            return;
+        }
+
         try
         {
             using var timeoutCts = new CancellationTokenSource(StartupVersionCheckTimeout);
+            await RefreshServerManagementAsync(timeoutCts.Token).ConfigureAwait(false);
             await CheckForUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
             await CheckStobeServerUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
             await CheckDialecticServerUpdatesAsync(timeoutCts.Token).ConfigureAwait(false);
@@ -3447,7 +5089,7 @@ fi
         }
         finally
         {
-            _isServerStatusRefreshInProgress = false;
+            EndServerStatusRetry();
         }
 
         if (!NeedsServerStatusRefresh())
@@ -3610,6 +5252,13 @@ fi
 
     private async Task<CommandResult> CompactVhdxAsync(string vhdxPath)
     {
+        vhdxPath = NormalizeDistroVhdxPath(vhdxPath)
+            ?? throw new InvalidOperationException("The distro disk path is not safe to pass to Windows compaction.");
+        if (!File.Exists(vhdxPath))
+        {
+            throw new FileNotFoundException("The distro disk file disappeared before Windows compaction.", vhdxPath);
+        }
+
         var scriptPath = Path.Combine(Path.GetTempPath(), $"dwemerdistro-compact-{Guid.NewGuid():N}.ps1");
         var logPath = Path.Combine(Path.GetTempPath(), $"dwemerdistro-compact-{Guid.NewGuid():N}.log");
         var script = """
@@ -3681,25 +5330,76 @@ fi
         }
     }
 
-    private static string BuildDiskReclaimSummary(
-        string vhdxPath,
-        FileProgressSnapshot? beforeSnapshot,
-        FileProgressSnapshot? afterSnapshot)
+    private async Task<long?> ReadDistroUsedBytesAsync()
     {
+        var result = await _wsl.RunBashAsync(
+                "df -B1 --output=used / | tail -n 1",
+                user: "root")
+            .ConfigureAwait(false);
+        return result.Succeeded ? ParseDistroUsedBytes(result.StandardOutput) : null;
+    }
+
+    internal static long? ParseDistroUsedBytes(string? output)
+    {
+        var value = output?
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .LastOrDefault();
+        return long.TryParse(value, out var bytes) && bytes >= 0 ? bytes : null;
+    }
+
+    internal static long? CalculateReclaimedBytes(long? beforeBytes, long? afterBytes)
+    {
+        return beforeBytes is not null && afterBytes is not null && beforeBytes >= afterBytes
+            ? beforeBytes.Value - afterBytes.Value
+            : null;
+    }
+
+    internal static string? NormalizeDistroVhdxPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) ||
+            path.Contains('"', StringComparison.Ordinal) ||
+            path.Any(char.IsControl))
+        {
+            return null;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            return Path.IsPathFullyQualified(fullPath) &&
+                   string.Equals(Path.GetExtension(fullPath), ".vhdx", StringComparison.OrdinalIgnoreCase)
+                ? fullPath
+                : null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    private static string BuildCompactDistroSummary(
+        FileProgressSnapshot? beforeSnapshot,
+        FileProgressSnapshot? afterSnapshot,
+        long? cleanedBytes)
+    {
+        var cleanupSummary = cleanedBytes is > 0
+            ? $"Removed {FormatByteSize(cleanedBytes.Value)} of reproducible caches. "
+            : string.Empty;
+
         if (beforeSnapshot is not null && afterSnapshot is not null)
         {
             var reclaimedBytes = beforeSnapshot.Value.Length - afterSnapshot.Value.Length;
-            return reclaimedBytes > 0
-                ? $"Reclaimed {FormatByteSize(reclaimedBytes)} from {vhdxPath}.{Environment.NewLine}Before: {FormatByteSize(beforeSnapshot.Value.Length)} | After: {FormatByteSize(afterSnapshot.Value.Length)}"
-                : $"Compaction completed for {vhdxPath}.{Environment.NewLine}Size is now {FormatByteSize(afterSnapshot.Value.Length)}.";
+            return cleanupSummary + (reclaimedBytes > 0
+                ? $"Returned {FormatByteSize(reclaimedBytes)} to Windows. The distro now uses {FormatByteSize(afterSnapshot.Value.Length)}, down from {FormatByteSize(beforeSnapshot.Value.Length)}."
+                : $"Windows did not reduce the distro disk file further. It uses {FormatByteSize(afterSnapshot.Value.Length)}.");
         }
 
         if (afterSnapshot is not null)
         {
-            return $"Compaction completed for {vhdxPath}.{Environment.NewLine}Current size: {FormatByteSize(afterSnapshot.Value.Length)}.";
+            return cleanupSummary + $"Returned unused space to Windows. The distro now uses {FormatByteSize(afterSnapshot.Value.Length)}.";
         }
 
-        return $"Compaction completed for {vhdxPath}.";
+        return cleanupSummary + "Returned unused space to Windows.";
     }
 
     private static string GetCommandError(CommandResult result)
@@ -3715,7 +5415,10 @@ fi
 
     private bool NeedsServerStatusRefresh()
     {
-        return StatusNeedsRefresh(_herikaStatusText) ||
+        // An unanswered install-state probe matters as much as a missing version: without it the
+        // Mods page cannot tell "not installed" from "not checked yet".
+        return ServerManagers.Any(manager => !manager.IsStatusKnown) ||
+               StatusNeedsRefresh(_herikaStatusText) ||
                StatusNeedsRefresh(_stobeStatusText) ||
                StatusNeedsRefresh(_dialecticStatusText);
     }
@@ -3726,14 +5429,22 @@ fi
                text.Contains("[N/A]", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildServerVersionStatusText(
+    /// <summary>
+    /// The one status line both the mod control menu and the 96px rail tile show. The
+    /// "Update Available" suffix rides the existing " | " separator after the version fields, so
+    /// the line only grows when the branch comparison actually confirmed a newer version - never
+    /// for an unknown or missing one.
+    /// </summary>
+    internal static string BuildServerVersionStatusText(
         string serviceName,
         string? branch,
         string? dateVersion,
-        string? semanticVersion)
+        string? semanticVersion,
+        bool updateAvailable = false)
     {
         var source = string.IsNullOrWhiteSpace(branch) ? serviceName : branch.Trim();
-        return $"{source} | {dateVersion ?? "N/A"} | {semanticVersion ?? "N/A"}";
+        var text = $"{source} | {dateVersion ?? "N/A"} | {semanticVersion ?? "N/A"}";
+        return updateAvailable ? $"{text} | {UpdateAvailableStatusSuffix}" : text;
     }
 
     private static FileProgressSnapshot? TryGetFileProgressSnapshot(string path)
@@ -3891,7 +5602,15 @@ fi
                     Owner = Application.Current.MainWindow
                 };
                 _firstRunSetupWindow = window;
-                window.Closed += (_, _) => _firstRunSetupWindow = null;
+                window.Closed += (_, _) =>
+                {
+                    _firstRunSetupWindow = null;
+                    QueueBackgroundTask(
+                        "QuickStart server status refresh",
+                        cancellationToken => RefreshServerManagementAsync(cancellationToken),
+                        StartupVersionCheckTimeout,
+                        accessesDistro: true);
+                };
                 window.Show();
                 window.Activate();
             }
@@ -3912,6 +5631,11 @@ fi
     {
         try
         {
+            if (serverKey == "reign")
+            {
+                await OpenReignRollbackWindowAsync().ConfigureAwait(true);
+                return;
+            }
             var config = GetRollbackServerConfig(serverKey);
             var (currentBranch, currentSha) = await GetServerHeadInfoAsync(config.Key).ConfigureAwait(false);
             var rollbackTargets = await GetRollbackTargetsAsync(config.Key).ConfigureAwait(false);
@@ -3946,6 +5670,19 @@ fi
         }
     }
 
+    internal ApiKeysService CreateApiKeysService() => new(_wsl, TryBeginPassiveDistroActivity, EndPassiveDistroActivity);
+
+    private void OpenApiKeysWindow()
+    {
+        if (!TryBeginPassiveDistroActivity()) return;
+        try
+        {
+            var window = new ApiKeysWindow(new ApiKeysService(_wsl)) { Owner = Application.Current.MainWindow };
+            window.ShowDialog();
+        }
+        finally { EndPassiveDistroActivity(); }
+    }
+
     private async Task OpenCudaConfigWindowAsync()
     {
         try
@@ -3971,7 +5708,8 @@ fi
         }
     }
 
-    public async Task InstallComponentAsync(string componentKey)
+    /// <summary>Returns true only when the installer ran and exited successfully.</summary>
+    public async Task<bool> InstallComponentAsync(string componentKey)
     {
         var definition = GetComponentInstallDefinition(componentKey);
         if (!await _componentInstallGate.WaitAsync(0).ConfigureAwait(true))
@@ -3981,12 +5719,13 @@ fi
                 "Component Install In Progress",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
-            return;
+            return false;
         }
 
         try
         {
             var wrapperScript = BuildComponentInstallWrapper(definition);
+            LauncherLogService.Operation($"START component installer: {definition.DisplayName}; log {definition.LogPath}");
             AppendLog($"Starting {definition.DisplayName} installer. Log: {definition.LogPath}{Environment.NewLine}");
 
             var exitCode = await _processRunner.RunWslScriptInNewConsoleAndWaitAsync(
@@ -3997,15 +5736,19 @@ fi
             AppendLog(
                 $"{definition.DisplayName} installer exited with code {exitCode}.{Environment.NewLine}",
                 exitCode == 0 ? "green" : "red");
+            LauncherLogService.Operation($"END component installer: {definition.DisplayName}; exit code {exitCode}");
+            return exitCode == 0;
         }
         catch (Exception ex)
         {
             AppendLog($"{definition.DisplayName} installer could not be started: {ex.Message}{Environment.NewLine}", "red");
+            LauncherLogService.Operation($"END component installer: {definition.DisplayName}; no exit code: {ex.GetType().Name}");
             MessageBox.Show(
                 $"{definition.DisplayName} could not be installed.\n\n{ex.Message}",
                 "Component Install Failed",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
+            return false;
         }
         finally
         {
@@ -4015,7 +5758,7 @@ fi
 
     private async Task CheckDialecticServerUpdatesAsync(CancellationToken cancellationToken = default)
     {
-        SetDialecticStatus("Checking...", "White");
+        SetDialecticStatus("Checking...", "White", false);
         var currentBranch = await GetDialecticServerCurrentBranchAsync(cancellationToken).ConfigureAwait(false);
         var branchChoice = MapServerBranchToChoice(currentBranch, "dialectic");
         if (branchChoice is not null)
@@ -4029,23 +5772,26 @@ fi
             ? null
             : await GetTextOrNullAsync($"https://raw.githubusercontent.com/Dwemer-Dynamics/DialecticServer/{currentBranch}/.version.txt", cancellationToken).ConfigureAwait(false);
 
-        var statusText = BuildServerVersionStatusText(
-            "dialectic",
-            currentBranch,
-            FormatDateVersion(currentVersion),
-            semanticVersion);
-
         if (!string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(gitVersion))
         {
-            SetDialecticStatus(statusText, CompareVersions(currentVersion, gitVersion) < 0 ? "Yellow" : "LimeGreen");
+            var updateAvailable = CompareVersions(currentVersion, gitVersion) < 0;
+            SetDialecticStatus(
+                BuildServerVersionStatusText(
+                    "dialectic", currentBranch, FormatDateVersion(currentVersion), semanticVersion, updateAvailable),
+                updateAvailable ? "Yellow" : "LimeGreen",
+                updateAvailable);
         }
         else if (!string.IsNullOrWhiteSpace(currentVersion) || !string.IsNullOrWhiteSpace(semanticVersion))
         {
-            SetDialecticStatus(statusText, "LimeGreen");
+            SetDialecticStatus(
+                BuildServerVersionStatusText(
+                    "dialectic", currentBranch, FormatDateVersion(currentVersion), semanticVersion),
+                "LimeGreen",
+                false);
         }
         else
         {
-            SetDialecticStatus(BuildServerVersionStatusText("dialectic", currentBranch, null, null), "Yellow");
+            SetDialecticStatus(BuildServerVersionStatusText("dialectic", currentBranch, null, null), "Yellow", false);
         }
     }
 
@@ -4203,9 +5949,9 @@ fi
             AppendLog($"{config.DisplayName} rollback completed successfully. HEAD: {rolledBackSha ?? "unknown"}{Environment.NewLine}", "green");
             RunOnUi(rollbackWindow.Close);
 
-            QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
-            QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout);
+            QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+            QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
+            QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
         }
         catch (Exception ex)
         {
@@ -4274,7 +6020,13 @@ fi
             "cuda" => new(
                 "cuda",
                 "CUDA",
-                "/usr/local/bin/install_full_packages",
+                """
+                if [ ! -x /usr/local/bin/install_cuda_dependencies ]; then
+                    echo "The minimal CUDA installer is missing. Update DwemerDistro and retry."
+                    exit 23
+                fi
+                /usr/local/bin/install_cuda_dependencies auto
+                """,
                 "command -v nvcc >/dev/null 2>&1 || [ -x /usr/bin/nvcc ] || [ -x /usr/local/cuda/bin/nvcc ]",
                 "root"),
             "minime" => new(
@@ -4299,7 +6051,7 @@ fi
                     echo "The audio.cpp Pocket-TTS installer is missing. Update DwemerDistro and retry."
                     exit 23
                 fi
-                BUILD_PARALLEL="${BUILD_PARALLEL:-2}" /usr/local/bin/install_audiocpp_pockettts 12.8
+                BUILD_PARALLEL="${BUILD_PARALLEL:-2}" /usr/local/bin/install_audiocpp_pockettts auto
                 ln -sfn /home/dwemer/audio.cpp/start-audiocpp-pockettts.sh /home/dwemer/audio.cpp/start.sh
                 chown -h dwemer:dwemer /home/dwemer/audio.cpp/start.sh
                 rm -f /home/dwemer/pocket-tts/start.sh
@@ -4316,6 +6068,7 @@ fi
                 fi
                 export PIP_NO_INPUT=1
                 export PIP_DISABLE_PIP_VERSION_CHECK=1
+                export PIP_NO_CACHE_DIR=1
                 cd /home/dwemer
                 POCKETTTS_FRESH=0
                 if [ ! -d pocket-tts/venv ]; then
@@ -4323,7 +6076,7 @@ fi
                 fi
                 if [ ! -d pocket-tts/.git ]; then
                     rm -rf pocket-tts
-                    git clone https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
+                    git clone --depth 1 https://github.com/Dwemer-Dynamics/pocket-tts pocket-tts
                 else
                     git -C pocket-tts pull --ff-only
                 fi
@@ -4339,13 +6092,45 @@ fi
                     python3 -m venv venv
                 fi
                 . venv/bin/activate
-                python -m pip install --upgrade pip wheel setuptools
-                python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
-                python -m pip install -e .
+                python -m pip install --no-cache-dir --upgrade pip wheel setuptools
+                list_cuda_only_packages() {
+                    python -m pip list --format=freeze |
+                        sed -n 's/^\(cuda-bindings\|cuda-pathfinder\|cuda-toolkit\|nvidia-[^=]*\|triton\)==.*$/\1/p'
+                }
+                remove_cuda_only_packages() {
+                    local packages
+                    mapfile -t packages < <(list_cuda_only_packages)
+                    if [ "${#packages[@]}" -gt 0 ]; then
+                        python -m pip uninstall -y "${packages[@]}"
+                    fi
+                }
+                # A CUDA Torch wheel can carry the same public version as the CPU wheel, so
+                # pip is allowed to keep it on --upgrade. Remove Torch together with its
+                # CUDA-only packages first; sweeping those out from under an installed CUDA
+                # Torch leaves the venv broken.
+                if python -m pip list --format=freeze | grep -q '^torch==.*+cu' || [ -n "$(list_cuda_only_packages)" ]; then
+                    python -m pip uninstall -y torch
+                    remove_cuda_only_packages
+                fi
+                python -m pip install --no-cache-dir --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+                remove_cuda_only_packages
+                python -m pip install --no-cache-dir -e .
                 ln -sfn /home/dwemer/pocket-tts/start-cpu.sh /home/dwemer/pocket-tts/start.sh
                 rm -f /home/dwemer/audio.cpp/start.sh
                 """,
                 "[ -x /home/dwemer/pocket-tts/venv/bin/python ] && [ -e /home/dwemer/pocket-tts/start.sh ]"),
+            "lmstudio" => new(
+                "lmstudio",
+                "LLM Studio",
+                "/usr/local/bin/install_lmstudio",
+                "[ -x /home/dwemer/.lmstudio/bin/lms ] && [ -f /etc/sudoers.d/dwemerdistro-lmstudio ]",
+                "root"),
+            "higgs" => new(
+                "higgs",
+                "Higgs TTS 3",
+                "[ -x /usr/local/bin/install_higgs_tts ] && grep -Fq -- '--model-options' /usr/local/bin/install_higgs_tts && /usr/local/bin/install_higgs_tts --model-options | grep -qx q8 || { echo 'Update DwemerDistro to install Higgs with model selection.'; exit 1; }; /usr/local/bin/install_higgs_tts auto ask",
+                "[ -x /home/dwemer/higgs-tts/runtime/audiocpp_server ] && [ -f /home/dwemer/higgs-tts/server.json ]",
+                "root"),
             "chatterbox" => new(
                 "chatterbox",
                 "Chatterbox",
@@ -4358,7 +6143,7 @@ fi
                 cd /home/dwemer
                 if [ ! -d omnivoice-tts/.git ]; then
                     rm -rf omnivoice-tts
-                    git clone https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts
+                    git clone --depth 1 https://github.com/Dwemer-Dynamics/omnivoice-tts omnivoice-tts
                 fi
                 /home/dwemer/omnivoice-tts/ddistro_install.sh
                 """,
@@ -4390,9 +6175,21 @@ fi
                 cd /home/dwemer
                 if [ ! -d parakeet-api-server/.git ]; then
                     rm -rf parakeet-api-server
-                    git clone https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
+                    git clone --depth 1 https://github.com/Dwemer-Dynamics/parakeet-api-server parakeet-api-server
                 fi
-                /home/dwemer/parakeet-api-server/ddistro_install.sh
+                cd /home/dwemer/parakeet-api-server
+                # Older checkouts track the scripts ddistro_install.sh and start.sh execute directly as 100644.
+                # Mark them in the index too, so a later fast-forward to the executable upstream modes is not blocked.
+                for script in install.sh conf.sh start-cpu.sh start-gpu.sh start_native.sh; do
+                    [ -f "$script" ] || continue
+                    if [ ! -O . ] || [ ! -O "$script" ]; then
+                        echo "Cannot repair Parakeet script permissions: $PWD/$script must be owned by $(id -un)."
+                        exit 24
+                    fi
+                    chmod u+x "$script"
+                    git update-index --chmod=+x -- "$script"
+                done
+                bash ./ddistro_install.sh
                 """,
                 "[ -x /home/dwemer/parakeet-api-server/venv/bin/python ]"),
             "localwhisper" => new(
@@ -4407,6 +6204,8 @@ fi
     private static string BuildComponentInstallWrapper(ComponentInstallDefinition definition)
     {
         var payload = $$"""
+        export PIP_NO_CACHE_DIR=1
+        export PIP_DISABLE_PIP_VERSION_CHECK=1
         set +e
         (
             set -e
@@ -4468,6 +6267,26 @@ fi
         fi
         set -e
 
+        if command -v ddistro_storage >/dev/null 2>&1; then
+            echo
+            echo "Removing reproducible installer downloads..."
+            set +e
+            if [ "$(id -u)" -eq 0 ]; then
+                ddistro_storage safe-cleanup
+            elif sudo -n true >/dev/null 2>&1; then
+                sudo -n ddistro_storage safe-cleanup
+            else
+                printf '%s\n' dwemer | sudo -S -p '' ddistro_storage safe-cleanup
+            fi
+            cleanup_status=$?
+            set -e
+            if [ "$cleanup_status" -ne 0 ]; then
+                echo "Storage cleanup was skipped; the component result is unchanged."
+            fi
+        else
+            rm -rf /home/dwemer/.cache/pip /home/dwemer/.cache/uv /home/dwemer/.npm/_cacache
+        fi
+
         echo
         if [ "$status" -eq 0 ]; then
             echo "$component_name installation completed and was verified."
@@ -4490,21 +6309,23 @@ fi
         await Task.Delay(75).ConfigureAwait(true);
     }
 
-    private void SetHerikaStatus(string text, string color)
+    private void SetHerikaStatus(string text, string color, bool updateAvailable)
     {
         RunOnUi(() =>
         {
             HerikaStatusText = text;
             HerikaStatusColor = color;
+            ApplyVersionStatusToManager(ServerProduct.Herika, text, color, updateAvailable);
         });
     }
 
-    private void SetStobeStatus(string text, string color)
+    private void SetStobeStatus(string text, string color, bool updateAvailable)
     {
         RunOnUi(() =>
         {
             StobeStatusText = text;
             StobeStatusColor = color;
+            ApplyVersionStatusToManager(ServerProduct.Stobe, text, color, updateAvailable);
         });
     }
 
@@ -4602,6 +6423,7 @@ fi
     {
         StartServerCommand.RaiseCanExecuteChanged();
         StopServerCommand.RaiseCanExecuteChanged();
+        ForceStopServerCommand.RaiseCanExecuteChanged();
     }
 
     private void StartStartAnimation()
@@ -4766,12 +6588,13 @@ fi
         public string LogPath => $"/home/dwemer/.dwemerdistro/logs/components/{Key}.log";
     }
 
-    private void SetDialecticStatus(string text, string color)
+    private void SetDialecticStatus(string text, string color, bool updateAvailable)
     {
         RunOnUi(() =>
         {
             DialecticStatusText = text;
             DialecticStatusColor = color;
+            ApplyVersionStatusToManager(ServerProduct.Dialectic, text, color, updateAvailable);
         });
     }
 
@@ -4783,4 +6606,20 @@ fi
         string[] VersionTextFiles);
 
     private readonly record struct FileProgressSnapshot(long Length, DateTime LastWriteUtc);
+}
+
+/// <summary>
+/// What the launcher knows about the shared system, in the order a check moves through it. The
+/// value only describes the system; it never gates Update Distro, which is also the recovery
+/// action and stays available in every state.
+/// </summary>
+public enum SystemUpdateAvailability
+{
+    /// <summary>No answer yet, or a distro that cannot report its version. Also the recovery state.</summary>
+    Unknown,
+    Checking,
+    Current,
+    UpdateAvailable,
+    Updating,
+    Failed
 }

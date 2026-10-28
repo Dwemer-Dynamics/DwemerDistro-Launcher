@@ -34,10 +34,15 @@
     <SolidColorBrush x:Key="GameCenter.Brand.ChimTint" Color="#3D2A1B" />
     <SolidColorBrush x:Key="GameCenter.Brand.ChimTintPressed" Color="#2F2117" />
     <SolidColorBrush x:Key="GameCenter.Brand.Stobe" Color="#E6B76C" />
+    <SolidColorBrush x:Key="GameCenter.Brand.Lorkhan" Color="#BC9D5A" />
     <SolidColorBrush x:Key="GameCenter.Brand.StobeBright" Color="#F4CD8A" />
+    <SolidColorBrush x:Key="GameCenter.Brand.LorkhanBright" Color="#D1B579" />
     <SolidColorBrush x:Key="GameCenter.Brand.StobeSoft" Color="#76562F" />
+    <SolidColorBrush x:Key="GameCenter.Brand.LorkhanSoft" Color="#68562F" />
     <SolidColorBrush x:Key="GameCenter.Brand.StobeTint" Color="#3C3529" />
+    <SolidColorBrush x:Key="GameCenter.Brand.LorkhanTint" Color="#383223" />
     <SolidColorBrush x:Key="GameCenter.Brand.StobeTintPressed" Color="#302B23" />
+    <SolidColorBrush x:Key="GameCenter.Brand.LorkhanTintPressed" Color="#2D281D" />
     <SolidColorBrush x:Key="GameCenter.Brand.Dialectic" Color="#FFB641" />
     <SolidColorBrush x:Key="GameCenter.Brand.DialecticBright" Color="#FFD27A" />
     <SolidColorBrush x:Key="GameCenter.Brand.DialecticSoft" Color="#805814" />
@@ -73,12 +78,21 @@
         <Setter Property="FontSize" Value="22" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Style.Triggers>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="REIGN">
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+                <Setter Property="FontFamily" Value="Times New Roman" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="CHIM">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
                 <Setter Property="FontWeight" Value="Normal" />
             </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="LORKHAN">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
                 <Setter Property="FontWeight" Value="Normal" />
             </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
@@ -92,32 +106,6 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Same treatment on the bottom game cards, where the DataContext is the
-         GameProfile itself rather than the view model. -->
-    <Style x:Key="GameCenter.ModCardTitle" TargetType="TextBlock">
-        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
-        <Setter Property="FontSize" Value="16" />
-        <Setter Property="FontWeight" Value="Bold" />
-        <Style.Triggers>
-            <DataTrigger Binding="{Binding Key}" Value="CHIM">
-                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
-                <Setter Property="FontWeight" Value="Normal" />
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Key}" Value="STOBE">
-                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
-                <Setter Property="FontWeight" Value="Normal" />
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Key}" Value="DIALECTIC">
-                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
-                <Setter Property="FontWeight" Value="Normal" />
-            </DataTrigger>
-            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
-                <Setter Property="FontFamily" Value="Segoe UI" />
-                <Setter Property="FontWeight" Value="Bold" />
-            </DataTrigger>
-        </Style.Triggers>
-    </Style>
-
     <!-- Mod-name run inside a "Name / ServerName" details heading. Only the name
          is branded; the suffix stays in the surrounding UI font so the server it
          maps to keeps reading as plain text. Exactly one details panel is visible
@@ -127,11 +115,19 @@
         <Setter Property="FontSize" Value="18" />
         <Setter Property="FontWeight" Value="Normal" />
         <Style.Triggers>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="REIGN">
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+                <Setter Property="FontFamily" Value="Times New Roman" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="CHIM">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="STOBE">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Stobe}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="LORKHAN">
+                <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
             </DataTrigger>
             <DataTrigger Binding="{Binding SelectedGame.Key}" Value="DIALECTIC">
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
@@ -166,8 +162,9 @@
 
     <!-- Neutral charcoal button. Every other tier derives from this template so hover,
          pressed, focus, and disabled feedback stay identical across the launcher.
-         Rounded 8px corners, bold Trebuchet MS, and a 34px floor carry over the
-         visual character of the pre-Game-Center launcher controls. -->
+         Rounded 8px corners and a 34px floor carry over the visual character of the
+         pre-Game-Center launcher controls; labels use the shared Segoe UI face at
+         SemiBold so buttons read as part of the same type system as the text. -->
     <Style x:Key="GameCenter.Button" TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
         <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
@@ -175,9 +172,9 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Padding" Value="12,6" />
         <Setter Property="MinHeight" Value="34" />
-        <Setter Property="FontFamily" Value="Trebuchet MS" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
@@ -202,7 +199,7 @@
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Foreground"
                                                 Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}, FallbackValue=White}" />
-                                        <Setter Property="FontFamily" Value="Trebuchet MS" />
+                                        <Setter Property="FontFamily" Value="Segoe UI" />
                                     </Style>
                                 </ContentPresenter.Resources>
                             </ContentPresenter>
@@ -259,6 +256,26 @@
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.AccentPressed}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Reign's primary action uses a muted gold fill with the shared light label. -->
+    <Style x:Key="GameCenter.Brand.ReignButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="#806515" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#6B5512" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="#57450E" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -333,6 +350,27 @@
         </Style.Triggers>
     </Style>
 
+    <Style x:Key="GameCenter.Brand.LorkhanButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanSoft}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Lorkhan}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.LorkhanBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Lorkhan}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
     <Style x:Key="GameCenter.Brand.DialecticButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
         <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticSoft}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
@@ -352,6 +390,364 @@
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
             </Trigger>
         </Style.Triggers>
+    </Style>
+
+    <!-- Per-mod update action. At rest it drops to the brand outline (transparent fill, brand
+         border), so the mod Webpage stays the panel's one strong action while the installed server is
+         current. It only takes a fill - the shared success green - when the mod's own version
+         comparison confirmed the selected branch is ahead: the view model's IsUpdateAvailable, never
+         the yellow status colour, which also stands for an unknown or missing version. Geometry,
+         position, the white label and the base template's focus ring are unchanged in every state,
+         so the swap costs no layout and no focus visual. Hover and pressed keep the brand feedback
+         (or move two channels in green for a confirmed update), and disabled is left to the brand
+         style's neutral muted treatment. The DataContext of each of these buttons is its
+         ServerManagerItemViewModel. -->
+    <Style x:Key="GameCenter.ModAction.ChimUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.ChimButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="False" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.StobeUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.StobeButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="False" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.LorkhanUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.LorkhanButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="False" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.DialecticUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.DialecticButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="False" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Compact secondary tier for the supporting actions inside a mod's action panel. The one
+         brand-filled action of the current state stays the strong call to action; these sit a
+         step down at 34px with a transparent fill and a soft 1px outline, so the panel reads as one
+         primary followed by supporting actions instead of a stack of equal-weight buttons.
+         Geometry only - hover, pressed, focus, and disabled feedback all come from the base
+         GameCenter.Button template, and the label stays full-strength white while enabled so the
+         de-emphasis never costs contrast. Disabled falls back to the same neutral PanelRaised /
+         BorderStrong / TextMuted treatment every other tier uses. -->
+    <Style x:Key="GameCenter.ModAction.SecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="Height" Value="34" />
+        <Setter Property="MinHeight" Value="34" />
+        <Setter Property="Padding" Value="10,0" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Brand-outlined variants of the compact secondary tier. They keep the mod's colour on the
+         outline so a supporting action still belongs to its mod, but never take a brand fill at
+         rest - the fill is reserved for that panel's primary action. Hover and pressed move the
+         same two channels as the filled brand buttons (fill to the brand tint, outline to the
+         brand tone), and disabled drops the brand for the shared neutral treatment. -->
+    <Style x:Key="GameCenter.ModAction.ReignSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.ChimSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.ChimTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.ChimBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.ChimTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.StobeSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.StobeTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.StobeBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.StobeTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.LorkhanSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Lorkhan}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.LorkhanBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.LorkhanTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Lorkhan}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.DialecticSecondaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.DialecticBright}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.DialecticTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Mod Webpage action. It is the panel's primary action while the installed server is
+         current, so it takes the brand fill at rest. When the mod's own version check confirms an
+         update, the Update button above it takes the emphasis and this drops to the brand outline
+         (transparent fill, brand border) without moving. Hover and pressed come from the brand
+         style in both states. The DataContext is the main view model, so each variant watches its
+         own manager. Reign and Lorkhan never report IsUpdateAvailable and use the plain brand
+         buttons. -->
+    <Style x:Key="GameCenter.ModAction.ChimWebpageButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.ChimButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding HerikaManager.IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.StobeWebpageButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.StobeButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding StobeManager.IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.DialecticWebpageButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Brand.DialecticButton}">
+        <Style.Triggers>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding DialecticManager.IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="False" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="Transparent" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- External pages and local logs: a compact, wrapping group of neutral outline buttons
+         under the mod's main actions. Visible labels may be shortened, but every button keeps
+         its full automation name and help text, and the WrapPanel keeps document (tab) order. -->
+    <Style x:Key="GameCenter.ModAction.LinkButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.SecondaryButton}">
+        <Setter Property="Height" Value="30" />
+        <Setter Property="MinHeight" Value="30" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="Margin" Value="0,0,6,6" />
+    </Style>
+
+    <!-- Hairline rule that closes the everyday actions and opens the Manage group, so rollback
+         and removal are a deliberate reach rather than the next button in the stack. Purely
+         decorative: it takes no hit testing and no focus and carries no automation name, so the
+         tab order and the screen-reader walk of the panel are unchanged. -->
+    <Style x:Key="GameCenter.ModAction.Separator" TargetType="Border">
+        <Setter Property="Height" Value="1" />
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Border}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+        <Setter Property="Margin" Value="0,12,0,8" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+    </Style>
+
+    <!-- Quiet "Manage" label under the separator. -->
+    <Style x:Key="GameCenter.ModAction.GroupLabel" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,0,0,6" />
     </Style>
 
     <Style x:Key="GameCenter.SuccessButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
@@ -397,6 +793,385 @@
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
             </Trigger>
         </Style.Triggers>
+    </Style>
+
+    <!-- Filled red destructive action, for the final confirmation of a purge in the uninstall and
+         update dialogs. DangerButton is the outline treatment for risky actions; this one is filled
+         so the confirming click never reads as just another secondary button. The label
+         stays the same near-white in every state - hover and pressed move the fill, not the text -
+         which keeps it above 5:1 on the burgundy-red fill and matches the brand buttons next to it. -->
+    <Style x:Key="GameCenter.ServerUninstallButton" TargetType="Button" BasedOn="{StaticResource GameCenter.DangerButton}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Danger}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Uninstall inside a mod's action panel: a restrained danger outline under the Manage label
+         rather than a red fill, so removal stays clearly destructive without competing with the
+         panel's primary action. The typed confirmation in the dialog keeps the filled red. -->
+    <Style x:Key="GameCenter.ModAction.UninstallButton" TargetType="Button" BasedOn="{StaticResource GameCenter.DangerButton}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Height" Value="34" />
+        <Setter Property="MinHeight" Value="34" />
+        <Setter Property="Padding" Value="10,0" />
+        <Style.Triggers>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Force Stop: always labelled and always reachable, but neutral at rest so it does not shout
+         beside Start and Stop. Hover, press and keyboard focus switch it to the danger treatment;
+         focus also keeps the base template's white focus ring. High contrast uses the system button
+         colours, and the trigger order keeps it there over the focus, hover and press tones. -->
+    <Style x:Key="GameCenter.ForceStopButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="Transparent" />
+        <Style.Triggers>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="False" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- The header's one Start / Stop runtime button. Green while it starts the server; a Tag of "Stop"
+         turns it red while it stops one that is starting or running. Both fills keep the near-white
+         label in every state: hover and press darken the fill and take the gold outline rather than
+         lightening it, so the label stays above 4.5:1. Disabled drops to the neutral raised tier, as
+         the other filled buttons do. The label always says which action it is, so colour is never
+         the only signal, and high contrast swaps to the system button colours; those triggers come
+         last so they win over every state above. Based on GameCenter.Button, not PrimaryButton, so
+         no burgundy hover can leak through. -->
+    <Style x:Key="GameCenter.ServerRuntimeButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </Trigger>
+            <Trigger Property="Tag" Value="Stop">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Danger}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
+            </Trigger>
+            <MultiTrigger>
+                <MultiTrigger.Conditions>
+                    <Condition Property="Tag" Value="Stop" />
+                    <Condition Property="IsMouseOver" Value="True" />
+                </MultiTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiTrigger>
+            <MultiTrigger>
+                <MultiTrigger.Conditions>
+                    <Condition Property="Tag" Value="Stop" />
+                    <Condition Property="IsPressed" Value="True" />
+                </MultiTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+            </MultiTrigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="False" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Dark action menus. Items keep the button type system: Segoe UI
+         SemiBold 12 on the raised panel, a gold-soft outline on the highlighted (hovered or arrow-key)
+         item, and the muted treatment when an item's command cannot run. The label's TextBlock style
+         binds to the item so the app-wide TextBlock style never repaints a disabled item white.
+         High contrast swaps to the system menu colours. -->
+    <Style x:Key="GameCenter.MenuItem" TargetType="MenuItem">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="12,8" />
+        <Setter Property="MinWidth" Value="188" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Border" Background="Transparent" BorderBrush="Transparent" BorderThickness="1"
+                            CornerRadius="4" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center">
+                            <ContentPresenter.Resources>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground"
+                                            Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type MenuItem}}, FallbackValue=White}" />
+                                    <Setter Property="FontFamily" Value="Segoe UI" />
+                                </Style>
+                            </ContentPresenter.Resources>
+                        </ContentPresenter>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <!-- Template triggers outrank style setters, so the high-contrast menu text also wins over
+                             derived styles such as GameCenter.DangerMenuItem. Later triggers override earlier ones. -->
+                        <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.MenuTextBrushKey}}" />
+                        </DataTrigger>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                            <Setter TargetName="Border" Property="Opacity" Value="0.55" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                                <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="False" />
+                            </MultiDataTrigger.Conditions>
+                            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                        </MultiDataTrigger>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                                <Condition Binding="{Binding IsHighlighted, RelativeSource={RelativeSource Self}}" Value="True" />
+                                <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                            </MultiDataTrigger.Conditions>
+                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                        </MultiDataTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Force Stop keeps the danger text tone inside the menu, as the old header button did on focus. -->
+    <Style x:Key="GameCenter.DangerMenuItem" TargetType="MenuItem" BasedOn="{StaticResource GameCenter.MenuItem}">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+    </Style>
+
+    <Style x:Key="GameCenter.MenuSeparator" TargetType="Separator">
+        <Setter Property="Margin" Value="4,4" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Border Height="1" Background="{DynamicResource GameCenter.Border}" SnapsToDevicePixels="True" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GameCenter.Menu" TargetType="ContextMenu">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="4" />
+        <Setter Property="Placement" Value="Bottom" />
+        <Setter Property="VerticalOffset" Value="4" />
+        <Setter Property="HasDropShadow" Value="False" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource GameCenter.MenuItem}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6"
+                            Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.MenuBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.MenuTextBrushKey}}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- "Manage server" disclosure in a mod's action panel. Branch choice, rollback and removal sit
+         behind it so the everyday view is the webpage, the update and the links. The header is a
+         34px outline toggle in the compact secondary tier with a chevron that turns when open; it is
+         the only tab stop (the Expander itself takes none) and Space or Enter toggles it. The
+         Expander exposes ExpandCollapse to assistive technology. Collapsed content is not in the tab
+         order. -->
+    <Style x:Key="GameCenter.ModAction.ManageExpander" TargetType="Expander">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="Margin" Value="0,6,0,0" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Expander">
+                    <StackPanel>
+                        <ToggleButton x:Name="HeaderSite" Cursor="Hand" Height="34" MinHeight="34"
+                                      IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                      Content="{TemplateBinding Header}"
+                                      Foreground="{TemplateBinding Foreground}"
+                                      AutomationProperties.Name="{TemplateBinding AutomationProperties.Name}"
+                                      AutomationProperties.HelpText="{TemplateBinding AutomationProperties.HelpText}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Grid>
+                                        <Border x:Name="Border" Background="Transparent" BorderBrush="{DynamicResource GameCenter.Border}"
+                                                BorderThickness="1" CornerRadius="8" SnapsToDevicePixels="True">
+                                            <Grid Margin="10,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True">
+                                                    <ContentPresenter.Resources>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground"
+                                                                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type ToggleButton}}, FallbackValue=White}" />
+                                                            <Setter Property="FontFamily" Value="Segoe UI" />
+                                                            <Setter Property="FontSize" Value="12" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                        </Style>
+                                                    </ContentPresenter.Resources>
+                                                </ContentPresenter>
+                                                <TextBlock x:Name="Chevron" Grid.Column="1" Text="&#xE70D;" FontFamily="Segoe MDL2 Assets"
+                                                           FontSize="10" VerticalAlignment="Center"
+                                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource TemplatedParent}}" />
+                                            </Grid>
+                                        </Border>
+                                        <Border x:Name="FocusRing" Margin="2" CornerRadius="6" BorderBrush="{DynamicResource GameCenter.Focus}"
+                                                BorderThickness="1" Visibility="Collapsed" IsHitTestVisible="False" SnapsToDevicePixels="True" />
+                                    </Grid>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Chevron" Property="Text" Value="&#xE70E;" />
+                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
+                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                                        </Trigger>
+                                        <Trigger Property="IsKeyboardFocused" Value="True">
+                                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                                        </Trigger>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter TargetName="Border" Property="Opacity" Value="0.45" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter x:Name="ExpandSite" Margin="0,10,0,0" Visibility="Collapsed" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsExpanded" Value="True">
+                            <Setter TargetName="ExpandSite" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style x:Key="GameCenter.NavButton" TargetType="RadioButton">
@@ -471,7 +1246,7 @@
     </Style>
 
     <!-- Window chrome buttons: square, borderless, no gold accent. These keep their own
-         template so the rounded, bold Trebuchet treatment of GameCenter.Button never
+         template so the rounded, outlined treatment of GameCenter.Button never
          reaches the caption glyphs. -->
     <Style x:Key="GameCenter.CaptionButton" TargetType="Button">
         <Setter Property="Background" Value="Transparent" />
@@ -881,91 +1656,67 @@
         </Setter>
     </Style>
 
+    <!-- Left sidebar game rows: a flat icon-and-name row, not a card. Selection is a quiet dark
+         fill plus the gold accent bar; keyboard focus adds a separate outline in the row's text
+         colour, so focus and selection never look the same. The template only reads the item's
+         Background, Foreground and BorderBrush (the accent bar), so the high contrast triggers
+         below can swap all three for system colours without fighting template setters. -->
     <Style x:Key="GameCenter.RailItem" TargetType="ListBoxItem">
         <Setter Property="AutomationProperties.Name" Value="{Binding Name, StringFormat={}{0} game}" />
-        <Setter Property="Background" Value="{DynamicResource GameCenter.Panel}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
-        <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="Margin" Value="0,0,10,0" />
-        <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="Height" Value="50" />
+        <Setter Property="Margin" Value="0,0,0,2" />
+        <Setter Property="Padding" Value="10,0,6,0" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="VerticalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
-                    <Border x:Name="Border"
-                            Background="{TemplateBinding Background}"
-                            BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="3"
-                            SnapsToDevicePixels="True">
-                        <ContentPresenter />
-                    </Border>
+                    <Grid SnapsToDevicePixels="True">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="3" />
+                        <Border Width="3" Margin="0,9" HorizontalAlignment="Left" CornerRadius="1.5"
+                                Background="{TemplateBinding BorderBrush}" />
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                        <Border x:Name="FocusRing" BorderBrush="{TemplateBinding Foreground}" BorderThickness="2"
+                                CornerRadius="3" Visibility="Collapsed" IsHitTestVisible="False" />
+                    </Grid>
                     <ControlTemplate.Triggers>
-                        <!-- Hover cue for items that are not the current selection. Scoped that way
-                             so hovering the selected card cannot repaint its brand frame gold. -->
-                        <MultiTrigger>
-                            <MultiTrigger.Conditions>
-                                <Condition Property="IsMouseOver" Value="True" />
-                                <Condition Property="IsSelected" Value="False" />
-                            </MultiTrigger.Conditions>
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
-                        </MultiTrigger>
-                        <!-- Selection thickens the frame here; its colour comes from the style's
-                             BorderBrush below, which the mod triggers set. This template no longer
-                             paints the selected frame itself, because a TargetName setter would
-                             outrank the templated value and flatten every mod back to one accent. -->
-                        <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Border" Property="BorderThickness" Value="2" />
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
                         </Trigger>
-                        <MultiTrigger>
-                            <MultiTrigger.Conditions>
-                                <Condition Property="IsKeyboardFocused" Value="True" />
-                                <Condition Property="IsSelected" Value="False" />
-                            </MultiTrigger.Conditions>
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
-                            <Setter TargetName="Border" Property="BorderThickness" Value="2" />
-                        </MultiTrigger>
-                        <MultiTrigger>
-                            <MultiTrigger.Conditions>
-                                <Condition Property="IsKeyboardFocused" Value="True" />
-                                <Condition Property="IsSelected" Value="True" />
-                            </MultiTrigger.Conditions>
-                            <Setter TargetName="Border" Property="BorderThickness" Value="3" />
-                        </MultiTrigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
-        <!-- The selected card is framed in its own mod's brand colour rather than one shared
-             accent, matching the branded controls on that mod's page. Unselected cards keep the
-             neutral border set above. Gold stays the fallback for a profile these triggers do not
-             name, so a new mod still reads as selected before it has a colour of its own. -->
+        <!-- Later triggers win: hover, then selection, then the high contrast overrides. -->
         <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
             <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Background" Value="#161616" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
             </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+            </DataTrigger>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
                     <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
-                    <Condition Binding="{Binding Key}" Value="CHIM" />
                 </MultiDataTrigger.Conditions>
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Chim}" />
-            </MultiDataTrigger>
-            <MultiDataTrigger>
-                <MultiDataTrigger.Conditions>
-                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
-                    <Condition Binding="{Binding Key}" Value="STOBE" />
-                </MultiDataTrigger.Conditions>
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Stobe}" />
-            </MultiDataTrigger>
-            <MultiDataTrigger>
-                <MultiDataTrigger.Conditions>
-                    <Condition Binding="{Binding IsSelected, RelativeSource={RelativeSource Self}}" Value="True" />
-                    <Condition Binding="{Binding Key}" Value="DIALECTIC" />
-                </MultiDataTrigger.Conditions>
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Brand.Dialectic}" />
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
             </MultiDataTrigger>
         </Style.Triggers>
     </Style>

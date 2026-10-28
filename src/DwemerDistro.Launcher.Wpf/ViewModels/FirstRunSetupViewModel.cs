@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
+using DwemerDistro.Launcher.Wpf.Models;
 using DwemerDistro.Launcher.Wpf.Services;
 using Application = System.Windows.Application;
 using MessageBox = System.Windows.MessageBox;
@@ -13,9 +15,13 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 {
     private const int IntroStepIndex = 0;
     private const int UpdateDistroStepIndex = 1;
-    private const int HuggingFaceStepIndex = 2;
-    private const int SetupStepIndex = 3;
-    private const int ReadyStepIndex = 4;
+    // Choosing mods sits between the core distro update and the credential/component steps: the
+    // manager needs the updated distro, and the later steps only target products that exist.
+    private const int LocalAiStepIndex = 2;
+    private const int ChooseModsStepIndex = 3;
+    private const int HuggingFaceStepIndex = 4;
+    private const int SetupStepIndex = 5;
+    private const int ReadyStepIndex = 6;
     private const string StatusChecking = "#555555";
     private const string StatusGood = "#285A2D";
     private const string StatusWarn = "#6A3A12";
@@ -36,10 +42,12 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private readonly OpenRouterCredentialSyncService _openRouterSync;
     private readonly HuggingFaceTokenService _huggingFaceToken;
     private readonly VoiceEngineService _voiceEngine;
+    private readonly ServerManagementService _serverManagement;
     private readonly OnboardingStateService _onboardingState = new();
     private readonly object _visibleSetupLogBufferLock = new();
     private readonly StringBuilder _visibleSetupLogBuffer = new();
     private readonly object _setupInstallProgressLock = new();
+    private bool _ownsQuickstartWindowDistroGate;
 
     private SetupPreset _selectedPreset;
     private DistroSetupStatus? _setupStatus;
@@ -51,8 +59,12 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private bool _isInstallingSetup;
     private bool _showPresetOptions;
     private bool _showTechnicalDetails;
+    private bool _voiceApplyDeferred;
     private bool _skipHuggingFaceStep = HuggingFaceTokenService.HasManagedToken;
     private bool _quickstartDistroUpdated;
+    private bool _isInstallingProducts;
+    private string _productStatusText = "Checking installed mods...";
+    private string _productStatusBackground = StatusChecking;
     private bool _isVisibleSetupLogFlushQueued;
     private bool _isSetupInstallProgressFlushQueued;
     private int _setupOutputGeneration;
@@ -78,6 +90,29 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private string _voiceStatusBackground = StatusChecking;
     private string _readySummary = "Finish setup to start DwemerDistro.";
     private SetupInstallProgress? _pendingSetupInstallProgress;
+    private string _localAiChoice = "skip";
+    private string? _localAiCompletedChoice;
+    private string _localAiStatus = string.Empty;
+    private bool _localAiAvailable;
+    private bool _localAiManagerReady;
+
+    public ObservableCollection<LocalAiOption> LocalAiOptions { get; } =
+        [new("skip", "Skip local AI"), new("engine", "Install engine only")];
+    public AsyncRelayCommand InstallLocalAiCommand { get; }
+    public AsyncRelayCommand SkipLocalAiCommand { get; }
+    public AsyncRelayCommand OpenLocalAiManagerCommand { get; }
+    public bool IsLocalAiStep => CurrentStepIndex == LocalAiStepIndex;
+    public bool IsLocalAiSelectionEnabled => !IsBusy;
+    public string LocalAiChoice
+    {
+        get => _localAiChoice;
+        set { if (SetProperty(ref _localAiChoice, value)) RaiseCommandStates(); }
+    }
+    public string LocalAiStatus
+    {
+        get => _localAiStatus;
+        private set => SetProperty(ref _localAiStatus, value);
+    }
 
     public FirstRunSetupViewModel(MainWindowViewModel mainWindowViewModel)
     {
@@ -89,6 +124,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         _openRouterSync = new OpenRouterCredentialSyncService(_wsl);
         _huggingFaceToken = new HuggingFaceTokenService(_wsl);
         _voiceEngine = new VoiceEngineService(_wsl);
+        _serverManagement = new ServerManagementService(_wsl);
         _selectedPreset = _distroSetup.GetPreset(SetupPresetKey.AmdCpu);
 
         SetupComponents = [];
@@ -108,14 +144,47 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                     model.AccessUrl,
                     () => _processRunner.OpenExternalUrl(model.AccessUrl))));
         VoiceApplyTargets = [];
+        ProductChoices = new ObservableCollection<QuickstartProductViewModel>(
+            GameProfile.CreateCatalog()
+                .Select(profile => (Profile: profile, Product: ServerManagementService.TryParseGameKey(profile.Key)))
+                .Where(entry => entry.Product is not null)
+                .Select(entry => new QuickstartProductViewModel(
+                    entry.Profile,
+                    entry.Product!.Value,
+                    RetryProductInstallAsync,
+                    SkipProductInstall)));
 
-        InstallRecommendedCommand = new AsyncRelayCommand(InstallRecommendedAsync, () => !IsBusy);
+        foreach (var product in ProductChoices)
+        {
+            product.PropertyChanged += ProductChoice_PropertyChanged;
+        }
+
+        InstallSelectedProductsCommand = new AsyncRelayCommand(
+            InstallSelectedProductsAsync,
+            () => !IsBusy && CanRunDistroWork && HasSelectedProducts);
+        RefreshProductsCommand = new AsyncRelayCommand(RefreshProductsAsync, () => !IsBusy);
+        InstallLocalAiCommand = new AsyncRelayCommand(InstallLocalAiAsync, () => !IsBusy && CanRunDistroWork && _localAiAvailable && LocalAiChoice != "skip");
+        SkipLocalAiCommand = new AsyncRelayCommand(async () =>
+        {
+            LocalAiChoice = "skip";
+            await SaveLocalAiChoiceAsync();
+            await ContinueAsync();
+        }, () => !IsBusy);
+        OpenLocalAiManagerCommand = new AsyncRelayCommand(async () =>
+        {
+            try { await new LmStudioService(_wsl).OpenManagerAsync(); }
+            catch (Exception error) { LocalAiStatus = error.Message; }
+        }, () => !IsBusy && _localAiManagerReady);
+
+        InstallRecommendedCommand = new AsyncRelayCommand(InstallRecommendedAsync, () => !IsBusy && CanRunDistroWork);
         ContinueCommand = new AsyncRelayCommand(ContinueAsync, CanContinue);
         SkipRecommendedSetupCommand = new AsyncRelayCommand(SkipRecommendedSetupAsync, () => !IsBusy && IsSetupIntroStep);
         BackCommand = new RelayCommand(Back, () => !IsBusy && CurrentStepIndex > 0);
         ToggleTechnicalDetailsCommand = new RelayCommand(() => ShowTechnicalDetails = !ShowTechnicalDetails, () => !IsBusy);
         TogglePresetOptionsCommand = new RelayCommand(() => ShowPresetOptions = !ShowPresetOptions, () => !IsBusy);
-        UpdateDistroCommand = new AsyncRelayCommand(UpdateDistroAsync, () => !IsBusy && !_mainWindowViewModel.IsDistroUpdateInProgress);
+        UpdateDistroCommand = new AsyncRelayCommand(
+            UpdateDistroAsync,
+            () => !IsBusy && CanRunDistroWork && !_mainWindowViewModel.IsDistroUpdateInProgress);
         RefreshSetupCommand = new AsyncRelayCommand(RefreshSetupAsync, () => !IsBusy);
         SaveOpenRouterCommand = new AsyncRelayCommand(SaveOpenRouterAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(OpenRouterKey));
         RefreshOpenRouterCommand = new AsyncRelayCommand(RefreshOpenRouterStatusAsync, () => !IsBusy);
@@ -130,6 +199,14 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
         ApplySelectedPresetToOptions();
         RebuildSetupComponentItems([]);
+        _ownsQuickstartWindowDistroGate = _mainWindowViewModel.TryBeginQuickstartDistroActivity();
+        if (!_ownsQuickstartWindowDistroGate)
+        {
+            throw new InvalidOperationException(
+                "First-time setup cannot open while critical distro maintenance is running.");
+        }
+
+        _mainWindowViewModel.PropertyChanged += MainWindowViewModel_PropertyChanged;
     }
 
     public event Action? RequestClose;
@@ -143,6 +220,13 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public ObservableCollection<HuggingFaceQuickstartModelViewModel> HuggingFaceModelAccessItems { get; }
 
     public ObservableCollection<CredentialTargetViewModel> VoiceApplyTargets { get; }
+
+    /// <summary>The three optional application servers, in rail order.</summary>
+    public ObservableCollection<QuickstartProductViewModel> ProductChoices { get; }
+
+    public AsyncRelayCommand InstallSelectedProductsCommand { get; }
+
+    public AsyncRelayCommand RefreshProductsCommand { get; }
 
     public AsyncRelayCommand InstallRecommendedCommand { get; }
 
@@ -189,6 +273,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(IsSetupIntroStep));
                 OnPropertyChanged(nameof(IsUpdateDistroStep));
+                OnPropertyChanged(nameof(IsChooseModsStep));
+                OnPropertyChanged(nameof(IsLocalAiStep));
                 OnPropertyChanged(nameof(IsSetupStep));
                 OnPropertyChanged(nameof(IsHuggingFaceStep));
                 OnPropertyChanged(nameof(IsReadyStep));
@@ -199,6 +285,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 OnPropertyChanged(nameof(PrimaryContinueText));
                 OnPropertyChanged(nameof(InstallRecommendedButtonText));
                 OnPropertyChanged(nameof(IsSetupSelectionEnabled));
+                OnPropertyChanged(nameof(IsLocalAiSelectionEnabled));
+                OnPropertyChanged(nameof(IsProductSelectionEnabled));
                 ShowTechnicalDetails = false;
                 RaiseCommandStates();
             }
@@ -208,6 +296,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public bool IsSetupIntroStep => CurrentStepIndex == IntroStepIndex;
 
     public bool IsUpdateDistroStep => CurrentStepIndex == UpdateDistroStepIndex;
+
+    public bool IsChooseModsStep => CurrentStepIndex == ChooseModsStepIndex;
 
     public bool IsHuggingFaceStep => CurrentStepIndex == HuggingFaceStepIndex && !_skipHuggingFaceStep;
 
@@ -227,12 +317,64 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             if (SetProperty(ref _isBusy, value))
             {
                 OnPropertyChanged(nameof(IsSetupSelectionEnabled));
+                OnPropertyChanged(nameof(IsProductSelectionEnabled));
                 RaiseCommandStates();
             }
         }
     }
 
+    /// <summary>
+    /// False while the launcher holds the shared distro gate for Compact Distro, Export, Import,
+    /// or Fix WSL DNS. Only the install and update actions read it, so every other step of
+    /// Quickstart, including moving between steps, stays usable.
+    /// </summary>
+    public bool CanRunDistroWork => !_mainWindowViewModel.IsCriticalMaintenanceInProgress;
+
     public bool IsSetupSelectionEnabled => !IsBusy && IsSetupStep;
+
+    public bool IsProductSelectionEnabled => !IsBusy && IsChooseModsStep && !_isInstallingProducts;
+
+    public bool IsInstallingProducts
+    {
+        get => _isInstallingProducts;
+        private set
+        {
+            if (SetProperty(ref _isInstallingProducts, value))
+            {
+                OnPropertyChanged(nameof(IsProductSelectionEnabled));
+            }
+        }
+    }
+
+    public bool HasSelectedProducts => ProductChoices.Any(product => product.IsSelected);
+
+    /// <summary>
+    /// Nothing selected is a valid choice. Once a user selects a mod, Quickstart must not advance
+    /// until that choice either installed successfully or the user explicitly skipped its failure.
+    /// </summary>
+    public bool CanLeaveProductSelection => CanAdvanceFromProductSelection(ProductChoices);
+
+    internal static bool CanAdvanceFromProductSelection(
+        IReadOnlyList<QuickstartProductViewModel> products) =>
+        !products.Any(product => product.IsSelected) || products
+            .Where(product => product.IsSelected)
+            .All(product => product.InstallState is
+                QuickstartProductInstallState.Installed or QuickstartProductInstallState.Skipped);
+
+    public string ProductStatusText
+    {
+        get => _productStatusText;
+        private set => SetProperty(ref _productStatusText, value);
+    }
+
+    public string ProductStatusBackground
+    {
+        get => _productStatusBackground;
+        private set => SetProperty(ref _productStatusBackground, value);
+    }
+
+    public string InstallProductsButtonText =>
+        HasSelectedProducts ? "Install Selected Mods" : "No Mods Selected";
 
     public bool IsInstallingSetup
     {
@@ -270,6 +412,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         IntroStepIndex => "Quick Setup",
         UpdateDistroStepIndex => "Update Distro",
+        LocalAiStepIndex => "Local AI (Optional)",
+        ChooseModsStepIndex => "Choose Your Mods",
         HuggingFaceStepIndex => "Connect Hugging Face",
         SetupStepIndex => "Components",
         _ => "Setup Complete"
@@ -279,6 +423,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         IntroStepIndex => "The launcher picked the recommended setup for this machine.",
         UpdateDistroStepIndex => "Pull the latest distro scripts first.",
+        LocalAiStepIndex => "Choose local AI before downloading the other components.",
+        ChooseModsStepIndex => "Pick the mods you want. You can add or remove any of them later from the Mods page.",
         HuggingFaceStepIndex => "The installers use Hugging Face to download cloned voice models.",
         SetupStepIndex => "Install the required voice and speech components.",
         _ => "Start the server, switch on the game, and talk."
@@ -288,6 +434,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     {
         IntroStepIndex => "Continue",
         UpdateDistroStepIndex => "Next",
+        LocalAiStepIndex => "Next",
+        ChooseModsStepIndex => "Next",
         HuggingFaceStepIndex => "Continue to Install",
         SetupStepIndex => "Continue to Start Server",
         _ => "Ready"
@@ -463,6 +611,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             HardwareDetail = hardware.Detail;
             ApplyPreset(hardware.RecommendedPreset);
             await RefreshSetupCoreAsync(cancellationToken).ConfigureAwait(true);
+            await RefreshProductsCoreAsync(cancellationToken).ConfigureAwait(true);
             await _huggingFaceToken.EnsureManagedTokenAsync(cancellationToken).ConfigureAwait(true);
             await RefreshHuggingFaceStatusCoreAsync(cancellationToken).ConfigureAwait(true);
         }).ConfigureAwait(true);
@@ -508,7 +657,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
 
         var setupComplete = false;
-        await RunBusyAsync($"Installing {_selectedPreset.Title}", async () =>
+        await RunDistroBusyAsync($"Installing {_selectedPreset.Title}", async () =>
         {
             ResetSetupOutputBuffers();
             SetupLogText = string.Empty;
@@ -548,7 +697,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private async Task UpdateDistroAsync()
     {
-        await RunBusyAsync("Updating distro", async () =>
+        await RunDistroBusyAsync("Updating distro", async () =>
         {
             ResetSetupOutputBuffers();
             SetupLogText = string.Empty;
@@ -569,6 +718,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                     ? "Distro update completed. Refreshed quickstart checks." + Environment.NewLine
                     : "Distro update reported issues. Check the main launcher log." + Environment.NewLine);
                 await RefreshSetupCoreAsync().ConfigureAwait(true);
+                await RefreshProductsCoreAsync().ConfigureAwait(true);
             }
             finally
             {
@@ -591,7 +741,57 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
+        if (IsLocalAiStep) await SaveLocalAiChoiceAsync();
         CurrentStepIndex = GetNextStepIndex(CurrentStepIndex);
+        if (IsLocalAiStep)
+        {
+            await RunBusyAsync("Checking local AI options", async () =>
+            {
+                var saved = await _onboardingState.LoadAsync();
+                _localAiAvailable = false;
+                _localAiManagerReady = false;
+                LocalAiStatus = string.Empty;
+                try
+                {
+                    var service = new LmStudioService(_wsl);
+                    var options = await service.GetOptionsAsync();
+                    _localAiAvailable = true;
+                    foreach (var option in options.Where(option => LocalAiOptions.All(existing => existing.Id != option.Id)))
+                        LocalAiOptions.Add(option);
+                    var status = await service.ReadAsync("status");
+                    _localAiManagerReady = status.GetProperty("installed").GetBoolean();
+                }
+                catch (Exception error) { LocalAiStatus = error.Message; }
+                LocalAiChoice = LocalAiOptions.Any(option => option.Id == saved.LocalAiChoice) ? saved.LocalAiChoice! : "skip";
+                _localAiCompletedChoice = saved.LocalAiCompletedChoice;
+            });
+        }
+    }
+
+    private async Task SaveLocalAiChoiceAsync()
+    {
+        var state = await _onboardingState.LoadAsync();
+        state.LocalAiChoice = LocalAiChoice;
+        state.LocalAiCompletedChoice = _localAiCompletedChoice;
+        await _onboardingState.SaveAsync(state);
+    }
+
+    private async Task InstallLocalAiAsync()
+    {
+        await SaveLocalAiChoiceAsync();
+        await RunDistroBusyAsync("Installing local AI", async () =>
+        {
+            try
+            {
+                await new LmStudioService(_wsl).InstallAsync(LocalAiChoice,
+                    message => _dispatcher.Invoke(() => LocalAiStatus = message.Length > 2000 ? message[^2000..] : message));
+                _localAiCompletedChoice = LocalAiChoice;
+                _localAiManagerReady = true;
+                LocalAiStatus = "Installed. Open Manager to load a model, or continue setup.";
+                await SaveLocalAiChoiceAsync();
+            }
+            catch (Exception error) { LocalAiStatus = error.Message + " Retry, or choose Skip local AI to continue."; }
+        });
     }
 
     private async Task SkipRecommendedSetupAsync()
@@ -603,7 +803,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
         try
         {
-            await _onboardingState.MarkSkippedAsync(_selectedPreset.Key).ConfigureAwait(true);
+            await _onboardingState
+                .MarkSkippedAsync(_selectedPreset.Key, GetSelectedProductKeys(), GetProductInstallResults())
+                .ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -692,6 +894,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             await RefreshVoiceStatusCoreAsync().ConfigureAwait(true);
             VoiceApplyTargets.Clear();
+            _voiceApplyDeferred = false;
 
             if (_voiceEngineStatus?.HasUsableEngine != true)
             {
@@ -699,10 +902,35 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 return;
             }
 
-            var targets = await _voiceEngine.ApplyVoiceEngineAsync(_voiceEngineStatus.EngineKey).ConfigureAwait(true);
+            var targets = await _voiceEngine.ApplyVoiceEngineAsync(
+                    _voiceEngineStatus.EngineKey,
+                    PocketTtsConnectorService.BackendForPreset(_selectedPreset))
+                .ConfigureAwait(true);
             ApplyVoiceTargetStatuses(targets);
 
-            ReadySummary = "Ready to start DwemerDistro.";
+            // The voice service normally starts with DwemerDistro, so the first setup waits for it.
+            _voiceApplyDeferred = targets.Any(target => target.StatusText == VoiceEngineService.ServiceUnavailableStatus);
+            var failed = targets
+                .Where(target => !target.Applied && !target.Skipped)
+                .Select(target => target.TargetName)
+                .ToArray();
+            if (failed.Length > 0)
+            {
+                ReadySummary = $"Voice setup needs attention for {string.Join(", ", failed)}. See Details.";
+            }
+            else if (_voiceApplyDeferred)
+            {
+                ReadySummary = "Almost ready. Game voices will be connected after DwemerDistro starts.";
+            }
+            else
+            {
+                ReadySummary = "Ready to start DwemerDistro.";
+            }
+
+            if (failed.Length > 0 || _voiceApplyDeferred)
+            {
+                ShowTechnicalDetails = true;
+            }
         }).ConfigureAwait(true);
     }
 
@@ -717,6 +945,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             LauncherLogService.Startup("Quickstart could not mark onboarding complete before starting server.", ex);
         }
 
+        await PersistDeferredVoiceApplyAsync().ConfigureAwait(true);
         RequestClose?.Invoke();
         _mainWindowViewModel.StartServerCommand.Execute(null);
     }
@@ -726,9 +955,34 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         if (IsReadyStep && CanContinue())
         {
             await MarkReadyAsync().ConfigureAwait(true);
+            await PersistDeferredVoiceApplyAsync().ConfigureAwait(true);
         }
 
         RequestClose?.Invoke();
+    }
+
+    /// <summary>
+    /// Saves a voice setup that waits for the voice service, after onboarding is marked complete
+    /// (which resets the state file). The next server start runs it, even after a launcher restart.
+    /// </summary>
+    private async Task PersistDeferredVoiceApplyAsync()
+    {
+        if (!_voiceApplyDeferred || _voiceEngineStatus is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _onboardingState.SetPendingVoiceApplyAsync(
+                    _voiceEngineStatus.EngineKey,
+                    PocketTtsConnectorService.BackendForPreset(_selectedPreset))
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Quickstart could not save the pending voice setup.", ex);
+        }
     }
 
     private async Task RefreshSetupCoreAsync(CancellationToken cancellationToken = default)
@@ -846,7 +1100,11 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         _openRouterStatus = status;
         OpenRouterTargets.Clear();
 
-        foreach (var target in status.Targets)
+        // A product that is not installed has no database to hold a key, so it is not a credential
+        // target at all - listing it as "needs key" would read as a problem the user must fix.
+        var installedTargets = status.Targets.Where(IsInstalledCredentialTarget).ToArray();
+
+        foreach (var target in installedTargets)
         {
             OpenRouterTargets.Add(new CredentialTargetViewModel(
                 target.TargetName,
@@ -944,6 +1202,16 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         VoiceApplyTargets.Clear();
         foreach (var target in targets)
         {
+            if (target.StatusText == VoiceEngineService.ServiceUnavailableStatus)
+            {
+                VoiceApplyTargets.Add(new CredentialTargetViewModel(
+                    target.TargetName,
+                    "After start",
+                    StatusWarn,
+                    "Connects when you start DwemerDistro and the voice service is running."));
+                continue;
+            }
+
             VoiceApplyTargets.Add(new CredentialTargetViewModel(
                 target.TargetName,
                 target.StatusText,
@@ -959,7 +1227,9 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 _selectedPreset.Key,
                 voiceEngineKey,
                 false,
-                IsHuggingFaceReady(_huggingFaceStatus))
+                IsHuggingFaceReady(_huggingFaceStatus),
+                GetSelectedProductKeys(),
+                GetProductInstallResults())
             .ConfigureAwait(true);
     }
 
@@ -974,6 +1244,10 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         {
             IntroStepIndex => true,
             UpdateDistroStepIndex => true,
+            LocalAiStepIndex => LocalAiChoice == "skip" || _localAiCompletedChoice == LocalAiChoice,
+            // Continuing with nothing selected is deliberate. A selected mod must be installed or
+            // explicitly skipped so a checked box cannot be silently ignored.
+            ChooseModsStepIndex => !_isInstallingProducts && CanLeaveProductSelection,
             HuggingFaceStepIndex => IsHuggingFaceReady(_huggingFaceStatus),
             SetupStepIndex => _setupStatus?.AllRequiredInstalled == true,
             ReadyStepIndex => _voiceEngineStatus?.HasUsableEngine == true,
@@ -1003,7 +1277,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
 
     private int GetNextStepIndex(int currentStepIndex)
     {
-        return _skipHuggingFaceStep && currentStepIndex == UpdateDistroStepIndex
+        return _skipHuggingFaceStep && currentStepIndex == ChooseModsStepIndex
             ? SetupStepIndex
             : Math.Min(ReadyStepIndex, currentStepIndex + 1);
     }
@@ -1011,13 +1285,13 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private int GetPreviousStepIndex(int currentStepIndex)
     {
         return _skipHuggingFaceStep && currentStepIndex == SetupStepIndex
-            ? UpdateDistroStepIndex
+            ? ChooseModsStepIndex
             : Math.Max(0, currentStepIndex - 1);
     }
 
     private int GetTotalStepCount()
     {
-        return _skipHuggingFaceStep ? 4 : 5;
+        return _skipHuggingFaceStep ? 6 : 7;
     }
 
     private int GetDisplayStepNumber()
@@ -1025,6 +1299,89 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         return _skipHuggingFaceStep && CurrentStepIndex > HuggingFaceStepIndex
             ? CurrentStepIndex
             : CurrentStepIndex + 1;
+    }
+
+    /// <summary>
+    /// Runs a Quickstart step that mutates the distro. Quickstart is modeless, so the step is
+    /// registered with the launcher's shared gate for its whole duration: Compact Distro, Export,
+    /// Import, and Fix WSL DNS cannot start underneath it, and it refuses to start while one of
+    /// those is already running.
+    /// </summary>
+    private async Task RunDistroBusyAsync(string busyText, Func<Task> action)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        if (!_mainWindowViewModel.TryBeginQuickstartDistroActivity())
+        {
+            ReportDistroMaintenanceBusy();
+            return;
+        }
+
+        try
+        {
+            await RunBusyAsync(busyText, action).ConfigureAwait(true);
+        }
+        finally
+        {
+            _mainWindowViewModel.EndQuickstartDistroActivity();
+        }
+    }
+
+    /// <summary>Quickstart has no console of its own, so the refusal has to be a dialog.</summary>
+    private void ReportDistroMaintenanceBusy()
+    {
+        MessageBox.Show(
+            MainWindowViewModel.ExclusiveDistroOperationBusyMessage +
+            "\n\nWait for it to finish, then try again.",
+            "DwemerDistro Quickstart",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
+    /// <summary>
+    /// Keeps the install and update buttons in step with the launcher's shared gate while this
+    /// modeless window stays open.
+    /// </summary>
+    private void MainWindowViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MainWindowViewModel.IsCriticalMaintenanceInProgress) &&
+            e.PropertyName != nameof(MainWindowViewModel.IsDistroUpdateInProgress))
+        {
+            return;
+        }
+
+        if (_dispatcher.CheckAccess())
+        {
+            RefreshDistroWorkAvailability();
+            return;
+        }
+
+        if (!_dispatcher.HasShutdownStarted)
+        {
+            _ = _dispatcher.BeginInvoke((Action)RefreshDistroWorkAvailability);
+        }
+    }
+
+    private void RefreshDistroWorkAvailability()
+    {
+        OnPropertyChanged(nameof(CanRunDistroWork));
+        RaiseCommandStates();
+    }
+
+    /// <summary>Releases the launcher-level subscription and window gate when Quickstart closes.</summary>
+    public void Detach()
+    {
+        _mainWindowViewModel.PropertyChanged -= MainWindowViewModel_PropertyChanged;
+        if (!_ownsQuickstartWindowDistroGate)
+        {
+            return;
+        }
+
+        _ownsQuickstartWindowDistroGate = false;
+        _mainWindowViewModel.EndQuickstartDistroActivity();
     }
 
     private async Task RunBusyAsync(string busyText, Func<Task> action)
@@ -1307,9 +1664,327 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         return verbosePrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     }
 
+    private void ProductChoice_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is not (nameof(QuickstartProductViewModel.IsSelected)
+            or nameof(QuickstartProductViewModel.IsInstalled)))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(HasSelectedProducts));
+        OnPropertyChanged(nameof(CanLeaveProductSelection));
+        OnPropertyChanged(nameof(InstallProductsButtonText));
+        InstallSelectedProductsCommand.RaiseCanExecuteChanged();
+        ContinueCommand.RaiseCanExecuteChanged();
+    }
+
+    private async Task RefreshProductsAsync()
+    {
+        await RunBusyAsync("Checking installed mods", () => RefreshProductsCoreAsync()).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Reads the server manager status so already-installed products show as Installed and stay
+    /// locked. A failed probe, a missing entry, or a state this build does not recognise leaves the
+    /// row locked as well: Quickstart only installs what the manager confirms is not installed.
+    /// </summary>
+    private async Task RefreshProductsCoreAsync(CancellationToken cancellationToken = default)
+    {
+        ProductStatusText = "Checking installed mods";
+        ProductStatusBackground = StatusChecking;
+
+        var result = await _serverManagement.GetStatusAsync(cancellationToken).ConfigureAwait(true);
+        if (!result.IsSuccess)
+        {
+            foreach (var product in ProductChoices)
+            {
+                product.ApplyStatus(ServerInstallState.Unknown);
+            }
+
+            ProductStatusText = "Mod status unavailable";
+            ProductStatusBackground = StatusUnknown;
+            AppendSetupLog(
+                $"Could not read installed mods: {result.Error}{Environment.NewLine}" +
+                $"Refresh installed mods before selecting anything to install.{Environment.NewLine}");
+            RaiseProductSelectionState();
+            return;
+        }
+
+        foreach (var product in ProductChoices)
+        {
+            product.ApplyStatus(ResolveReportedState(result, product.Product));
+        }
+
+        UpdateProductSelectionSummary();
+    }
+
+    /// <summary>
+    /// The state the manager reports for a product. A failed read, an absent entry, and a value this
+    /// build cannot parse all resolve to Unknown rather than being treated as "not installed".
+    /// </summary>
+    internal static ServerInstallState ResolveReportedState(ServerStatusResult? result, ServerProduct product)
+    {
+        if (result?.IsSuccess != true)
+        {
+            return ServerInstallState.Unknown;
+        }
+
+        return result.Snapshot!.Find(product)?.State switch
+        {
+            ServerInstallState.NotInstalled => ServerInstallState.NotInstalled,
+            ServerInstallState.Installed => ServerInstallState.Installed,
+            ServerInstallState.NeedsRepair => ServerInstallState.NeedsRepair,
+            _ => ServerInstallState.Unknown
+        };
+    }
+
+    /// <summary>
+    /// Installs the ticked products one at a time on the production branch. A failure stops that
+    /// product only: earlier successes stay installed and the row offers Retry or Skip.
+    /// </summary>
+    private async Task InstallSelectedProductsAsync()
+    {
+        var selected = ProductChoices.Where(product => product.IsSelected).ToArray();
+        if (selected.Length == 0)
+        {
+            return;
+        }
+
+        await RunDistroBusyAsync("Installing mods", async () =>
+        {
+            IsInstallingProducts = true;
+            ResetSetupOutputBuffers();
+            SetupLogText = string.Empty;
+            SetupInstallProgress = 0;
+            SetupInstallDetailText = string.Empty;
+            try
+            {
+                for (var index = 0; index < selected.Length; index++)
+                {
+                    var product = selected[index];
+                    product.ResetInstallState();
+                    SetupInstallProgressText = $"Installing {product.Title} ({index + 1} of {selected.Length})...";
+                    SetupInstallProgress = index * 100d / selected.Length;
+                    await InstallProductCoreAsync(product).ConfigureAwait(true);
+                }
+
+                SetupInstallProgress = 100;
+                SetupInstallProgressText = BuildProductInstallSummary(selected);
+                UpdateProductSelectionSummary();
+            }
+            finally
+            {
+                IsInstallingProducts = false;
+            }
+        }).ConfigureAwait(true);
+    }
+
+    /// <summary>Refreshes the Choose Your Mods summary and command state after status or install changes.</summary>
+    private void UpdateProductSelectionSummary()
+    {
+        var installedCount = ProductChoices.Count(product => product.IsInstalled);
+        ProductStatusText = installedCount == 0
+            ? "No mods installed yet"
+            : $"{installedCount} of {ProductChoices.Count} installed";
+        ProductStatusBackground = installedCount == 0 ? StatusWarn : StatusGood;
+        if (ProductChoices.Any(product => product.ReportedState == ServerInstallState.Unknown))
+        {
+            ProductStatusText = "Mod status unavailable";
+            ProductStatusBackground = StatusUnknown;
+        }
+
+        RaiseProductSelectionState();
+    }
+
+    /// <summary>
+    /// Re-reads the selection-derived state after a status refresh may have dropped ticks, without
+    /// overwriting a status summary the caller already set.
+    /// </summary>
+    private void RaiseProductSelectionState()
+    {
+        OnPropertyChanged(nameof(HasSelectedProducts));
+        OnPropertyChanged(nameof(CanLeaveProductSelection));
+        OnPropertyChanged(nameof(InstallProductsButtonText));
+        RaiseCommandStates();
+    }
+
+    internal static string BuildProductInstallSummary(IReadOnlyList<QuickstartProductViewModel> attempted)
+    {
+        var installed = attempted.Count(product => product.InstallState == QuickstartProductInstallState.Installed);
+        var failed = attempted.Count(product => product.InstallState == QuickstartProductInstallState.Failed);
+        if (failed == 0)
+        {
+            return $"Installed {installed} of {attempted.Count} mods.";
+        }
+
+        return $"Installed {installed} of {attempted.Count} mods. {failed} need attention - retry or skip.";
+    }
+
+    /// <summary>
+    /// Runs one install on the production branch. Quickstart never offers the development branch: a
+    /// first-run user should land on the branch the mod ships to players.
+    /// </summary>
+    private Task InstallProductCoreAsync(QuickstartProductViewModel product)
+    {
+        return InstallProductGuardedAsync(
+            product,
+            token => _serverManagement.GetStatusAsync(token),
+            () => _serverManagement.InstallAsync(product.Product, ServerBranchChannel.Main, AppendSetupLog),
+            AppendSetupLog);
+    }
+
+    /// <summary>
+    /// The single install path behind both the batch run and Retry. The manager status is re-read
+    /// immediately before the install command, on this explicit user action only, and the install is
+    /// never issued unless the fresh answer is an explicit not-installed. A row blocked here stays
+    /// Failed so Retry can pick it up once the status recovers.
+    /// </summary>
+    internal static async Task InstallProductGuardedAsync(
+        QuickstartProductViewModel product,
+        Func<CancellationToken, Task<ServerStatusResult>> readStatus,
+        Func<Task<CommandResult>> install,
+        Action<string> log,
+        CancellationToken cancellationToken = default)
+    {
+        product.SetInstallState(QuickstartProductInstallState.Installing);
+        log($"{Environment.NewLine}Checking the current install status for {product.Title}...{Environment.NewLine}");
+
+        ServerStatusResult? status;
+        try
+        {
+            status = await readStatus(cancellationToken).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            status = ServerStatusResult.Failed(ex.Message);
+        }
+
+        var state = ResolveReportedState(status, product.Product);
+        product.ApplyStatus(state);
+
+        if (state != ServerInstallState.NotInstalled)
+        {
+            var blocked = DescribeBlockedInstall(product.Title, state);
+            if (state == ServerInstallState.Installed)
+            {
+                // Already present: record it as installed rather than a failure so onboarding can
+                // still move on, and leave removal to the Mods page.
+                product.SetInstallState(QuickstartProductInstallState.Installed, blocked);
+            }
+            else
+            {
+                product.SetInstallState(QuickstartProductInstallState.Failed, blocked);
+            }
+
+            log($"{blocked}{Environment.NewLine}");
+            return;
+        }
+
+        log($"Installing {product.Title} on the Main branch...{Environment.NewLine}");
+
+        try
+        {
+            var result = await install().ConfigureAwait(true);
+
+            if (result.Succeeded)
+            {
+                product.SetInstallState(QuickstartProductInstallState.Installed);
+                log($"{product.Title} installed.{Environment.NewLine}");
+                return;
+            }
+
+            var error = (result.StandardError + result.StandardOutput).Trim();
+            product.SetInstallState(
+                QuickstartProductInstallState.Failed,
+                string.IsNullOrWhiteSpace(error) ? $"Exit code {result.ExitCode}." : TakeLastLines(error, 3));
+            log($"{product.Title} install failed.{Environment.NewLine}");
+        }
+        catch (Exception ex)
+        {
+            product.SetInstallState(QuickstartProductInstallState.Failed, ex.Message);
+            log($"{product.Title} install failed: {ex.Message}{Environment.NewLine}");
+        }
+    }
+
+    /// <summary>The guidance shown on a row whose fresh status blocked the install.</summary>
+    internal static string DescribeBlockedInstall(string title, ServerInstallState state)
+    {
+        return state switch
+        {
+            ServerInstallState.Installed =>
+                $"{title} is already installed. Manage or remove it from the Mods page.",
+            ServerInstallState.NeedsRepair =>
+                $"{title} needs repair, so Quickstart did not install it. Repair or reinstall it from the Mods page.",
+            _ =>
+                $"Could not confirm whether {title} is installed, so nothing was installed. Refresh installed mods and try again, or manage it from the Mods page."
+        };
+    }
+
+    private async Task RetryProductInstallAsync(QuickstartProductViewModel product)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        await RunDistroBusyAsync($"Installing {product.Title}", async () =>
+        {
+            IsInstallingProducts = true;
+            try
+            {
+                SetupInstallProgressText = $"Retrying {product.Title}...";
+                await InstallProductCoreAsync(product).ConfigureAwait(true);
+                SetupInstallProgressText = product.InstallState == QuickstartProductInstallState.Installed
+                    ? $"{product.Title} installed."
+                    : $"{product.Title} still needs attention.";
+            }
+            finally
+            {
+                IsInstallingProducts = false;
+            }
+        }).ConfigureAwait(true);
+    }
+
+    /// <summary>Leaves a failed product uninstalled and lets the user move on.</summary>
+    private void SkipProductInstall(QuickstartProductViewModel product)
+    {
+        product.SetInstallState(QuickstartProductInstallState.Skipped, product.ResultDetail);
+        AppendSetupLog($"Skipped {product.Title}. Install it later from the Mods page.{Environment.NewLine}");
+        RaiseCommandStates();
+    }
+
+    private static string TakeLastLines(string text, int maxLines)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(Environment.NewLine, lines.Skip(Math.Max(0, lines.Length - maxLines)));
+    }
+
+    private IReadOnlyList<string> GetSelectedProductKeys()
+    {
+        return ProductChoices
+            .Where(product => product.IsSelected || product.InstallState != QuickstartProductInstallState.Pending)
+            .Select(product => ServerManagementService.ToProductToken(product.Product))
+            .ToArray();
+    }
+
+    private IReadOnlyDictionary<string, string> GetProductInstallResults()
+    {
+        return ProductChoices.ToDictionary(
+            product => ServerManagementService.ToProductToken(product.Product),
+            product => product.ToInstallResultKey(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     private void RaiseCommandStates()
     {
+        InstallLocalAiCommand?.RaiseCanExecuteChanged();
+        SkipLocalAiCommand?.RaiseCanExecuteChanged();
+        OpenLocalAiManagerCommand?.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(IsLocalAiSelectionEnabled));
         InstallRecommendedCommand.RaiseCanExecuteChanged();
+        InstallSelectedProductsCommand.RaiseCanExecuteChanged();
+        RefreshProductsCommand.RaiseCanExecuteChanged();
         ContinueCommand.RaiseCanExecuteChanged();
         SkipRecommendedSetupCommand.RaiseCanExecuteChanged();
         BackCommand.RaiseCanExecuteChanged();
@@ -1324,6 +1999,30 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         StartServerCommand.RaiseCanExecuteChanged();
         AdvancedSettingsCommand.RaiseCanExecuteChanged();
         UpdateDistroCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// True when the credential target belongs to a product the manager reports as installed. Targets
+    /// are matched on database name, which is what the manager reports for each product.
+    /// </summary>
+    private bool IsInstalledCredentialTarget(OpenRouterTargetStatus target)
+    {
+        var match = ProductChoices.FirstOrDefault(product =>
+            string.Equals(
+                ServerManagementService.ToProductToken(product.Product),
+                target.DatabaseName,
+                StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(product.Key, ExtractTargetKey(target.TargetName), StringComparison.OrdinalIgnoreCase));
+
+        // An unrecognised target (CHIM's "dwemer" database, or a future product) is kept: dropping it
+        // would silently stop applying the key.
+        return match is null || match.IsInstalled;
+    }
+
+    private static string ExtractTargetKey(string targetName)
+    {
+        var separator = targetName.IndexOf('/');
+        return (separator < 0 ? targetName : targetName[..separator]).Trim();
     }
 
     private static string BuildOpenRouterStatusDetail(OpenRouterSyncStatus status)

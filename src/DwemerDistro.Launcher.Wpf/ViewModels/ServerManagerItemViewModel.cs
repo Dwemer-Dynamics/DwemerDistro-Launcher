@@ -1,0 +1,513 @@
+using System.Collections.ObjectModel;
+using DwemerDistro.Launcher.Wpf.Models;
+using DwemerDistro.Launcher.Wpf.Services;
+
+namespace DwemerDistro.Launcher.Wpf.ViewModels;
+
+/// <summary>
+/// One optional application server as the Mods page sees it. Three of these live for the lifetime
+/// of the window - they hold only scalars plus the two-item branch list, so keeping them resident
+/// costs nothing and needs no extra views or subscriptions.
+///
+/// The Mods page shows one of three mutually exclusive control sets, driven by
+/// <see cref="ShowNotInstalledActions"/>, <see cref="ShowInstalledActions"/> and
+/// <see cref="ShowRepairActions"/>. Status text is one fixed-height line whose colour carries the
+/// state, so a busy or failed operation never changes a button's size.
+/// </summary>
+public sealed class ServerManagerItemViewModel : ObservableObject
+{
+    internal const string NotInstalledColor = "#C8C8C8";
+    internal const string CheckingColor = "White";
+    internal const string NeedsRepairColor = "#FF9F40";
+    internal const string BusyColor = "#F4D8A6";
+    internal const string ErrorColor = "#FF8A80";
+
+    private readonly Func<ServerManagerItemViewModel, Task> _install;
+    private readonly Func<ServerManagerItemViewModel, Task> _update;
+    private readonly Func<ServerManagerItemViewModel, Task> _repair;
+    private readonly Func<ServerManagerItemViewModel, Task> _uninstall;
+
+    private ServerInstallState _state = ServerInstallState.Unknown;
+    private ServerRepositoryState _repositoryState = ServerRepositoryState.Unknown;
+    private bool? _databasePresent;
+    private string? _root;
+    private string? _database;
+    private string? _branch;
+    private string? _version;
+    private int? _port;
+    private string _versionStatusText = "Checking...";
+    private string _versionStatusColor = CheckingColor;
+    private bool _isVersionUpdateAvailable;
+    private string _selectedBranch = "Main";
+    private bool _hasExplicitBranchSelection;
+    private bool _isBusy;
+    private bool _isConflictingOperationRunning;
+    private string? _busyText;
+    private string? _errorText;
+
+    public ServerManagerItemViewModel(
+        ServerProduct product,
+        string gameKey,
+        Func<ServerManagerItemViewModel, Task> install,
+        Func<ServerManagerItemViewModel, Task> update,
+        Func<ServerManagerItemViewModel, Task> repair,
+        Func<ServerManagerItemViewModel, Task> uninstall)
+    {
+        Product = product;
+        GameKey = gameKey;
+        DisplayName = ServerManagementService.GetDisplayName(product);
+        PurgeToken = ServerManagementService.GetPurgeToken(product);
+        RailProductName = BuildRailProductName(product);
+        UpdateActionName = BuildUpdateActionName(product);
+        Branches = new ObservableCollection<string>(product switch
+        {
+            ServerProduct.Reign => new[] { "Dev" },
+            ServerProduct.Lorkhan => new[] { "Dev" },
+            _ => new[] { "Main", "Dev" }
+        });
+        _selectedBranch = Branches[0];
+        _install = install;
+        _update = update;
+        _repair = repair;
+        _uninstall = uninstall;
+
+        InstallCommand = new AsyncRelayCommand(() => _install(this), () => CanInstall);
+        UpdateCommand = new AsyncRelayCommand(() => _update(this), () => CanUpdate);
+        RepairCommand = new AsyncRelayCommand(() => _repair(this), () => CanRepair);
+        UninstallCommand = new AsyncRelayCommand(() => _uninstall(this), () => CanUninstall);
+    }
+
+    public ServerProduct Product { get; }
+
+    /// <summary>Rail key ("CHIM", "STOBE", "DIALECTIC") this product backs.</summary>
+    public string GameKey { get; }
+
+    public string DisplayName { get; }
+
+    /// <summary>
+    /// Rail-facing name ("CHIM", "STOBE", "Dialectic"). The uninstall confirmation uses it so the
+    /// dialog names the product with the same word the rail shows.
+    /// </summary>
+    public string RailProductName { get; }
+
+    public string PurgeToken { get; }
+
+    /// <summary>
+    /// Label for the single-product update action ("Update CHIM"). It names the rail product the
+    /// mod page is showing rather than the server binary, so it never reads as a second copy of the
+    /// system-first mod update.
+    /// </summary>
+    public string UpdateActionName { get; }
+
+    public ObservableCollection<string> Branches { get; }
+
+    public AsyncRelayCommand InstallCommand { get; }
+
+    /// <summary>Updates the shared system first, then this product on its selected branch.</summary>
+    public AsyncRelayCommand UpdateCommand { get; }
+
+    public AsyncRelayCommand RepairCommand { get; }
+
+    public AsyncRelayCommand UninstallCommand { get; }
+
+    public ServerInstallState State => _state;
+
+    public ServerRepositoryState RepositoryState => _repositoryState;
+
+    public string? Root => _root;
+
+    public string? Database => _database;
+
+    public int? Port => _port;
+
+    public bool? DatabasePresent => _databasePresent;
+
+    public string? InstalledBranch => _branch;
+
+    public string? InstalledVersion => _version;
+
+    public bool IsStatusKnown => _state != ServerInstallState.Unknown;
+
+    public bool IsInstalled => _state == ServerInstallState.Installed;
+
+    public bool IsNotInstalled => _state == ServerInstallState.NotInstalled;
+
+    public bool NeedsRepair => _state == ServerInstallState.NeedsRepair;
+
+    /// <summary>Install branch picker plus the Install Server action.</summary>
+    public bool ShowNotInstalledActions => _state == ServerInstallState.NotInstalled;
+
+    /// <summary>Branch picker, webpage, rollback and Uninstall Server.</summary>
+    public bool ShowInstalledActions => _state == ServerInstallState.Installed;
+
+    /// <summary>Repair Installation plus Uninstall Server.</summary>
+    public bool ShowRepairActions => _state == ServerInstallState.NeedsRepair;
+
+    public bool CanInstall => _state == ServerInstallState.NotInstalled && !_isBusy && !_isConflictingOperationRunning;
+
+    public bool CanRepair => _state == ServerInstallState.NeedsRepair && !_isBusy && !_isConflictingOperationRunning;
+
+    /// <summary>
+    /// The single-product update needs a confirmed install - the manager never installs a missing or
+    /// broken product - and must stay out of reach while a system update or another product's
+    /// operation is already driving the manager. Nothing else gates it.
+    /// </summary>
+    public bool CanUpdate =>
+        _state == ServerInstallState.Installed
+        && !_isBusy
+        && !_isConflictingOperationRunning;
+
+    /// <summary>
+    /// True only when the last version check compared the installed version against the selected
+    /// branch and found the branch ahead. It is never inferred from the status colour, because the
+    /// same yellow also covers an unknown or missing version. Every other state - checking,
+    /// current, unknown, missing, needs repair, busy, failed - leaves this false, so the update
+    /// button keeps its per-mod brand colour and green stays a confirmed signal.
+    /// </summary>
+    public bool IsUpdateAvailable =>
+        _isVersionUpdateAvailable
+        && CanUpdate
+        && string.IsNullOrWhiteSpace(_errorText);
+
+    /// <summary>A product with anything on disk can be purged; a clean absence cannot.</summary>
+    public bool CanUninstall =>
+        (_state == ServerInstallState.Installed || _state == ServerInstallState.NeedsRepair)
+        && !_isBusy && !_isConflictingOperationRunning;
+
+    /// <summary>Webpage and rollback are only meaningful for a real install.</summary>
+    public bool CanUseInstalledFeatures => _state == ServerInstallState.Installed && !_isBusy && !_isConflictingOperationRunning;
+
+    public bool IsBusy
+    {
+        get => _isBusy;
+        private set
+        {
+            if (SetProperty(ref _isBusy, value))
+            {
+                RaiseDerivedState();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Set by the window while a server, component or system operation is in flight. Lifecycle
+    /// actions must not compete with the system stage or another mod's database changes.
+    /// </summary>
+    public bool IsConflictingOperationRunning
+    {
+        get => _isConflictingOperationRunning;
+        set
+        {
+            if (SetProperty(ref _isConflictingOperationRunning, value))
+            {
+                RaiseDerivedState();
+            }
+        }
+    }
+
+    public string SelectedBranch
+    {
+        get => _selectedBranch;
+        set
+        {
+            if (SetProperty(ref _selectedBranch, Product is ServerProduct.Reign or ServerProduct.Lorkhan ? "Dev" : value))
+            {
+                _hasExplicitBranchSelection = true;
+                OnPropertyChanged(nameof(UpdateActionHelpText));
+            }
+        }
+    }
+
+    public ServerBranchChannel SelectedBranchChannel =>
+        ServerManagementService.ParseBranchChannel(_selectedBranch);
+
+    /// <summary>
+    /// The single status line. Busy and error states take priority, then the manager state, then the
+    /// existing green/yellow version semantics for an installed product.
+    /// </summary>
+    public string StatusText
+    {
+        get
+        {
+            if (_isBusy && !string.IsNullOrWhiteSpace(_busyText))
+            {
+                return _busyText!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_errorText))
+            {
+                return _errorText!;
+            }
+
+            return _state switch
+            {
+                ServerInstallState.NotInstalled => "Not installed",
+                ServerInstallState.NeedsRepair => "Needs repair",
+                ServerInstallState.Installed => _versionStatusText,
+                _ => _versionStatusText
+            };
+        }
+    }
+
+    public string StatusColor
+    {
+        get
+        {
+            if (_isBusy && !string.IsNullOrWhiteSpace(_busyText))
+            {
+                return BusyColor;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_errorText))
+            {
+                return ErrorColor;
+            }
+
+            return _state switch
+            {
+                ServerInstallState.NotInstalled => NotInstalledColor,
+                ServerInstallState.NeedsRepair => NeedsRepairColor,
+                ServerInstallState.Installed => _versionStatusColor,
+                _ => CheckingColor
+            };
+        }
+    }
+
+    /// <summary>Root, database and port for the uninstall dialog and the status tooltip.</summary>
+    public string LocationSummary
+    {
+        get
+        {
+            var parts = new List<string>
+            {
+                $"Files: {_root ?? "unknown"}",
+                $"Database: {_database ?? "unknown"}" + (_databasePresent == false ? " (missing)" : string.Empty)
+            };
+
+            if (_port is not null)
+            {
+                parts.Add($"Port: {_port}");
+            }
+
+            return string.Join(" | ", parts);
+        }
+    }
+
+    public string AccessibleStatusHelpText =>
+        $"{DisplayName}: {StatusText}. {LocationSummary}";
+
+    /// <summary>
+    /// Says what the single-product update will do and, when it is unavailable, why - so a screen
+    /// reader landing on the disabled button hears a reason instead of only "dimmed".
+    /// </summary>
+    public string UpdateActionHelpText
+    {
+        get
+        {
+            if (_isBusy)
+            {
+                return $"{UpdateActionName} is unavailable while {DisplayName} is busy.";
+            }
+
+            if (_isConflictingOperationRunning)
+            {
+                return $"{UpdateActionName} is unavailable while another server, component, or system operation is running.";
+            }
+
+            if (_state != ServerInstallState.Installed)
+            {
+                return $"{UpdateActionName} is unavailable until {RailProductName} is installed.";
+            }
+
+            var lead = IsUpdateAvailable
+                ? $"Update Available for {RailProductName} on the selected {SelectedBranch} branch. "
+                : string.Empty;
+
+            return lead +
+                   $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} branch. " +
+                   "Other mods are left unchanged.";
+        }
+    }
+
+    /// <summary>Rail-facing label for the per-product update action.</summary>
+    internal static string BuildUpdateActionName(ServerProduct product)
+    {
+        return $"Update {BuildRailProductName(product)}";
+    }
+
+    /// <summary>The name the rail uses for this product.</summary>
+    internal static string BuildRailProductName(ServerProduct product)
+    {
+        return product switch
+        {
+            ServerProduct.Herika => "CHIM",
+            ServerProduct.Stobe => "STOBE",
+            ServerProduct.Dialectic => "Dialectic",
+            ServerProduct.Reign => "Reign",
+            ServerProduct.Lorkhan => "LORKHAN",
+            _ => throw new ArgumentOutOfRangeException(nameof(product), product, "Unknown server product.")
+        };
+    }
+
+    /// <summary>Applies a fresh status entry. A null entry means the probe did not list the product.</summary>
+    public void ApplyStatus(ServerStatus? status)
+    {
+        _state = status?.State ?? ServerInstallState.Unknown;
+        _repositoryState = status?.RepositoryState ?? ServerRepositoryState.Unknown;
+        _databasePresent = status?.DatabasePresent;
+        _root = status?.Root;
+        _database = status?.Database;
+        _branch = status?.Branch;
+        _version = status?.Version;
+        _port = status?.Port;
+        _errorText = null;
+        if (Product is ServerProduct.Reign or ServerProduct.Lorkhan)
+        {
+            _versionStatusText = status?.Version ?? "Version unavailable";
+            _versionStatusColor = string.IsNullOrWhiteSpace(status?.Version) ? "Yellow" : "LimeGreen";
+            _isVersionUpdateAvailable = false;
+        }
+
+        // Follow the installed branch until the user stages a different update target.
+        if (Product is not (ServerProduct.Reign or ServerProduct.Lorkhan) && !_hasExplicitBranchSelection && status?.Branch is not null)
+        {
+            var channel = MapBranchToChannel(status.Branch, status.ProductionBranch, status.DevelopmentBranch);
+            if (channel is not null)
+            {
+                if (SetProperty(ref _selectedBranch, ServerManagementService.ToBranchChoice(channel.Value), nameof(SelectedBranch)))
+                {
+                    OnPropertyChanged(nameof(UpdateActionHelpText));
+                }
+            }
+        }
+
+        RaiseDerivedState();
+    }
+
+    /// <summary>Records a status-probe failure without discarding what the UI already showed.</summary>
+    public void ApplyStatusError(string error)
+    {
+        _errorText = error;
+        RaiseDerivedState();
+    }
+
+    /// <summary>
+    /// Feeds the existing per-product version check into the installed status line.
+    /// <paramref name="updateAvailable"/> is the version comparison's own answer, passed in rather
+    /// than read back out of <paramref name="color"/>.
+    /// </summary>
+    public void ApplyVersionStatus(string text, string color, bool updateAvailable)
+    {
+        _versionStatusText = text;
+        _versionStatusColor = color;
+        _isVersionUpdateAvailable = updateAvailable;
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(StatusColor));
+        OnPropertyChanged(nameof(AccessibleStatusHelpText));
+        OnPropertyChanged(nameof(IsUpdateAvailable));
+        OnPropertyChanged(nameof(UpdateActionHelpText));
+    }
+
+    public void BeginOperation(string busyText)
+    {
+        _busyText = busyText;
+        _errorText = null;
+        IsBusy = true;
+    }
+
+    public void UpdateOperationText(string busyText)
+    {
+        _busyText = busyText;
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(AccessibleStatusHelpText));
+    }
+
+    public void EndOperation(string? error = null)
+    {
+        _busyText = null;
+        _errorText = error;
+
+        var wasBusy = _isBusy;
+        _isBusy = false;
+        if (wasBusy)
+        {
+            OnPropertyChanged(nameof(IsBusy));
+        }
+
+        // Setting or clearing the error moves the status line and the confirmed-update signal even
+        // when nothing was in flight, so the derived state is republished either way.
+        RaiseDerivedState();
+    }
+
+    /// <summary>
+    /// Chooses the visible branch entry from the checked-out branch, preferring the exact
+    /// production/development names the manager reported for this product.
+    /// </summary>
+    internal static ServerBranchChannel? MapBranchToChannel(
+        string? branch,
+        string? productionBranch,
+        string? developmentBranch)
+    {
+        var normalized = branch?.Trim();
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(productionBranch) &&
+            string.Equals(normalized, productionBranch.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(productionBranch, "reign", StringComparison.OrdinalIgnoreCase)
+                ? ServerBranchChannel.Reign : ServerBranchChannel.Main;
+        }
+
+        if (!string.IsNullOrWhiteSpace(developmentBranch) &&
+            string.Equals(normalized, developmentBranch.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return ServerBranchChannel.Dev;
+        }
+
+        return normalized.ToLowerInvariant() switch
+        {
+            "main" or "master" or "aiagent" or "stobe" or "dialectic" => ServerBranchChannel.Main,
+            "dev" => ServerBranchChannel.Dev,
+            "reign" => ServerBranchChannel.Reign,
+            "unstable" => ServerBranchChannel.Dev,
+            _ => null
+        };
+    }
+
+    private void RaiseDerivedState()
+    {
+        OnPropertyChanged(nameof(State));
+        OnPropertyChanged(nameof(RepositoryState));
+        OnPropertyChanged(nameof(Root));
+        OnPropertyChanged(nameof(Database));
+        OnPropertyChanged(nameof(Port));
+        OnPropertyChanged(nameof(DatabasePresent));
+        OnPropertyChanged(nameof(InstalledBranch));
+        OnPropertyChanged(nameof(InstalledVersion));
+        OnPropertyChanged(nameof(IsStatusKnown));
+        OnPropertyChanged(nameof(IsInstalled));
+        OnPropertyChanged(nameof(IsNotInstalled));
+        OnPropertyChanged(nameof(NeedsRepair));
+        OnPropertyChanged(nameof(ShowNotInstalledActions));
+        OnPropertyChanged(nameof(ShowInstalledActions));
+        OnPropertyChanged(nameof(ShowRepairActions));
+        OnPropertyChanged(nameof(CanInstall));
+        OnPropertyChanged(nameof(CanRepair));
+        OnPropertyChanged(nameof(CanUpdate));
+        OnPropertyChanged(nameof(IsUpdateAvailable));
+        OnPropertyChanged(nameof(CanUninstall));
+        OnPropertyChanged(nameof(CanUseInstalledFeatures));
+        OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(StatusColor));
+        OnPropertyChanged(nameof(LocationSummary));
+        OnPropertyChanged(nameof(AccessibleStatusHelpText));
+        OnPropertyChanged(nameof(UpdateActionHelpText));
+        InstallCommand.RaiseCanExecuteChanged();
+        UpdateCommand.RaiseCanExecuteChanged();
+        RepairCommand.RaiseCanExecuteChanged();
+        UninstallCommand.RaiseCanExecuteChanged();
+    }
+}
