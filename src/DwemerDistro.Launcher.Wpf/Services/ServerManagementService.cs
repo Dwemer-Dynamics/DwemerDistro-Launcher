@@ -19,6 +19,13 @@ public sealed class ServerManagementService(WslService wsl)
 
     internal const string ManagerCommand = "/usr/local/bin/ddistro_server";
 
+    // Update-only exit codes. Each comes with one stdout line carrying the bounded file list.
+    internal const int UpdateBlockedByTrackedEditsExitCode = 79;
+    internal const int UpdateBlockedByUntrackedFilesExitCode = 80;
+    internal const string UpdateBlockedMarker = "DDISTRO_UPDATE_BLOCKED ";
+    internal const int UpdateBlockedFileLimit = 20;
+    private const int UpdateBlockedPathLimit = 200;
+
     // The distro emits snake_case field names (schema_version, repository_state, database_present,
     // production_branch, development_branch), so the naming policy has to match or every one of them
     // silently reads back as its default.
@@ -118,7 +125,11 @@ public sealed class ServerManagementService(WslService wsl)
             var result = await wsl.RunDistroAsUserAsync("root", arguments, line =>
             {
                 LauncherLogService.Operation(line);
-                output?.Invoke(line);
+                // The blocker line is for the launcher; Git's own message already names the files.
+                if (!line.StartsWith(UpdateBlockedMarker, StringComparison.Ordinal))
+                {
+                    output?.Invoke(line);
+                }
             }, cancellationToken).ConfigureAwait(false);
             LauncherLogService.Operation($"END {operation}; exit code {result.ExitCode}");
             return result;
@@ -362,6 +373,71 @@ public sealed class ServerManagementService(WslService wsl)
         return start >= 0 && end > start ? output[start..(end + 1)] : null;
     }
 
+    /// <summary>
+    /// Reads the manager's blocked-update signal. It needs both the dedicated exit code and a
+    /// matching blocker line, so an older manager's generic exit 1 never looks like a blocker.
+    /// </summary>
+    internal static ServerUpdateBlocker? TryParseUpdateBlocker(Models.CommandResult result)
+    {
+        var expectedReason = result.ExitCode switch
+        {
+            UpdateBlockedByTrackedEditsExitCode => "tracked-changes",
+            UpdateBlockedByUntrackedFilesExitCode => "untracked-files",
+            _ => null
+        };
+        if (expectedReason is null)
+        {
+            return null;
+        }
+
+        var line = (result.StandardOutput ?? string.Empty)
+            .Split('\n')
+            .Select(text => text.TrimEnd('\r'))
+            .LastOrDefault(text => text.StartsWith(UpdateBlockedMarker, StringComparison.Ordinal));
+        if (line is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(line[UpdateBlockedMarker.Length..]);
+            var payload = document.RootElement;
+            if (payload.ValueKind != JsonValueKind.Object ||
+                !payload.TryGetProperty("schema_version", out var schema) || !schema.TryGetInt32(out var version) || version != 1 ||
+                !payload.TryGetProperty("reason", out var reason) || reason.GetString() != expectedReason ||
+                !payload.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var paths = files.EnumerateArray()
+                // A blank name cannot tell the user which file is at stake.
+                .Where(file => file.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(file.GetString()))
+                .Select(file => ShortenBlockedPath(file.GetString()!))
+                .Take(UpdateBlockedFileLimit)
+                .ToArray();
+            var total = payload.TryGetProperty("total", out var count) && count.TryGetInt32(out var value)
+                ? Math.Max(value, paths.Length)
+                : paths.Length;
+            return new ServerUpdateBlocker(
+                result.ExitCode == UpdateBlockedByTrackedEditsExitCode,
+                paths,
+                total);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    // Control characters would break the dialog layout, and a very long path would push the buttons away.
+    private static string ShortenBlockedPath(string path)
+    {
+        var visible = new string(path.Select(character => char.IsControl(character) ? '?' : character).ToArray());
+        return visible.Length <= UpdateBlockedPathLimit ? visible : "..." + visible[^(UpdateBlockedPathLimit - 3)..];
+    }
+
     internal static ServerProduct? ParseProduct(string? value)
     {
         return value?.Trim().ToLowerInvariant() switch
@@ -446,6 +522,12 @@ public sealed class ServerManagementService(WslService wsl)
         public int? Port { get; set; }
     }
 }
+
+/// <summary>
+/// Local files stopped an update before the server checkout changed. Only tracked edits can be
+/// discarded by a forced retry; untracked files have to be moved by the user.
+/// </summary>
+public sealed record ServerUpdateBlocker(bool IsTrackedEdits, IReadOnlyList<string> Files, int TotalFiles);
 
 /// <summary>Status probe outcome. A failure keeps the previous UI state instead of clearing it.</summary>
 public sealed record ServerStatusResult(ServerStatusSnapshot? Snapshot, string? Error)

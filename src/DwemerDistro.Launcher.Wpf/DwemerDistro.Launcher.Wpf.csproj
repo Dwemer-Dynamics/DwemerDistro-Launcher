@@ -8,9 +8,9 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>DwemerDistro</AssemblyName>
-    <Version>3.3.30</Version>
-    <FileVersion>3.3.30.0</FileVersion>
-    <AssemblyVersion>3.3.30.0</AssemblyVersion>
+    <Version>3.3.39</Version>
+    <FileVersion>3.3.39.0</FileVersion>
+    <AssemblyVersion>3.3.39.0</AssemblyVersion>
     <ApplicationIcon>Assets\DwemerDistro.ico</ApplicationIcon>
   </PropertyGroup>
 
@@ -19,6 +19,7 @@
     <None Remove="Assets\*.gif" />
     <None Remove="Assets\*.ico" />
     <None Remove="Assets\GameCenter\*.jpg" />
+    <None Remove="Assets\GameCenter\*.png" />
     <None Remove="Assets\Fonts\*.ttf" />
     <None Remove="Assets\Fonts\FONT-LICENSES.md" />
     <None Remove="Assets\Fonts\OFL-*.txt" />
@@ -26,6 +27,7 @@
     <Resource Include="Assets\*.gif" />
     <Resource Include="Assets\*.ico" />
     <Resource Include="Assets\GameCenter\*.jpg" />
+    <Resource Include="Assets\GameCenter\*.png" />
     <!-- Brand title faces are packaged into the assembly so the launcher never
          depends on a system-installed font. The attribution and the full OFL
          licence text are copied out as loose files rather than embedded, so they
@@ -33,6 +35,8 @@
     <Resource Include="Assets\Fonts\*.ttf" />
     <Content Include="Assets\Fonts\FONT-LICENSES.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\OFL-*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Byte-identical copy of Core's etc/dwemerdistro-components.json, so the launcher builds and probes without Core. -->
+    <EmbeddedResource Include="Resources\dwemerdistro-components.json" LogicalName="DwemerDistro.Launcher.Wpf.Resources.dwemerdistro-components.json" />
   </ItemGroup>
 
   <Target Name="GenerateLauncherSecrets" BeforeTargets="CoreCompile">
