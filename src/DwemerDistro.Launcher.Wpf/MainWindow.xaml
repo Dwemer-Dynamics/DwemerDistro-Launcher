@@ -153,19 +153,21 @@
                          saying; the resting "Update Distro" frame therefore hugs its label instead of
                          carrying the available-update text's width all day. The badge is an overlay in the
                          button's own right gutter instead of a column, so it never pulls the label off the
-                         frame's centre.
+                         frame's centre. The leading update glyph is the same one Check Update uses, so the
+                         frame reads as an action before its label is read.
                          The button stays visible and enabled whenever no other operation is running, because
                          it is also the recovery action for a distro that cannot report itself. -->
                     <Grid Margin="0,0,6,0">
                         <!-- Hidden reservation for the two longest labels - the available-update text and
                              the longest running text - each padded by the widest frame any state can ask
-                             for: 8px padding + 1px border + the 20px badge gutter, per side. The size and
+                             for: 8px padding + 1px border + the 20px badge gutter, per side, plus the
+                             18px leading glyph on the left. The size and
                              weight repeat what the button lends its label, so the reservation measures the
                              same text the same way; the face is left to inherit, exactly as the label's
                              does. Nothing here is drawn or announced; it only pins the slot width. -->
-                        <TextBlock Text="Distro Update Available" Visibility="Hidden" Margin="29,0"
+                        <TextBlock Text="Distro Update Available" Visibility="Hidden" Margin="47,0,29,0"
                                    FontSize="12" FontWeight="SemiBold" />
-                        <TextBlock Text="Quickstart Updating..." Visibility="Hidden" Margin="29,0"
+                        <TextBlock Text="Quickstart Updating..." Visibility="Hidden" Margin="47,0,29,0"
                                    FontSize="12" FontWeight="SemiBold" />
                         <Button Command="{Binding UpdateSystemCommand}"
                                 HorizontalAlignment="Right"
@@ -173,30 +175,57 @@
                                 AutomationProperties.HelpText="{Binding UpdateSystemHelpText}"
                                 ToolTip="{Binding SystemStatusHelpText}">
                             <Button.Style>
-                                <!-- Padding stays symmetric in both states, so the label is centred in the
+                                <!-- Padding stays symmetric in both states, so the content is centred in the
                                      frame either way. It only widens while the badge is up, to open the
-                                     right gutter the glyph sits in. Neutral at rest; a confirmed update
-                                     takes the copper outline and label, and a failed update a danger
-                                     outline. Unknown keeps its badge. Colour only echoes the label,
-                                     badge and status text, which still say which state it is. -->
-                                <Style TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+                                     right gutter the glyph sits in. The copper outline the mod Update
+                                     buttons rest in marks it as an action; a confirmed update fills it
+                                     with the copper the mod panels use for their primary action, and a
+                                     failed update takes a danger outline. Unknown keeps its badge. Colour
+                                     only echoes the label, badge and status text, which still say which
+                                     state it is. The fill re-states hover, pressed and disabled because a
+                                     data trigger would otherwise outrank the inherited ones. -->
+                                <Style TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.CopperOutlineButton}">
                                     <Setter Property="Padding" Value="8,6" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsSystemUpdateBadgeVisible}" Value="True">
                                             <Setter Property="Padding" Value="28,6" />
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding SystemUpdateState}" Value="UpdateAvailable">
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.Copper}" />
                                             <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
-                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.CopperStrong}" />
                                         </DataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding SystemUpdateState}" Value="UpdateAvailable" />
+                                                <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.CopperHover}" />
+                                        </MultiDataTrigger>
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding SystemUpdateState}" Value="UpdateAvailable" />
+                                                <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.CopperPressed}" />
+                                        </MultiDataTrigger>
                                         <DataTrigger Binding="{Binding SystemUpdateState}" Value="Failed">
                                             <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
                                         </DataTrigger>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                                            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                                        </Trigger>
                                     </Style.Triggers>
                                 </Style>
                             </Button.Style>
                             <Grid>
-                                <TextBlock Text="{Binding SystemUpdateButtonText}" HorizontalAlignment="Center" />
+                                <!-- Decorative: the accessible name already says what the button does. -->
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" FontWeight="Normal"
+                                               Width="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding SystemUpdateButtonText}" VerticalAlignment="Center" />
+                                </StackPanel>
                                 <!-- The negative margin moves the glyph out of the label's box and into the
                                      padding gutter, so it neither widens the content nor lands on a glyph. -->
                                 <TextBlock Text="{Binding SystemUpdateBadgeGlyph}"
@@ -640,10 +669,10 @@
                                              its Tag hands the shared style this mod's manager while the DataContext stays
                                              the view model its command lives on. -->
                                         <StackPanel Visibility="{Binding HerikaManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="CHIM Webpage" Command="{Binding OpenChimCommand}" Tag="{Binding HerikaManager}"
+                                            <Button Content="Open CHIM" Command="{Binding OpenChimCommand}" Tag="{Binding HerikaManager}"
                                                     Style="{StaticResource GameCenter.ModAction.WebpageButton}" Margin="0,0,0,12" Height="38"
-                                                    AutomationProperties.Name="CHIM Webpage"
-                                                    AutomationProperties.HelpText="Open the CHIM server webpage. If it is unavailable, the launcher can start the server first." />
+                                                    AutomationProperties.Name="Open CHIM"
+                                                    AutomationProperties.HelpText="Open the CHIM server webpage in your browser. If it is unavailable, the launcher can start the server first." />
                                             <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding HerikaManager.Branches}" SelectedItem="{Binding HerikaManager.SelectedBranch}"
                                                       Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
@@ -665,9 +694,9 @@
                                                  start WSL, so they stay usable while the server is stopped or busy. -->
                                             <HeaderedContentControl Header="Pages and logs" Style="{StaticResource GameCenter.ModAction.Group}">
                                                 <StackPanel>
-                                                    <Button Content="Nexus Page" Command="{Binding OpenChimNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,4"
-                                                            AutomationProperties.Name="CHIM Nexus Page"
-                                                            AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
+                                                    <Button Content="Download Mod" Command="{Binding OpenChimNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,4"
+                                                            AutomationProperties.Name="Download CHIM from Nexus Mods"
+                                                            AutomationProperties.HelpText="Open the Files tab of this mod's Nexus Mods page in your browser to download it. The local server is not started or contacted." />
                                                     <Button Content="Skyrim Logs" Command="{Binding OpenChimSkyrimLogsCommand}" Style="{StaticResource GameCenter.ModAction.LogRow}"
                                                             AutomationProperties.Name="Open CHIM Skyrim Logs"
                                                             AutomationProperties.HelpText="Open File Explorer with the local Skyrim AIAgent.log selected. The local server is not started or contacted." />
@@ -763,10 +792,10 @@
                                                     AutomationProperties.HelpText="Download and install this server on the selected branch. Nothing else is changed." />
                                         </StackPanel>
                                         <StackPanel Visibility="{Binding LorkhanManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="LORKHAN Webpage" Command="{Binding OpenLorkhanCommand}" Tag="{Binding LorkhanManager}"
+                                            <Button Content="Open LORKHAN" Command="{Binding OpenLorkhanCommand}" Tag="{Binding LorkhanManager}"
                                                     Style="{StaticResource GameCenter.ModAction.WebpageButton}" Margin="0,0,0,12" Height="38"
-                                                    AutomationProperties.Name="LORKHAN Webpage"
-                                                    AutomationProperties.HelpText="Open the LORKHAN server webpage. If it is unavailable, the launcher can start the server first." />
+                                                    AutomationProperties.Name="Open LORKHAN"
+                                                    AutomationProperties.HelpText="Open the LORKHAN server webpage in your browser. If it is unavailable, the launcher can start the server first." />
                                             <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding LorkhanManager.Branches}" SelectedItem="{Binding LorkhanManager.SelectedBranch}"
                                                       Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
@@ -904,10 +933,10 @@
                                              its Tag hands the shared style this mod's manager while the DataContext stays
                                              the view model its command lives on. -->
                                         <StackPanel Visibility="{Binding StobeManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="STOBE Webpage" Command="{Binding OpenStobeCommand}" Tag="{Binding StobeManager}"
+                                            <Button Content="Open STOBE" Command="{Binding OpenStobeCommand}" Tag="{Binding StobeManager}"
                                                     Style="{StaticResource GameCenter.ModAction.WebpageButton}" Margin="0,0,0,12" Height="38"
-                                                    AutomationProperties.Name="STOBE Webpage"
-                                                    AutomationProperties.HelpText="Open the STOBE server webpage. If it is unavailable, the launcher can start the server first." />
+                                                    AutomationProperties.Name="Open STOBE"
+                                                    AutomationProperties.HelpText="Open the STOBE server webpage in your browser. If it is unavailable, the launcher can start the server first." />
                                             <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding StobeManager.Branches}" SelectedItem="{Binding StobeManager.SelectedBranch}"
                                                       Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
@@ -929,9 +958,9 @@
                                                  WSL, so they stay usable while the server is stopped or busy. -->
                                             <HeaderedContentControl Header="Pages and logs" Style="{StaticResource GameCenter.ModAction.Group}">
                                                 <StackPanel>
-                                                    <Button Content="Nexus Page" Command="{Binding OpenStobeNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,4"
-                                                            AutomationProperties.Name="STOBE Nexus Page"
-                                                            AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
+                                                    <Button Content="Download Mod" Command="{Binding OpenStobeNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,4"
+                                                            AutomationProperties.Name="Download STOBE from Nexus Mods"
+                                                            AutomationProperties.HelpText="Open the Files tab of this mod's Nexus Mods page in your browser to download it. The local server is not started or contacted." />
                                                     <Button Content="STOBE Logs" Command="{Binding OpenStobeLogsCommand}" Style="{StaticResource GameCenter.ModAction.LogRow}"
                                                             AutomationProperties.Name="Open STOBE Logs"
                                                             AutomationProperties.HelpText="Open File Explorer with the local Kenshi Stobe.log selected, or RE_Kenshi_log.txt if STOBE has not written a log. The local server is not started or contacted." />
@@ -1040,10 +1069,10 @@
                                              its Tag hands the shared style this mod's manager while the DataContext stays
                                              the view model its command lives on. -->
                                         <StackPanel Visibility="{Binding DialecticManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="DIALECTIC Webpage" Command="{Binding OpenDialecticCommand}" Tag="{Binding DialecticManager}"
+                                            <Button Content="Open DIALECTIC" Command="{Binding OpenDialecticCommand}" Tag="{Binding DialecticManager}"
                                                     Style="{StaticResource GameCenter.ModAction.WebpageButton}" Margin="0,0,0,12" Height="38"
-                                                    AutomationProperties.Name="DIALECTIC Webpage"
-                                                    AutomationProperties.HelpText="Open the Dialectic server webpage. If it is unavailable, the launcher can start the server first." />
+                                                    AutomationProperties.Name="Open DIALECTIC"
+                                                    AutomationProperties.HelpText="Open the Dialectic server webpage in your browser. If it is unavailable, the launcher can start the server first." />
                                             <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding DialecticManager.Branches}" SelectedItem="{Binding DialecticManager.SelectedBranch}"
                                                       Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
@@ -1065,9 +1094,9 @@
                                                  WSL, so they stay usable while the server is stopped or busy. -->
                                             <HeaderedContentControl Header="Pages and logs" Style="{StaticResource GameCenter.ModAction.Group}">
                                                 <StackPanel>
-                                                    <Button Content="Nexus Page" Command="{Binding OpenDialecticNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,4"
-                                                            AutomationProperties.Name="DIALECTIC Nexus Page"
-                                                            AutomationProperties.HelpText="Open this mod's page on Nexus Mods in your browser. The local server is not started or contacted." />
+                                                    <Button Content="Download Mod" Command="{Binding OpenDialecticNexusCommand}" Style="{StaticResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,4"
+                                                            AutomationProperties.Name="Download DIALECTIC from Nexus Mods"
+                                                            AutomationProperties.HelpText="Open the Files tab of this mod's Nexus Mods page in your browser to download it. The local server is not started or contacted." />
                                                     <Button Content="DIALECTIC Logs" Command="{Binding OpenDialecticLogsCommand}" Style="{StaticResource GameCenter.ModAction.LogRow}"
                                                             AutomationProperties.Name="Open DIALECTIC Logs"
                                                             AutomationProperties.HelpText="Open File Explorer with the local Fallout New Vegas dialectic.log selected. The local server is not started or contacted." />
@@ -1161,10 +1190,10 @@
                                             </HeaderedContentControl>
                                         </StackPanel>
                                         <StackPanel Visibility="{Binding ReignManager.ShowInstalledActions, Converter={StaticResource BoolToVisibility}}">
-                                            <Button Content="REIGN Webpage" Command="{Binding OpenReignCommand}" Tag="{Binding ReignManager}"
+                                            <Button Content="Open REIGN" Command="{Binding OpenReignCommand}" Tag="{Binding ReignManager}"
                                                     Style="{StaticResource GameCenter.ModAction.WebpageButton}" Margin="0,0,0,12" Height="38"
-                                                    AutomationProperties.Name="REIGN Webpage"
-                                                    AutomationProperties.HelpText="Open the Reign server webpage. If it is unavailable, the launcher can start the server first." />
+                                                    AutomationProperties.Name="Open REIGN"
+                                                    AutomationProperties.HelpText="Open the Reign server webpage in your browser. If it is unavailable, the launcher can start the server first." />
                                             <TextBlock Text="Update branch" Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,5" />
                                             <ComboBox ItemsSource="{Binding ReignManager.Branches}" SelectedItem="{Binding ReignManager.SelectedBranch}"
                                                       Style="{StaticResource GameCenter.ComboBox}" HorizontalAlignment="Stretch"
@@ -1837,7 +1866,7 @@
                                     <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding WslAddressText}" TextWrapping="Wrap"
                                                AutomationProperties.LabeledBy="{Binding ElementName=WslAddressLabel}" />
                                 </Grid>
-                                <TextBlock Text="On this PC, use the mod's Webpage button. These addresses are for troubleshooting; LAN access may require additional setup."
+                                <TextBlock Text="On this PC, use the mod's Open button. These addresses are for troubleshooting; LAN access may require additional setup."
                                            Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,10" />
                                 <WrapPanel>
                                     <Button Content="Refresh" Command="{Binding RefreshConnectionDetailsCommand}"
