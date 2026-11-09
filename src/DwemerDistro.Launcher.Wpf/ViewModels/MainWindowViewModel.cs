@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -147,6 +148,8 @@ echo "CHIM-MCP installed and enabled."
 """;
 
     private readonly Dispatcher _dispatcher;
+    private readonly ConcurrentQueue<string> _pendingConsoleOutput = new();
+    private int _consoleDrainScheduled;
     private readonly DispatcherTimer _startAnimationTimer;
     private readonly DispatcherTimer _serverStatusRetryTimer;
     private readonly ProcessRunner _processRunner = new();
@@ -1180,7 +1183,7 @@ echo "CHIM-MCP installed and enabled."
             }
 
             var targetVersion = update.Version.ToString(3);
-            AppendLog($"Launcher update {targetVersion} found. Updating before first-time setup...{Environment.NewLine}", "yellow");
+            AppendLog($"Launcher update {targetVersion} found. Updating before first-time setup...{Environment.NewLine}");
             SetLauncherUpdateState(
                 $"Launcher update required before setup [{currentVersion} -> {targetVersion}]",
                 "Red",
@@ -1344,9 +1347,11 @@ echo "CHIM-MCP installed and enabled."
         IsServerStarting = true;
         StartButtonText = "Server is Starting";
         StartStartAnimation();
+        var readyAnnounced = 0;
 
         try
         {
+            AppendLog("Starting DwemerDistro..." + Environment.NewLine);
             _serverProcess = _processRunner.StartHiddenProcess(
                 "wsl.exe",
                 new[] { "-d", LauncherConstants.DistroName, "--", "/etc/start_env" },
@@ -1358,7 +1363,8 @@ echo "CHIM-MCP installed and enabled."
                     }
 
                     AppendLog(line);
-                    if (line.Contains("AIAgent.ini Network Settings:", StringComparison.OrdinalIgnoreCase))
+                    if (line.Contains("AIAgent.ini Network Settings:", StringComparison.OrdinalIgnoreCase)
+                        && Interlocked.Exchange(ref readyAnnounced, 1) == 0)
                     {
                         RunOnUi(() =>
                         {
@@ -1374,12 +1380,11 @@ echo "CHIM-MCP installed and enabled."
                 },
                 redirectInput: true);
 
-            AppendLog("DwemerDistro is starting up." + Environment.NewLine);
             await _serverProcess.WaitForExitAsync().ConfigureAwait(true);
         }
         catch (Exception ex)
         {
-            AppendLog($"An error occurred: {ex.Message}{Environment.NewLine}", "red");
+            AppendLog($"Server start failed: {ex.Message}{Environment.NewLine}", "red");
         }
         finally
         {
@@ -1796,15 +1801,15 @@ echo "CHIM-MCP installed and enabled."
             }
             else
             {
-                AppendLog("DwemerDistro process not running or already stopped." + Environment.NewLine);
+                AppendLog("DwemerDistro was not running." + Environment.NewLine);
             }
 
             await _wsl.RunWslAsync(new[] { "-t", LauncherConstants.DistroName }).ConfigureAwait(false);
-            AppendLog("DwemerDistro terminated." + Environment.NewLine);
+            AppendLog("DwemerDistro stopped." + Environment.NewLine);
         }
         catch (Exception ex)
         {
-            AppendLog($"An error occurred during stop: {ex.Message}{Environment.NewLine}", "red");
+            AppendLog($"Stop failed: {ex.Message}{Environment.NewLine}", "red");
         }
         finally
         {
@@ -1823,12 +1828,12 @@ echo "CHIM-MCP installed and enabled."
         try
         {
             await _wsl.RunWslAsync(new[] { "-t", LauncherConstants.DistroName }).ConfigureAwait(false);
-            AppendLog("DwemerDistro force terminated command sent." + Environment.NewLine);
+            AppendLog("DwemerDistro force stop sent." + Environment.NewLine);
             _processRunner.TryKill(_serverProcess);
         }
         catch (Exception ex)
         {
-            AppendLog($"An error occurred during force stop: {ex.Message}{Environment.NewLine}", "red");
+            AppendLog($"Force stop failed: {ex.Message}{Environment.NewLine}", "red");
         }
         finally
         {
@@ -1910,7 +1915,7 @@ echo "CHIM-MCP installed and enabled."
                 : string.Empty;
             if (!systemSucceeded)
             {
-                completionMessage = "System update failed. No mods were updated. Check the log above.";
+                completionMessage = $"System update failed{_systemUpdateFailure} No mods were updated.";
             }
             else if (modsFailed)
             {
@@ -1941,7 +1946,7 @@ echo "CHIM-MCP installed and enabled."
         }
         catch (Exception ex)
         {
-            var message = systemSucceeded ? "Error during mod update" : "System update failed. No mods were updated";
+            var message = systemSucceeded ? "Mod update failed" : "System update failed. No mods were updated";
             AppendLog($"{message}: {ex.Message}{Environment.NewLine}", "red");
             ReportSystemUpdateOutcome(systemSucceeded);
         }
@@ -2164,21 +2169,33 @@ echo "CHIM-MCP installed and enabled."
 
         try
         {
-            AppendLog("Starting the DwemerDistro core and shared components update." + Environment.NewLine);
+            AppendLog("Updating DwemerDistro core and shared components..." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
             var succeeded = await RunSharedDistroUpdateAsync(cancellationToken).ConfigureAwait(true);
             AppendLog(
                 succeeded
-                    ? "System update completed successfully." + Environment.NewLine
-                    : "System update may have encountered issues. Check the log above." + Environment.NewLine,
+                    ? "System update complete." + Environment.NewLine
+                    : $"System update failed{_systemUpdateFailure}" + Environment.NewLine,
                 succeeded ? "green" : "red");
             ReportSystemUpdateOutcome(succeeded);
             return succeeded;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            AppendLog("System update canceled." + Environment.NewLine);
+            ReportSystemUpdateOutcome(false);
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            AppendLog("System update stopped: it timed out or the launcher is closing." + Environment.NewLine, "red");
+            ReportSystemUpdateOutcome(false);
+            return false;
+        }
         catch (Exception ex)
         {
-            AppendLog($"Error during system update: {ex.Message}{Environment.NewLine}", "red");
+            AppendLog($"System update failed: {ex.Message}{Environment.NewLine}", "red");
             ReportSystemUpdateOutcome(false);
             return false;
         }
@@ -2235,9 +2252,7 @@ echo "CHIM-MCP installed and enabled."
         }
 
         AppendLog(
-            $"{Environment.NewLine}Launcher {currentVersion} has not updated this distro yet. " +
-            $"Updating DwemerDistro and its shared components automatically. Installed mods are not changed.{Environment.NewLine}",
-            "yellow");
+            $"Launcher {currentVersion} sync: updating DwemerDistro core and shared components. Mods are unchanged.{Environment.NewLine}");
 
         // Marshalled to the UI thread because the update drives button text, the operation lock, and
         // command states, exactly as the Components button does.
@@ -2252,9 +2267,8 @@ echo "CHIM-MCP installed and enabled."
 
         if (!succeeded)
         {
-            AppendLog(
-                "Automatic launcher update sync did not complete. It will run again on the next launch." + Environment.NewLine,
-                "yellow");
+            // RunSystemUpdateAsync already printed the failure; only the retry schedule is new here.
+            AppendLog("Launcher sync will retry on the next launch." + Environment.NewLine);
             return;
         }
 
@@ -2271,18 +2285,20 @@ echo "CHIM-MCP installed and enabled."
         {
             LauncherLogService.Startup("Launcher version sync could not record its marker.", ex);
             AppendLog(
-                "Automatic launcher update sync finished, but it could not be recorded, so it runs again on the next launch." +
-                Environment.NewLine,
+                "Launcher sync finished but could not be recorded; it will run again on the next launch." + Environment.NewLine,
                 "yellow");
             return;
         }
 
+        if (write.Succeeded)
+        {
+            LauncherLogService.Startup($"Launcher version sync recorded {currentVersion}.");
+            return;
+        }
+
         AppendLog(
-            write.Succeeded
-                ? $"Automatic launcher update sync finished. Launcher {currentVersion} will not repeat it." + Environment.NewLine
-                : "Automatic launcher update sync finished, but it could not be recorded, so it runs again on the next launch." +
-                  Environment.NewLine,
-            write.Succeeded ? "green" : "yellow");
+            "Launcher sync finished but could not be recorded; it will run again on the next launch." + Environment.NewLine,
+            "yellow");
     }
 
     /// <summary>
@@ -2592,29 +2608,48 @@ echo "CHIM-MCP installed and enabled."
         var bashCommand = BuildSystemUpdateCommand();
 
         var sharedComponentsStarted = false;
+        var stage = UpdateStagePreparing;
+        string? evidence = null;
+        _systemUpdateFailure = null;
         LauncherLogService.Operation("START distro and shared components update");
         try
         {
+            // Raw output always goes to the operations log; the console shows only core and shared
+            // component steps, minus known routine apt/pip/git chatter. Stages come from explicit
+            // markers, never from output wording.
             _distroUpdateTask = DistroUpdateRunner.RunAsync(_wsl, bashCommand, line =>
             {
                 LauncherLogService.Operation(line);
-                if (line.Contains(SharedComponentsMarker, StringComparison.OrdinalIgnoreCase))
+                var marker = ParseUpdateStageMarker(line);
+                if (marker is not null)
                 {
-                    sharedComponentsStarted = true;
-                    AppendLog(Environment.NewLine + "Shared components update" + Environment.NewLine, "green");
+                    stage = marker;
+                    evidence = null;
+                    // update_gws prints its own one-line title, so the marker itself stays silent.
+                    sharedComponentsStarted |= marker == UpdateStageShared;
                     return;
                 }
 
-                AppendLog(line);
+                evidence = SelectUpdateFailureEvidence(evidence, line);
+                if (ShowUpdateStageOutput(stage) && !ConsoleOutputFilter.IsRoutineLine(line))
+                {
+                    AppendLog(line);
+                }
             }, updateCts.Token);
             var result = await _distroUpdateTask.ConfigureAwait(false);
 
-            LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; shared components started={sharedComponentsStarted}");
-            return result.Succeeded && sharedComponentsStarted;
+            LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; stage {stage}; shared components started={sharedComponentsStarted}");
+            var succeeded = result.Succeeded && sharedComponentsStarted;
+            if (!succeeded)
+            {
+                _systemUpdateFailure = DescribeSystemUpdateFailure(stage, result.ExitCode, evidence);
+            }
+
+            return succeeded;
         }
         catch (Exception ex)
         {
-            LauncherLogService.Operation($"END distro and shared components update; no exit code: {ex.GetType().Name}");
+            LauncherLogService.Operation($"END distro and shared components update; no exit code: {ex.GetType().Name}; stage {stage}");
             throw;
         }
     }
@@ -2628,6 +2663,7 @@ echo "CHIM-MCP installed and enabled."
             "GIT_CONFIG_KEY_1=http.extraHeader GIT_CONFIG_VALUE_1= " +
             "GIT_CONFIG_KEY_2=http.https://github.com/.extraheader GIT_CONFIG_VALUE_2= && " +
             "cd /home/dwemer/dwemerdistro && " +
+            BuildUpdateStageMarker(UpdateStageDownload) +
             "if [ ! -d .git ]; then git init; fi && " +
             "if [ -f /home/dwemer/.gitconfig ] && ! command -v git-credential-manager >/dev/null 2>&1 && " +
             "git config --file /home/dwemer/.gitconfig --get-all credential.helper 2>/dev/null | grep -Fxq manager; then " +
@@ -2635,8 +2671,10 @@ echo "CHIM-MCP installed and enabled."
             $"if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin {DistroRepositoryUrl}; " +
             $"else git remote add origin {DistroRepositoryUrl}; fi && " +
             "git -c credential.helper= fetch origin && git reset --hard origin/main && " +
+            BuildUpdateStageMarker(UpdateStageCore) +
             "chmod +x update.sh && echo 'dwemer' | sudo -S -p '' ./update.sh && " +
             $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand() + " && " +
+            BuildUpdateStageMarker(UpdateStageRelease) +
             BuildSystemReleaseMarkerWriteCommand();
     }
 
@@ -5940,9 +5978,7 @@ fi
         if (serverKey == "lorkhan") LorkhanManager.BeginOperation("Rolling back LorkhanServer...");
         try
         {
-            AppendLog($"Starting {config.DisplayName} rollback..." + Environment.NewLine);
-            AppendLog($"Target: {target.Label}{Environment.NewLine}");
-            AppendLog("Warning: DB/config compatibility can vary across versions." + Environment.NewLine, "yellow");
+            AppendLog($"Rolling back {config.DisplayName} to {target.Label}..." + Environment.NewLine);
 
             var stashMessage = $"Auto-stash before rollback {DateTime.Now:yyyy-MM-dd HH:mm:ss}";
             var verifyRef = $"{target.Ref}^{{commit}}";
@@ -5982,7 +6018,7 @@ fi
 
             if (!result.Succeeded)
             {
-                AppendLog("Rollback failed. Review output above for details." + Environment.NewLine, "red");
+                AppendLog($"{config.DisplayName} rollback failed (exit code {result.ExitCode}). Details are above." + Environment.NewLine, "red");
                 return;
             }
 
@@ -5993,7 +6029,7 @@ fi
                 .ElementAtOrDefault(1)
                 ?.Trim();
 
-            AppendLog($"{config.DisplayName} rollback completed successfully. HEAD: {rolledBackSha ?? "unknown"}{Environment.NewLine}", "green");
+            AppendLog($"{config.DisplayName} rolled back to {rolledBackSha ?? "the selected version"}.{Environment.NewLine}", "green");
             RunOnUi(rollbackWindow.Close);
 
             QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
@@ -6002,7 +6038,7 @@ fi
         }
         catch (Exception ex)
         {
-            AppendLog($"Rollback error: {ex.Message}{Environment.NewLine}", "red");
+            AppendLog($"{config.DisplayName} rollback failed: {ex.Message}{Environment.NewLine}", "red");
         }
         finally
         {
@@ -6405,21 +6441,82 @@ fi
         });
     }
 
+    // All console writes share one FIFO queue so UI-thread and background messages keep call order.
     private void AppendLog(string text, string? tag = null)
     {
-        var sanitized = SanitizeLogText(text);
+        var sanitized = SanitizeLogText(FormatConsoleLevel(text, tag));
         if (string.IsNullOrEmpty(sanitized))
         {
             return;
         }
 
+        _pendingConsoleOutput.Enqueue(sanitized);
         if (_dispatcher.CheckAccess())
         {
-            AppendSanitizedLog(sanitized);
+            DrainPendingConsoleOutput();
             return;
         }
 
-        _ = _dispatcher.BeginInvoke(() => AppendSanitizedLog(sanitized), DispatcherPriority.Background);
+        if (Interlocked.Exchange(ref _consoleDrainScheduled, 1) == 0)
+        {
+            _ = _dispatcher.BeginInvoke(DrainPendingConsoleOutput, DispatcherPriority.Background);
+        }
+    }
+
+    /// <summary>One-line Components page results for the main console.</summary>
+    internal void ReportComponentMessage(string message, bool isError = false)
+    {
+        AppendLog(message + Environment.NewLine, isError ? "red" : null);
+    }
+
+    // For mod and custom-mod operations whose raw output is already in the operations log: known
+    // routine apt/pip/git lines are skipped. ProcessRunner lines already end in a newline; dialog
+    // status lines do not, so one is added only when missing.
+    private void AppendOperationOutput(string line)
+    {
+        if (ConsoleOutputFilter.IsRoutineLine(line))
+        {
+            return;
+        }
+
+        AppendLog(line.EndsWith('\n') ? line : line + Environment.NewLine);
+    }
+
+    private void DrainPendingConsoleOutput()
+    {
+        Interlocked.Exchange(ref _consoleDrainScheduled, 0);
+        var builder = new StringBuilder();
+        while (_pendingConsoleOutput.TryDequeue(out var chunk))
+        {
+            builder.Append(chunk);
+        }
+
+        if (builder.Length > 0)
+        {
+            AppendSanitizedLog(builder.ToString());
+        }
+    }
+
+    // Console colors are not rendered, so warning and error tags become readable text prefixes.
+    internal static string FormatConsoleLevel(string text, string? tag)
+    {
+        var body = text.TrimStart('\r', '\n');
+        var prefix = tag switch
+        {
+            "yellow" => "Warning: ",
+            "red" => "Error: ",
+            _ => ""
+        };
+        var content = body.TrimStart(' ');
+        if (prefix.Length == 0
+            || content.StartsWith("Warning", StringComparison.OrdinalIgnoreCase)
+            || content.StartsWith("Error", StringComparison.OrdinalIgnoreCase))
+        {
+            return body;
+        }
+
+        // Indented detail lines keep their indentation ahead of the prefix.
+        return body[..(body.Length - content.Length)] + prefix + content;
     }
 
     private void AppendSanitizedLog(string sanitized)

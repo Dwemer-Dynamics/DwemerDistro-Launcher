@@ -32,6 +32,8 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     private static readonly object QuickstartInstallLogLock = new();
     private static readonly string QuickstartInstallLogPath =
         Path.Combine(AppContext.BaseDirectory, "Logs", "quickstart-install.log");
+    private static readonly string QuickstartPreviousInstallLogPath =
+        Path.Combine(AppContext.BaseDirectory, "Logs", "quickstart-install.previous.log");
 
     private readonly MainWindowViewModel _mainWindowViewModel;
     private readonly Dispatcher _dispatcher;
@@ -168,7 +170,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     public string LocalAiStatus
     {
         get => _localAiStatus;
-        private set => SetProperty(ref _localAiStatus, value);
+        private set => SetProperty(ref _localAiStatus, DiagnosticEvidenceService.Sanitize(value));
     }
 
     public FirstRunSetupViewModel(MainWindowViewModel mainWindowViewModel)
@@ -727,7 +729,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             SetupInstallDetailText = string.Empty;
             IsInstallingSetup = true;
             AppendSetupLog($"Quickstart install log: {QuickstartInstallLogPath}{Environment.NewLine}");
-            AppendSetupLog("Console output is summarized here to keep the launcher responsive. The full apt and pip output is saved in the quickstart install log." + Environment.NewLine);
+            AppendSetupLog("Showing a summary; full apt and pip output is in the log above." + Environment.NewLine);
             AppendSetupLog($"Recommended path: {_selectedPreset.Title}{Environment.NewLine}");
             try
             {
@@ -773,10 +775,10 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 var updated = await _mainWindowViewModel.UpdateDistroFromQuickstartAsync().ConfigureAwait(true);
                 _quickstartDistroUpdated = updated;
                 SetupInstallProgress = updated ? 100 : 0;
-                SetupInstallProgressText = updated ? "Distro update complete." : "Distro update needs attention.";
+                SetupInstallProgressText = updated ? "Distro update complete." : "Distro update did not complete.";
                 AppendSetupLog(updated
                     ? "Distro update completed. Refreshed quickstart checks." + Environment.NewLine
-                    : "Distro update reported issues. Check the main launcher log." + Environment.NewLine);
+                    : "Distro update did not complete (busy, canceled or failed); the reason is in the main launcher console." + Environment.NewLine);
                 await RefreshSetupCoreAsync().ConfigureAwait(true);
                 await RefreshProductsCoreAsync().ConfigureAwait(true);
             }
@@ -1543,6 +1545,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
         }
 
         AppendQuickstartInstallLog(text);
+        // ProcessRunner delivers whole lines and synthetic messages end in a newline, so no line is split here.
         var visibleText = BuildVisibleSetupLogAppend(text);
         if (string.IsNullOrEmpty(visibleText))
         {
@@ -1617,6 +1620,12 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             Directory.CreateDirectory(Path.GetDirectoryName(QuickstartInstallLogPath)!);
             lock (QuickstartInstallLogLock)
             {
+                // A retry keeps the previous attempt (one rotation) so its failure evidence survives.
+                if (File.Exists(QuickstartInstallLogPath) && new FileInfo(QuickstartInstallLogPath).Length > 0)
+                {
+                    File.Move(QuickstartInstallLogPath, QuickstartPreviousInstallLogPath, overwrite: true);
+                }
+
                 File.WriteAllText(
                     QuickstartInstallLogPath,
                     $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Quickstart install log started.{Environment.NewLine}");
@@ -1635,7 +1644,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             Directory.CreateDirectory(Path.GetDirectoryName(QuickstartInstallLogPath)!);
             lock (QuickstartInstallLogLock)
             {
-                File.AppendAllText(QuickstartInstallLogPath, text);
+                File.AppendAllText(QuickstartInstallLogPath, DiagnosticEvidenceService.Sanitize(text));
             }
         }
         catch
@@ -1746,7 +1755,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                visibleTail;
     }
 
-    private static string BuildVisibleSetupLogAppend(string text)
+    internal static string BuildVisibleSetupLogAppend(string text)
     {
         var builder = new StringBuilder();
         var normalized = text.Replace("\r", "\n");
@@ -1758,43 +1767,14 @@ public sealed class FirstRunSetupViewModel : ObservableObject
                 continue;
             }
 
-            builder.AppendLine(line);
+            builder.AppendLine(DiagnosticEvidenceService.Sanitize(line));
         }
 
         return builder.ToString();
     }
 
-    private static bool IsVerboseInstallerLine(string line)
-    {
-        string[] verbosePrefixes =
-        [
-            "(Reading database",
-            "Selecting previously unselected package",
-            "Preparing to unpack",
-            "Unpacking ",
-            "Setting up ",
-            "Processing triggers for",
-            "Reading package lists",
-            "Building dependency tree",
-            "Reading state information",
-            "Hit:",
-            "Get:",
-            "Ign:",
-            "Fetched ",
-            "The following ",
-            "The following additional packages",
-            "Suggested packages:",
-            "Recommended packages:",
-            "After this operation",
-            "Need to get",
-            "Requirement already satisfied:",
-            "Collecting ",
-            "Downloading ",
-            "Installing collected packages:"
-        ];
-
-        return verbosePrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-    }
+    // Quickstart shares the conservative routine-output rules used by update and mod operations.
+    internal static bool IsVerboseInstallerLine(string line) => ConsoleOutputFilter.IsRoutineLine(line);
 
     private void ProductChoice_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {

@@ -172,7 +172,7 @@ public sealed partial class MainWindowViewModel
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { lines.Add("Last recorded lifecycle event: [log unreadable]"); summary.Problems.Add("Launcher lifecycle log unreadable"); }
-        foreach (var name in new[] { "launcher-startup.log", "launcher-update.log", "quickstart-install.log", "launcher-operations.log", "launcher-operations.previous.log" })
+        foreach (var name in new[] { "launcher-startup.log", "launcher-update.log", "quickstart-install.log", "quickstart-install.previous.log", "launcher-operations.log", "launcher-operations.previous.log" })
             DiagnosticEvidenceService.AddNewestLog(lines, name, [Path.Combine(AppContext.BaseDirectory, "Logs", name)], summary: summary);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));

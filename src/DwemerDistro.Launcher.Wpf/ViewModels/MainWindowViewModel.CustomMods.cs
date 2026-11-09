@@ -674,7 +674,7 @@ public sealed partial class MainWindowViewModel
         bool installed;
         try
         {
-            var dialog = new AddCustomModWindow(_customModService, line => AppendLog(line + Environment.NewLine))
+            var dialog = new AddCustomModWindow(_customModService, AppendOperationOutput)
             {
                 Owner = Application.Current?.MainWindow
             };
@@ -764,7 +764,7 @@ public sealed partial class MainWindowViewModel
         AppendLog($"{label} custom mod {mod.Name}.{Environment.NewLine}");
         try
         {
-            var result = await operation(mod.Id, line => AppendLog(line + Environment.NewLine), CancellationToken.None)
+            var result = await operation(mod.Id, AppendOperationOutput, CancellationToken.None)
                 .ConfigureAwait(true);
             CustomModsStatusText = result.Succeeded
                 ? $"{label} finished."
@@ -838,7 +838,7 @@ public sealed partial class MainWindowViewModel
         CustomModBranchCheckResult review;
         try
         {
-            review = await _customModService.CheckBranchesAsync(mod.Id, target, line => AppendLog(line + Environment.NewLine))
+            review = await _customModService.CheckBranchesAsync(mod.Id, target, AppendOperationOutput)
                 .ConfigureAwait(true);
         }
         catch (Exception ex)

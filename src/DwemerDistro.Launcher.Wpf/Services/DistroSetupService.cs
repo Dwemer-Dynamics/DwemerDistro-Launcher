@@ -567,7 +567,6 @@ PY
             }
 
             output?.Invoke($"Installing {component.Title}..." + Environment.NewLine);
-            output?.Invoke("Running in non-interactive mode with a 2 hour safety timeout." + Environment.NewLine);
             progress?.Invoke(new SetupInstallProgress(
                 completedComponents,
                 totalComponents,
@@ -909,10 +908,53 @@ PY
             .ToArray();
     }
 
-    private static string BuildCommandError(Models.CommandResult result)
+    // Errors and warnings always stay visible, even when they share a prefix with routine apt/pip output.
+    internal static bool IsInstallerProblemLine(string line)
     {
-        var text = (result.StandardError + result.StandardOutput).Trim();
-        return string.IsNullOrWhiteSpace(text) ? $"Exit code {result.ExitCode}" : text;
+        string[] problemPrefixes = ["E:", "W:", "Err:", "ERROR", "error:", "fatal:", "dpkg: error", "Traceback"];
+        string[] problemText =
+        [
+            "unmet dependencies",
+            "NO_PUBKEY",
+            "GPG error",
+            "signatures couldn't be verified",
+            "not signed",
+            "is not signed",
+            "Permission denied",
+            "Unable to",
+            "Could not",
+            "failed"
+        ];
+        return problemPrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            || problemText.Any(text => line.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private const int CommandErrorContextLines = 6;
+    private const int CommandErrorContextChars = 800;
+
+    // Output was already streamed to the install log, so the error carries only a short, redacted tail.
+    internal static string BuildCommandError(Models.CommandResult result)
+    {
+        var source = string.IsNullOrWhiteSpace(result.StandardError) ? result.StandardOutput : result.StandardError;
+        var lines = (source ?? string.Empty)
+            .Replace("\r", "\n")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var problems = lines.Where(IsInstallerProblemLine).ToArray();
+        var context = (problems.Length > 0 ? problems : lines).TakeLast(CommandErrorContextLines).ToArray();
+        var summary = $"exit code {result.ExitCode}";
+        if (context.Length == 0)
+        {
+            return summary + ".";
+        }
+
+        // Whole lines are redacted before the character limit, so a cut never exposes part of a secret.
+        var text = DiagnosticEvidenceService.Sanitize(string.Join(Environment.NewLine, context));
+        if (text.Length > CommandErrorContextChars)
+        {
+            text = "..." + text[^CommandErrorContextChars..];
+        }
+
+        return $"{summary}. Last output:{Environment.NewLine}{text}{Environment.NewLine}Full output is in the install log.";
     }
 }
 

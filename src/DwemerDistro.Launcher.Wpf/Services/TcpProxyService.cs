@@ -13,6 +13,13 @@ public sealed class TcpProxyService
     private CancellationTokenSource? _cts;
     private TcpListener? _listener;
     private Task? _acceptLoopTask;
+    private readonly object _failureLock = new();
+    private string? _lastFailure;
+    private DateTime _lastFailureShownUtc;
+    private int _suppressedFailures;
+
+    // Repeated identical connection failures are counted, not reprinted, for this window.
+    internal static readonly TimeSpan FailureRepeatWindow = TimeSpan.FromSeconds(60);
 
     public TcpProxyService(int listenPort, string name,
         Func<CancellationToken, Task<IPEndPoint?>> targetResolver, Action<string> log)
@@ -33,7 +40,7 @@ public sealed class TcpProxyService
         _cts = new CancellationTokenSource();
         _listener = new TcpListener(IPAddress.Loopback, _listenPort);
         _listener.Start(16);
-        _log($"{_name} proxy listening on 127.0.0.1:{_listenPort}{Environment.NewLine}");
+        LauncherLogService.Startup($"{_name} proxy listening on 127.0.0.1:{_listenPort}");
         _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
     }
 
@@ -63,7 +70,7 @@ public sealed class TcpProxyService
         _listener = null;
         _cts.Dispose();
         _cts = null;
-        _log($"{_name} proxy stopped.{Environment.NewLine}");
+        LauncherLogService.Startup($"{_name} proxy stopped.");
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -103,7 +110,7 @@ public sealed class TcpProxyService
         var target = await _targetResolver(cancellationToken).ConfigureAwait(false);
         if (target is null)
         {
-            _log($"{_name} proxy: Could not get WSL IP.{Environment.NewLine}");
+            LogFailure("could not get the DwemerDistro address");
             return;
         }
 
@@ -111,6 +118,7 @@ public sealed class TcpProxyService
         try
         {
             await server.ConnectAsync(target, cancellationToken).ConfigureAwait(false);
+            ResetFailures();
             await using var clientStream = client.GetStream();
             await using var serverStream = server.GetStream();
 
@@ -122,8 +130,48 @@ public sealed class TcpProxyService
         {
             if (!cancellationToken.IsCancellationRequested)
             {
-                _log($"{_name} proxy: Error connecting to target: {ex.Message}{Environment.NewLine}");
+                LogFailure($"connection to DwemerDistro failed: {ex.Message}");
             }
+        }
+    }
+
+    private void LogFailure(string reason)
+    {
+        var message = FormatFailure(reason, DateTime.UtcNow);
+        if (message is not null)
+        {
+            _log(message + Environment.NewLine);
+        }
+    }
+
+    // Returns the console line for a failure, or null while an identical failure is being throttled.
+    internal string? FormatFailure(string reason, DateTime nowUtc)
+    {
+        lock (_failureLock)
+        {
+            if (string.Equals(reason, _lastFailure, StringComparison.Ordinal)
+                && nowUtc - _lastFailureShownUtc < FailureRepeatWindow)
+            {
+                _suppressedFailures++;
+                return null;
+            }
+
+            var repeated = string.Equals(reason, _lastFailure, StringComparison.Ordinal) && _suppressedFailures > 0
+                ? $" (repeated {_suppressedFailures + 1} times)"
+                : "";
+            _lastFailure = reason;
+            _lastFailureShownUtc = nowUtc;
+            _suppressedFailures = 0;
+            return $"Warning: {_name} proxy {reason}{repeated}";
+        }
+    }
+
+    private void ResetFailures()
+    {
+        lock (_failureLock)
+        {
+            _lastFailure = null;
+            _suppressedFailures = 0;
         }
     }
 }
