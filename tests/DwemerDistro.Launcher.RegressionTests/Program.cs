@@ -586,9 +586,9 @@ try
         "Each mod webpage button must open that product's local web UI, not its Nexus page.");
     Assert(gameCatalog.All(game => MainWindowViewModel.ResolveServerWebPageUrl(game.Key) is not null),
         "Every game profile on the rail must resolve to a webpage URL.");
-    Assert(MainWindowViewModel.ResolveNexusPageUrl("CHIM") == "https://www.nexusmods.com/skyrimspecialedition/mods/126330"
-           && MainWindowViewModel.ResolveNexusPageUrl("STOBE") == "https://www.nexusmods.com/kenshi/mods/1891"
-           && MainWindowViewModel.ResolveNexusPageUrl("DIALECTIC") == "https://www.nexusmods.com/newvegas/mods/99233",
+    Assert(MainWindowViewModel.ResolveNexusPageUrl("CHIM") == "https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files"
+           && MainWindowViewModel.ResolveNexusPageUrl("STOBE") == "https://www.nexusmods.com/kenshi/mods/1891?tab=files"
+           && MainWindowViewModel.ResolveNexusPageUrl("DIALECTIC") == "https://www.nexusmods.com/newvegas/mods/99233?tab=files",
         "Each Nexus button must open that mod's own Nexus page.");
     Assert(gameCatalog.Where(game => game.Key is not ("REIGN" or "LORKHAN")).All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null)
            && MainWindowViewModel.ResolveNexusPageUrl("REIGN") is null,

@@ -24,12 +24,13 @@ public static class LauncherConstants
     public const string CustomModCreationGuideUrl = "https://github.com/Dwemer-Dynamics/Kagrenac";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";
     public const string PatreonUrl = "https://www.patreon.com/DwemerDynamics";
+    public const string PloofyUrl = "https://ploofy.ai/";
     public const string ChimServerUiUrl = "http://127.0.0.1:8081/HerikaServer/ui/";
     public const string StobeServerUiUrl = "http://127.0.0.1:8083/StobeServer/ui/";
     public const string DialecticServerUiUrl = "http://127.0.0.1:8088/DialecticServer/ui/";
 
     // Public mod pages. These are plain external links: they never probe or start WSL.
-    public const string ChimNexusUrl = "https://www.nexusmods.com/skyrimspecialedition/mods/126330";
-    public const string StobeNexusUrl = "https://www.nexusmods.com/kenshi/mods/1891";
-    public const string DialecticNexusUrl = "https://www.nexusmods.com/newvegas/mods/99233";
+    public const string ChimNexusUrl = "https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files";
+    public const string StobeNexusUrl = "https://www.nexusmods.com/kenshi/mods/1891?tab=files";
+    public const string DialecticNexusUrl = "https://www.nexusmods.com/newvegas/mods/99233?tab=files";
 }

@@ -292,6 +292,7 @@ echo "CHIM-MCP installed and enabled."
         OpenCustomModCreationGuideCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.CustomModCreationGuideUrl));
         OpenDiscordCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.DiscordUrl));
         OpenPatreonCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.PatreonUrl));
+        OpenPloofyCommand = new RelayCommand(() => _processRunner.OpenExternalUrl(LauncherConstants.PloofyUrl));
 
         OpenPiperVoicesFolderCommand = new RelayCommand(() => OpenFolder(@"\\wsl.localhost\DwemerAI4Skyrim3\home\dwemer\piper\voices"), CanAccessDistro);
 
@@ -834,6 +835,7 @@ echo "CHIM-MCP installed and enabled."
     public RelayCommand OpenCustomModCreationGuideCommand { get; }
     public RelayCommand OpenDiscordCommand { get; }
     public RelayCommand OpenPatreonCommand { get; }
+    public RelayCommand OpenPloofyCommand { get; }
     public RelayCommand OpenPiperVoicesFolderCommand { get; }
     public RelayCommand OpenTerminalCommand { get; }
     public RelayCommand ViewMemoryUsageCommand { get; }

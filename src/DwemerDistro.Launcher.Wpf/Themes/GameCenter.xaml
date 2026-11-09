@@ -17,9 +17,22 @@
     <SolidColorBrush x:Key="GameCenter.GoldSoft" Color="#C9A227" />
     <SolidColorBrush x:Key="GameCenter.GoldTint" Color="#3B3116" />
     <SolidColorBrush x:Key="GameCenter.GoldTintPressed" Color="#2A230F" />
+    <!-- Dark copper: the one brand-neutral accent for navigation, selection, progress and the mod
+         action panel. Edge and Strong carry the hover, pressed and selected outlines, so the brighter
+         tones only ever appear as thin lines; labels stay white on every copper fill. The Gold set
+         above stays defined for the views that still use it. -->
+    <SolidColorBrush x:Key="GameCenter.Copper" Color="#8A3A12" />
+    <SolidColorBrush x:Key="GameCenter.CopperHover" Color="#9E4516" />
+    <SolidColorBrush x:Key="GameCenter.CopperPressed" Color="#6E2E0E" />
+    <SolidColorBrush x:Key="GameCenter.CopperEdge" Color="#C4642A" />
+    <SolidColorBrush x:Key="GameCenter.CopperStrong" Color="#E2803F" />
+    <SolidColorBrush x:Key="GameCenter.CopperTint" Color="#3A2418" />
+    <SolidColorBrush x:Key="GameCenter.CopperTintPressed" Color="#2A1A11" />
     <SolidColorBrush x:Key="GameCenter.Success" Color="#2E7D39" />
     <SolidColorBrush x:Key="GameCenter.SuccessHover" Color="#3E914A" />
     <SolidColorBrush x:Key="GameCenter.SuccessPressed" Color="#23602C" />
+    <!-- Hover and pressed outline on green fills, so green never carries an orange edge. -->
+    <SolidColorBrush x:Key="GameCenter.SuccessEdge" Color="#7FD88A" />
     <SolidColorBrush x:Key="GameCenter.Danger" Color="#B31717" />
     <SolidColorBrush x:Key="GameCenter.DangerHover" Color="#4C1212" />
     <SolidColorBrush x:Key="GameCenter.DangerPressed" Color="#340C0C" />
@@ -235,11 +248,11 @@
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -251,11 +264,11 @@
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.AccentHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.AccentPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -572,11 +585,11 @@
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
@@ -750,19 +763,257 @@
         <Setter Property="Margin" Value="0,0,0,6" />
     </Style>
 
+    <!-- Mod action panel tiers. One action, one colour, on every mod: the panel's buttons never
+         carry a brand colour, which stays in the artwork, rail emblem and title. The copper fill is
+         the one primary action of the current state (Webpage while current, Install, Repair, a
+         custom mod's dashboard); the copper outline is the same family without the fill. Hover and
+         pressed each move two channels, disabled drops to the neutral muted treatment every other
+         tier uses, and the base template's white focus ring is kept, so focus reads on copper,
+         green, red and transparent alike. -->
+    <Style x:Key="GameCenter.ModAction.PrimaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Copper}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperHover}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.CopperOutlineButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Installed mod Webpage, shared by every official mod. Copper fill while the server is
+         current; when the mod's own version check confirms an update (IsUpdateAvailable), Update
+         below takes the emphasis and this drops to the copper outline in place, so nothing moves.
+         The button's DataContext stays the main view model its command lives on; its Tag carries
+         that mod's ServerManagerItemViewModel, which is all the style reads. -->
+    <Style x:Key="GameCenter.ModAction.WebpageButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.PrimaryButton}">
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding Tag.IsUpdateAvailable, RelativeSource={RelativeSource Self}}" Value="True">
+                <Setter Property="Background" Value="Transparent" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Tag.IsUpdateAvailable, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperTint}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Tag.IsUpdateAvailable, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperTintPressed}" />
+            </MultiDataTrigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Installed mod Update, shared by every official mod. Copper outline at rest; the shared
+         success green only when IsUpdateAvailable confirms the selected branch is ahead, never the
+         yellow status colour, which also stands for an unknown or missing version. Hover and pressed
+         darken the green, as Start Server does, so the white label stays above 4.5:1. The DataContext
+         of each of these buttons is its ServerManagerItemViewModel. -->
+    <Style x:Key="GameCenter.ModAction.UpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.CopperOutlineButton}">
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding IsUpdateAvailable}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessEdge}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessEdge}" />
+            </MultiDataTrigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Local game log action: a quiet full-width row with a document glyph, muted until hovered or
+         focused, so logs never compete with the panel's buttons. Content stays the plain label
+         string; hover, pressed, focus and disabled come from the base template. -->
+    <Style x:Key="GameCenter.ModAction.LogRow" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+        <Setter Property="Height" Value="30" />
+        <Setter Property="MinHeight" Value="30" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="ContentTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE8A5;" FontFamily="Segoe MDL2 Assets" FontSize="12" FontWeight="Normal"
+                                   Margin="0,0,9,0" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    </Grid>
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Quiet sentence-case group heading with a hairline to the right ("Pages and logs",
+         "Manage"). Decorative only: it takes no focus or tab stop and has no automation peer, so the
+         tab order and screen-reader walk are those of the buttons inside it. -->
+    <Style x:Key="GameCenter.ModAction.Group" TargetType="HeaderedContentControl">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Margin" Value="0,14,0,0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="HeaderedContentControl">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Header, RelativeSource={RelativeSource TemplatedParent}}"
+                                       Style="{StaticResource GameCenter.ModAction.GroupLabel}" Margin="0" VerticalAlignment="Center" />
+                            <Border Grid.Column="1" Height="1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                    Background="{DynamicResource GameCenter.Border}" SnapsToDevicePixels="True" />
+                        </Grid>
+                        <ContentPresenter />
+                    </StackPanel>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="GameCenter.SuccessButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
         <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessEdge}" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessEdge}" />
             </Trigger>
         </Style.Triggers>
+    </Style>
+
+    <!-- Ploofy.ai panel: mirrors the dashboard's .dashboard-ploofy frame (dark #0f0e0e, 14px corners,
+         cyan hairline and glow that brighten on hover and focus); the whole panel is the link. -->
+    <Style x:Key="GameCenter.PloofyLinkButton" TargetType="Button">
+        <Setter Property="Background" Value="#0F0E0E" />
+        <Setter Property="BorderBrush" Value="#4000E5FF" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="14">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#00E5FF" ShadowDepth="0" BlurRadius="18" Opacity="0.12" />
+                            </Border.Effect>
+                        </Border>
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center" />
+                        <Border x:Name="FocusRing"
+                                Margin="-4"
+                                CornerRadius="18"
+                                BorderBrush="#00E5FF"
+                                BorderThickness="2"
+                                Visibility="Collapsed"
+                                IsHitTestVisible="False" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Border" Property="BorderBrush" Value="#8000E5FF" />
+                            <Setter TargetName="Border" Property="Effect">
+                                <Setter.Value>
+                                    <DropShadowEffect Color="#00E5FF" ShadowDepth="0" BlurRadius="22" Opacity="0.22" />
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Border" Property="BorderBrush" Value="#8000E5FF" />
+                            <Setter TargetName="Border" Property="Effect">
+                                <Setter.Value>
+                                    <DropShadowEffect Color="#00E5FF" ShadowDepth="0" BlurRadius="22" Opacity="0.22" />
+                                </Setter.Value>
+                            </Setter>
+                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!-- Launcher self-update remains green when actionable and turns neutral when current. -->
@@ -807,12 +1058,12 @@
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.DangerHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
             </Trigger>
             <Trigger Property="IsEnabled" Value="False">
@@ -899,7 +1150,7 @@
 
     <!-- The header's one Start / Stop runtime button. Green while it starts the server; a Tag of "Stop"
          turns it red while it stops one that is starting or running. Both fills keep the near-white
-         label in every state: hover and press darken the fill and take the gold outline rather than
+         label in every state: hover and press darken the fill and take a lighter outline rather than
          lightening it, so the label stays above 4.5:1. Disabled drops to the neutral raised tier, as
          the other filled buttons do. The label always says which action it is, so colour is never
          the only signal, and high contrast swaps to the system button colours; those triggers come
@@ -912,11 +1163,11 @@
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessEdge}" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessEdge}" />
             </Trigger>
             <Trigger Property="Tag" Value="Stop">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.Danger}" />
@@ -928,7 +1179,7 @@
                     <Condition Property="IsMouseOver" Value="True" />
                 </MultiTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.DangerHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiTrigger>
             <MultiTrigger>
                 <MultiTrigger.Conditions>
@@ -936,7 +1187,7 @@
                     <Condition Property="IsPressed" Value="True" />
                 </MultiTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiTrigger>
             <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
@@ -980,7 +1231,7 @@
     </Style>
 
     <!-- Dark action menus. Items keep the button type system: Segoe UI
-         SemiBold 12 on the raised panel, a gold-soft outline on the highlighted (hovered or arrow-key)
+         SemiBold 12 on the raised panel, a copper outline on the highlighted (hovered or arrow-key)
          item, and the muted treatment when an item's command cannot run. The label's TextBlock style
          binds to the item so the app-wide TextBlock style never repaints a disabled item white.
          High contrast swaps to the system menu colours. -->
@@ -1015,7 +1266,7 @@
                         </DataTrigger>
                         <Trigger Property="IsHighlighted" Value="True">
                             <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
                             <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
@@ -1208,12 +1459,12 @@
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
                             <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                         </Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
                             <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                         </Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
@@ -1234,18 +1485,18 @@
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
                 <Setter Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
             </Trigger>
         </Style.Triggers>
     </Style>
 
-    <!-- Window chrome buttons: square, borderless, no gold accent. These keep their own
+    <!-- Window chrome buttons: square, borderless, no copper accent. These keep their own
          template so the rounded, outlined treatment of GameCenter.Button never
          reaches the caption glyphs. -->
     <Style x:Key="GameCenter.CaptionButton" TargetType="Button">
@@ -1381,10 +1632,10 @@
                             <Setter TargetName="Check" Property="Visibility" Value="Visible" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                             <Setter TargetName="Box" Property="Opacity" Value="0.8" />
                         </Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True">
@@ -1474,10 +1725,10 @@
                             <Setter TargetName="Check" Property="Visibility" Value="Visible" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                             <Setter TargetName="Box" Property="Opacity" Value="0.8" />
                         </Trigger>
                         <!-- Ring plus box outline: the label is the click target, so the focus
@@ -1526,7 +1777,7 @@
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsSelected" Value="True">
                             <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                         </Trigger>
                         <Trigger Property="IsHighlighted" Value="True">
                             <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.AccentHover}" />
@@ -1588,7 +1839,7 @@
                                       HorizontalAlignment="Center"
                                       VerticalAlignment="Center"
                                       Data="M 0,0 L 9,0 L 4.5,5.5 Z"
-                                      Fill="{DynamicResource GameCenter.Gold}"
+                                      Fill="{DynamicResource GameCenter.CopperStrong}"
                                       IsHitTestVisible="False" />
                             </Grid>
                         </Border>
@@ -1619,7 +1870,7 @@
                                PopupAnimation="None"
                                IsOpen="{TemplateBinding IsDropDownOpen}">
                             <Border Background="{DynamicResource GameCenter.Panel}"
-                                    BorderBrush="{DynamicResource GameCenter.Gold}"
+                                    BorderBrush="{DynamicResource GameCenter.CopperStrong}"
                                     BorderThickness="1"
                                     CornerRadius="3"
                                     Margin="0,2,0,0"
@@ -1635,10 +1886,10 @@
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                         </Trigger>
                         <Trigger Property="IsDropDownOpen" Value="True">
-                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                         </Trigger>
                         <Trigger Property="IsKeyboardFocusWithin" Value="True">
                             <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
@@ -1657,7 +1908,7 @@
     </Style>
 
     <!-- Left sidebar game rows: a flat icon-and-name row, not a card. Selection is a quiet dark
-         fill plus the gold accent bar; keyboard focus adds a separate outline in the row's text
+         fill plus the copper accent bar; keyboard focus adds a separate outline in the row's text
          colour, so focus and selection never look the same. The template only reads the item's
          Background, Foreground and BorderBrush (the accent bar), so the high contrast triggers
          below can swap all three for system colours without fighting template setters. -->
@@ -1703,7 +1954,7 @@
             <Trigger Property="IsSelected" Value="True">
                 <Setter Property="Background" Value="#161616" />
                 <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </Trigger>
             <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
                 <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" />
@@ -1719,5 +1970,251 @@
                 <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
             </MultiDataTrigger>
         </Style.Triggers>
+    </Style>
+
+    <!-- Scroll bars: one implicit style so every launcher ScrollViewer (including those inside TextBox,
+         ListBox and ComboBox templates) picks it up without per-control changes. Only the
+         ScrollBar chrome is replaced: PART_Track, the standard ScrollBar line/page commands and
+         Track's own viewport sizing, direction and drag handling are kept, and wheel/keyboard
+         scrolling stays with ScrollViewer. Dark neutral track, legible grey thumb, copper on hover
+         and drag; system colours in high contrast. -->
+    <Style x:Key="GameCenter.ScrollBar.Thumb" TargetType="Thumb">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Background" Value="#6E6E6E" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <!-- Transparent outer border keeps the full bar width draggable; the grip is drawn inset. -->
+                    <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="Grip" Background="{TemplateBinding Background}" CornerRadius="3" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperEdge}" />
+            </Trigger>
+            <Trigger Property="IsDragging" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperStrong}" />
+            </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsDragging, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Track areas either side of the thumb: invisible, but still page on click/hold. -->
+    <Style x:Key="GameCenter.ScrollBar.PageButton" TargetType="RepeatButton">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RepeatButton">
+                    <Border Background="Transparent" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Small chevron line buttons at each end; the chevron is the button's Content. -->
+    <Style x:Key="GameCenter.ScrollBar.LineButton" TargetType="RepeatButton">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Foreground" Value="#9A9A9A" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RepeatButton">
+                    <Border Background="Transparent">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.CopperEdge}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.CopperStrong}" />
+            </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GameCenter.ScrollBar.Chevron" TargetType="Path">
+        <Setter Property="Width" Value="7" />
+        <Setter Property="Height" Value="7" />
+        <Setter Property="Stretch" Value="Uniform" />
+        <Setter Property="StrokeThickness" Value="1.5" />
+        <Setter Property="StrokeStartLineCap" Value="Round" />
+        <Setter Property="StrokeEndLineCap" Value="Round" />
+        <Setter Property="StrokeLineJoin" Value="Round" />
+        <Setter Property="Stroke" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RepeatButton}}" />
+    </Style>
+
+    <ControlTemplate x:Key="GameCenter.ScrollBar.VerticalTemplate" TargetType="ScrollBar">
+        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" SnapsToDevicePixels="True">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="12" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="12" />
+                </Grid.RowDefinitions>
+                <RepeatButton Grid.Row="0" Style="{StaticResource GameCenter.ScrollBar.LineButton}" Command="ScrollBar.LineUpCommand">
+                    <Path Style="{StaticResource GameCenter.ScrollBar.Chevron}" Data="M 0,4 L 3.5,0 L 7,4" Height="4" />
+                </RepeatButton>
+                <Track x:Name="PART_Track" Grid.Row="1" IsDirectionReversed="True">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Style="{StaticResource GameCenter.ScrollBar.PageButton}" Command="ScrollBar.PageUpCommand" />
+                    </Track.DecreaseRepeatButton>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Style="{StaticResource GameCenter.ScrollBar.PageButton}" Command="ScrollBar.PageDownCommand" />
+                    </Track.IncreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb Style="{StaticResource GameCenter.ScrollBar.Thumb}" Padding="3,0" />
+                    </Track.Thumb>
+                </Track>
+                <RepeatButton Grid.Row="2" Style="{StaticResource GameCenter.ScrollBar.LineButton}" Command="ScrollBar.LineDownCommand">
+                    <Path Style="{StaticResource GameCenter.ScrollBar.Chevron}" Data="M 0,0 L 3.5,4 L 7,0" Height="4" />
+                </RepeatButton>
+            </Grid>
+        </Border>
+    </ControlTemplate>
+
+    <ControlTemplate x:Key="GameCenter.ScrollBar.HorizontalTemplate" TargetType="ScrollBar">
+        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" SnapsToDevicePixels="True">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                </Grid.ColumnDefinitions>
+                <RepeatButton Grid.Column="0" Style="{StaticResource GameCenter.ScrollBar.LineButton}" Command="ScrollBar.LineLeftCommand">
+                    <Path Style="{StaticResource GameCenter.ScrollBar.Chevron}" Data="M 4,0 L 0,3.5 L 4,7" Width="4" />
+                </RepeatButton>
+                <Track x:Name="PART_Track" Grid.Column="1" IsDirectionReversed="False">
+                    <Track.DecreaseRepeatButton>
+                        <RepeatButton Style="{StaticResource GameCenter.ScrollBar.PageButton}" Command="ScrollBar.PageLeftCommand" />
+                    </Track.DecreaseRepeatButton>
+                    <Track.IncreaseRepeatButton>
+                        <RepeatButton Style="{StaticResource GameCenter.ScrollBar.PageButton}" Command="ScrollBar.PageRightCommand" />
+                    </Track.IncreaseRepeatButton>
+                    <Track.Thumb>
+                        <Thumb Style="{StaticResource GameCenter.ScrollBar.Thumb}" Padding="0,3" />
+                    </Track.Thumb>
+                </Track>
+                <RepeatButton Grid.Column="2" Style="{StaticResource GameCenter.ScrollBar.LineButton}" Command="ScrollBar.LineRightCommand">
+                    <Path Style="{StaticResource GameCenter.ScrollBar.Chevron}" Data="M 0,0 L 4,3.5 L 0,7" Width="4" />
+                </RepeatButton>
+            </Grid>
+        </Border>
+    </ControlTemplate>
+
+    <Style TargetType="ScrollBar">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Stylus.IsFlicksEnabled" Value="False" />
+        <Setter Property="Background" Value="#1A1A1A" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Width" Value="12" />
+        <Setter Property="MinWidth" Value="12" />
+        <Setter Property="Height" Value="Auto" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Template" Value="{StaticResource GameCenter.ScrollBar.VerticalTemplate}" />
+        <Style.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+                <Setter Property="Width" Value="Auto" />
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="Height" Value="12" />
+                <Setter Property="MinHeight" Value="12" />
+                <Setter Property="Template" Value="{StaticResource GameCenter.ScrollBar.HorizontalTemplate}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+            </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+                <Setter Property="BorderThickness" Value="1" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- ScrollViewer: the native Aero2 template part for part (same named parts, bindings, CanContentScroll,
+         Padding and computed visibility), only re-colouring the square where both bars meet, which the
+         native template fills with the light SystemColors.ControlBrush. The theme style still applies
+         underneath; controls that set their own ScrollViewer template are unaffected. -->
+    <Style TargetType="ScrollViewer">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollViewer">
+                    <Grid x:Name="Grid" Background="{TemplateBinding Background}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Rectangle x:Name="Corner" Grid.Column="1" Grid.Row="1" Fill="#1A1A1A" RadiusX="3" RadiusY="3" />
+                        <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" Grid.Column="0" Grid.Row="0"
+                                                CanContentScroll="{TemplateBinding CanContentScroll}"
+                                                CanHorizontallyScroll="False" CanVerticallyScroll="False"
+                                                Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                Margin="{TemplateBinding Padding}" />
+                        <ScrollBar x:Name="PART_VerticalScrollBar" AutomationProperties.AutomationId="VerticalScrollBar"
+                                   Cursor="Arrow" Grid.Column="1" Grid.Row="0" Minimum="0"
+                                   Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}"
+                                   Value="{Binding VerticalOffset, Mode=OneWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                   Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}" />
+                        <ScrollBar x:Name="PART_HorizontalScrollBar" AutomationProperties.AutomationId="HorizontalScrollBar"
+                                   Cursor="Arrow" Grid.Column="0" Grid.Row="1" Minimum="0" Orientation="Horizontal"
+                                   Maximum="{TemplateBinding ScrollableWidth}" ViewportSize="{TemplateBinding ViewportWidth}"
+                                   Value="{Binding HorizontalOffset, Mode=OneWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                   Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                            <Setter TargetName="Corner" Property="Fill" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+                            <Setter TargetName="Corner" Property="RadiusX" Value="0" />
+                            <Setter TargetName="Corner" Property="RadiusY" Value="0" />
+                        </DataTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 </ResourceDictionary>
