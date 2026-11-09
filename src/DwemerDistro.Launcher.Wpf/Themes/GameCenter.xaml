@@ -958,6 +958,64 @@
         </Style.Triggers>
     </Style>
 
+    <!-- Ploofy.ai panel: mirrors the dashboard's .dashboard-ploofy frame (dark #0f0e0e, 14px corners,
+         cyan hairline and glow that brighten on hover and focus); the whole panel is the link. -->
+    <Style x:Key="GameCenter.PloofyLinkButton" TargetType="Button">
+        <Setter Property="Background" Value="#0F0E0E" />
+        <Setter Property="BorderBrush" Value="#4000E5FF" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="14">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#00E5FF" ShadowDepth="0" BlurRadius="18" Opacity="0.12" />
+                            </Border.Effect>
+                        </Border>
+                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center" />
+                        <Border x:Name="FocusRing"
+                                Margin="-4"
+                                CornerRadius="18"
+                                BorderBrush="#00E5FF"
+                                BorderThickness="2"
+                                Visibility="Collapsed"
+                                IsHitTestVisible="False" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Border" Property="BorderBrush" Value="#8000E5FF" />
+                            <Setter TargetName="Border" Property="Effect">
+                                <Setter.Value>
+                                    <DropShadowEffect Color="#00E5FF" ShadowDepth="0" BlurRadius="22" Opacity="0.22" />
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Border" Property="BorderBrush" Value="#8000E5FF" />
+                            <Setter TargetName="Border" Property="Effect">
+                                <Setter.Value>
+                                    <DropShadowEffect Color="#00E5FF" ShadowDepth="0" BlurRadius="22" Opacity="0.22" />
+                                </Setter.Value>
+                            </Setter>
+                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- Launcher self-update remains green when actionable and turns neutral when current. -->
     <Style x:Key="GameCenter.LauncherUpdateButton" TargetType="Button" BasedOn="{StaticResource GameCenter.SuccessButton}">
         <Setter Property="HorizontalContentAlignment" Value="Left" />

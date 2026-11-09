@@ -24,6 +24,7 @@ public static class LauncherConstants
     public const string CustomModCreationGuideUrl = "https://github.com/Dwemer-Dynamics/Kagrenac";
     public const string DiscordUrl = "https://discord.com/invite/NDn9qud2ug";
     public const string PatreonUrl = "https://www.patreon.com/DwemerDynamics";
+    public const string PloofyUrl = "https://ploofy.ai/";
     public const string ChimServerUiUrl = "http://127.0.0.1:8081/HerikaServer/ui/";
     public const string StobeServerUiUrl = "http://127.0.0.1:8083/StobeServer/ui/";
     public const string DialecticServerUiUrl = "http://127.0.0.1:8088/DialecticServer/ui/";

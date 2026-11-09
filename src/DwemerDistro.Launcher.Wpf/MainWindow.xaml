@@ -535,6 +535,13 @@
                     </StackPanel>
                 </ScrollViewer>
                 <StackPanel Grid.Row="3" Margin="5,12,5,4">
+                    <Button Command="{Binding OpenPloofyCommand}" Style="{StaticResource GameCenter.PloofyLinkButton}"
+                            AutomationProperties.Name="Ploofy.ai"
+                            AutomationProperties.HelpText="Open ploofy.ai in your web browser."
+                            ToolTip="Open ploofy.ai in your web browser." Margin="0,0,0,12">
+                        <Image Source="Assets/ploofy-logo.png" Height="40" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Button>
                     <Button Command="{Binding UpdateLauncherCommand}" Style="{StaticResource GameCenter.LauncherUpdateButton}"
                             AutomationProperties.Name="{Binding LauncherUpdateButtonText}"
                             AutomationProperties.HelpText="{Binding LauncherUpdateStatusText}" Margin="0,0,0,10">
