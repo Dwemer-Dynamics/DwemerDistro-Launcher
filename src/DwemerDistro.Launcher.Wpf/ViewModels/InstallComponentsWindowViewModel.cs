@@ -475,6 +475,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
             if (!result.Succeeded)
             {
+                LauncherLogService.Operation(BuildComponentProbeFailure($"exit code {result.ExitCode}", result.StandardError));
                 SetComponentProbeUnavailable();
                 return;
             }
@@ -493,6 +494,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
 
             if (payload?.Install is null || payload.Configurable is null)
             {
+                LauncherLogService.Operation(BuildComponentProbeFailure("unreadable probe output", result.StandardError));
                 SetComponentProbeUnavailable();
                 return;
             }
@@ -523,6 +525,19 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         {
             _componentProbeGate.Release();
         }
+    }
+
+    // Probe failures keep a short, redacted stderr tail in the operations log; the page shows only its status.
+    // Redaction runs before truncation so a cut can never leave the visible half of a secret.
+    internal static string BuildComponentProbeFailure(string reason, string? standardError)
+    {
+        var tail = DiagnosticEvidenceService.Sanitize((standardError ?? string.Empty).Trim());
+        if (tail.Length > 1000)
+        {
+            tail = "..." + tail[^1000..];
+        }
+
+        return $"Component status check failed ({reason}).{(tail.Length > 0 ? " stderr: " + tail : string.Empty)}";
     }
 
     private void SetComponentProbeUnavailable()
@@ -589,20 +604,27 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         await TrackOperationAsync(async () =>
         {
             // A closed console or failed configuration exits non-zero; connectors stay as they were.
-            var configured = false;
+            var exitCode = -1;
+            _mainWindowViewModel.ReportComponentMessage($"Configuring {definition.Title} in a separate console...");
             try
             {
-                configured = await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true) == 0;
+                exitCode = await _processRunner.RunInNewConsoleAndWaitAsync(command).ConfigureAwait(true);
             }
             finally
             {
                 await RefreshInstalledStatesAsync().ConfigureAwait(true);
             }
 
-            if (configured)
+            if (exitCode == 0)
             {
+                _mainWindowViewModel.ReportComponentMessage($"{definition.Title} configuration finished.");
                 await SyncPocketTtsConnectorsAsync(definition.Key).ConfigureAwait(true);
+                return;
             }
+
+            var failure = $"{definition.Title} configuration failed or was canceled (exit code {exitCode}). Connectors were not changed.";
+            ConfigurableComponentsStatusText = failure;
+            _mainWindowViewModel.ReportComponentMessage(failure, isError: true);
         }).ConfigureAwait(true);
     }
 

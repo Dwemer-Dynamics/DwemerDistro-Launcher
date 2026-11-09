@@ -38,7 +38,7 @@ public sealed class DiscoveryService
         _cts = new CancellationTokenSource();
         _listener = new TcpListener(IPAddress.Loopback, LauncherConstants.DiscoveryPort);
         _listener.Start(5);
-        _log($"Discovery service listening on localhost:{LauncherConstants.DiscoveryPort}{Environment.NewLine}");
+        LauncherLogService.Startup($"Discovery service listening on localhost:{LauncherConstants.DiscoveryPort}");
         _acceptLoopTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
     }
 
@@ -67,7 +67,7 @@ public sealed class DiscoveryService
         _listener = null;
         _cts.Dispose();
         _cts = null;
-        _log($"Discovery service stopped.{Environment.NewLine}");
+        LauncherLogService.Startup("Discovery service stopped.");
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)

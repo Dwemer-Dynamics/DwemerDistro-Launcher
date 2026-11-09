@@ -16,6 +16,16 @@ public sealed partial class MainWindowViewModel
 {
     /// <summary>Separates the distro core update from the shared components update in the console.</summary>
     private const string SharedComponentsMarker = "=====MARKER:BEGIN_SHARED_COMPONENTS=====";
+    private const string UpdateStageMarkerPrefix = "=====MARKER:STAGE:";
+    internal const string UpdateStagePreparing = "preparing";
+    internal const string UpdateStageDownload = "download";
+    internal const string UpdateStageCore = "core";
+    internal const string UpdateStageShared = "shared";
+    internal const string UpdateStageRelease = "release";
+    private const int UpdateFailureEvidenceLimit = 240;
+
+    // Set by the last failed shared distro update: " <stage> (exit N): <evidence>. Full output: ..." or null.
+    private string? _systemUpdateFailure;
 
     private ServerManagementService? _serverManagement;
 
@@ -364,10 +374,10 @@ public sealed partial class MainWindowViewModel
                         {
                             if (force && !forceGitUpdates)
                             {
-                                AppendLog($"Discarding local edits and retrying the {item.DisplayName} update once...{Environment.NewLine}", "yellow");
+                                AppendLog($"Discarding local edits and retrying the {item.DisplayName} update once...{Environment.NewLine}");
                             }
 
-                            return service.UpdateAsync(item.Product, branch, force, line => AppendLog(line), cancellationToken);
+                            return service.UpdateAsync(item.Product, branch, force, AppendOperationOutput, cancellationToken);
                         },
                         blocker => ConfirmDiscardTrackedEdits(item.DisplayName, blocker),
                         blocker =>
@@ -384,34 +394,34 @@ public sealed partial class MainWindowViewModel
                     .ConfigureAwait(false);
                 if (outcome == ServerOperationOutcome.Succeeded)
                 {
-                    AppendLog($"{item.DisplayName} {pastVerb} successfully.{Environment.NewLine}", "green");
+                    AppendLog($"{item.DisplayName} {pastVerb}.{Environment.NewLine}", "green");
                 }
                 else if (outcome == ServerOperationOutcome.Skipped)
                 {
-                    AppendLog($"{item.DisplayName} update skipped. Local edits were kept.{Environment.NewLine}", "yellow");
+                    AppendLog($"{item.DisplayName} update skipped. Local edits were kept.{Environment.NewLine}");
                 }
             }
             else
             {
                 var result = operation == ServerOperation.Install
                     ? await service
-                        .InstallAsync(item.Product, branch, line => AppendLog(line), cancellationToken)
+                        .InstallAsync(item.Product, branch, AppendOperationOutput, cancellationToken)
                         .ConfigureAwait(false)
                     : await service
-                        .RepairAsync(item.Product, branch, line => AppendLog(line), cancellationToken)
+                        .RepairAsync(item.Product, branch, AppendOperationOutput, cancellationToken)
                         .ConfigureAwait(false);
 
                 outcome = result.Succeeded ? ServerOperationOutcome.Succeeded : ServerOperationOutcome.Failed;
                 AppendLog(
                     result.Succeeded
-                        ? $"{item.DisplayName} {pastVerb} successfully.{Environment.NewLine}"
+                        ? $"{item.DisplayName} {pastVerb}.{Environment.NewLine}"
                         : $"{item.DisplayName} {failureVerb} failed: {GetCommandError(result)}{Environment.NewLine}",
                     result.Succeeded ? "green" : "red");
             }
         }
         catch (OperationCanceledException)
         {
-            AppendLog($"{item.DisplayName} {failureVerb} was canceled.{Environment.NewLine}", "yellow");
+            AppendLog($"{item.DisplayName} {failureVerb} canceled.{Environment.NewLine}");
         }
         catch (Exception ex)
         {
@@ -658,7 +668,7 @@ public sealed partial class MainWindowViewModel
         var succeeded = false;
         try
         {
-            var result = await service.UninstallAsync(item.Product, line => AppendLog(line)).ConfigureAwait(false);
+            var result = await service.UninstallAsync(item.Product, AppendOperationOutput).ConfigureAwait(false);
             succeeded = result.Succeeded;
             AppendLog(
                 succeeded
@@ -766,6 +776,92 @@ public sealed partial class MainWindowViewModel
     internal static bool ShouldUpdateProduct(ServerInstallState state)
     {
         return state == ServerInstallState.Installed;
+    }
+
+    internal static string BuildUpdateStageMarker(string stage)
+    {
+        return $"echo '{UpdateStageMarkerPrefix}{stage}=====' && ";
+    }
+
+    /// <summary>Returns the stage named by an explicit update marker line, or null for ordinary output.</summary>
+    internal static string? ParseUpdateStageMarker(string line)
+    {
+        var trimmed = line.Trim();
+        if (string.Equals(trimmed, SharedComponentsMarker, StringComparison.Ordinal))
+        {
+            return UpdateStageShared;
+        }
+
+        if (!trimmed.StartsWith(UpdateStageMarkerPrefix, StringComparison.Ordinal)
+            || !trimmed.EndsWith("=====", StringComparison.Ordinal)
+            || trimmed.Length <= UpdateStageMarkerPrefix.Length + 5)
+        {
+            return null;
+        }
+
+        return trimmed[UpdateStageMarkerPrefix.Length..^5];
+    }
+
+    /// <summary>Git download chatter stays in the operations log; core and shared steps are console-worthy.</summary>
+    internal static bool ShowUpdateStageOutput(string stage)
+    {
+        return stage is UpdateStageCore or UpdateStageShared;
+    }
+
+    /// <summary>
+    /// Keeps the latest explicit error line of the current stage (fatal:, error:, E:, Permission denied),
+    /// otherwise the latest non-empty line. This only picks evidence; it never decides the stage.
+    /// </summary>
+    internal static string? SelectUpdateFailureEvidence(string? current, string line)
+    {
+        var trimmed = line.Trim();
+        if (trimmed.Length == 0)
+        {
+            return current;
+        }
+
+        var isError = trimmed.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("error:", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("E:", StringComparison.Ordinal)
+            || trimmed.Contains("Permission denied", StringComparison.OrdinalIgnoreCase);
+        if (isError)
+        {
+            return ErrorEvidencePrefix + trimmed;
+        }
+
+        return current is not null && current.StartsWith(ErrorEvidencePrefix, StringComparison.Ordinal)
+            ? current
+            : trimmed;
+    }
+
+    private const string ErrorEvidencePrefix = "\u0001";
+
+    internal static string DescribeSystemUpdateFailure(string stage, int exitCode, string? evidence)
+    {
+        var stageText = stage switch
+        {
+            UpdateStageDownload => "while updating the distro checkout",
+            UpdateStageCore => "during the core update",
+            UpdateStageShared => "during the shared components update",
+            UpdateStageRelease => "while recording the system release",
+            _ => "while preparing the update"
+        };
+        string? reason = exitCode switch
+        {
+            75 => "another distro update is already running",
+            124 or 137 => "the update timed out",
+            _ => evidence is null
+                ? null
+                : DiagnosticEvidenceService.Sanitize(evidence.TrimStart(ErrorEvidencePrefix[0]))
+        };
+        if (reason is { Length: > UpdateFailureEvidenceLimit })
+        {
+            reason = reason[..UpdateFailureEvidenceLimit] + "...";
+        }
+
+        var text = $" {stageText} (exit {exitCode})";
+        text += reason is null ? "." : $": {reason.TrimEnd('.')}.";
+        return text + " Full output: Logs\\launcher-operations.log.";
     }
 
     /// <summary>

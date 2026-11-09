@@ -628,6 +628,107 @@ try
            MainWindowViewModel.MaxConsoleLines + 1,
         "Console output must contain at most 3,000 data lines plus the trim notice.");
 
+    // --- Console cleanup: level prefixes, update stages, proxy throttling, Quickstart evidence ---
+    Assert(MainWindowViewModel.FormatConsoleLevel("\r\nUpdate check failed.\n", "yellow") == "Warning: Update check failed.\n"
+           && MainWindowViewModel.FormatConsoleLevel("Stop failed.\n", "red") == "Error: Stop failed.\n"
+           && MainWindowViewModel.FormatConsoleLevel("Error: already marked\n", "red") == "Error: already marked\n"
+           && MainWindowViewModel.FormatConsoleLevel("Done.\n", "green") == "Done.\n"
+           && MainWindowViewModel.FormatConsoleLevel("  Skyrim: not set up\n", "yellow") == "  Warning: Skyrim: not set up\n",
+        "Unrendered console colors must become Warning/Error text prefixes without leading blank lines or duplicates.");
+    var stagedCommand = MainWindowViewModel.BuildSystemUpdateCommand();
+    Assert(stagedCommand.IndexOf("STAGE:download", StringComparison.Ordinal) < stagedCommand.IndexOf("git -c credential.helper= fetch", StringComparison.Ordinal)
+           && stagedCommand.IndexOf("STAGE:core", StringComparison.Ordinal) < stagedCommand.IndexOf("./update.sh", StringComparison.Ordinal)
+           && MainWindowViewModel.ParseUpdateStageMarker("=====MARKER:STAGE:core=====\n") == MainWindowViewModel.UpdateStageCore
+           && MainWindowViewModel.ParseUpdateStageMarker("=====MARKER:BEGIN_SHARED_COMPONENTS=====") == MainWindowViewModel.UpdateStageShared
+           && MainWindowViewModel.ParseUpdateStageMarker("fatal: could not update core") is null,
+        "System update stages must come only from explicit markers placed before each step.");
+    Assert(!MainWindowViewModel.ShowUpdateStageOutput(MainWindowViewModel.UpdateStageDownload)
+           && MainWindowViewModel.ShowUpdateStageOutput(MainWindowViewModel.UpdateStageCore),
+        "Raw git download output must stay in the operations log; core steps stay visible.");
+    string? updateEvidence = null;
+    foreach (var line in new[] { "remote: Counting objects", "error: unable to create '.git/index.lock': Permission denied", "fatal: Could not reset index file" , "HEAD is now at x" })
+    {
+        updateEvidence = MainWindowViewModel.SelectUpdateFailureEvidence(updateEvidence, line);
+    }
+    var downloadFailure = MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageDownload, 128, updateEvidence);
+    Assert(downloadFailure.Contains("while updating the distro checkout (exit 128): fatal: Could not reset index file.", StringComparison.Ordinal)
+           && !downloadFailure.Contains("may", StringComparison.OrdinalIgnoreCase)
+           && !downloadFailure.Contains("Doctor", StringComparison.Ordinal),
+        "A failed update must name its marked stage, exit code and the latest real error line, without guessing a repair.");
+    Assert(MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageCore, 75, "x").Contains("another distro update is already running", StringComparison.Ordinal)
+           && MainWindowViewModel.DescribeSystemUpdateFailure("preparing", 1, "token=hf_abcdefghijklmnopqrstuvwxyz").Contains("[redacted]", StringComparison.Ordinal),
+        "Update failure reasons must map explicit exit codes and redact secrets.");
+    var proxy = new TcpProxyService(1, "CHIM", _ => Task.FromResult<System.Net.IPEndPoint?>(null), _ => { });
+    var proxyStart = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    Assert(proxy.FormatFailure("connection to DwemerDistro failed: refused", proxyStart) == "Warning: CHIM proxy connection to DwemerDistro failed: refused"
+           && proxy.FormatFailure("connection to DwemerDistro failed: refused", proxyStart.AddSeconds(5)) is null
+           && proxy.FormatFailure("connection to DwemerDistro failed: refused", proxyStart.AddSeconds(30)) is null
+           && proxy.FormatFailure("connection to DwemerDistro failed: refused", proxyStart.AddSeconds(61)) == "Warning: CHIM proxy connection to DwemerDistro failed: refused (repeated 3 times)"
+           && proxy.FormatFailure("could not get the DwemerDistro address", proxyStart.AddSeconds(62)) is not null,
+        "Identical proxy failures must show once, then be counted within the throttle window; a new failure shows immediately.");
+    string[] routineOperationLines =
+    [
+        "Already up to date.\r\n",
+        "remote: Counting objects: 100% (5/5), done.\n",
+        "Receiving objects:  45% (9/20)\n",
+        "   1a2b3c4..5d6e7f8  main       -> origin/main\n",
+        " src/Controller.php | 12 ++++++------\r\n",
+        " 2 files changed, 9 insertions(+), 3 deletions(-)\n",
+        "Requirement already satisfied: numpy in ./venv/lib (1.26.4)\n",
+        "Downloading torch-2.1.0-cp310-cp310-manylinux1_x86_64.whl (619.9 MB)\n",
+        "   ━━━━━━━━━━ 12.3/619.9 MB 3.2 MB/s eta 0:03:10\n",
+        "Setting up curl (8.5.0-2ubuntu10) ...\n",
+        "[SKIP] CHIM XTTS repository not installed; skipping update.\n"
+    ];
+    string[] visibleOperationLines =
+    [
+        "E: Unable to locate package foo\n",
+        "W: GPG error: http://x NO_PUBKEY ABC\n",
+        "The following packages have unmet dependencies:\n",
+        "error: Your local changes to the following files would be overwritten by merge:\n",
+        "fatal: Could not reset index file to revision 'origin/main'.\n",
+        "[WARNING] MeloTTS update failed.\n",
+        "Do you want to continue? [Y/n]\n",
+        "hint: You have divergent branches and need to specify how to reconcile them.\n",
+        "Setting up libgpg-error-dev (1.47-3) ...\n",
+        "Uninstalling herika...\n",
+        "Downloading Parakeet model files...\n",
+        ">> Pulling latest changes...\n",
+        "== UPDATING MELO-TTS (main) ==\n",
+        "Applying database migration 12\n"
+    ];
+    Assert(routineOperationLines.All(ConsoleOutputFilter.IsRoutineLine)
+           && !visibleOperationLines.Any(ConsoleOutputFilter.IsRoutineLine),
+        "The operation console filter must hide only known routine apt/pip/git lines; problems, prompts, steps and unknown lines stay visible.");
+    Assert(ConsoleOutputFilter.IsRoutineLine("[SKIP] OmniVoice TTS not installed; install it from DwemerDistro Installed Components.\n")
+           && ConsoleOutputFilter.IsRoutineLine("[SKIP] /home/dwemer/mimic3 is not installed\n")
+           && !ConsoleOutputFilter.IsRoutineLine("[SKIP] /home/dwemer/db.sqlite has no core_tts_connector table.\n")
+           && !ConsoleOutputFilter.IsRoutineLine("[SKIP] Database migration skipped; connector left unchanged.\n"),
+        "Only Core not-installed skips are routine; any other [SKIP] line stays visible.");
+    Assert(ConsoleOutputFilter.IsRoutineLine("0 upgraded, 3 newly installed, 0 to remove and 12 not upgraded.\n")
+           && !ConsoleOutputFilter.IsRoutineLine("0 upgraded, 0 newly installed, 2 to remove and 0 not upgraded.\n")
+           && !ConsoleOutputFilter.IsRoutineLine("1 upgraded, 0 newly installed, 10 to remove and 0 not upgraded.\n"),
+        "An apt summary is routine only when it removes no packages; nonzero removals stay visible.");
+    var probeStderr = "password=" + new string('S', 1500);
+    var probeFailure = InstallComponentsWindowViewModel.BuildComponentProbeFailure("exit code 1", probeStderr);
+    Assert(probeFailure.Contains("[redacted]", StringComparison.Ordinal) && !probeFailure.Contains("SSSSSSSS", StringComparison.Ordinal),
+        "Component probe stderr must be redacted before truncation so a cut cannot expose the tail of a secret.");
+    var visibleApt = FirstRunSetupViewModel.BuildVisibleSetupLogAppend(
+        "The following NEW packages will be installed:\nThe following packages have unmet dependencies:\nThe following signatures couldn't be verified because the public key is not available: NO_PUBKEY ABC\nGet:1 http://x y\n");
+    Assert(!visibleApt.Contains("NEW packages", StringComparison.Ordinal)
+           && visibleApt.Contains("unmet dependencies", StringComparison.Ordinal)
+           && visibleApt.Contains("NO_PUBKEY", StringComparison.Ordinal)
+           && !visibleApt.Contains("Get:1", StringComparison.Ordinal),
+        "Apt dependency and signature errors must stay visible even though routine 'The following' lines are hidden.");
+    var longOutput = string.Join("\n", Enumerable.Range(1, 500).Select(index => $"progress line {index}")) + "\nE: Unable to locate package foo\napi_key=sk-abcdefghijklmnopqrstuvwxyz\n";
+    var quickstartError = DistroSetupService.BuildCommandError(new DwemerDistro.Launcher.Wpf.Models.CommandResult(100, longOutput, ""));
+    Assert(quickstartError.StartsWith("exit code 100.", StringComparison.Ordinal)
+           && quickstartError.Contains("E: Unable to locate package foo", StringComparison.Ordinal)
+           && !quickstartError.Contains("progress line 1\n", StringComparison.Ordinal)
+           && !quickstartError.Contains("sk-abcdefghijklmnop", StringComparison.Ordinal)
+           && quickstartError.Length < 1200,
+        "Quickstart failures must carry a short redacted error tail, not the whole streamed output.");
+
     // --- ddistro_server status contract ---------------------------------------------------
 
     const string statusJson = """

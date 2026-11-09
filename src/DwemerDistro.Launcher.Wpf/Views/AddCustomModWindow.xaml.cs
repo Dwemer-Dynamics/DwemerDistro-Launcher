@@ -153,7 +153,7 @@ public partial class AddCustomModWindow : Window
                 {
                     if (line.StartsWith("[INFO] ", StringComparison.Ordinal) || line.StartsWith("[OK] ", StringComparison.Ordinal))
                     {
-                        StatusText.Text = line[(line.IndexOf(' ') + 1)..];
+                        StatusText.Text = line[(line.IndexOf(' ') + 1)..].TrimEnd();
                     }
                 });
             }).ConfigureAwait(true);

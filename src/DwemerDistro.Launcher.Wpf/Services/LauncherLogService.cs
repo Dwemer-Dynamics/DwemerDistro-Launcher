@@ -42,6 +42,7 @@ public static class LauncherLogService
                 line += Environment.NewLine + exception;
             }
 
+            line = DiagnosticEvidenceService.Sanitize(line);
             lock (Lock)
             {
                 File.AppendAllText(StartupLogPath, line + Environment.NewLine);

@@ -1,3 +1,4 @@
+using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.Models;
 
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
@@ -167,7 +168,7 @@ public sealed class QuickstartProductViewModel : ObservableObject
     public void SetInstallState(QuickstartProductInstallState state, string? detail = null)
     {
         _installState = state;
-        _resultDetail = detail;
+        _resultDetail = detail is null ? null : DiagnosticEvidenceService.Sanitize(detail);
         if (state == QuickstartProductInstallState.Installed)
         {
             _reportedState = ServerInstallState.Installed;
