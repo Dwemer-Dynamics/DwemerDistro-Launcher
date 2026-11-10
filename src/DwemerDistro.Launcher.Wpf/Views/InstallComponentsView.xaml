@@ -403,7 +403,7 @@
                                             </Style>
                                         </Border.Style>
                                         <TextBlock Text="{Binding Title}"
-                                                   Foreground="{StaticResource Components.Gold}"
+                                                   Foreground="{StaticResource Components.Text}"
                                                    FontSize="12"
                                                    FontWeight="SemiBold"
                                                    AutomationProperties.HeadingLevel="Level2" />
