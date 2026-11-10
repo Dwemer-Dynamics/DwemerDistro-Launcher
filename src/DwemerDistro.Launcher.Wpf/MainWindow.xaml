@@ -261,8 +261,8 @@
                                                 <StackPanel>
                                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                                                     <TextBlock Text="{Binding PortText}" />
-                                                    <TextBlock Text="{Binding StatusText}" />
-                                                    <TextBlock Text="Click or press Enter to test" Margin="0,6,0,0" />
+                                                    <TextBlock Text="{Binding ShortStatusText}" />
+                                                    <TextBlock Text="Click to test" Margin="0,6,0,0" />
                                                 </StackPanel>
                                             </ToolTip>
                                         </ContentControl.ToolTip>

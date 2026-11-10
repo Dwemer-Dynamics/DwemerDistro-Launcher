@@ -28,8 +28,24 @@ public sealed class ComponentStatusItemViewModel : ObservableObject
     public ComponentServiceState State
     {
         get => _state;
-        private set => SetProperty(ref _state, value);
+        private set
+        {
+            if (SetProperty(ref _state, value)) OnPropertyChanged(nameof(ShortStatusText));
+        }
     }
+
+    /// <summary>One or two words for the hover tooltip; StatusText keeps the probe's full explanation.</summary>
+    public string ShortStatusText => State switch
+    {
+        ComponentServiceState.Running => "Running",
+        ComponentServiceState.Starting => "Starting",
+        ComponentServiceState.Stopped or ComponentServiceState.DistroStopped => "Stopped",
+        ComponentServiceState.NotResponding => "Not responding",
+        ComponentServiceState.Disabled => "Disabled",
+        ComponentServiceState.Checking => "Checking",
+        ComponentServiceState.Paused => "Paused",
+        _ => "Unknown",
+    };
 
     public string StatusText
     {

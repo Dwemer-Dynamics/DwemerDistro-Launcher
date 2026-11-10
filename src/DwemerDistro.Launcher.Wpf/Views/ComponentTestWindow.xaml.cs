@@ -66,6 +66,7 @@ public partial class ComponentTestWindow : Window
                 File.WriteAllBytes(_sampleFile, audio);
                 if (_closed) { ClearSample(); return; }
                 Play.IsEnabled = true;
+                Play_Click(Play, new RoutedEventArgs());
             }
         }
         catch (OperationCanceledException) { if (!_closed) Result.Text = "Test cancelled. The service may still finish the current request."; }

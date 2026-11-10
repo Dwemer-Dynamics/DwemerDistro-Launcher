@@ -121,7 +121,7 @@ public static class ComponentQuickTestService
             audio = await SendAsync(port, id == "chatterbox" ? "/tts_to_audio/" : "/tts_to_audio", Json(payload), token);
         }
         if (!IsWave(audio)) throw new InvalidOperationException("The service responded, but did not return WAV audio.");
-        return new("Speech sample generated. Select Play sample to verify the sound.", audio);
+        return new("Speech sample generated. Use Play sample to replay.", audio);
     }
 
     private static bool IsWave(byte[] bytes) => bytes.Length > 44 && Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF" && Encoding.ASCII.GetString(bytes, 8, 4) == "WAVE";
