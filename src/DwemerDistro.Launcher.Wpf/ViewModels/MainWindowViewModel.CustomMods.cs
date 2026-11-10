@@ -259,7 +259,7 @@ public sealed partial class MainWindowViewModel
         CheckCustomModHealthCommand = new AsyncRelayCommand(
             () => RunCustomModStatusCheckAsync(), () => CanStartCustomModOperation() && HasSelectedCustomMod);
         OpenCustomModDashboardCommand = new RelayCommand(
-            OpenCustomModDashboard, () => _selectedCustomMod?.DashboardUrl is not null && _selectedCustomMod.State == CustomModState.Ready);
+            OpenCustomModDashboard, () => CanOpenCustomModDashboard(_selectedCustomMod));
         OpenCustomModRepositoryCommand = new RelayCommand(
             OpenCustomModRepository, () => CustomModService.ValidateRepositoryUrl(_selectedCustomMod?.Repository) is null);
         UpdateCustomModCommand = new AsyncRelayCommand(
@@ -470,15 +470,21 @@ public sealed partial class MainWindowViewModel
         return RefreshCustomModsAsync(checkHealth: true);
     }
 
+    internal static bool CanOpenCustomModDashboard(CustomModInfo? mod)
+    {
+        return mod?.State == CustomModState.Ready &&
+               CustomModService.IsSafeModUrl(mod.DashboardUrl, mod.Id, mod.ServerFolder);
+    }
+
     private void OpenCustomModDashboard()
     {
         var mod = _selectedCustomMod;
-        if (mod?.DashboardUrl is null || !CustomModService.IsSafeModUrl(mod.DashboardUrl, mod.Id))
+        if (!CanOpenCustomModDashboard(mod))
         {
             return;
         }
 
-        _processRunner.OpenExternalUrl(mod.DashboardUrl);
+        _processRunner.OpenExternalUrl(mod!.DashboardUrl!);
     }
 
     private void OpenCustomModRepository()

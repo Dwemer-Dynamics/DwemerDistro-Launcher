@@ -347,7 +347,7 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.4.2", "Launcher constants must report version 3.4.2.");
+    Assert(LauncherConstants.LauncherVersion == "3.4.3", "Launcher constants must report version 3.4.3.");
     Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
                == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --download-diagnostics \"%1\"",
         "The server-page browser protocol must send the diagnostic report through the browser download manager.");
@@ -900,6 +900,18 @@ try
            && customMods[0].ShortCommit == "0123456" && customMods[0].State == CustomModState.Ready
            && customMods[1].DashboardUrl is null && customMods[1].HealthUrl is null && customMods[1].State == CustomModState.Failed,
         "Custom mod links must stay on the fixed local route for their own id, and invalid ids are dropped.");
+    var namedDashboardMod = customMods![0] with
+    {
+        ServerFolder = "EdgerunnerAIFrameworkServer",
+        DashboardUrl = "http://127.0.0.1:19000/EdgerunnerAIFrameworkServer/ui/"
+    };
+    Assert(MainWindowViewModel.CanOpenCustomModDashboard(namedDashboardMod)
+           && MainWindowViewModel.CanOpenCustomModDashboard(customMods[0])
+           && !MainWindowViewModel.CanOpenCustomModDashboard(namedDashboardMod with { DashboardUrl = "http://127.0.0.1:19000/OtherServer/ui/" })
+           && !MainWindowViewModel.CanOpenCustomModDashboard(namedDashboardMod with { DashboardUrl = "https://attacker.example/" })
+           && !MainWindowViewModel.CanOpenCustomModDashboard(namedDashboardMod with { State = CustomModState.Failed })
+           && !MainWindowViewModel.CanOpenCustomModDashboard(null),
+        "Dashboard command must accept its registered named root and legacy route, while rejecting other roots, hosts and unavailable installs.");
     Assert(customMods[0].GameName == "Test Game" && customMods[0].AuthorCredit == "By Mod Team"
            && customMods[1].GameName.Length == 0 && customMods[1].AuthorCredit.Length == 0
            && (customMods[0] with { Author = "" }).AuthorCredit == "By owner",
