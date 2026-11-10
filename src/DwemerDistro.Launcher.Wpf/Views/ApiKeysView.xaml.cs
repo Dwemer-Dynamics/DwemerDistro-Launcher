@@ -92,7 +92,7 @@ public partial class ApiKeysView : System.Windows.Controls.UserControl {
             _needsReload=false;
             foreach(var key in _snapshot.Keys??[]) _rows.Add(new(key,key.Provider,providers));
             foreach(var provider in providers.Keys) if(provider!="custom_openai" && !(_snapshot.Keys??[]).Any(k=>k.Provider==provider)) _rows.Add(new(null,provider,providers));
-            Status.Text="Global keys are shared by their assigned consumers. Saved keys stay masked until Show.";
+            Status.Text="";
         } finally { _busy=false; UpdateState(); }
     }
     private void AddCustom_Click(object sender,RoutedEventArgs e) {
