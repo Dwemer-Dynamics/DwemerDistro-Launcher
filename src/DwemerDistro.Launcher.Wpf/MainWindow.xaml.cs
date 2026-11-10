@@ -22,6 +22,29 @@ namespace DwemerDistro.Launcher.Wpf;
 
 public partial class MainWindow : Window
 {
+    public void ShowComponentTest(string id, string title)
+    {
+        ComponentBeltOverflowButton.IsChecked = false;
+        new ComponentTestWindow(_viewModel, id, title) { Owner = this }.ShowDialog();
+    }
+
+    private void ComponentTest_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ComponentStatusItemViewModel item })
+        {
+            e.Handled = true;
+            ShowComponentTest(item.Id, item.Name);
+        }
+    }
+
+    private void ComponentTest_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Space && sender is FrameworkElement { DataContext: ComponentStatusItemViewModel item })
+        {
+            e.Handled = true;
+            ShowComponentTest(item.Id, item.Name);
+        }
+    }
     private const int WmGetMinMaxInfo = 0x0024;
     private const int ComponentsTabIndex = 1;
     private const uint MonitorDefaultToNearest = 0x00000002;
@@ -34,6 +57,9 @@ public partial class MainWindow : Window
     private int _renderedOutputGeneration = -1;
     private bool _isConsoleExpanded;
     private int _landmarkIndex = -1;
+    private bool _shutdownStarted;
+    private bool _shutdownCompleted;
+    private StartupUpdateNoticeWindow? _startupUpdateNotice;
 
     public MainWindow()
     {
@@ -42,11 +68,17 @@ public partial class MainWindow : Window
         SourceInitialized += MainWindow_SourceInitialized;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         _viewModel.ApiKeysPageRequested += (_, _) => ApiKeysNavButton.IsChecked = true;
+        _viewModel.StartupDistroUpdateNoticeRaised += ViewModel_StartupDistroUpdateNoticeRaised;
+        _viewModel.LmStudioTestRequested += ViewModel_LmStudioTestRequested;
+        _viewModel.LmStudioLibraryFocusRequested += ViewModel_LmStudioLibraryFocusRequested;
         SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
         Activated += (_, _) => UpdateLmStudioRefresh();
         Deactivated += (_, _) => UpdateLmStudioRefresh();
         StateChanged += (_, _) => UpdateLmStudioRefresh();
         IsVisibleChanged += (_, _) => UpdateLmStudioRefresh();
+        // The header belt polls while the window can be seen, on every tab.
+        StateChanged += (_, _) => UpdateComponentBeltRefresh();
+        IsVisibleChanged += (_, _) => UpdateComponentBeltRefresh();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -85,6 +117,8 @@ public partial class MainWindow : Window
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (_shutdownCompleted) return;
+        if (_shutdownStarted) { e.Cancel = true; return; }
         if (ApiKeysHost.Content is ApiKeysView { IsBusy: true } keys)
         {
             e.Cancel = true;
@@ -134,9 +168,99 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Closing is synchronous to WPF: defer it until the asynchronous session/update cleanup has finished.
+        e.Cancel = true;
+        _shutdownStarted = true;
+        IsEnabled = false;
+        // The notice only explains; it must not outlive the window or hold up cleanup.
+        _startupUpdateNotice?.Close();
         SystemParameters.StaticPropertyChanged -= SystemParameters_StaticPropertyChanged;
         _viewModel.CloseCommunityModDetails();
-        await _viewModel.ShutdownAsync();
+        try
+        {
+            await _viewModel.ShutdownAsync();
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Operation($"Launcher shutdown cleanup failed: {ex.GetType().Name}");
+        }
+        finally
+        {
+            _shutdownCompleted = true;
+            // Queue even when cleanup completed synchronously; Close cannot run inside the original Closing event.
+            _ = Dispatcher.BeginInvoke(Close);
+        }
+    }
+
+    /// <summary>
+    /// Shows the automatic startup update's failure notice, owned by this window and modeless, so the assistant's
+    /// startup connection and shutdown cleanup never wait on it. One at a time; never once closing has started.
+    /// </summary>
+    private void ViewModel_StartupDistroUpdateNoticeRaised(object? sender, StartupDistroUpdateNotice notice)
+    {
+        if (_shutdownStarted || _startupUpdateNotice is not null || !IsLoaded)
+        {
+            return;
+        }
+
+        var window = new StartupUpdateNoticeWindow(notice) { Owner = this };
+        window.Closed += StartupUpdateNotice_Closed;
+        _startupUpdateNotice = window;
+        window.Show();
+    }
+
+    private void StartupUpdateNotice_Closed(object? sender, EventArgs e)
+    {
+        if (sender is not StartupUpdateNoticeWindow window)
+        {
+            return;
+        }
+
+        window.Closed -= StartupUpdateNotice_Closed;
+        if (ReferenceEquals(_startupUpdateNotice, window))
+        {
+            _startupUpdateNotice = null;
+        }
+
+        if (_shutdownStarted)
+        {
+            return;
+        }
+
+        switch (window.Choice)
+        {
+            case StartupUpdateNoticeChoice.OpenSettings:
+                ShowSystemUpdateSettings();
+                break;
+            case StartupUpdateNoticeChoice.ShowConsole:
+                if (!_isConsoleExpanded)
+                {
+                    ToggleConsole();
+                }
+
+                _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+                {
+                    if (_outputRichTextBox is { } output) output.Focus();
+                });
+                break;
+        }
+    }
+
+    /// <summary>Opens Settings at the distro section and focuses Update Distro; pressing it still asks first.</summary>
+    private void ShowSystemUpdateSettings()
+    {
+        SettingsNavButton.IsChecked = true;
+        _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        {
+            if (_shutdownStarted || MainTabs.SelectedIndex != 2)
+            {
+                return;
+            }
+
+            DistroUpdateSection.BringIntoView();
+            // Disabled while another operation runs; the section is still in view and its status says why.
+            UpdateDistroButton.Focus();
+        });
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -423,6 +547,86 @@ public partial class MainWindow : Window
             IsActive && IsVisible && WindowState != WindowState.Minimized);
     }
 
+    // Two columns of LLM Studio cards when there is room, one otherwise; tab order follows the cards either way.
+    private void LmStudioColumns_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var wide = e.NewSize.Width >= 860;
+        Grid.SetColumnSpan(LmStudioMainColumn, wide ? 1 : 3);
+        Grid.SetRow(LmStudioSideColumn, wide ? 0 : 1);
+        Grid.SetColumn(LmStudioSideColumn, wide ? 2 : 0);
+        Grid.SetColumnSpan(LmStudioSideColumn, wide ? 1 : 3);
+    }
+
+    private void LmStudioMoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        LmStudioMoreMenu.DataContext = DataContext;
+        LmStudioMoreMenu.PlacementTarget = LmStudioMoreButton;
+        LmStudioMoreMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        LmStudioMoreMenu.IsOpen = true;
+    }
+
+    // A slot's Test picks that model in Try a model; the prompt is where the user continues.
+    private void ViewModel_LmStudioTestRequested(object? sender, EventArgs e)
+    {
+        LmStudioPromptBox.BringIntoView();
+        LmStudioPromptBox.Focus();
+    }
+
+    // A deleted model's row took its focused Delete button with it. Once the list has its new rows, focus moves to the
+    // first available button in the library, unless the user has already moved focus elsewhere.
+    private void ViewModel_LmStudioLibraryFocusRequested(object? sender, EventArgs e)
+    {
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        {
+            if (Keyboard.FocusedElement is DependencyObject focused && focused != this && PresentationSource.FromDependencyObject(focused) is not null)
+                return;
+            FirstEnabledButton(LmStudioLibraryList)?.Focus();
+        });
+    }
+
+    private static System.Windows.Controls.Button? FirstEnabledButton(DependencyObject parent)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is System.Windows.Controls.Button { IsEnabled: true, IsVisible: true, Focusable: true } button) return button;
+            if (FirstEnabledButton(child) is { } found) return found;
+        }
+        return null;
+    }
+
+    private void UpdateComponentBeltRefresh()
+    {
+        _viewModel.SetComponentBeltActive(IsVisible && WindowState != WindowState.Minimized);
+    }
+
+    private void ComponentBeltHost_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        _viewModel.ComponentBelt.SetAvailableWidth(e.NewSize.Width);
+    }
+
+    // The overflow list takes focus when it opens so keyboard users land on its first row.
+    private void ComponentBeltOverflowPopup_Opened(object? sender, EventArgs e)
+    {
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (ComponentBeltOverflowList.ItemContainerGenerator.ContainerFromIndex(0) is ContentPresenter presenter
+                && VisualTreeHelper.GetChildrenCount(presenter) > 0
+                && VisualTreeHelper.GetChild(presenter, 0) is UIElement row)
+            {
+                row.Focus();
+            }
+        }, System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private void ComponentBeltOverflowPopup_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        e.Handled = true;
+        ComponentBeltOverflowButton.IsChecked = false;
+        ComponentBeltOverflowButton.Focus();
+    }
+
     private void UpdateSelectedGameDetails()
     {
         if (ChimDetails is null)
@@ -447,9 +651,14 @@ public partial class MainWindow : Window
     {
         _isConsoleExpanded = !_isConsoleExpanded;
         ApplyConsoleLayout();
-        if (_isConsoleExpanded)
+        if (_isConsoleExpanded && _outputRichTextBox is { } output)
         {
-            _outputRichTextBox?.ScrollToEnd();
+            // The console was just built and has no template or layout yet, so an immediate ScrollToEnd does nothing:
+            // it opens at the latest line once laid out. Later output keeps following as RenderOutputText appends it.
+            _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+            {
+                if (ReferenceEquals(output, _outputRichTextBox)) output.ScrollToEnd();
+            });
         }
     }
 

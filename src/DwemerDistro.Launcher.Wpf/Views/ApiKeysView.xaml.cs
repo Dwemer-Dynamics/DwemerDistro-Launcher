@@ -90,10 +90,20 @@ public partial class ApiKeysView : System.Windows.Controls.UserControl {
             _snapshot=result.Ok ? result.Snapshot : null; _rows.Clear();
             if(_snapshot?.Providers is not {Count:>0} providers) { _needsReload=true; Status.Text="Global API keys are unavailable. Reload to retry."; return; }
             _needsReload=false;
-            foreach(var key in _snapshot.Keys??[]) _rows.Add(new(key,key.Provider,providers));
-            foreach(var provider in providers.Keys) if(provider!="custom_openai" && !(_snapshot.Keys??[]).Any(k=>k.Provider==provider)) _rows.Add(new(null,provider,providers));
-            Status.Text="Global keys are shared by their assigned consumers. Saved keys stay masked until Show.";
+            var loaded=new List<ProviderKeyRow>();
+            foreach(var key in _snapshot.Keys??[]) loaded.Add(new(key,key.Provider,providers));
+            foreach(var provider in providers.Keys) if(provider!="custom_openai" && !(_snapshot.Keys??[]).Any(k=>k.Provider==provider)) loaded.Add(new(null,provider,providers));
+            foreach(var row in Ordered(loaded)) _rows.Add(row);
+            Status.Text="";
         } finally { _busy=false; UpdateState(); }
+    }
+    // Saved keys first, then empty providers, each alphabetical by displayed name; unsaved custom drafts stay last.
+    internal static IEnumerable<ProviderKeyRow> Ordered(IEnumerable<ProviderKeyRow> rows)=>rows
+        .OrderBy(r=>r.Key is not null ? 0 : r.IsCustomName ? 2 : 1)
+        .ThenBy(r=>r.IsCustomName ? r.Label : r.ProviderLabel,StringComparer.CurrentCultureIgnoreCase);
+    private void PlaceRow(ProviderKeyRow row) {
+        int from=_rows.IndexOf(row), to=Ordered(_rows).ToList().IndexOf(row);
+        if(from>=0 && from!=to) { _rows.Move(from,to); Rows.SelectedItem=row; Rows.ScrollIntoView(row); }
     }
     private void AddCustom_Click(object sender,RoutedEventArgs e) {
         if(_busy||_needsReload||_snapshot?.Providers is not { } providers) return;
@@ -118,7 +128,7 @@ public partial class ApiKeysView : System.Windows.Controls.UserControl {
         try {
             var result=await _service.RunAsync("global-save",payload);
             if(result.Ok && result.Data?.Deserialize<SharedKey>(ApiKeysService.JsonOptions) is { } saved) {
-                row.Apply(saved);
+                row.Apply(saved); PlaceRow(row);
                 if(_snapshot?.Keys is { } keys) { var index=keys.FindIndex(k=>k.Id==saved.Id); if(index<0) keys.Add(saved); else keys[index]=saved; }
                 Status.Text=result.Outcome=="unchanged" ? "The current global key was kept." : $"Saved global key {saved.Label}. Existing assignments retain the same key ID.";
             } else {

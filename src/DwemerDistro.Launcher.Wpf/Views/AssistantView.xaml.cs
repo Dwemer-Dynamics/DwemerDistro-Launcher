@@ -21,6 +21,8 @@ public partial class AssistantView : UserControl
     private const double NarrowWidth = 860;
     private const double NarrowChatHeight = 380;
     private const double NarrowChatWithCardHeight = 700;
+    // The setup card and the composer under it, without scrolling inside the card for most states.
+    private const double NarrowSetupHeight = 600;
     private AssistantViewModel? _viewModel;
     private bool? _isNarrow;
     // Below this width the review column is not offered wider.
@@ -176,6 +178,11 @@ public partial class AssistantView : UserControl
             RemeasureBackdrop();
         };
         DataContextChanged += AssistantView_DataContextChanged;
+        // Shown again (the page reopened, or the setup card made way for it): it opens at the newest message.
+        TranscriptBox.IsVisibleChanged += (_, e) =>
+        {
+            if (e.NewValue is true) ScrollTranscriptToLatest();
+        };
         // Ctrl+V in the composer attaches a copied screenshot or copied files; text pastes as usual.
         CommandManager.AddPreviewCanExecuteHandler(InputBox, InputBox_PreviewCanPaste);
         CommandManager.AddPreviewExecutedHandler(InputBox, InputBox_PreviewPaste);
@@ -205,7 +212,7 @@ public partial class AssistantView : UserControl
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(AssistantViewModel.StatusText))
+        if (e.PropertyName is nameof(AssistantViewModel.StatusText) or nameof(AssistantViewModel.HeaderStatusText))
         {
             RaiseLiveRegion(StatusTextBlock);
         }
@@ -213,7 +220,7 @@ public partial class AssistantView : UserControl
         {
             RaiseLiveRegion(OutcomeTextBlock);
         }
-        else if (e.PropertyName == nameof(AssistantViewModel.IsSidePanelVisible))
+        else if (e.PropertyName is nameof(AssistantViewModel.IsSidePanelVisible) or nameof(AssistantViewModel.IsOnboardingShown))
         {
             _isNarrow = null;
             ApplyLayout(ActualWidth);
@@ -228,6 +235,46 @@ public partial class AssistantView : UserControl
             if (follow) Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () => TranscriptBox.ScrollToEnd());
             if (_viewModel?.IsActionProposed == true) RaiseLiveRegion(RestartProposalTitle);
         }
+        else if (e.PropertyName == nameof(AssistantViewModel.SetupAction))
+        {
+            // The card kept focus while its step changed (e.g. Connect led to Sign in): the new step gets it.
+            if (OnboardingCard.IsKeyboardFocused) Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, FocusSetupStep);
+            RaiseLiveRegion(OnboardingTitleText);
+        }
+    }
+
+    // The focused setup control went away (Connect while connecting, a step replaced, or the card closed once connected):
+    // focus moves to the step shown now, or to the composer, instead of being lost.
+    private void OnboardingOverlay_IsKeyboardFocusWithinChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true) return;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, () =>
+        {
+            // Another visible control took focus, or the launcher only lost activation: nothing to repair.
+            if (Keyboard.FocusedElement is UIElement { IsVisible: true } focused && focused is not Window || Window.GetWindow(this)?.IsActive != true) return;
+            if (_viewModel?.IsOnboardingShown == true) FocusSetupStep();
+            else if (IsVisible) InputBox.Focus();
+        });
+    }
+
+    private void FocusSetupStep()
+    {
+        if (_viewModel?.IsOnboardingShown != true) return;
+        foreach (var step in new UIElement[] { ConnectButton, SignInButton, OpenSignInPageButton, OpenApiKeysButton, RunProbeButton, RepairHomeConfigButton })
+        {
+            if (step.IsVisible && step.IsEnabled && step.Focus()) return;
+        }
+
+        OnboardingCard.Focus();
+    }
+
+    private void SessionMenuButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Opened from a click rather than a right-click, the menu takes the page's view model explicitly so every item's command binds.
+        SessionMenu.DataContext = DataContext;
+        SessionMenu.PlacementTarget = SessionMenuButton;
+        SessionMenu.Placement = PlacementMode.Bottom;
+        SessionMenu.IsOpen = true;
     }
 
     /// <summary>Scrolls the status header into view and announces it, e.g. after a blocked close.</summary>
@@ -886,14 +933,24 @@ public partial class AssistantView : UserControl
         && (focused as System.Windows.Controls.ContextMenu ?? focused.Parent as System.Windows.Controls.ContextMenu)?.PlacementTarget == TranscriptBox;
 
     // Shown again, e.g. back from API Keys: an OpenRouter chat without a usable key reads its key once more.
+    // Earlier pages browsed before leaving are put away (Back to latest, which only restores the kept view),
+    // so the page always reopens on the latest conversation; paging while it stays open is left alone.
     private void AssistantView_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (e.NewValue is true)
         {
+            if (_viewModel?.BackToLatestCommand.CanExecute(null) == true) _viewModel.BackToLatestCommand.Execute(null);
             RemeasureBackdrop();
             _viewModel?.OnPageShown();
         }
     }
+
+    // After layout, so the transcript's extent includes everything added while it was not shown.
+    private void ScrollTranscriptToLatest() =>
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        {
+            if (TranscriptBox.IsVisible) TranscriptBox.ScrollToEnd();
+        });
 
     // Enter sends, Shift+Enter keeps the newline the TextBox would insert anyway.
     private void InputBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -904,7 +961,7 @@ public partial class AssistantView : UserControl
         }
 
         e.Handled = true;
-        if (ViewModel?.SendCommand.CanExecute(null) == true)
+        if (ViewModel is { IsSessionUsable: true } && ViewModel.SendCommand.CanExecute(null))
         {
             ViewModel.SendCommand.Execute(null);
         }
@@ -1046,7 +1103,10 @@ public partial class AssistantView : UserControl
         SidePanel.VerticalScrollBarVisibility = narrow ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         ChatRow.Height = narrow ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
         // A proposal card sits inside the conversation card, so in one column the card grows instead of squeezing the transcript.
-        ChatCard.Height = narrow ? (_viewModel?.IsActionProposed == true ? NarrowChatWithCardHeight : NarrowChatHeight) : double.NaN;
+        ChatCard.Height = !narrow ? double.NaN
+            : _viewModel?.IsActionProposed == true ? NarrowChatWithCardHeight
+            : _viewModel?.IsOnboardingShown == true ? NarrowSetupHeight
+            : NarrowChatHeight;
         SessionActions.HorizontalAlignment = narrow ? System.Windows.HorizontalAlignment.Left : System.Windows.HorizontalAlignment.Right;
         Grid.SetColumn(SessionActions, narrow ? 0 : 1);
         Grid.SetColumnSpan(SessionActions, narrow ? 2 : 1);

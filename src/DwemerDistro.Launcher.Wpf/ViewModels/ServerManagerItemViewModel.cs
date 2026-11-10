@@ -320,11 +320,11 @@ public sealed class ServerManagerItemViewModel : ObservableObject
             }
 
             var lead = IsUpdateAvailable
-                ? $"Update Available for {RailProductName} on the selected {SelectedBranch} branch. "
+                ? $"Update Available for {RailProductName} on the selected {SelectedBranch} release. "
                 : string.Empty;
 
             return lead +
-                   $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} branch. " +
+                   $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} release. " +
                    "Other mods are left unchanged.";
         }
     }

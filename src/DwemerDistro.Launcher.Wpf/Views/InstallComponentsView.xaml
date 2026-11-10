@@ -7,21 +7,19 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
 
-        <!-- Compact dark palette for the component cards, matched to the launcher surfaces. -->
+        <!-- Compact dark palette for the component cards, matched to the launcher surfaces. The Gold keys
+             hold the shared copper accent (CopperStrong / CopperTint) for the current section; Warn stays amber. -->
         <SolidColorBrush x:Key="Components.Raised" Color="#333333" />
         <SolidColorBrush x:Key="Components.Line" Color="#424242" />
         <SolidColorBrush x:Key="Components.LineStrong" Color="#585858" />
         <SolidColorBrush x:Key="Components.Text" Color="#ECECEC" />
         <SolidColorBrush x:Key="Components.Muted" Color="#B4B4B4" />
-        <SolidColorBrush x:Key="Components.Gold" Color="#D8B44C" />
-        <SolidColorBrush x:Key="Components.GoldSoft" Color="#413C30" />
+        <SolidColorBrush x:Key="Components.Gold" Color="#E2803F" />
+        <SolidColorBrush x:Key="Components.GoldSoft" Color="#3A2418" />
         <SolidColorBrush x:Key="Components.Ok" Color="#86D08C" />
         <SolidColorBrush x:Key="Components.Warn" Color="#E6B45E" />
         <SolidColorBrush x:Key="Components.Bad" Color="#F08A8A" />
         <SolidColorBrush x:Key="Components.Off" Color="#9A9A9A" />
-        <!-- Neutral light plate so dark and light artwork both stay legible without recoloring. -->
-        <SolidColorBrush x:Key="Components.ArtPlate" Color="#EFEDE9" />
-        <SolidColorBrush x:Key="Components.ArtLine" Color="#5A5A5A" />
 
         <!-- Card actions keep the shared GameCenter template (focus ring, pressed, disabled)
              at a compact height so a card footer fits on one or two lines. -->
@@ -34,12 +32,12 @@
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="#454545" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
 
-        <Style x:Key="CardPrimaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.PrimaryButton}">
+        <Style x:Key="CardPrimaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.GoButton}">
             <Setter Property="Padding" Value="12,3" />
             <Setter Property="MinHeight" Value="28" />
             <Setter Property="MinWidth" Value="76" />
@@ -69,14 +67,11 @@
             <Setter Property="Padding" Value="10,8" />
         </Style>
 
-        <!-- Same 38px artwork box everywhere; the mark is kept whole inside it. -->
+        <!-- Same 38px artwork slot everywhere; the mark is kept whole inside it. No plate:
+             transparent marks sit directly on the card, opaque ones bring their own. -->
         <Style x:Key="ArtBox" TargetType="Border">
             <Setter Property="Width" Value="38" />
             <Setter Property="Height" Value="38" />
-            <Setter Property="Background" Value="{StaticResource Components.ArtPlate}" />
-            <Setter Property="BorderBrush" Value="{StaticResource Components.ArtLine}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="6" />
             <Setter Property="VerticalAlignment" Value="Top" />
         </Style>
 
@@ -89,6 +84,31 @@
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
 
+        <!-- The two Pocket-TTS cards share one mascot, so each wears its hardware mark in the art's top-left
+             corner: NVIDIA for the GPU audio.cpp build, AMD for the CPU Python build. Decorative only. -->
+        <Style x:Key="ArtHardwareBadge" TargetType="Border">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Setter Property="Width" Value="13" />
+            <Setter Property="Height" Value="13" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+            <Setter Property="Background" Value="{StaticResource Components.Raised}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Components.Raised}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Key}" Value="audiocpp">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Setter Property="Tag" Value="pack://application:,,,/DwemerDistro;component/Assets/nvidia.png" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Key}" Value="pockettts">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Setter Property="Tag" Value="pack://application:,,,/DwemerDistro;component/Assets/amd.png" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="MutedText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource Components.Muted}" />
             <Setter Property="FontFamily" Value="Segoe UI" />
@@ -96,7 +116,7 @@
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
 
-        <!-- Compatibility pill: 14px brand mark on a light plate plus a visible label. -->
+        <!-- Compatibility pill: 12px brand mark plus a visible label. -->
         <Style x:Key="HardwarePill" TargetType="Border">
             <Setter Property="BorderBrush" Value="{StaticResource Components.Line}" />
             <Setter Property="BorderThickness" Value="1" />
@@ -164,11 +184,78 @@
         </Style>
     </UserControl.Resources>
 
+    <Grid>
+    <!-- Until the first installed-state probe settles, the cards would only guess "Not installed" and
+         offer Install, so the page shows this instead. It waits on the real probe, never a timer. -->
+    <StackPanel x:Name="LoadingPanel"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                MaxWidth="320"
+                Margin="14"
+                AutomationProperties.Name="Loading components">
+        <StackPanel.Style>
+            <Style TargetType="StackPanel">
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsLoadingComponents}" Value="False">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </StackPanel.Style>
+        <TextBlock Text="Loading components"
+                   Foreground="{StaticResource Components.Text}"
+                   FontSize="16"
+                   FontWeight="SemiBold"
+                   HorizontalAlignment="Center"
+                   AutomationProperties.HeadingLevel="Level1" />
+        <TextBlock Text="Checking installed components."
+                   Style="{StaticResource MutedText}"
+                   Margin="0,4,0,12"
+                   TextAlignment="Center"
+                   HorizontalAlignment="Center"
+                   AutomationProperties.LiveSetting="Polite" />
+        <!-- Animates only while visible and while Windows client-area animation is on. -->
+        <ProgressBar Width="200"
+                     Height="4"
+                     Background="#151515"
+                     BorderThickness="0"
+                     Foreground="{DynamicResource GameCenter.CopperStrong}"
+                     IsTabStop="False"
+                     Focusable="False"
+                     AutomationProperties.Name="Checking installed components">
+            <ProgressBar.Style>
+                <Style TargetType="ProgressBar">
+                    <Setter Property="IsIndeterminate" Value="False" />
+                    <Style.Triggers>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding IsLoadingComponents}" Value="True" />
+                                <Condition Binding="{Binding Path=(SystemParameters.ClientAreaAnimation)}" Value="True" />
+                            </MultiDataTrigger.Conditions>
+                            <Setter Property="IsIndeterminate" Value="True" />
+                        </MultiDataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ProgressBar.Style>
+        </ProgressBar>
+    </StackPanel>
+
     <ScrollViewer x:Name="PageScroller"
                   VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled"
                   Padding="14"
                   ScrollChanged="PageScroller_ScrollChanged">
+        <ScrollViewer.Style>
+            <!-- Hidden unless the probe has settled, so an unresolved binding can never flash the cards. -->
+            <Style TargetType="ScrollViewer" BasedOn="{StaticResource {x:Type ScrollViewer}}">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsLoadingComponents}" Value="False">
+                        <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
         <StackPanel x:Name="PageContent"
                     SizeChanged="PageContent_SizeChanged">
 
@@ -383,7 +470,7 @@
                                             </Style>
                                         </Border.Style>
                                         <TextBlock Text="{Binding Title}"
-                                                   Foreground="{StaticResource Components.Gold}"
+                                                   Foreground="{StaticResource Components.Text}"
                                                    FontSize="12"
                                                    FontWeight="SemiBold"
                                                    AutomationProperties.HeadingLevel="Level2" />
@@ -453,6 +540,11 @@
                                                                     </DataTemplate>
                                                                 </ItemsControl.ItemTemplate>
                                                             </ItemsControl>
+                                                            <Button Content="Test" Click="TestComponent_Click"
+                                                                    IsEnabled="{Binding IsInstalled}"
+                                                                    Visibility="{Binding HasPort, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                                    AutomationProperties.Name="{Binding Title, StringFormat=Test {0}}"
+                                                                    Style="{StaticResource CardQuietButton}" />
                                                             <Button Content="{Binding SecondaryActionText}"
                                                                     Command="{Binding SecondaryActionCommand}"
                                                                     Style="{StaticResource CardQuietButton}"
@@ -475,8 +567,14 @@
                                                                     <ColumnDefinition Width="*" />
                                                                 </Grid.ColumnDefinitions>
                                                                 <Border Style="{StaticResource ArtBox}">
-                                                                    <Image Source="{Binding ArtworkSource}"
-                                                                           Style="{StaticResource ArtImage}" />
+                                                                    <Grid>
+                                                                        <Image Source="{Binding ArtworkSource}"
+                                                                               Style="{StaticResource ArtImage}" />
+                                                                        <Border Style="{StaticResource ArtHardwareBadge}">
+                                                                            <Image Source="{Binding Tag, RelativeSource={RelativeSource AncestorType=Border}}" Stretch="Uniform"
+                                                                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                                                                        </Border>
+                                                                    </Grid>
                                                                 </Border>
                                                                 <StackPanel Grid.Column="1"
                                                                             Margin="8,0,0,0">
@@ -610,17 +708,13 @@
                                                                 <Border Style="{StaticResource HardwarePill}"
                                                                         Visibility="{Binding SupportsNvidiaCuda, Converter={StaticResource BoolToVisibilityConverter}}">
                                                                     <StackPanel Orientation="Horizontal">
-                                                                        <Border Background="{StaticResource Components.ArtPlate}"
-                                                                                CornerRadius="2"
-                                                                                Padding="1"
-                                                                                Margin="0,0,4,0"
-                                                                                VerticalAlignment="Center">
-                                                                            <Image Source="/DwemerDistro;component/Assets/nvidia.png"
-                                                                                   Width="12"
-                                                                                   Height="12"
-                                                                                   Stretch="Uniform"
-                                                                                   RenderOptions.BitmapScalingMode="HighQuality" />
-                                                                        </Border>
+                                                                        <Image Source="/DwemerDistro;component/Assets/nvidia.png"
+                                                                               Width="12"
+                                                                               Height="12"
+                                                                               Margin="1,1,5,1"
+                                                                               VerticalAlignment="Center"
+                                                                               Stretch="Uniform"
+                                                                               RenderOptions.BitmapScalingMode="HighQuality" />
                                                                         <TextBlock Text="NVIDIA"
                                                                                    Foreground="{StaticResource Components.Muted}"
                                                                                    FontSize="11"
@@ -631,17 +725,13 @@
                                                                 <Border Style="{StaticResource HardwarePill}"
                                                                         Visibility="{Binding SupportsAmdCpu, Converter={StaticResource BoolToVisibilityConverter}}">
                                                                     <StackPanel Orientation="Horizontal">
-                                                                        <Border Background="{StaticResource Components.ArtPlate}"
-                                                                                CornerRadius="2"
-                                                                                Padding="1"
-                                                                                Margin="0,0,4,0"
-                                                                                VerticalAlignment="Center">
-                                                                            <Image Source="/DwemerDistro;component/Assets/amd.png"
-                                                                                   Width="12"
-                                                                                   Height="12"
-                                                                                   Stretch="Uniform"
-                                                                                   RenderOptions.BitmapScalingMode="HighQuality" />
-                                                                        </Border>
+                                                                        <Image Source="/DwemerDistro;component/Assets/amd.png"
+                                                                               Width="12"
+                                                                               Height="12"
+                                                                               Margin="1,1,5,1"
+                                                                               VerticalAlignment="Center"
+                                                                               Stretch="Uniform"
+                                                                               RenderOptions.BitmapScalingMode="HighQuality" />
                                                                         <TextBlock Text="AMD / CPU"
                                                                                    Foreground="{StaticResource Components.Muted}"
                                                                                    FontSize="11"
@@ -670,4 +760,5 @@
             </Grid>
         </StackPanel>
     </ScrollViewer>
+    </Grid>
 </UserControl>

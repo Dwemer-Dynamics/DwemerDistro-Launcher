@@ -393,9 +393,17 @@ public sealed partial class AssistantViewModel : ObservableObject
     private int _sessionGeneration;
     private bool _ownsDistroActivity;
     private bool _startupConnectRequested;
+    // The launcher's startup checks and sync are still settling the distro (see BeginStartupHold); ended once, never begun again.
+    private bool _isStartupHeld;
+    private bool _startupHoldEnded;
+    private string _startupPhase = string.Empty;
+    private bool _startupWillConnect;
     private bool _isShutDown;
     // The user, or startup on their behalf, wants a session; Disconnect clears it, so maintenance never reopens one the user closed.
     private bool _connectionIntent;
+    // Startup's choice across launches (see ConnectOnStartupAsync); without a store, as in older tests, startup always connects.
+    private readonly IAssistantConnectionPreferenceStore? _connectionPreferenceStore;
+    private AssistantConnectionPreference? _connectionPreference;
     // Distro maintenance closed the session and holds the distro; nothing connects until every operation that asked ends.
     private int _maintenanceHolds;
     private bool IsMaintenanceHeld => _maintenanceHolds > 0;
@@ -433,7 +441,7 @@ public sealed partial class AssistantViewModel : ObservableObject
     private readonly CancellationTokenSource _lifetime = new();
     private AssistantState _state = AssistantState.NotChecked;
     private string _statusText = string.Empty;
-    private string _statusDetail = "The assistant connects after the launcher's startup checks, or press Connect. Nothing is sent until you ask.";
+    private string _statusDetail = "Press Connect to get started. After a successful connection, the assistant reconnects next time unless you choose Disconnect. Nothing is sent until you ask.";
     private string _providerText = "Codex";
     private string _accountText = "Not connected";
     private AssistantModelOption? _selectedModel;
@@ -526,9 +534,12 @@ public sealed partial class AssistantViewModel : ObservableObject
         IAssistantStateStore? claudeStore = null, ClaudeChatStore? claudeChats = null,
         Func<CancellationToken, Task<ClaudeCodeStatus>>? claudeStatus = null, ProcessRunner? claudeRunner = null,
         IAssistantStateStore? openRouterStore = null, OpenRouterChatStore? openRouterChats = null,
-        Func<CancellationToken, Task<ApiKeysResult>>? openRouterKeys = null)
+        Func<CancellationToken, Task<ApiKeysResult>>? openRouterKeys = null,
+        IAssistantConnectionPreferenceStore? connectionPreference = null)
     {
         _cli = cli;
+        _connectionPreferenceStore = connectionPreference;
+        _connectionPreference = connectionPreference?.Load();
         _host = host;
         _store = store;
         _codexStore = store;
@@ -545,8 +556,8 @@ public sealed partial class AssistantViewModel : ObservableObject
         Memory = new AssistantMemoryViewModel((arguments, timeout) => RunCliAsync(arguments, timeout, _lifetime.Token), host, () => (_taskId, _threadId),
             () => CanClearMemory);
         ReopenCommand = new AsyncRelayCommand(ReopenSelectedAsync, () => SelectedHistory is { IsCurrent: false, CanReopen: true } && CanSwitchChat);
-        ArchiveCommand = new RelayCommand(ToggleArchiveSelected, () => SelectedHistory is { IsCurrent: false });
-        RenameCommand = new RelayCommand(RenameSelected, () => SelectedHistory is not null && AssistantCatalogEntry.IsValidTitle(RenameText.Trim()));
+        ArchiveCommand = new RelayCommand(ToggleArchiveSelected, () => SelectedHistory is { IsCurrent: false } && !_isStartupHeld);
+        RenameCommand = new RelayCommand(RenameSelected, () => SelectedHistory is not null && AssistantCatalogEntry.IsValidTitle(RenameText.Trim()) && !_isStartupHeld);
         ExportChatCommand = new AsyncRelayCommand(ExportChatAsync, () => CanExportChat);
         CancelExportCommand = new RelayCommand(() => _export?.Cancel(), () => IsExporting);
         DeleteChatCommand = new RelayCommand(() => ConfirmingDelete = true, () => CanDeleteSelected && !ConfirmingDelete);
@@ -554,7 +565,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         CancelDeleteCommand = new RelayCommand(() => ConfirmingDelete = false, () => ConfirmingDelete);
         _dispatcher = Dispatcher.CurrentDispatcher;
         _statusText = Describe(AssistantState.NotChecked);
-        ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => _client is null && !IsMaintenanceHeld
+        ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => _client is null && !IsMaintenanceHeld && !_isStartupHeld
             && State is not (AssistantState.Checking or AssistantState.Busy or AssistantState.Applying));
         RunProbeCommand = new AsyncRelayCommand(RunProbeAsync, () => State == AssistantState.IsolationFailed);
         SignInCommand = new AsyncRelayCommand(SignInAsync, () => State == AssistantState.SignedOut && _client is not null);
@@ -580,11 +591,12 @@ public sealed partial class AssistantViewModel : ObservableObject
         ApproveCommand = new AsyncRelayCommand(ApproveAsync, () => State == AssistantState.Review && _review is not null);
         RejectCommand = new RelayCommand(Reject, () => State == AssistantState.Review);
         RollbackCommand = new AsyncRelayCommand(RollbackAsync, () => _canRollback && _taskId is not null && State is AssistantState.Ready or AssistantState.Disconnected or AssistantState.Error);
-        CheckOutcomeCommand = new AsyncRelayCommand(CheckOutcomeAsync, () => _canCheckOutcome && _taskId is not null && State is not (AssistantState.Applying or AssistantState.Busy));
+        CheckOutcomeCommand = new AsyncRelayCommand(CheckOutcomeAsync, () => _canCheckOutcome && _taskId is not null && !_isStartupHeld
+            && State is not (AssistantState.Applying or AssistantState.Busy));
         AllowFileAccessCommand = new AsyncRelayCommand(AllowFileAccessAsync, () => State == AssistantState.Ready && _fileRequest is not null);
         DeclineFileAccessCommand = new RelayCommand(DeclineFileAccess, () => _fileRequest is not null && State is not (AssistantState.Busy or AssistantState.Checking));
         RepairHomeConfigCommand = new AsyncRelayCommand(RepairHomeConfigAsync, () => _homeConfigProposal is not null && _client is null
-            && !IsMaintenanceHeld && State == AssistantState.Error);
+            && !IsMaintenanceHeld && !_isStartupHeld && State == AssistantState.Error);
         CancelHomeConfigRepairCommand = new RelayCommand(CancelHomeConfigRepair, () => _homeConfigProposal is not null);
         ApproveActionCommand = new AsyncRelayCommand(() => DecideActionAsync("approve"),
             () => _actionProposal is not null && _client is not null && State == AssistantState.Streaming && !IsMaintenanceHeld);
@@ -592,6 +604,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         ApproveRunForTaskCommand = new AsyncRelayCommand(() => DecideActionAsync("approve_session"),
             () => CanAllowRunForTask && _client is not null && State == AssistantState.Streaming && !IsMaintenanceHeld);
         RevokeRunGrantCommand = new AsyncRelayCommand(RevokeRunGrantAsync, () => HasRunGrant && _client is not null);
+        InitializePresentation();
     }
 
     public AsyncRelayCommand ConnectCommand { get; }
@@ -1058,14 +1071,45 @@ public sealed partial class AssistantViewModel : ObservableObject
     /// user has used Connect or the launcher is closing. Like Connect it only reads readiness: it never runs the isolation
     /// check, signs in, opens a page or sends a message, and any failure stays inline with Connect available.
     /// </summary>
+    /// <remarks>
+    /// It connects only when the last usable connection was not followed by the user's Disconnect, and first selects that
+    /// connection's provider again. A failed attempt changes nothing. With no saved preference yet (a launcher from before
+    /// it existed), a ChatGPT task reference with an opened thread for this distro installation,
+    /// stands for an earlier connection; otherwise the tab waits for Connect, and the next usable connection opts in.
+    /// </remarks>
     internal async Task ConnectOnStartupAsync()
     {
-        if (_startupConnectRequested || _isShutDown || IsMaintenanceHeld) return;
+        // Still held, it leaves the one startup connection for EndStartupHold's caller to request.
+        if (_startupConnectRequested || _isShutDown || IsMaintenanceHeld || _isStartupHeld) return;
         _startupConnectRequested = true;
         if (State != AssistantState.NotChecked || !ConnectCommand.CanExecute(null)) return;
+        if (_connectionPreferenceStore is not null)
+        {
+            var preference = _connectionPreference ?? InferConnectionPreference();
+            if (preference is null || !preference.ReconnectOnStartup)
+            {
+                LauncherLogService.Startup(preference is null
+                    ? "Assistant startup connection skipped: it has not connected before."
+                    : "Assistant startup connection skipped: the user disconnected it.");
+                return;
+            }
+            // Never another provider than the one that connected: one this build cannot offer leaves the tab waiting for Connect.
+            if (Providers.FirstOrDefault(option => option.Id == preference.Provider) is not { IsAvailable: true } option)
+            {
+                LauncherLogService.Startup("Assistant startup connection skipped: its provider is not available.");
+                return;
+            }
+            if (!ReferenceEquals(option, _selectedProvider))
+            {
+                await SwitchProviderAsync(option);
+                if (_isShutDown || !ReferenceEquals(option, _selectedProvider)
+                    || State != AssistantState.NotChecked || !ConnectCommand.CanExecute(null)) return;
+            }
+        }
         try
         {
             await ConnectAsync();
+            LauncherLogService.Startup($"Assistant startup connection completed: {State}.");
         }
         catch (Exception ex)
         {
@@ -1073,6 +1117,93 @@ public sealed partial class AssistantViewModel : ObservableObject
             LauncherLogService.Operation($"Assistant startup connection failed: {ex.GetType().Name}");
             if (!_isShutDown) await EndSessionAsync(AssistantState.Error, "The assistant could not connect: " + Shorten(ex.Message, 200));
         }
+    }
+
+    /// <summary>
+    /// The launcher's startup checks, data loading and launcher-version sync have not settled yet. Connect, provider and chat
+    /// switching, outcome checks and history edits wait, so nothing reads or opens the distro while startup may still change it;
+    /// the page says what startup is doing instead of offering Connect.
+    /// </summary>
+    public bool IsStartupHeld => _isStartupHeld;
+
+    /// <summary>What startup is doing now, in one sentence; empty when not held.</summary>
+    public string StartupPhase => _isStartupHeld ? _startupPhase : string.Empty;
+
+    /// <summary>
+    /// Begins the startup hold, before the page is first shown. Called at most once effectively: after
+    /// <see cref="EndStartupHold"/>, or once the launcher is closing, it does nothing.
+    /// </summary>
+    internal void BeginStartupHold(string phase)
+    {
+        if (_isStartupHeld || _startupHoldEnded || _isShutDown) return;
+        _isStartupHeld = true;
+        _startupPhase = phase;
+        // Read once: whether startup's one connection will run, so the page promises it only then.
+        _startupWillConnect = WillConnectOnStartup();
+        RaiseStartupHold();
+    }
+
+    /// <summary>Names the startup step the assistant is waiting for; ignored once the hold has ended.</summary>
+    internal void SetStartupPhase(string phase)
+    {
+        if (!_isStartupHeld || phase == _startupPhase) return;
+        _startupPhase = phase;
+        OnPropertyChanged(nameof(StartupPhase));
+        RaisePresentation();
+    }
+
+    /// <summary>
+    /// Ends the startup hold exactly once. A <paramref name="detail"/> explains, on the setup card, why startup will not
+    /// connect (setup needed, a check that failed, an update still busy); Connect is then available unless maintenance holds it.
+    /// The caller requests startup's connection, if any, only after this.
+    /// </summary>
+    internal void EndStartupHold(string? detail = null)
+    {
+        if (!_isStartupHeld) return;
+        _isStartupHeld = false;
+        _startupHoldEnded = true;
+        if (detail is not null && _client is null && State == AssistantState.NotChecked) StatusDetail = detail;
+        RaiseStartupHold();
+    }
+
+    private void RaiseStartupHold()
+    {
+        OnPropertyChanged(nameof(IsStartupHeld));
+        OnPropertyChanged(nameof(StartupPhase));
+        RaiseCommands();
+        RaisePresentation();
+    }
+
+    /// <summary>The same choice <see cref="ConnectOnStartupAsync"/> makes, read without connecting, switching or saving.</summary>
+    private bool WillConnectOnStartup()
+    {
+        if (_startupConnectRequested) return false;
+        if (_connectionPreferenceStore is null) return true;
+        try
+        {
+            var preference = _connectionPreference ?? InferConnectionPreference();
+            return preference is { ReconnectOnStartup: true } && Providers.Any(option => option.Id == preference.Provider && option.IsAvailable);
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup($"Assistant startup connection preference could not be read: {ex.GetType().Name}");
+            return false;
+        }
+    }
+
+    private AssistantConnectionPreference? InferConnectionPreference() =>
+        _codexStore.Load() is { ThreadId: not null } saved && saved.Distro == _cli.DistroName && saved.BelongsTo(_host.GetDistroInstallationId(), saved.Provider)
+            ? new AssistantConnectionPreference(AssistantConnectionPreference.CurrentVersion, true, ChatGptProviderId)
+            : null;
+
+    /// <summary>Saves startup's choice for the selected provider; written only when it changes.</summary>
+    private void RememberConnection(bool reconnectOnStartup)
+    {
+        if (_connectionPreferenceStore is null) return;
+        var preference = new AssistantConnectionPreference(AssistantConnectionPreference.CurrentVersion, reconnectOnStartup, _selectedProvider.Id);
+        if (preference == _connectionPreference) return;
+        _connectionPreference = preference;
+        _connectionPreferenceStore.Save(preference);
     }
 
     internal async Task ConnectAsync()
@@ -1392,7 +1523,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         if (saved.Distro != _cli.DistroName || !saved.BelongsTo(_installationId, _provider))
         {
             SetState(AssistantState.Error, $"The saved task {saved.TaskId} belongs to a different DwemerDistro installation or assistant provider, " +
-                "so it was not reused. Nothing was applied. Press New task to start a fresh task.");
+                "so it was not reused. Nothing was applied. Open the More (…) menu and choose New chat to start fresh.");
             return false;
         }
 
@@ -1562,6 +1693,8 @@ public sealed partial class AssistantViewModel : ObservableObject
         catch (AppServerException ex)
         {
             if (!ReferenceEquals(_client, client)) return;
+            // Only the code and Core's validated reason token: never the message, which may quote the session's output.
+            LauncherLogService.Operation($"Assistant session start refused: code {ex.Code}; reason {(ex.Reason.Length > 0 ? ex.Reason : "none")}");
             var homeConfig = ex.Reason == HomeConfigRefusal;
             await EndSessionAsync(AssistantState.Error, homeConfig ? HomeConfigRefusedText + " Checking whether DwemerDistro can repair it…" : ex.Message);
             if (homeConfig) await OfferHomeConfigRepairAsync();
@@ -2364,6 +2497,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         if (!ReferenceEquals(_client, client)) return;
         SignInUrl = string.Empty;
         SignInCode = string.Empty;
+        RememberConnection(reconnectOnStartup: true);
         SetState(AssistantState.Ready, ReadyText());
         if (_historyLoadPending)
         {
@@ -2384,7 +2518,7 @@ public sealed partial class AssistantViewModel : ObservableObject
     }
 
     private string ReadyText() => HasAutoRun(ActiveToolRevision)
-        ? "Ask about your DwemerDistro setup, or describe a fix. Routine checks and changes run automatically; anything destructive asks you first."
+        ? "Talk with the Dwemer Distro directly to fix issues and investigate logs."
         : HasLiveRun(ActiveToolRevision)
         ? "Ask about your DwemerDistro setup, or describe a fix. Nothing runs on the live distro until you approve it."
         : HasFoundations(ActiveToolRevision)
@@ -3588,6 +3722,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         }
         _connectionIntent = false;
         _reconnectAfterMaintenance = false;
+        RememberConnection(reconnectOnStartup: false);
         await EndSessionAsync(AssistantState.Disconnected, "Session closed. Connect to continue this task.");
     }
 
@@ -3877,6 +4012,8 @@ public sealed partial class AssistantViewModel : ObservableObject
     private void OnDisconnected(string reason, string tail)
     {
         if (_client is null) return;
+        // The reason is the launcher's own fixed text; the session's output tail is shown, never logged.
+        LauncherLogService.Operation($"Assistant session disconnected in state {State}: {Shorten(reason, 120)}");
         _ = DisposeClientAsync();
         var detail = reason + (tail.Trim().Length > 0 ? " Last output: " + Shorten(tail.Trim(), 240) : string.Empty);
         if (State is AssistantState.Applying or AssistantState.Review)
@@ -4572,7 +4709,7 @@ public sealed partial class AssistantViewModel : ObservableObject
     public string ArchiveLabel => SelectedHistory?.Entry.Archived == true ? "Unarchive" : "Archive";
 
     /// <summary>Another chat can be opened only while nothing is in flight.</summary>
-    private bool CanSwitchChat => !_isShutDown && !IsMaintenanceHeld && !_isLoadingHistory && !IsExporting && !HasRunningJobs && State is AssistantState.Ready or AssistantState.Disconnected
+    private bool CanSwitchChat => !_isShutDown && !IsMaintenanceHeld && !_isStartupHeld && !_isLoadingHistory && !IsExporting && !HasRunningJobs && State is AssistantState.Ready or AssistantState.Disconnected
         or AssistantState.Error or AssistantState.SignedOut or AssistantState.NotChecked or AssistantState.CliAbsent or AssistantState.RuntimeAbsent;
 
     /// <summary>The History panel opened: reads the catalogue once if Connect has not.</summary>

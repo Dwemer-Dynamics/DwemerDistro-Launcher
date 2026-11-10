@@ -14,10 +14,12 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private readonly MainWindowViewModel _mainWindowViewModel;
     private readonly List<InstallComponentItemViewModel> _allItems = [];
     private readonly Dictionary<string, HuggingFaceModelAccessViewModel> _modelAccessItemsByKey;
-    private readonly SemaphoreSlim _componentProbeGate = new(1, 1);
+    // Shared with the header belt, which outlives this page, so the two never probe the distro at once.
+    private SemaphoreSlim ComponentProbeGate => _mainWindowViewModel.ComponentStatusProbeGate;
     private CancellationTokenSource? _passiveChecks;
     private Task? _passiveCheckTask;
     private int _activeOperationCount;
+    private bool _isLoadingComponents = true;
     private string _huggingFaceTokenStatusText = "Checking";
     private string _huggingFaceTokenDetailText = "Checking Hugging Face token...";
     private string _huggingFaceTokenStatusBackground = "#555555";
@@ -127,6 +129,17 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     {
         get => _huggingFaceTokenStatusForeground;
         private set => SetProperty(ref _huggingFaceTokenStatusForeground, value);
+    }
+
+    /// <summary>
+    /// True from construction until the first installed-state probe settles (read, failed or threw), so
+    /// the page never shows guessed Install cards. Later refreshes keep the cards and show per-card Checking.
+    /// A canceled first probe leaves it set, but cancellation only happens when the page is discarded.
+    /// </summary>
+    public bool IsLoadingComponents
+    {
+        get => _isLoadingComponents;
+        private set => SetProperty(ref _isLoadingComponents, value);
     }
 
     public bool HasActiveOperation => _activeOperationCount > 0;
@@ -450,7 +463,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     {
         try
         {
-            await _componentProbeGate.WaitAsync(cancellationToken).ConfigureAwait(true);
+            await ComponentProbeGate.WaitAsync(cancellationToken).ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
@@ -523,7 +536,12 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
         finally
         {
-            _componentProbeGate.Release();
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                IsLoadingComponents = false;
+            }
+
+            ComponentProbeGate.Release();
         }
     }
 
@@ -992,14 +1010,23 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         builder.AppendLine("    try:");
         builder.AppendLine("        with urllib.request.urlopen('http://127.0.0.1:8021/health', timeout=2) as response:");
         builder.AppendLine("            health = json.loads(response.read().decode('utf-8', errors='replace'))");
-        builder.AppendLine("        if response.status == 200 and health.get('status') == 'ok':");
-        builder.AppendLine("            language = (health.get('active_language') or {}).get('id') or 'unknown'");
+        builder.AppendLine("        identified = isinstance(health, dict) and 'omnivoice' in str(health.get('model') or '').lower()");
+        builder.AppendLine("        active_language = health.get('active_language') if identified else None");
+        builder.AppendLine("        language = (active_language.get('id') if isinstance(active_language, dict) else None) or 'unknown'");
+        builder.AppendLine("        if response.status == 200 and identified and health.get('status') == 'no_voices':");
+        builder.AppendLine("            return make_status(True, 'Running - no voices configured', f'running; language {language}; 0 voices; add a voice before speech will work.', GOOD)");
+        builder.AppendLine("        if response.status == 200 and identified and health.get('status') == 'ok':");
         builder.AppendLine("            voice_count = health.get('voice_count', 0)");
         builder.AppendLine("            cuda = 'CUDA yes' if health.get('cuda') else 'CUDA no'");
         builder.AppendLine("            gpu = health.get('gpu') or 'unknown GPU'");
         builder.AppendLine("            default_voice = health.get('default_voice') or 'no default'");
         builder.AppendLine("            detail = f'healthy; language {language}; {voice_count} voices; {cuda}; {gpu}; default {default_voice}'");
         builder.AppendLine("            return make_status(True, 'Healthy', detail, GOOD)");
+        builder.AppendLine("        if identified:");
+        builder.AppendLine("            detail = 'OmniVoice answered /health but did not report ready.'");
+        builder.AppendLine("            if log_error:");
+        builder.AppendLine("                detail += ' Last log: ' + log_error");
+        builder.AppendLine("            return make_status(True, 'Not ready', detail, BAD)");
         builder.AppendLine("    except Exception:");
         builder.AppendLine("        pass");
         builder.AppendLine("    if is_port_open(8021):");
@@ -1275,7 +1302,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
                 primaryCommand: CreateInstallCommand("parakeet"),
                 supportsNvidiaCuda: true,
                 supportsAmdCpu: true,
-                artwork: "nvidia.png",
+                artwork: "component-parakeet.png",
                 port: 8022),
             CreateItem(
                 key: "localwhisper",
