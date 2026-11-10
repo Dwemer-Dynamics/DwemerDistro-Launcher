@@ -100,7 +100,7 @@ public static class ComponentServiceStatus
     /// it; enabled from the catalog startup rule (or Higgs's marker); health from loopback connects and the
     /// identity endpoints only. It prints one JSON line of ids, ports and closed-set words.
     /// </summary>
-    public static string BuildProbeScript()
+    public static string BuildProbeScript(string? componentId = null)
     {
         var builder = new StringBuilder();
         builder.AppendLine("python3 - <<'PY'");
@@ -112,7 +112,7 @@ public static class ComponentServiceStatus
         builder.Append(DwemerDistro.Launcher.Wpf.ViewModels.InstallComponentsWindowViewModel.BuildCatalogProbeFunctions(ComponentCatalog.Embedded));
         builder.Append(ProbeFunctions);
         builder.AppendLine("SERVICES = [");
-        foreach (var service in Services)
+        foreach (var service in Services.Where(service => componentId is null || service.Id == componentId))
         {
             builder.Append("    (").Append(Py(service.Id)).Append(", ").Append(Py(service.Check.ToString()))
                 .Append(", ").Append(service.Port)

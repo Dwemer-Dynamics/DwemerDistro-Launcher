@@ -453,6 +453,11 @@
                                                                     </DataTemplate>
                                                                 </ItemsControl.ItemTemplate>
                                                             </ItemsControl>
+                                                            <Button Content="Test" Click="TestComponent_Click"
+                                                                    IsEnabled="{Binding IsInstalled}"
+                                                                    Visibility="{Binding HasPort, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                                    AutomationProperties.Name="{Binding Title, StringFormat=Test {0}}"
+                                                                    Style="{StaticResource CardQuietButton}" />
                                                             <Button Content="{Binding SecondaryActionText}"
                                                                     Command="{Binding SecondaryActionCommand}"
                                                                     Style="{StaticResource CardQuietButton}"

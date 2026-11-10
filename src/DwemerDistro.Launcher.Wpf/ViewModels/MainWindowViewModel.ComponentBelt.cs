@@ -20,6 +20,42 @@ public sealed partial class MainWindowViewModel
     /// <summary>Held by whichever of the Components page or the belt is probing component status.</summary>
     internal SemaphoreSlim ComponentStatusProbeGate { get; } = new(1, 1);
 
+    /// <summary>Holds the existing maintenance lease and probe gate for one user-requested component test.</summary>
+    public async Task<ComponentTestResult> TestComponentAsync(string id, bool sample, string text, string? file, CancellationToken token)
+    {
+        var definition = ComponentServiceStatus.Services.FirstOrDefault(service => service.Id == id);
+        if (definition is null) return new("No runtime test is available for this installation-only component.");
+        if (IsComponentBeltPaused()) return new("Wait for the current distro operation to finish before testing.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdownCts.Token);
+        timeout.CancelAfter(sample ? TimeSpan.FromSeconds(90) : TimeSpan.FromSeconds(15));
+        await ComponentStatusProbeGate.WaitAsync(timeout.Token);
+        var ownsActivity = false;
+        try
+        {
+            ownsActivity = TryBeginPassiveDistroActivity();
+            if (!ownsActivity || IsComponentBeltPaused()) return new("Another distro operation is in progress. Try again when it finishes.");
+            if (!await _wsl.DistroRunningAsync(timeout.Token)) return new("Dwemer Distro is stopped. Start the server before testing.");
+            var response = await _wsl.RunBashAsync(ComponentServiceStatus.BuildProbeScript(id), loginShell: false, cancellationToken: timeout.Token);
+            var probe = response.Succeeded ? ComponentServiceStatus.ParseProbe(response.StandardOutput)?.SingleOrDefault() : null;
+            if (probe is null) return new("Could not check the component. Check the distro connection and try again.");
+            if (probe.Installed != "present") return new("The component is not installed or its installation could not be verified.");
+            var status = ComponentServiceStatus.Describe(definition, probe, false).Text;
+            if (!sample || probe.Health is "closed" or "other")
+                return new($"Port {probe.Port}\n{status}\n\nService check only. No speech, transcription or model inference was tested.");
+            var result = await ComponentQuickTestService.RunSampleAsync(id, probe.Port, text, file, timeout.Token);
+            return result with { Message = $"Port {probe.Port}\n{result.Message}" };
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested && !_shutdownCts.IsCancellationRequested)
+        {
+            return new("The test timed out. The service may still be finishing the request; check its logs before retrying.");
+        }
+        finally
+        {
+            if (ownsActivity) EndPassiveDistroActivity();
+            ComponentStatusProbeGate.Release();
+        }
+    }
+
     /// <summary>Called by the window whenever it may have been shown, hidden or minimised; polling runs only while true.</summary>
     public void SetComponentBeltActive(bool active)
     {

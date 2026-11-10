@@ -22,6 +22,29 @@ namespace DwemerDistro.Launcher.Wpf;
 
 public partial class MainWindow : Window
 {
+    public void ShowComponentTest(string id, string title)
+    {
+        ComponentBeltOverflowButton.IsChecked = false;
+        new ComponentTestWindow(_viewModel, id, title) { Owner = this }.ShowDialog();
+    }
+
+    private void ComponentTest_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: ComponentStatusItemViewModel item })
+        {
+            e.Handled = true;
+            ShowComponentTest(item.Id, item.Name);
+        }
+    }
+
+    private void ComponentTest_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Space && sender is FrameworkElement { DataContext: ComponentStatusItemViewModel item })
+        {
+            e.Handled = true;
+            ShowComponentTest(item.Id, item.Name);
+        }
+    }
     private const int WmGetMinMaxInfo = 0x0024;
     private const int ComponentsTabIndex = 1;
     private const uint MonitorDefaultToNearest = 0x00000002;

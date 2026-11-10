@@ -252,6 +252,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <ContentControl Style="{StaticResource ComponentBelt.Cell}"
+                                                    MouseLeftButtonUp="ComponentTest_MouseUp" KeyDown="ComponentTest_KeyDown" Cursor="Hand"
                                                     AutomationProperties.Name="{Binding Name}"
                                                     AutomationProperties.ItemStatus="{Binding StatusText}"
                                                     AutomationProperties.HelpText="{Binding Summary}">
@@ -261,6 +262,7 @@
                                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                                                     <TextBlock Text="{Binding PortText}" />
                                                     <TextBlock Text="{Binding StatusText}" />
+                                                    <TextBlock Text="Click or press Enter to test" Margin="0,6,0,0" />
                                                 </StackPanel>
                                             </ToolTip>
                                         </ContentControl.ToolTip>
@@ -299,6 +301,7 @@
                                         <DataTemplate>
                                             <!-- Rows spell out name, port and status, so the light is never the only cue. -->
                                             <ContentControl Focusable="True" IsTabStop="True" FocusVisualStyle="{x:Null}"
+                                                            MouseLeftButtonUp="ComponentTest_MouseUp" KeyDown="ComponentTest_KeyDown" Cursor="Hand"
                                                             AutomationProperties.Name="{Binding Name}"
                                                             AutomationProperties.ItemStatus="{Binding StatusText}"
                                                             AutomationProperties.HelpText="{Binding Summary}">

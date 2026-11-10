@@ -37,6 +37,13 @@ public partial class InstallComponentsView : System.Windows.Controls.UserControl
         InitializeComponent();
     }
 
+    private void TestComponent_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: InstallComponentItemViewModel item }
+            && Window.GetWindow(this) is MainWindow window)
+            window.ShowComponentTest(item.Key, item.Title);
+    }
+
     public int CardColumns
     {
         get => (int)GetValue(CardColumnsProperty);
