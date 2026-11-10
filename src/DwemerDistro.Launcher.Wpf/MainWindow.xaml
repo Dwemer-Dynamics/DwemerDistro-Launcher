@@ -39,7 +39,7 @@
             <Setter Property="MinHeight" Value="40" />
         </Style>
         <!-- Live log chips: sized to their icon and short label, so the row stays one compact strip.
-             Brass edge on hover and keyboard focus; the shared white focus ring still shows. -->
+             Copper edge on hover and keyboard focus; the shared white focus ring still shows. -->
         <Style x:Key="GameCenter.LogButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
             <Setter Property="Background" Value="{DynamicResource GameCenter.Panel}" />
             <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
@@ -51,14 +51,14 @@
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                 </Trigger>
                 <Trigger Property="IsKeyboardFocused" Value="True">
-                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                 </Trigger>
                 <Trigger Property="IsPressed" Value="True">
                     <Setter Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -112,6 +112,31 @@
                 <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="NotResponding"><Setter Property="Fill" Value="#EF4444" /></DataTrigger>
                 <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
                     <Setter Property="Stroke" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- The two Pocket-TTS runtimes share one mascot, so each wears its hardware mark in the top-left
+             corner (NVIDIA for the GPU audio.cpp build, AMD for the CPU Python build) opposite the light.
+             Every other component keeps it collapsed. Decorative: the cell's name already names the runtime. -->
+        <Style x:Key="ComponentBelt.HardwareBadge" TargetType="Border">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Setter Property="Width" Value="10" />
+            <Setter Property="Height" Value="10" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+            <Setter Property="Background" Value="{DynamicResource GameCenter.Panel}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Panel}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Id}" Value="audiocpp">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Setter Property="Tag" Value="pack://application:,,,/DwemerDistro;component/Assets/nvidia.png" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Id}" Value="pockettts">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Setter Property="Tag" Value="pack://application:,,,/DwemerDistro;component/Assets/amd.png" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -299,6 +324,10 @@
                                                    RenderOptions.BitmapScalingMode="HighQuality" />
                                             <Ellipse Style="{StaticResource ComponentBelt.Light}" Tag="{Binding State}"
                                                      HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,1,1" />
+                                            <Border Style="{StaticResource ComponentBelt.HardwareBadge}" Margin="1,1,0,0">
+                                                <Image Source="{Binding Tag, RelativeSource={RelativeSource AncestorType=Border}}" Stretch="Uniform"
+                                                       RenderOptions.BitmapScalingMode="HighQuality" />
+                                            </Border>
                                         </Grid>
                                     </ContentControl>
                                 </DataTemplate>
@@ -355,6 +384,10 @@
                                                                RenderOptions.BitmapScalingMode="HighQuality" />
                                                         <Ellipse Style="{StaticResource ComponentBelt.Light}" Tag="{Binding State}"
                                                                  HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+                                                        <Border Style="{StaticResource ComponentBelt.HardwareBadge}">
+                                                            <Image Source="{Binding Tag, RelativeSource={RelativeSource AncestorType=Border}}" Stretch="Uniform"
+                                                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                                                        </Border>
                                                     </Grid>
                                                     <StackPanel Grid.Column="1">
                                                         <TextBlock FontWeight="SemiBold" TextWrapping="Wrap">

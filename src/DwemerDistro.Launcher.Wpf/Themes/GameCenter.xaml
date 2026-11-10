@@ -20,7 +20,7 @@
     <!-- Dark copper: the one brand-neutral accent for navigation, selection, progress and the mod
          action panel. Edge and Strong carry the hover, pressed and selected outlines, so the brighter
          tones only ever appear as thin lines; labels stay white on every copper fill. The Gold set
-         above stays defined for the views that still use it. -->
+         above is reserved for Reign branding and warning/attention states, never generic controls. -->
     <SolidColorBrush x:Key="GameCenter.Copper" Color="#8A3A12" />
     <SolidColorBrush x:Key="GameCenter.CopperHover" Color="#9E4516" />
     <SolidColorBrush x:Key="GameCenter.CopperPressed" Color="#6E2E0E" />
@@ -338,19 +338,19 @@
         </Style.Triggers>
     </Style>
 
-    <!-- Gold outline: high-visibility secondary action (update work). -->
+    <!-- Copper outline: high-visibility secondary action (update work). -->
     <Style x:Key="GameCenter.AccentButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
         <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
-        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Gold}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.CopperStrong}" />
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
-                <Setter Property="Background" Value="{DynamicResource GameCenter.GoldTint}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperTint}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </Trigger>
             <Trigger Property="IsPressed" Value="True">
-                <Setter Property="Background" Value="{DynamicResource GameCenter.GoldTintPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="Background" Value="{DynamicResource GameCenter.CopperTintPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -485,7 +485,7 @@
                     <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiDataTrigger>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
@@ -493,7 +493,7 @@
                     <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiDataTrigger>
         </Style.Triggers>
     </Style>
@@ -523,7 +523,7 @@
                     <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiDataTrigger>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
@@ -531,7 +531,7 @@
                     <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiDataTrigger>
         </Style.Triggers>
     </Style>
@@ -561,7 +561,7 @@
                     <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiDataTrigger>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
@@ -569,7 +569,7 @@
                     <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiDataTrigger>
         </Style.Triggers>
     </Style>
@@ -599,7 +599,7 @@
                     <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiDataTrigger>
             <MultiDataTrigger>
                 <MultiDataTrigger.Conditions>
@@ -607,7 +607,7 @@
                     <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
                 </MultiDataTrigger.Conditions>
                 <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
             </MultiDataTrigger>
         </Style.Triggers>
     </Style>
@@ -1442,11 +1442,11 @@
                                         </Trigger>
                                         <Trigger Property="IsMouseOver" Value="True">
                                             <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
-                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                                         </Trigger>
                                         <Trigger Property="IsPressed" Value="True">
                                             <Setter TargetName="Border" Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
-                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                                            <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                                         </Trigger>
                                         <Trigger Property="IsKeyboardFocused" Value="True">
                                             <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />

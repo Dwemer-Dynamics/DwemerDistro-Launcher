@@ -29,9 +29,16 @@ this project's license. Sources (`src/DwemerDistro.Launcher.Wpf/Assets/`):
 - `component-higgs.png`: Boson AI creator mark (https://github.com/boson-ai/higgs-audio)
 - `component-chatterbox.png`: Resemble AI creator mark (https://github.com/resemble-ai/chatterbox)
 - `component-omnivoice.png`: OmniVoice project image from its README (https://github.com/k2-fsa/OmniVoice)
-- `component-xtts.png`: Coqui creator mark (https://github.com/coqui-ai/TTS)
+- `component-xtts.png`: Coqui frog mark for Coqui TTS (https://github.com/coqui-ai/TTS),
+  rendered from the official coqui.ai `mask-icon.svg` (archived at
+  https://web.archive.org/web/20231231201732/https://coqui.ai/mask-icon.svg,
+  SHA-256 `f3298211595f73d6a43bf31a3c90a7bffcfec6139e17f5ec9cd30f4f17ee77ce`) with geometry unchanged and `currentColor` filled
+  light mint `#C8F5E1` on transparent for the dark theme
 - `component-piper.png`: Piper project logo (https://github.com/OHF-Voice/piper1-gpl)
-- `component-whisper.png`: OpenAI creator mark (https://github.com/openai/whisper)
+- `component-whisper.png`: OpenAI Blossom for Whisper (https://github.com/openai/whisper),
+  rendered unmodified from `OpenAI-white-monoblossom.svg` in the official
+  https://cdn.openai.com/brand/OpenAI-Logos-2025.zip (linked from https://openai.com/brand/)
+  on transparent
 - `component-lmstudio.png`: LM Studio app icon (https://lmstudio.ai/brand)
 - `nvidia.png` (NVIDIA branding also used for Parakeet STT):
   NVIDIA logo

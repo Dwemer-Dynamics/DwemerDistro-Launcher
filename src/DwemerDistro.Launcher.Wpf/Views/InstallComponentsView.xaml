@@ -7,14 +7,15 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter" />
 
-        <!-- Compact dark palette for the component cards, matched to the launcher surfaces. -->
+        <!-- Compact dark palette for the component cards, matched to the launcher surfaces. The Gold keys
+             hold the shared copper accent (CopperStrong / CopperTint) for the current section; Warn stays amber. -->
         <SolidColorBrush x:Key="Components.Raised" Color="#333333" />
         <SolidColorBrush x:Key="Components.Line" Color="#424242" />
         <SolidColorBrush x:Key="Components.LineStrong" Color="#585858" />
         <SolidColorBrush x:Key="Components.Text" Color="#ECECEC" />
         <SolidColorBrush x:Key="Components.Muted" Color="#B4B4B4" />
-        <SolidColorBrush x:Key="Components.Gold" Color="#D8B44C" />
-        <SolidColorBrush x:Key="Components.GoldSoft" Color="#413C30" />
+        <SolidColorBrush x:Key="Components.Gold" Color="#E2803F" />
+        <SolidColorBrush x:Key="Components.GoldSoft" Color="#3A2418" />
         <SolidColorBrush x:Key="Components.Ok" Color="#86D08C" />
         <SolidColorBrush x:Key="Components.Warn" Color="#E6B45E" />
         <SolidColorBrush x:Key="Components.Bad" Color="#F08A8A" />
@@ -31,7 +32,7 @@
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Background" Value="#454545" />
-                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -81,6 +82,31 @@
             <Setter Property="RenderOptions.BitmapScalingMode" Value="HighQuality" />
             <Setter Property="HorizontalAlignment" Value="Center" />
             <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- The two Pocket-TTS cards share one mascot, so each wears its hardware mark in the art's top-left
+             corner: NVIDIA for the GPU audio.cpp build, AMD for the CPU Python build. Decorative only. -->
+        <Style x:Key="ArtHardwareBadge" TargetType="Border">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Setter Property="Width" Value="13" />
+            <Setter Property="Height" Value="13" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+            <Setter Property="Background" Value="{StaticResource Components.Raised}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Components.Raised}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Key}" Value="audiocpp">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Setter Property="Tag" Value="pack://application:,,,/DwemerDistro;component/Assets/nvidia.png" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Key}" Value="pockettts">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Setter Property="Tag" Value="pack://application:,,,/DwemerDistro;component/Assets/amd.png" />
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="MutedText" TargetType="TextBlock">
@@ -474,8 +500,14 @@
                                                                     <ColumnDefinition Width="*" />
                                                                 </Grid.ColumnDefinitions>
                                                                 <Border Style="{StaticResource ArtBox}">
-                                                                    <Image Source="{Binding ArtworkSource}"
-                                                                           Style="{StaticResource ArtImage}" />
+                                                                    <Grid>
+                                                                        <Image Source="{Binding ArtworkSource}"
+                                                                               Style="{StaticResource ArtImage}" />
+                                                                        <Border Style="{StaticResource ArtHardwareBadge}">
+                                                                            <Image Source="{Binding Tag, RelativeSource={RelativeSource AncestorType=Border}}" Stretch="Uniform"
+                                                                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                                                                        </Border>
+                                                                    </Grid>
                                                                 </Border>
                                                                 <StackPanel Grid.Column="1"
                                                                             Margin="8,0,0,0">

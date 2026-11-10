@@ -43,7 +43,7 @@
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter Property="Foreground" Value="{StaticResource Assistant.NoteText}" />
-                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -75,7 +75,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Frame" Property="Opacity" Value="0.6" />
@@ -95,7 +95,7 @@
         </Style>
         <!-- A quiet text link, e.g. to API Keys; keyboard reachable with the standard focus rectangle. -->
         <Style x:Key="Assistant.Link" TargetType="Button">
-            <Setter Property="Foreground" Value="{DynamicResource GameCenter.GoldSoft}" />
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.CopperStrong}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
@@ -107,7 +107,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="LinkText" Property="TextDecorations" Value="Underline" />
-                                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Gold}" />
+                                <Setter Property="Foreground" Value="{DynamicResource GameCenter.CopperStrong}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="LinkText" Property="TextDecorations" Value="Underline" />
@@ -243,7 +243,7 @@
 
                     <!-- Sign-in: the supported URL and code are shown here; the browser opens only on click. -->
                     <Border Visibility="{Binding IsSignInVisible, Converter={StaticResource BoolToVisibility}}"
-                            BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,8,0,0">
+                            BorderBrush="{DynamicResource GameCenter.CopperStrong}" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,8,0,0">
                         <StackPanel>
                             <TextBlock x:Name="SignInUrlLabel" Text="Sign-in page" Style="{StaticResource GameCenter.Caption}" />
                             <TextBox Text="{Binding SignInUrl, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}" FontFamily="Consolas"
@@ -263,7 +263,7 @@
                     <!-- Only for the broker's account_home_unmanaged_config refusal when Core's dry run found the one file it can repair.
                          The status above explains it; nothing changes until Repair here, and Cancel changes nothing. -->
                     <Border x:Name="HomeConfigRepairCard" Visibility="{Binding IsHomeConfigRepairOffered, Converter={StaticResource BoolToVisibility}}"
-                            BorderBrush="{DynamicResource GameCenter.Gold}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
+                            BorderBrush="{DynamicResource GameCenter.CopperStrong}" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
                             AutomationProperties.Name="Confirm repairing the assistant's account settings file">
                         <WrapPanel>
                             <TextBlock x:Name="HomeConfigRepairText" Text="Move config.toml into quarantine and reconnect?" FontWeight="SemiBold"
@@ -355,11 +355,11 @@
                                  button is a default and nothing takes focus. Stop, disconnect, a new chat or the broker's expiry also end it.
                                  A destructive live command (routine ones run without a card) has a danger border and only Confirm and run or Cancel. -->
                             <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
-                                    Background="{DynamicResource GameCenter.GoldTint}"
+                                    Background="{DynamicResource GameCenter.CopperTint}"
                                     CornerRadius="8" Padding="12,10" Margin="0,0,0,6">
                                 <Border.Style>
                                     <Style TargetType="Border">
-                                        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Gold}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                                         <Setter Property="BorderThickness" Value="1" />
                                         <Setter Property="AutomationProperties.Name" Value="Confirm the action the assistant proposed" />
                                         <Style.Triggers>
@@ -525,7 +525,7 @@
                 <ScrollViewer x:Name="SidePanel" Grid.Column="1" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto" Focusable="False"
                               Visibility="{Binding IsSidePanelVisible, Converter={StaticResource BoolToVisibility}}">
                     <StackPanel>
-                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.Gold}"
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.CopperStrong}"
                                 Visibility="{Binding IsChangesVisible, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel>
                                 <TextBlock Text="CHANGES READY" Style="{StaticResource GameCenter.SectionHeading}" />
@@ -537,7 +537,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.Gold}"
+                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.CopperStrong}"
                                 Visibility="{Binding IsReviewVisible, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel>
                                 <DockPanel>
