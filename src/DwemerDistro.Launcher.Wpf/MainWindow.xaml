@@ -38,9 +38,37 @@
             <Setter Property="MinWidth" Value="196" />
             <Setter Property="MinHeight" Value="40" />
         </Style>
-        <Style x:Key="GameCenter.LogButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ActionCardButton}">
-            <Setter Property="MinWidth" Value="168" />
-            <Setter Property="MinHeight" Value="36" />
+        <!-- Live log chips: sized to their icon and short label, so the row stays one compact strip.
+             Brass edge on hover and keyboard focus; the shared white focus ring still shows. -->
+        <Style x:Key="GameCenter.LogButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+            <Setter Property="Background" Value="{DynamicResource GameCenter.Panel}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Padding" Value="8,5,12,5" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="ToolTipService.InitialShowDelay" Value="400" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.GoldSoft}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="GameCenter.LogButtonIcon" TargetType="Image">
+            <Setter Property="Width" Value="16" />
+            <Setter Property="Height" Value="16" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="RenderOptions.BitmapScalingMode" Value="HighQuality" />
         </Style>
         <!-- Settings rows: one full-width card per setting, stacked vertically. The title and
              wrapped explanation take the flexible column so descriptions stay readable down to
@@ -2070,7 +2098,16 @@
                         </Border>
                         <Border Style="{StaticResource GameCenter.Card}" Padding="14" Margin="0,0,0,16">
                             <StackPanel>
-                                <TextBlock Text="CONNECTION DETAILS" Style="{StaticResource GameCenter.SectionHeading}" />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Command="{Binding RefreshConnectionDetailsCommand}"
+                                            Style="{StaticResource GameCenter.Button}" Width="32" Height="32" MinWidth="32" MinHeight="32"
+                                            Padding="0" HorizontalContentAlignment="Center" VerticalAlignment="Center"
+                                            ToolTip="Refresh" AutomationProperties.Name="Refresh"
+                                            AutomationProperties.HelpText="Read current addresses without starting a stopped distro.">
+                                        <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14" FontWeight="Normal" />
+                                    </Button>
+                                    <TextBlock Text="CONNECTION DETAILS" Style="{StaticResource GameCenter.SectionHeading}" VerticalAlignment="Center" />
+                                </DockPanel>
                                 <Grid Margin="0,10,0,8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="110" />
@@ -2089,28 +2126,63 @@
                                 </Grid>
                                 <TextBlock Text="On this PC, use the mod's Open button. These addresses are for troubleshooting; LAN access may require additional setup."
                                            Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" Margin="0,0,0,10" />
-                                <WrapPanel>
-                                    <Button Content="Refresh" Command="{Binding RefreshConnectionDetailsCommand}"
-                                            Style="{StaticResource GameCenter.LogButton}" AutomationProperties.Name="Refresh connection details"
-                                            AutomationProperties.HelpText="Read current addresses without starting a stopped distro." />
-                                    <Button Content="Copy details" Command="{Binding CopyConnectionDetailsCommand}"
-                                            Style="{StaticResource GameCenter.LogButton}" AutomationProperties.Name="Copy connection details"
-                                            AutomationProperties.HelpText="Copy the displayed PC and WSL details to the clipboard." />
-                                </WrapPanel>
                                 <TextBlock x:Name="ConnectionDetailsStatusTextBlock" Text="{Binding ConnectionDetailsStatus}"
                                            Style="{StaticResource GameCenter.Caption}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
                         </Border>
                         <TextBlock Text="LIVE LOGS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,4" />
                         <TextBlock Text="Open a live service log in a terminal window." Style="{StaticResource GameCenter.Caption}" Margin="0,0,0,12" />
-                        <WrapPanel>
-                            <Button Command="{Binding ViewXttsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Dwemer Distro XTTS" />
-                            <Button Command="{Binding ViewChatterboxLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Chatterbox" />
-                            <Button Command="{Binding ViewPocketTtsLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="PocketTTS" />
-                            <Button Command="{Binding ViewPiperLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Piper" />
-                            <Button Command="{Binding ViewLocalWhisperLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="LocalWhisper" />
-                            <Button Command="{Binding ViewParakeetLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Parakeet" />
-                            <Button Command="{Binding ViewApacheLogsCommand}" Style="{StaticResource GameCenter.LogButton}" Content="Apache" />
+                        <WrapPanel x:Name="LiveLogButtons">
+                            <Button Command="{Binding ViewXttsLogsCommand}" Style="{StaticResource GameCenter.LogButton}"
+                                    ToolTip="Dwemer Distro XTTS log" AutomationProperties.Name="Dwemer Distro XTTS log">
+                                <StackPanel Orientation="Horizontal">
+                                    <Image Source="Assets/component-xtts.png" Style="{StaticResource GameCenter.LogButtonIcon}" />
+                                    <TextBlock Text="XTTS" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding ViewChatterboxLogsCommand}" Style="{StaticResource GameCenter.LogButton}"
+                                    ToolTip="Chatterbox log" AutomationProperties.Name="Chatterbox log">
+                                <StackPanel Orientation="Horizontal">
+                                    <Image Source="Assets/component-chatterbox.png" Style="{StaticResource GameCenter.LogButtonIcon}" />
+                                    <TextBlock Text="Chatterbox" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding ViewPocketTtsLogsCommand}" Style="{StaticResource GameCenter.LogButton}"
+                                    ToolTip="PocketTTS log" AutomationProperties.Name="PocketTTS log">
+                                <StackPanel Orientation="Horizontal">
+                                    <Image Source="Assets/component-pocket-tts.png" Style="{StaticResource GameCenter.LogButtonIcon}" />
+                                    <TextBlock Text="PocketTTS" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding ViewPiperLogsCommand}" Style="{StaticResource GameCenter.LogButton}"
+                                    ToolTip="Piper log" AutomationProperties.Name="Piper log">
+                                <StackPanel Orientation="Horizontal">
+                                    <Image Source="Assets/component-piper.png" Style="{StaticResource GameCenter.LogButtonIcon}" />
+                                    <TextBlock Text="Piper" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding ViewLocalWhisperLogsCommand}" Style="{StaticResource GameCenter.LogButton}"
+                                    ToolTip="LocalWhisper log" AutomationProperties.Name="LocalWhisper log">
+                                <StackPanel Orientation="Horizontal">
+                                    <Image Source="Assets/component-whisper.png" Style="{StaticResource GameCenter.LogButtonIcon}" />
+                                    <TextBlock Text="LocalWhisper" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding ViewParakeetLogsCommand}" Style="{StaticResource GameCenter.LogButton}"
+                                    ToolTip="Parakeet log" AutomationProperties.Name="Parakeet log">
+                                <StackPanel Orientation="Horizontal">
+                                    <Image Source="Assets/nvidia.png" Style="{StaticResource GameCenter.LogButtonIcon}" />
+                                    <TextBlock Text="Parakeet" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding ViewApacheLogsCommand}" Style="{StaticResource GameCenter.LogButton}"
+                                    ToolTip="Apache error log" AutomationProperties.Name="Apache error log">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="14" FontWeight="Normal"
+                                               Width="16" Margin="0,0,8,0" TextAlignment="Center" VerticalAlignment="Center" />
+                                    <TextBlock Text="Apache" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                         </WrapPanel>
                     </StackPanel>
                 </ScrollViewer>
