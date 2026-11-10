@@ -35,4 +35,3 @@ this project's license. Sources (`src/DwemerDistro.Launcher.Wpf/Assets/`):
 - `component-lmstudio.png`: LM Studio app icon (https://lmstudio.ai/brand)
 - `nvidia.png` (NVIDIA branding also used for Parakeet STT):
   NVIDIA logo
-
