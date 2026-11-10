@@ -67,6 +67,92 @@
                 <Trigger Property="Text" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></Trigger>
             </Style.Triggers>
         </Style>
+        <!-- Component belt status light. Tag carries a ComponentServiceState; only Running is green, and the
+             words in the tooltip and accessible status always say the same thing, so colour is never the only cue.
+             The dark ring keeps the 7px light legible over any icon. -->
+        <Style x:Key="ComponentBelt.Light" TargetType="Ellipse">
+            <Setter Property="Width" Value="7" />
+            <Setter Property="Height" Value="7" />
+            <Setter Property="Fill" Value="#8C8C8C" />
+            <Setter Property="Stroke" Value="{DynamicResource GameCenter.Panel}" />
+            <Setter Property="StrokeThickness" Value="1" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="Running"><Setter Property="Fill" Value="#3FCB5A" /></DataTrigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="Starting"><Setter Property="Fill" Value="#F0A830" /></DataTrigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="Stopped"><Setter Property="Fill" Value="#EF4444" /></DataTrigger>
+                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="NotResponding"><Setter Property="Fill" Value="#EF4444" /></DataTrigger>
+                <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                    <Setter Property="Stroke" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- One read-only belt cell: a 28px tile with the component's mark and its light in the bottom-right
+             corner. It takes keyboard focus (the arrow keys move within the belt) so the tooltip, which names
+             the service, its actual port and its status, opens for keyboard users too. -->
+        <Style x:Key="ComponentBelt.Cell" TargetType="ContentControl">
+            <Setter Property="Focusable" Value="True" />
+            <Setter Property="IsTabStop" Value="True" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+            <Setter Property="ToolTipService.ShowsToolTipOnKeyboardFocus" Value="True" />
+            <Setter Property="ToolTipService.InitialShowDelay" Value="250" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContentControl">
+                        <Border x:Name="Tile" Background="{DynamicResource GameCenter.PanelRaised}"
+                                BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Tile" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
+                                <Setter TargetName="Tile" Property="BorderThickness" Value="2" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- The +N overflow toggle wears the same tile so the belt reads as one strip. -->
+        <Style x:Key="ComponentBelt.OverflowToggle" TargetType="ToggleButton">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+            <Setter Property="MinWidth" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="6,0,8,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="ToolTipService.ShowsToolTipOnKeyboardFocus" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Tile" Background="{DynamicResource GameCenter.PanelRaised}"
+                                BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" CornerRadius="4"
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Tile" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
+                                <Setter TargetName="Tile" Property="BorderThickness" Value="2" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="ShellGrid" Background="{DynamicResource GameCenter.Window}">
@@ -128,6 +214,7 @@
                 BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="0,0,0,1">
             <Grid Margin="10,0,12,0">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
@@ -146,7 +233,129 @@
                     <RadioButton x:Name="LogsNavButton" GroupName="Destination" Content="Lo_gs"
                                  Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                <!-- Component status belt: the header's spare width between the destinations and the distro
+                     controls, on every tab. It only takes what is left over (the star column), so the tabs and
+                     the command slots keep their widths; cells that do not fit go behind a +N dropdown, and when
+                     none fit the dropdown alone is a compact count. Read-only: nothing here starts, stops or
+                     changes a service. One Tab stop; the arrow keys move between cells. -->
+                <Grid x:Name="ComponentBeltHost" Grid.Column="1" Margin="12,0,0,0" ClipToBounds="True"
+                      DataContext="{Binding ComponentBelt}" SizeChanged="ComponentBeltHost_SizeChanged"
+                      KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Contained">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <ItemsControl x:Name="ComponentBeltItems" ItemsSource="{Binding VisibleItems}" Focusable="False"
+                                      AutomationProperties.Name="Component services">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <ContentControl Style="{StaticResource ComponentBelt.Cell}"
+                                                    AutomationProperties.Name="{Binding Name}"
+                                                    AutomationProperties.ItemStatus="{Binding StatusText}"
+                                                    AutomationProperties.HelpText="{Binding Summary}">
+                                        <ContentControl.ToolTip>
+                                            <ToolTip>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding PortText}" />
+                                                    <TextBlock Text="{Binding StatusText}" />
+                                                </StackPanel>
+                                            </ToolTip>
+                                        </ContentControl.ToolTip>
+                                        <Grid>
+                                            <Image Source="{Binding ArtworkSource}" Width="18" Height="18" Stretch="Uniform"
+                                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                                            <Ellipse Style="{StaticResource ComponentBelt.Light}" Tag="{Binding State}"
+                                                     HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,1,1" />
+                                        </Grid>
+                                    </ContentControl>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <ToggleButton x:Name="ComponentBeltOverflowButton" Style="{StaticResource ComponentBelt.OverflowToggle}"
+                                      Visibility="{Binding HasOverflow, Converter={StaticResource BoolToVisibility}}"
+                                      AutomationProperties.Name="{Binding OverflowAccessibleName}"
+                                      ToolTip="{Binding OverflowAccessibleName}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding OverflowText}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <!-- The worst hidden state, so a red service never hides behind +N. -->
+                                <Ellipse Style="{StaticResource ComponentBelt.Light}" Tag="{Binding OverflowState}"
+                                         VerticalAlignment="Bottom" Margin="3,0,0,1" />
+                            </StackPanel>
+                        </ToggleButton>
+                        <Popup x:Name="ComponentBeltOverflowPopup" PlacementTarget="{Binding ElementName=ComponentBeltOverflowButton}"
+                               Placement="Bottom" StaysOpen="False" AllowsTransparency="True"
+                               IsOpen="{Binding IsChecked, ElementName=ComponentBeltOverflowButton, Mode=TwoWay}"
+                               Opened="ComponentBeltOverflowPopup_Opened">
+                            <Border Background="{DynamicResource GameCenter.PanelRaised}" BorderBrush="{DynamicResource GameCenter.Border}"
+                                    BorderThickness="1" CornerRadius="4" Padding="6" Margin="0,4,0,0" MaxWidth="420"
+                                    PreviewKeyDown="ComponentBeltOverflowPopup_PreviewKeyDown"
+                                    KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.DirectionalNavigation="Cycle">
+                                <ItemsControl x:Name="ComponentBeltOverflowList" ItemsSource="{Binding OverflowItems}" Focusable="False"
+                                              AutomationProperties.Name="More component services">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <!-- Rows spell out name, port and status, so the light is never the only cue. -->
+                                            <ContentControl Focusable="True" IsTabStop="True" FocusVisualStyle="{x:Null}"
+                                                            AutomationProperties.Name="{Binding Name}"
+                                                            AutomationProperties.ItemStatus="{Binding StatusText}"
+                                                            AutomationProperties.HelpText="{Binding Summary}">
+                                                <ContentControl.Template>
+                                                    <ControlTemplate TargetType="ContentControl">
+                                                        <Border x:Name="Row" BorderBrush="Transparent" BorderThickness="1" CornerRadius="3" Padding="6,4">
+                                                            <ContentPresenter />
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                                                <Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource GameCenter.Focus}" />
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </ContentControl.Template>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid Width="22" Height="22" Margin="0,1,8,0" VerticalAlignment="Top">
+                                                        <Image Source="{Binding ArtworkSource}" Width="18" Height="18" Stretch="Uniform"
+                                                               RenderOptions.BitmapScalingMode="HighQuality" />
+                                                        <Ellipse Style="{StaticResource ComponentBelt.Light}" Tag="{Binding State}"
+                                                                 HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+                                                    </Grid>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock FontWeight="SemiBold" TextWrapping="Wrap">
+                                                            <Run Text="{Binding Name, Mode=OneWay}" />
+                                                            <Run Text="{Binding PortText, Mode=OneWay}" FontWeight="Normal"
+                                                                 Foreground="{DynamicResource GameCenter.TextMuted}" />
+                                                        </TextBlock>
+                                                        <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" FontSize="11"
+                                                                   Foreground="{DynamicResource GameCenter.TextMuted}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </ContentControl>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </Popup>
+                        <!-- Before the first probe there is nothing to list yet; one quiet grey chip says why. -->
+                        <ContentControl Style="{StaticResource ComponentBelt.Cell}" Width="Auto" Margin="0"
+                                        Visibility="{Binding ShowsPlaceholder, Converter={StaticResource BoolToVisibility}}"
+                                        AutomationProperties.Name="Component services"
+                                        AutomationProperties.ItemStatus="{Binding PlaceholderText}"
+                                        ToolTip="{Binding PlaceholderText}">
+                            <StackPanel Orientation="Horizontal" Margin="7,0">
+                                <Ellipse Style="{StaticResource ComponentBelt.Light}" Tag="Unknown" VerticalAlignment="Center" Margin="0,0,5,0" />
+                                <TextBlock Text="Services" FontSize="11" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource GameCenter.TextMuted}" />
+                            </StackPanel>
+                        </ContentControl>
+                    </StackPanel>
+                </Grid>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
                     <!-- The one Update Distro action in the normal launcher. The widest state is reserved
                          by this outer slot rather than by the coloured frame, so Start / Stop and Force Stop
                          never move while the visible button sizes itself to whatever it is currently

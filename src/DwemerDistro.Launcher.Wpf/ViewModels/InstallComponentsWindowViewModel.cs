@@ -14,7 +14,8 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     private readonly MainWindowViewModel _mainWindowViewModel;
     private readonly List<InstallComponentItemViewModel> _allItems = [];
     private readonly Dictionary<string, HuggingFaceModelAccessViewModel> _modelAccessItemsByKey;
-    private readonly SemaphoreSlim _componentProbeGate = new(1, 1);
+    // Shared with the header belt, which outlives this page, so the two never probe the distro at once.
+    private SemaphoreSlim ComponentProbeGate => _mainWindowViewModel.ComponentStatusProbeGate;
     private CancellationTokenSource? _passiveChecks;
     private Task? _passiveCheckTask;
     private int _activeOperationCount;
@@ -450,7 +451,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
     {
         try
         {
-            await _componentProbeGate.WaitAsync(cancellationToken).ConfigureAwait(true);
+            await ComponentProbeGate.WaitAsync(cancellationToken).ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
@@ -523,7 +524,7 @@ public sealed class InstallComponentsWindowViewModel : ObservableObject
         }
         finally
         {
-            _componentProbeGate.Release();
+            ComponentProbeGate.Release();
         }
     }
 

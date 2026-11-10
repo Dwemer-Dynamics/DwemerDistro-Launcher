@@ -344,6 +344,7 @@ echo "CHIM-MCP installed and enabled."
             if (SetProperty(ref _isServerRunning, value))
             {
                 RaiseServerCommandStates();
+                NoteServerRunningChangedForComponentBelt();
             }
         }
     }
@@ -357,6 +358,7 @@ echo "CHIM-MCP installed and enabled."
             {
                 RaiseServerCommandStates();
                 RaiseUpdateCommandStates();
+                RequestComponentBeltRefresh();
             }
         }
     }
@@ -1000,6 +1002,7 @@ echo "CHIM-MCP installed and enabled."
         _connectionDetailsClosed = true;
         _connectionDetailsCts?.Cancel();
         StopLmStudioRefresh();
+        StopComponentBeltRefresh();
         LauncherLogService.Startup("Launcher shutdown started.");
         _startAnimationTimer.Stop();
         _serverStatusRetryTimer.Stop();
@@ -1967,6 +1970,8 @@ echo "CHIM-MCP installed and enabled."
         RaiseUpdateCommandStates();
         RefreshServerUpdateConflictState();
         OnPropertyChanged(nameof(IsComponentInteractionEnabled));
+        // An install or configuration run can add, remove or restart a service.
+        if (!value) RequestComponentBeltRefresh();
     }
 
     /// <summary>

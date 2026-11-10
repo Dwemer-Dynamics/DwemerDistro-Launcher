@@ -47,6 +47,9 @@ public partial class MainWindow : Window
         Deactivated += (_, _) => UpdateLmStudioRefresh();
         StateChanged += (_, _) => UpdateLmStudioRefresh();
         IsVisibleChanged += (_, _) => UpdateLmStudioRefresh();
+        // The header belt polls while the window can be seen, on every tab.
+        StateChanged += (_, _) => UpdateComponentBeltRefresh();
+        IsVisibleChanged += (_, _) => UpdateComponentBeltRefresh();
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -421,6 +424,38 @@ public partial class MainWindow : Window
         _viewModel.SetLmStudioPanelActive(
             MainTabs.SelectedIndex == 0 && _viewModel.IsLmStudioView &&
             IsActive && IsVisible && WindowState != WindowState.Minimized);
+    }
+
+    private void UpdateComponentBeltRefresh()
+    {
+        _viewModel.SetComponentBeltActive(IsVisible && WindowState != WindowState.Minimized);
+    }
+
+    private void ComponentBeltHost_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        _viewModel.ComponentBelt.SetAvailableWidth(e.NewSize.Width);
+    }
+
+    // The overflow list takes focus when it opens so keyboard users land on its first row.
+    private void ComponentBeltOverflowPopup_Opened(object? sender, EventArgs e)
+    {
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            if (ComponentBeltOverflowList.ItemContainerGenerator.ContainerFromIndex(0) is ContentPresenter presenter
+                && VisualTreeHelper.GetChildrenCount(presenter) > 0
+                && VisualTreeHelper.GetChild(presenter, 0) is UIElement row)
+            {
+                row.Focus();
+            }
+        }, System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private void ComponentBeltOverflowPopup_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        e.Handled = true;
+        ComponentBeltOverflowButton.IsChecked = false;
+        ComponentBeltOverflowButton.Focus();
     }
 
     private void UpdateSelectedGameDetails()
