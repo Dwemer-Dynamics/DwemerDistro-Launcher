@@ -396,6 +396,9 @@ public sealed partial class AssistantViewModel : ObservableObject
     private bool _isShutDown;
     // The user, or startup on their behalf, wants a session; Disconnect clears it, so maintenance never reopens one the user closed.
     private bool _connectionIntent;
+    // Startup's choice across launches (see ConnectOnStartupAsync); without a store, as in older tests, startup always connects.
+    private readonly IAssistantConnectionPreferenceStore? _connectionPreferenceStore;
+    private AssistantConnectionPreference? _connectionPreference;
     // Distro maintenance closed the session and holds the distro; nothing connects until every operation that asked ends.
     private int _maintenanceHolds;
     private bool IsMaintenanceHeld => _maintenanceHolds > 0;
@@ -433,7 +436,7 @@ public sealed partial class AssistantViewModel : ObservableObject
     private readonly CancellationTokenSource _lifetime = new();
     private AssistantState _state = AssistantState.NotChecked;
     private string _statusText = string.Empty;
-    private string _statusDetail = "The assistant connects after the launcher's startup checks, or press Connect. Nothing is sent until you ask.";
+    private string _statusDetail = "Press Connect to get started. After a successful connection, the assistant reconnects next time unless you choose Disconnect. Nothing is sent until you ask.";
     private string _providerText = "Codex";
     private string _accountText = "Not connected";
     private AssistantModelOption? _selectedModel;
@@ -526,9 +529,12 @@ public sealed partial class AssistantViewModel : ObservableObject
         IAssistantStateStore? claudeStore = null, ClaudeChatStore? claudeChats = null,
         Func<CancellationToken, Task<ClaudeCodeStatus>>? claudeStatus = null, ProcessRunner? claudeRunner = null,
         IAssistantStateStore? openRouterStore = null, OpenRouterChatStore? openRouterChats = null,
-        Func<CancellationToken, Task<ApiKeysResult>>? openRouterKeys = null)
+        Func<CancellationToken, Task<ApiKeysResult>>? openRouterKeys = null,
+        IAssistantConnectionPreferenceStore? connectionPreference = null)
     {
         _cli = cli;
+        _connectionPreferenceStore = connectionPreference;
+        _connectionPreference = connectionPreference?.Load();
         _host = host;
         _store = store;
         _codexStore = store;
@@ -1059,11 +1065,40 @@ public sealed partial class AssistantViewModel : ObservableObject
     /// user has used Connect or the launcher is closing. Like Connect it only reads readiness: it never runs the isolation
     /// check, signs in, opens a page or sends a message, and any failure stays inline with Connect available.
     /// </summary>
+    /// <remarks>
+    /// It connects only when the last usable connection was not followed by the user's Disconnect, and first selects that
+    /// connection's provider again. A failed attempt changes nothing. With no saved preference yet (a launcher from before
+    /// it existed), a ChatGPT task reference with an opened thread for this distro installation,
+    /// stands for an earlier connection; otherwise the tab waits for Connect, and the next usable connection opts in.
+    /// </remarks>
     internal async Task ConnectOnStartupAsync()
     {
         if (_startupConnectRequested || _isShutDown || IsMaintenanceHeld) return;
         _startupConnectRequested = true;
         if (State != AssistantState.NotChecked || !ConnectCommand.CanExecute(null)) return;
+        if (_connectionPreferenceStore is not null)
+        {
+            var preference = _connectionPreference ?? InferConnectionPreference();
+            if (preference is null || !preference.ReconnectOnStartup)
+            {
+                LauncherLogService.Startup(preference is null
+                    ? "Assistant startup connection skipped: it has not connected before."
+                    : "Assistant startup connection skipped: the user disconnected it.");
+                return;
+            }
+            // Never another provider than the one that connected: one this build cannot offer leaves the tab waiting for Connect.
+            if (Providers.FirstOrDefault(option => option.Id == preference.Provider) is not { IsAvailable: true } option)
+            {
+                LauncherLogService.Startup("Assistant startup connection skipped: its provider is not available.");
+                return;
+            }
+            if (!ReferenceEquals(option, _selectedProvider))
+            {
+                await SwitchProviderAsync(option);
+                if (_isShutDown || !ReferenceEquals(option, _selectedProvider)
+                    || State != AssistantState.NotChecked || !ConnectCommand.CanExecute(null)) return;
+            }
+        }
         try
         {
             await ConnectAsync();
@@ -1074,6 +1109,21 @@ public sealed partial class AssistantViewModel : ObservableObject
             LauncherLogService.Operation($"Assistant startup connection failed: {ex.GetType().Name}");
             if (!_isShutDown) await EndSessionAsync(AssistantState.Error, "The assistant could not connect: " + Shorten(ex.Message, 200));
         }
+    }
+
+    private AssistantConnectionPreference? InferConnectionPreference() =>
+        _codexStore.Load() is { ThreadId: not null } saved && saved.Distro == _cli.DistroName && saved.BelongsTo(_host.GetDistroInstallationId(), saved.Provider)
+            ? new AssistantConnectionPreference(AssistantConnectionPreference.CurrentVersion, true, ChatGptProviderId)
+            : null;
+
+    /// <summary>Saves startup's choice for the selected provider; written only when it changes.</summary>
+    private void RememberConnection(bool reconnectOnStartup)
+    {
+        if (_connectionPreferenceStore is null) return;
+        var preference = new AssistantConnectionPreference(AssistantConnectionPreference.CurrentVersion, reconnectOnStartup, _selectedProvider.Id);
+        if (preference == _connectionPreference) return;
+        _connectionPreference = preference;
+        _connectionPreferenceStore.Save(preference);
     }
 
     internal async Task ConnectAsync()
@@ -2365,6 +2415,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         if (!ReferenceEquals(_client, client)) return;
         SignInUrl = string.Empty;
         SignInCode = string.Empty;
+        RememberConnection(reconnectOnStartup: true);
         SetState(AssistantState.Ready, ReadyText());
         if (_historyLoadPending)
         {
@@ -3589,6 +3640,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         }
         _connectionIntent = false;
         _reconnectAfterMaintenance = false;
+        RememberConnection(reconnectOnStartup: false);
         await EndSessionAsync(AssistantState.Disconnected, "Session closed. Connect to continue this task.");
     }
 

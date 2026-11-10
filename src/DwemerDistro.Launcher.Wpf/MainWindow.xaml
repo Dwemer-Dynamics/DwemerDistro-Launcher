@@ -38,19 +38,16 @@
             <Setter Property="MinWidth" Value="196" />
             <Setter Property="MinHeight" Value="40" />
         </Style>
-        <!-- Live log chips: sized to their icon and short label, so the row stays one compact strip.
-             Copper edge on hover and keyboard focus; the shared white focus ring still shows. -->
-        <Style x:Key="GameCenter.LogButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
-            <Setter Property="Background" Value="{DynamicResource GameCenter.Panel}" />
+        <!-- Compact actions for Settings and Logs, matching the Components card buttons: the shared
+             GameCenter template (focus ring, pressed, disabled) at 28px, neutral fill, copper edge on hover. -->
+        <Style x:Key="GameCenter.CompactButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+            <Setter Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
             <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
-            <Setter Property="Padding" Value="8,5,12,5" />
-            <Setter Property="Margin" Value="0,0,8,8" />
-            <Setter Property="MinHeight" Value="32" />
-            <Setter Property="ToolTipService.InitialShowDelay" Value="400" />
+            <Setter Property="Padding" Value="10,3" />
+            <Setter Property="MinHeight" Value="28" />
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                    <Setter Property="Background" Value="#454545" />
                     <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                 </Trigger>
                 <Trigger Property="IsKeyboardFocused" Value="True">
@@ -61,6 +58,18 @@
                     <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                 </Trigger>
             </Style.Triggers>
+        </Style>
+        <Style x:Key="GameCenter.CompactPrimaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.PrimaryButton}">
+            <Setter Property="Padding" Value="12,3" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="MinWidth" Value="76" />
+        </Style>
+        <!-- Live log chips: sized to their icon and short label, so the row stays one compact strip. -->
+        <Style x:Key="GameCenter.LogButton" TargetType="Button" BasedOn="{StaticResource GameCenter.CompactButton}">
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Padding" Value="8,3,10,3" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="ToolTipService.InitialShowDelay" Value="400" />
         </Style>
         <Style x:Key="GameCenter.LogButtonIcon" TargetType="Image">
             <Setter Property="Width" Value="16" />
@@ -83,8 +92,8 @@
         <Style x:Key="GameCenter.SettingRowDescription" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
             <Setter Property="Margin" Value="0,4,0,0" />
         </Style>
-        <Style x:Key="GameCenter.SettingRowButton" TargetType="Button" BasedOn="{StaticResource GameCenter.PrimaryButton}">
-            <Setter Property="MinWidth" Value="104" />
+        <Style x:Key="GameCenter.SettingRowButton" TargetType="Button" BasedOn="{StaticResource GameCenter.CompactButton}">
+            <Setter Property="MinWidth" Value="84" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
         <!-- Optional custom mod game and author lines collapse when the registry has none. -->
@@ -762,9 +771,20 @@
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="&#xE99A;" FontFamily="Segoe MDL2 Assets" FontSize="20" Width="26" Margin="0,0,10,0"
-                                               TextAlignment="Center" VerticalAlignment="Center"
-                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" />
+                                    <!-- Centurion core emblem, sized like the game emblems above; high contrast drops it the same way. -->
+                                    <Image Source="Assets/centurioncore.png" Width="26" Height="26" Margin="0,0,10,0"
+                                           Stretch="Uniform" VerticalAlignment="Center"
+                                           RenderOptions.BitmapScalingMode="HighQuality">
+                                        <Image.Style>
+                                            <Style TargetType="Image">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Image.Style>
+                                    </Image>
                                     <TextBlock Grid.Column="1" Text="LLM Studio" FontSize="13" FontWeight="SemiBold"
                                                Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"
                                                VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
@@ -2175,8 +2195,8 @@
                                 <Button Grid.Column="1"
                                         Content="Generate Distro Debugging Logs"
                                         Command="{Binding GenerateDiagnosticsCommand}"
-                                        Style="{StaticResource GameCenter.PrimaryButton}"
-                                        MinWidth="238" MinHeight="40" VerticalAlignment="Center"
+                                        Style="{StaticResource GameCenter.CompactPrimaryButton}"
+                                        VerticalAlignment="Center"
                                         AutomationProperties.Name="Generate distro debugging logs"
                                         AutomationProperties.HelpText="Create a diagnostic file with distro logs and system details." />
                             </Grid>
@@ -2185,7 +2205,7 @@
                             <StackPanel>
                                 <DockPanel>
                                     <Button DockPanel.Dock="Right" Command="{Binding RefreshConnectionDetailsCommand}"
-                                            Style="{StaticResource GameCenter.Button}" Width="32" Height="32" MinWidth="32" MinHeight="32"
+                                            Style="{StaticResource GameCenter.CompactButton}" Width="28" Height="28" MinWidth="28" MinHeight="28"
                                             Padding="0" HorizontalContentAlignment="Center" VerticalAlignment="Center"
                                             ToolTip="Refresh" AutomationProperties.Name="Refresh"
                                             AutomationProperties.HelpText="Read current addresses without starting a stopped distro.">

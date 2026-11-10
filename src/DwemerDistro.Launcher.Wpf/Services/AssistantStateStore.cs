@@ -172,3 +172,81 @@ public sealed class AssistantStateStore : IAssistantStateStore
         }
     }
 }
+
+/// <summary>
+/// Whether startup connects the assistant, and to which provider. A usable connection turns it on and the user's
+/// Disconnect turns it off; closing the launcher, a lost session or maintenance leave it as it was. A provider id only.
+/// </summary>
+public sealed record AssistantConnectionPreference(int Version, bool ReconnectOnStartup, string Provider)
+{
+    public const int CurrentVersion = 1;
+
+    public bool IsValid() => Version == CurrentVersion && AssistantTaskReference.ProviderRegex().IsMatch(Provider ?? string.Empty);
+}
+
+public interface IAssistantConnectionPreferenceStore
+{
+    /// <summary>The saved preference, or null when none is saved or the saved one is unusable.</summary>
+    AssistantConnectionPreference? Load();
+
+    void Save(AssistantConnectionPreference preference);
+}
+
+/// <summary>
+/// <c>connection.json</c> beside the task references. Reads fail closed to "nothing saved" and writes are best effort,
+/// because losing it only means the next startup waits for Connect, or decides as a launcher without it would.
+/// </summary>
+public sealed class AssistantConnectionPreferenceStore : IAssistantConnectionPreferenceStore
+{
+    private const int MaxFileBytes = 4 * 1024;
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+    public AssistantConnectionPreferenceStore(string? localAppDataDirectory = null)
+    {
+        var resolvedDirectory = localAppDataDirectory
+                                ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        StatePath = Path.Combine(resolvedDirectory, "DwemerDistro", "assistant", "connection.json");
+    }
+
+    public string StatePath { get; }
+
+    public AssistantConnectionPreference? Load()
+    {
+        try
+        {
+            var file = new FileInfo(StatePath);
+            if (!file.Exists || file.Length > MaxFileBytes) return null;
+            var preference = JsonSerializer.Deserialize<AssistantConnectionPreference>(File.ReadAllText(StatePath), JsonOptions);
+            return preference is not null && preference.IsValid() ? preference : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    public void Save(AssistantConnectionPreference preference)
+    {
+        if (!preference.IsValid()) return;
+        try
+        {
+            var directory = Path.GetDirectoryName(StatePath)!;
+            Directory.CreateDirectory(directory);
+            // Replace atomically so a crash mid-write leaves the previous preference, not a torn file.
+            var temporaryPath = Path.Combine(directory, $"connection.{Guid.NewGuid():N}.tmp");
+            try
+            {
+                File.WriteAllBytes(temporaryPath, JsonSerializer.SerializeToUtf8Bytes(preference, JsonOptions));
+                File.Move(temporaryPath, StatePath, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            LauncherLogService.Operation("Assistant connection preference could not be saved.");
+        }
+    }
+}

@@ -289,6 +289,7 @@ public sealed partial class AssistantViewModel
         SelectedModel = ClaudeModels.FirstOrDefault(model => model.Id == preferred) ?? ClaudeModels.First(model => model.Id == ClaudeDefaultModel);
         await LoadRecoveryAsync(client, supplyContext: true);
         if (!ReferenceEquals(_client, client)) return;
+        RememberConnection(reconnectOnStartup: true);
         SetState(AssistantState.Ready, ReadyText());
         if (_pendingContinuation is { } continuation)
         {

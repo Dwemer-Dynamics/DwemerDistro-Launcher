@@ -22,7 +22,9 @@ public sealed partial class MainWindowViewModel : IAssistantHost
             new AssistantStateStore(fileName: AssistantStateStore.ClaudeFileName), new ClaudeChatStore(), claudeLocator.GetStatusAsync, _processRunner,
             new AssistantStateStore(fileName: AssistantStateStore.OpenRouterFileName), new OpenRouterChatStore(),
             // Key metadata only (global-status), read on Connect or when the page is shown again without a usable key; the secret stays in DwemerDistro.
-            _ => CreateApiKeysService().RunAsync("global-status"));
+            _ => CreateApiKeysService().RunAsync("global-status"),
+            // Whether startup connects, and to which provider: a usable connection turns it on, the user's Disconnect off.
+            new AssistantConnectionPreferenceStore());
         // Whether an idle session can be closed for maintenance follows its state, so the maintenance buttons do too.
         assistant.PropertyChanged += Assistant_PropertyChanged;
         return assistant;
@@ -80,7 +82,8 @@ public sealed partial class MainWindowViewModel : IAssistantHost
     /// <summary>
     /// Startup's one automatic Connect, queued after first-time setup was found unnecessary and the launcher-version
     /// sync settled. Skipped while the launcher closes or an update, install or maintenance holds the distro; the
-    /// tab then waits for Connect. It never switches tabs or takes focus.
+    /// tab then waits for Connect. The assistant itself connects only if its last usable connection was not ended by
+    /// Disconnect (see <see cref="AssistantViewModel.ConnectOnStartupAsync"/>). It never switches tabs or takes focus.
     /// </summary>
     private void QueueAssistantStartupConnect()
     {

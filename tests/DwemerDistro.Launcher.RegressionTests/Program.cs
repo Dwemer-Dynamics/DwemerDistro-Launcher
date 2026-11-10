@@ -3363,7 +3363,7 @@ try
         Assert(stateStore.Load() is null, "A saved reference for another product must be ignored.");
 
         var foreign = await ConnectAssistantAsync(stateStore, savedReference with { InstallationId = "{" + Guid.NewGuid() + "}" }, installationId, statusTask: null);
-        Assert(foreign.vm.State == AssistantState.Error && foreign.vm.StatusDetail.Contains("New task") && foreign.cli.Calls.Count == 2 && foreign.cli.ServedTask is null
+        Assert(foreign.vm.State == AssistantState.Error && foreign.vm.StatusDetail.Contains("New chat") && foreign.cli.Calls.Count == 2 && foreign.cli.ServedTask is null
                && stateStore.Load() is not null,
             "A task saved on another distro installation must not be checked, reused, or replaced by a silently prepared task.");
         var otherDistro = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
@@ -3698,6 +3698,55 @@ try
         Assert(signedOut.vm.State == AssistantState.SignedOut && StartupQuiet(signedOut.cli, signedOut.transport),
             "A signed-out session must come back signed out after maintenance, without starting a login.");
         await signedOut.vm.ShutdownAsync();
+
+        // Startup connects only after a usable connection the user did not end with Disconnect, and to that provider.
+        var preferenceStore = new AssistantConnectionPreferenceStore(Path.Combine(assistantStateRoot, "preference"));
+        var neverConnected = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm => { stateStore.Clear(); return vm.ConnectOnStartupAsync(); });
+        Assert(neverConnected.vm.State == AssistantState.NotChecked && neverConnected.cli.Calls.Count == 0 && preferenceStore.Load() is null
+               && neverConnected.vm.ConnectCommand.CanExecute(null),
+            "A launcher that never connected must not connect at startup, nor save a preference, and Connect must stay available.");
+        await neverConnected.vm.ShutdownAsync();
+        var failedLegacy = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm => vm.ConnectOnStartupAsync(),
+            script: command => command == "capabilities" ? "{\"schema_version\":1,\"ok\":false,\"data\":null,\"error\":{\"code\":\"busy\",\"message\":\"Another operation is running.\"}}" : null);
+        Assert(failedLegacy.vm.State == AssistantState.Error && failedLegacy.cli.Calls.Count(call => call == "capabilities") == 1 && preferenceStore.Load() is null,
+            "A saved ChatGPT task with no preference yet stands for an earlier connection: startup tries once, and a failure saves nothing.");
+        await failedLegacy.vm.ShutdownAsync();
+        var legacy = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm => vm.ConnectOnStartupAsync());
+        Assert(legacy.vm.State == AssistantState.Ready && preferenceStore.Load() is { ReconnectOnStartup: true, Provider: AssistantViewModel.ChatGptProviderId },
+            "A usable startup connection must save that startup connects ChatGPT again.");
+        Assert(await legacy.vm.SuspendForMaintenanceAsync() && preferenceStore.Load() is { ReconnectOnStartup: true },
+            "Maintenance closing the session must keep the preference.");
+        legacy.vm.ResumeAfterMaintenance(reconnect: false);
+        await legacy.vm.ShutdownAsync();
+        Assert(preferenceStore.Load() is { ReconnectOnStartup: true }, "Closing the launcher must keep the preference.");
+        var reconnected = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm => vm.ConnectOnStartupAsync());
+        Assert(reconnected.vm.State == AssistantState.Ready, "After a usable connection, the next startup must connect.");
+        reconnected.vm.DisconnectCommand.Execute(null);
+        await WaitUntilAsync(() => reconnected.vm.State == AssistantState.Disconnected);
+        Assert(preferenceStore.Load() is { ReconnectOnStartup: false, Provider: AssistantViewModel.ChatGptProviderId },
+            "Disconnect must save that startup no longer connects.");
+        await reconnected.vm.ShutdownAsync();
+        var afterDisconnect = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm => vm.ConnectOnStartupAsync());
+        Assert(afterDisconnect.vm.State == AssistantState.NotChecked && afterDisconnect.cli.Calls.Count == 0 && afterDisconnect.vm.ConnectCommand.CanExecute(null),
+            "After Disconnect, the next startup must not connect, even with a saved task.");
+        afterDisconnect.vm.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => afterDisconnect.vm.State == AssistantState.Ready);
+        Assert(preferenceStore.Load() is { ReconnectOnStartup: true }, "Connecting again must turn startup's connection back on.");
+        await afterDisconnect.vm.ShutdownAsync();
+        preferenceStore.Save(new AssistantConnectionPreference(AssistantConnectionPreference.CurrentVersion, true, AssistantViewModel.ClaudeProviderId));
+        var unavailableProvider = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm => vm.ConnectOnStartupAsync());
+        Assert(unavailableProvider.vm.State == AssistantState.NotChecked && unavailableProvider.cli.Calls.Count == 0
+               && unavailableProvider.vm.SelectedProvider.Id == AssistantViewModel.ChatGptProviderId
+               && preferenceStore.Load() is { ReconnectOnStartup: true, Provider: AssistantViewModel.ClaudeProviderId },
+            "Startup must never connect a provider other than the remembered one, and must keep the preference when it cannot offer it.");
+        await unavailableProvider.vm.ShutdownAsync();
+        stateStore.Save(savedReference);
 
         // Maintenance waits a bounded time for a Core command the last response started. If it is still running, the
         // hold ends at once and maintenance is refused; the gate claim never meets a held, closed assistant.
@@ -6733,7 +6782,8 @@ static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTra
     string distroName = LauncherConstants.DistroName, bool signedOut = false, bool distroBusy = false, Func<string, string?>? script = null,
     TaskCompletionSource? capabilitiesGate = null, Func<AssistantViewModel, Task>? connect = null,
     System.Text.Json.Nodes.JsonArray? resumedTurns = null, TaskCompletionSource? prepareGate = null,
-    Func<string, System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>? respondFirst = null, IAssistantCatalogStore? catalog = null)
+    Func<string, System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>? respondFirst = null, IAssistantCatalogStore? catalog = null,
+    IAssistantConnectionPreferenceStore? connectionPreference = null)
 {
     store.Save(saved);
     // rust-v0.163.0 thread responses report the policy in force; Core's broker pins never and /work. thread/resume with
@@ -6776,7 +6826,7 @@ static async Task<(AssistantViewModel vm, FakeAssistantCli cli, FakeAssistantTra
     };
     var cli = new FakeAssistantCli(transport, statusTask) { DistroName = distroName, Script = script, CapabilitiesGate = capabilitiesGate, PrepareGate = prepareGate };
     var host = new FakeAssistantHost(installationId) { DistroBusy = distroBusy };
-    var vm = new AssistantViewModel(cli, host, store, catalog);
+    var vm = new AssistantViewModel(cli, host, store, catalog, connectionPreference: connectionPreference);
     await (connect ?? (model => model.ConnectAsync()))(vm);
     return (vm, cli, transport, host);
 }

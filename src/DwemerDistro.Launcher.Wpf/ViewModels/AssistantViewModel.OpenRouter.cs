@@ -217,6 +217,7 @@ public sealed partial class AssistantViewModel
         _openRouterKeysRead = true;
         _openRouterKeysFailed = false;
         ApplyOpenRouterBinding();
+        if (State == AssistantState.Ready && IsOpenRouterConnected) RememberConnection(reconnectOnStartup: true);
         RaiseOpenRouter();
     }
 
@@ -311,6 +312,7 @@ public sealed partial class AssistantViewModel
         AccountText = OpenRouterConnectionText;
         await LoadRecoveryAsync(client, supplyContext: true);
         if (!ReferenceEquals(_client, client)) return;
+        if (IsOpenRouterConnected) RememberConnection(reconnectOnStartup: true);
         SetState(AssistantState.Ready, ReadyText());
         if (_historyLoadPending)
         {
