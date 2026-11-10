@@ -101,7 +101,11 @@ public static class ComponentQuickTestService
             var family = id == "audiocpp" ? "pocket_tts" : "higgs_audio_tts";
             var model = listing.GetProperty("data").EnumerateArray().FirstOrDefault(m => m.TryGetProperty("family", out var value) && value.GetString() == family);
             if (model.ValueKind == JsonValueKind.Undefined) throw new InvalidOperationException("The expected speech model is not configured.");
-            audio = await SendAsync(port, "/v1/audio/speech", Json(new { model = model.GetProperty("id").GetString(), input = text, response_format = "wav" }), token);
+            // PocketTTS needs an explicit built-in voice when server.json has no default voice preset.
+            object speechRequest = id == "audiocpp"
+                ? new { model = model.GetProperty("id").GetString(), input = text, voice = "alba", response_format = "wav" }
+                : new { model = model.GetProperty("id").GetString(), input = text, response_format = "wav" };
+            audio = await SendAsync(port, "/v1/audio/speech", Json(speechRequest), token);
         }
         else if (id == "pipertts") audio = await SendAsync(port, "/", Json(new { text }), token);
         else if (id == "omnivoice") audio = await SendAsync(port, "/tts_to_audio", Json(new { text }), token);
