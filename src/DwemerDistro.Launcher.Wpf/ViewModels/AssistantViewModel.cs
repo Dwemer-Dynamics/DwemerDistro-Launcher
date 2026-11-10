@@ -592,6 +592,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         ApproveRunForTaskCommand = new AsyncRelayCommand(() => DecideActionAsync("approve_session"),
             () => CanAllowRunForTask && _client is not null && State == AssistantState.Streaming && !IsMaintenanceHeld);
         RevokeRunGrantCommand = new AsyncRelayCommand(RevokeRunGrantAsync, () => HasRunGrant && _client is not null);
+        InitializePresentation();
     }
 
     public AsyncRelayCommand ConnectCommand { get; }
@@ -1392,7 +1393,7 @@ public sealed partial class AssistantViewModel : ObservableObject
         if (saved.Distro != _cli.DistroName || !saved.BelongsTo(_installationId, _provider))
         {
             SetState(AssistantState.Error, $"The saved task {saved.TaskId} belongs to a different DwemerDistro installation or assistant provider, " +
-                "so it was not reused. Nothing was applied. Press New task to start a fresh task.");
+                "so it was not reused. Nothing was applied. Open the More (…) menu and choose New chat to start fresh.");
             return false;
         }
 
