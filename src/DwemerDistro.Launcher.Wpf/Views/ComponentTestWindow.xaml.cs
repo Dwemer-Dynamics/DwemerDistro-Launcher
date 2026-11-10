@@ -24,7 +24,6 @@ public partial class ComponentTestWindow : Window
         Heading.Text = title;
         Description.Text = ComponentQuickTestService.Description(id);
         var speechInput = ComponentQuickTestService.IsSpeechInput(id);
-        Play.Visibility = speechInput || id is "lmstudio" or "minime" ? Visibility.Collapsed : Visibility.Visible;
         Sample.Content = speechInput ? "Transcribe recording" : id == "lmstudio" ? "Send test prompt" : id == "minime" ? "Classify text" : "Generate speech";
         ChooseFile.Visibility = FileLabel.Visibility = speechInput ? Visibility.Visible : Visibility.Collapsed;
         Input.Visibility = InputLabel.Visibility = !speechInput && ComponentQuickTestService.HasSample(id) ? Visibility.Visible : Visibility.Collapsed;
@@ -65,8 +64,7 @@ public partial class ComponentTestWindow : Window
                 test.Token.ThrowIfCancellationRequested();
                 File.WriteAllBytes(_sampleFile, audio);
                 if (_closed) { ClearSample(); return; }
-                Play.IsEnabled = true;
-                Play_Click(Play, new RoutedEventArgs());
+                PlaySample();
             }
         }
         catch (OperationCanceledException) { if (!_closed) Result.Text = "Test cancelled. The service may still finish the current request."; }
@@ -86,7 +84,7 @@ public partial class ComponentTestWindow : Window
         }
     }
 
-    private void Play_Click(object sender, RoutedEventArgs e)
+    private void PlaySample()
     {
         if (_sampleFile is null) return;
         _player.Open(new Uri(_sampleFile));
@@ -99,7 +97,6 @@ public partial class ComponentTestWindow : Window
     private void ClearSample()
     {
         _player.Close();
-        Play.IsEnabled = false;
         if (_sampleFile is null) return;
         try { File.Delete(_sampleFile); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         _sampleFile = null;

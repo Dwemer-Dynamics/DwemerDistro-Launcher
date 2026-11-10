@@ -23,7 +23,7 @@ public static class ComponentQuickTestService
         "parakeet" or "localwhisper" => "Choose a short WAV recording to transcribe. No microphone recording starts automatically.",
         "lmstudio" => "Send a short prompt to an already-loaded language model. No model will be downloaded or loaded by the launcher.",
         "minime" => "Run a short text classification through Minime. This tests Minime, not the separate Text2Vec service.",
-        _ => "Generate a short speech sample, then use Play sample to hear it. The service uses its existing voice configuration."
+        _ => "Generate a short speech sample; it plays automatically when ready. The service uses its existing voice configuration."
     };
 
     // Reads at most 10 MB, including streamed responses, and never follows a service redirect outside localhost.
@@ -121,7 +121,7 @@ public static class ComponentQuickTestService
             audio = await SendAsync(port, id == "chatterbox" ? "/tts_to_audio/" : "/tts_to_audio", Json(payload), token);
         }
         if (!IsWave(audio)) throw new InvalidOperationException("The service responded, but did not return WAV audio.");
-        return new("Speech sample generated. Use Play sample to replay.", audio);
+        return new("Speech sample generated.", audio);
     }
 
     private static bool IsWave(byte[] bytes) => bytes.Length > 44 && Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF" && Encoding.ASCII.GetString(bytes, 8, 4) == "WAVE";

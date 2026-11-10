@@ -20,8 +20,7 @@
         </StackPanel>
         <WrapPanel Grid.Row="3" Margin="0,14,0,10">
             <Button x:Name="Check" Content="Check service" Click="Check_Click" Style="{DynamicResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,8,6"/>
-            <Button x:Name="Sample" Content="Run sample test" Click="Sample_Click" Style="{DynamicResource GameCenter.ModAction.CopperOutlineButton}" Margin="0,0,8,6"/>
-            <Button x:Name="Play" Content="Play sample" Click="Play_Click" IsEnabled="False" Style="{DynamicResource GameCenter.ModAction.SecondaryButton}" Margin="0,0,0,6"/>
+            <Button x:Name="Sample" Content="Run sample test" Click="Sample_Click" Style="{DynamicResource GameCenter.ModAction.CopperOutlineButton}" Margin="0,0,0,6"/>
         </WrapPanel>
         <Border Grid.Row="4" BorderBrush="{DynamicResource GameCenter.Border}" BorderThickness="1" Padding="12" CornerRadius="4">
             <ScrollViewer VerticalScrollBarVisibility="Auto"><TextBlock x:Name="Result" Text="Choose a check to begin." TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/></ScrollViewer>
