@@ -505,9 +505,14 @@ public partial class MainWindow : Window
     {
         _isConsoleExpanded = !_isConsoleExpanded;
         ApplyConsoleLayout();
-        if (_isConsoleExpanded)
+        if (_isConsoleExpanded && _outputRichTextBox is { } output)
         {
-            _outputRichTextBox?.ScrollToEnd();
+            // The console was just built and has no template or layout yet, so an immediate ScrollToEnd does nothing:
+            // it opens at the latest line once laid out. Later output keeps following as RenderOutputText appends it.
+            _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+            {
+                if (ReferenceEquals(output, _outputRichTextBox)) output.ScrollToEnd();
+            });
         }
     }
 

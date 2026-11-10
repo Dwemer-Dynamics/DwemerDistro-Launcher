@@ -178,6 +178,11 @@ public partial class AssistantView : UserControl
             RemeasureBackdrop();
         };
         DataContextChanged += AssistantView_DataContextChanged;
+        // Shown again (the page reopened, or the setup card made way for it): it opens at the newest message.
+        TranscriptBox.IsVisibleChanged += (_, e) =>
+        {
+            if (e.NewValue is true) ScrollTranscriptToLatest();
+        };
         // Ctrl+V in the composer attaches a copied screenshot or copied files; text pastes as usual.
         CommandManager.AddPreviewCanExecuteHandler(InputBox, InputBox_PreviewCanPaste);
         CommandManager.AddPreviewExecutedHandler(InputBox, InputBox_PreviewPaste);
@@ -928,14 +933,24 @@ public partial class AssistantView : UserControl
         && (focused as System.Windows.Controls.ContextMenu ?? focused.Parent as System.Windows.Controls.ContextMenu)?.PlacementTarget == TranscriptBox;
 
     // Shown again, e.g. back from API Keys: an OpenRouter chat without a usable key reads its key once more.
+    // Earlier pages browsed before leaving are put away (Back to latest, which only restores the kept view),
+    // so the page always reopens on the latest conversation; paging while it stays open is left alone.
     private void AssistantView_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (e.NewValue is true)
         {
+            if (_viewModel?.BackToLatestCommand.CanExecute(null) == true) _viewModel.BackToLatestCommand.Execute(null);
             RemeasureBackdrop();
             _viewModel?.OnPageShown();
         }
     }
+
+    // After layout, so the transcript's extent includes everything added while it was not shown.
+    private void ScrollTranscriptToLatest() =>
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        {
+            if (TranscriptBox.IsVisible) TranscriptBox.ScrollToEnd();
+        });
 
     // Enter sends, Shift+Enter keeps the newline the TextBox would insert anyway.
     private void InputBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)

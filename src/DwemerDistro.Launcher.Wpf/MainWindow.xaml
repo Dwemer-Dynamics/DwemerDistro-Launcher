@@ -271,20 +271,72 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
+                <!-- Each destination leads with a decorative 12px MDL2 glyph; the accessible name stays the
+                     plain label. The glyphs cost 18px a tab, so these tabs pad 6px a side instead of 12px to
+                     leave the component belt room for its compact count at the 980px minimum. -->
                 <StackPanel x:Name="NavigationLandmark" Orientation="Horizontal">
-                    <RadioButton x:Name="LibraryNavButton" GroupName="Destination" Content="_Mods" IsChecked="True"
-                                 Style="{StaticResource GameCenter.NavButton}" Tag="0" Checked="DestinationNav_Checked" />
-                    <RadioButton x:Name="SetupNavButton" GroupName="Destination" Content="_Components"
-                                 Style="{StaticResource GameCenter.NavButton}" Tag="1" Checked="DestinationNav_Checked" />
-                    <RadioButton x:Name="SettingsNavButton" GroupName="Destination" Content="_Settings"
-                                 Style="{StaticResource GameCenter.NavButton}" Tag="2" Checked="DestinationNav_Checked" />
-                    <RadioButton x:Name="ApiKeysNavButton" GroupName="Destination" Content="API _Keys"
-                                 Style="{StaticResource GameCenter.NavButton}" Tag="5" Checked="DestinationNav_Checked"
-                                 AutomationProperties.Name="API Keys" />
-                    <RadioButton x:Name="AssistantNavButton" GroupName="Destination" Content="_Assistant"
-                                 Style="{StaticResource GameCenter.NavButton}" Tag="4" Checked="DestinationNav_Checked" />
-                    <RadioButton x:Name="LogsNavButton" GroupName="Destination" Content="Lo_gs"
-                                 Style="{StaticResource GameCenter.NavButton}" Tag="3" Checked="DestinationNav_Checked" />
+                    <StackPanel.Resources>
+                        <Style x:Key="HeaderNavButton" TargetType="RadioButton" BasedOn="{StaticResource GameCenter.NavButton}">
+                            <Setter Property="Padding" Value="6,12" />
+                        </Style>
+                        <Style x:Key="HeaderNavGlyph" TargetType="TextBlock">
+                            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+                            <Setter Property="FontSize" Value="12" />
+                            <Setter Property="FontWeight" Value="Normal" />
+                            <Setter Property="Width" Value="12" />
+                            <Setter Property="Margin" Value="0,0,6,0" />
+                            <Setter Property="TextAlignment" Value="Center" />
+                            <Setter Property="VerticalAlignment" Value="Center" />
+                        </Style>
+                    </StackPanel.Resources>
+                    <RadioButton x:Name="LibraryNavButton" GroupName="Destination" IsChecked="True"
+                                 Style="{StaticResource HeaderNavButton}" Tag="0" Checked="DestinationNav_Checked"
+                                 AutomationProperties.Name="Mods">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xEA86;" Style="{StaticResource HeaderNavGlyph}" />
+                            <AccessText Text="_Mods" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="SetupNavButton" GroupName="Destination"
+                                 Style="{StaticResource HeaderNavButton}" Tag="1" Checked="DestinationNav_Checked"
+                                 AutomationProperties.Name="Components">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE950;" Style="{StaticResource HeaderNavGlyph}" />
+                            <AccessText Text="_Components" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="SettingsNavButton" GroupName="Destination"
+                                 Style="{StaticResource HeaderNavButton}" Tag="2" Checked="DestinationNav_Checked"
+                                 AutomationProperties.Name="Settings">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE713;" Style="{StaticResource HeaderNavGlyph}" />
+                            <AccessText Text="_Settings" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="ApiKeysNavButton" GroupName="Destination"
+                                 Style="{StaticResource HeaderNavButton}" Tag="5" Checked="DestinationNav_Checked"
+                                 AutomationProperties.Name="API Keys">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8D7;" Style="{StaticResource HeaderNavGlyph}" />
+                            <AccessText Text="API _Keys" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="AssistantNavButton" GroupName="Destination"
+                                 Style="{StaticResource HeaderNavButton}" Tag="4" Checked="DestinationNav_Checked"
+                                 AutomationProperties.Name="Assistant">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8F2;" Style="{StaticResource HeaderNavGlyph}" />
+                            <AccessText Text="_Assistant" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="LogsNavButton" GroupName="Destination"
+                                 Style="{StaticResource HeaderNavButton}" Tag="3" Checked="DestinationNav_Checked"
+                                 AutomationProperties.Name="Logs">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE9F9;" Style="{StaticResource HeaderNavGlyph}" />
+                            <AccessText Text="Lo_gs" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </RadioButton>
                 </StackPanel>
                 <!-- Component status belt: the header's spare width between the destinations and the distro
                      controls, on every tab. It only takes what is left over (the star column), so the tabs and

@@ -26,7 +26,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="Frame" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="6" Padding="5,1,8,2">
+                        <Border x:Name="Frame" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="8" Padding="5,1,8,2">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock x:Name="Chevron" Text="&#x25B8;" Width="12" VerticalAlignment="Center" Foreground="{TemplateBinding Foreground}" />
                                 <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" VerticalAlignment="Center"
@@ -58,22 +58,19 @@
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Padding" Value="8,6" />
             <Setter Property="FontSize" Value="13" />
-        </Style>
-        <!-- The composer: the same text box, rounded and quiet until it has focus. -->
-        <Style x:Key="Assistant.Composer" TargetType="TextBox" BasedOn="{StaticResource Assistant.TextBox}">
-            <Setter Property="Background" Value="#252525" />
-            <Setter Property="BorderBrush" Value="{StaticResource Assistant.SoftBorder}" />
-            <Setter Property="Padding" Value="10,7" />
-            <Setter Property="FontSize" Value="14" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Frame" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10" Padding="{TemplateBinding Padding}">
-                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" HorizontalScrollBarVisibility="Hidden"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                          HorizontalScrollBarVisibility="{TemplateBinding HorizontalScrollBarVisibility}"
                                           VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}" />
                         </Border>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                            </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
                             </Trigger>
@@ -85,9 +82,126 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- The composer: the same text box, rounded and quiet until it has focus. -->
+        <Style x:Key="Assistant.Composer" TargetType="TextBox" BasedOn="{StaticResource Assistant.TextBox}">
+            <Setter Property="Background" Value="#252525" />
+            <Setter Property="BorderBrush" Value="{StaticResource Assistant.SoftBorder}" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Frame" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="14" Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" HorizontalScrollBarVisibility="Hidden"
+                                          VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Frame" Property="BorderBrush" Value="{DynamicResource GameCenter.CopperEdge}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Frame" Property="Opacity" Value="0.6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- The shared button, a little rounder for this page: the tier styles keep their colours, disabled look and white focus ring;
+             this adds a soft light wash that fades in on hover (instant when Windows turns client-area animation off) and a slight
+             press-in. Render transforms only, so nothing around a button moves. -->
+        <ControlTemplate x:Key="Assistant.ButtonTemplate" TargetType="Button">
+            <Grid x:Name="Root" RenderTransformOrigin="0.5,0.5">
+                <Border x:Name="Border" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="11" SnapsToDevicePixels="True">
+                    <Grid>
+                        <Border x:Name="Wash" Background="#16FFFFFF" CornerRadius="10" Opacity="0" IsHitTestVisible="False" />
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}" RecognizesAccessKey="True">
+                            <ContentPresenter.Resources>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}, FallbackValue=White}" />
+                                    <Setter Property="FontFamily" Value="Segoe UI" />
+                                </Style>
+                            </ContentPresenter.Resources>
+                        </ContentPresenter>
+                    </Grid>
+                </Border>
+                <Border x:Name="FocusRing" Margin="2" CornerRadius="9" BorderBrush="{DynamicResource GameCenter.Focus}" BorderThickness="1"
+                        Visibility="Collapsed" IsHitTestVisible="False" SnapsToDevicePixels="True" />
+            </Grid>
+            <ControlTemplate.Triggers>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
+                        <Condition Binding="{Binding Source={x:Static SystemParameters.ClientAreaAnimation}}" Value="False" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter TargetName="Wash" Property="Opacity" Value="1" />
+                </MultiDataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
+                        <Condition Binding="{Binding Source={x:Static SystemParameters.ClientAreaAnimation}}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <MultiDataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Wash" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </MultiDataTrigger.EnterActions>
+                    <MultiDataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="Wash" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.14" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </MultiDataTrigger.ExitActions>
+                </MultiDataTrigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter TargetName="Wash" Property="Visibility" Value="Hidden" />
+                    <Setter TargetName="Root" Property="RenderTransform">
+                        <Setter.Value>
+                            <ScaleTransform ScaleX="0.98" ScaleY="0.98" />
+                        </Setter.Value>
+                    </Setter>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="Border" Property="Opacity" Value="0.45" />
+                    <Setter TargetName="Wash" Property="Visibility" Value="Hidden" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+        <!-- Neutral actions rest on a softer edge; hover and press still take the shared copper edges. -->
         <Style x:Key="Assistant.Action" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
             <Setter Property="Margin" Value="0,0,6,6" />
             <Setter Property="MinWidth" Value="96" />
+            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
+            <Setter Property="Template" Value="{StaticResource Assistant.ButtonTemplate}" />
+        </Style>
+        <Style x:Key="Assistant.Primary" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.PrimaryButton}">
+            <Setter Property="Template" Value="{StaticResource Assistant.ButtonTemplate}" />
+        </Style>
+        <Style x:Key="Assistant.Outline" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.CopperOutlineButton}">
+            <Setter Property="Template" Value="{StaticResource Assistant.ButtonTemplate}" />
+        </Style>
+        <Style x:Key="Assistant.ReviewPrimary" TargetType="Button" BasedOn="{StaticResource GameCenter.PrimaryButton}">
+            <Setter Property="Template" Value="{StaticResource Assistant.ButtonTemplate}" />
+        </Style>
+        <Style x:Key="Assistant.Success" TargetType="Button" BasedOn="{StaticResource GameCenter.SuccessButton}">
+            <Setter Property="Template" Value="{StaticResource Assistant.ButtonTemplate}" />
+        </Style>
+        <!-- Side-panel cards: the shared card, rounded like the conversation. -->
+        <Style x:Key="Assistant.Card" TargetType="Border" BasedOn="{StaticResource GameCenter.Card}">
+            <Setter Property="CornerRadius" Value="12" />
         </Style>
         <Style x:Key="Assistant.Label" TargetType="TextBlock" BasedOn="{StaticResource GameCenter.Caption}">
             <Setter Property="Margin" Value="0,0,8,0" />
@@ -200,7 +314,7 @@
                         <Button x:Name="StopButton" Content="Stop" Command="{Binding StopCommand}" Margin="0,0,10,0" MinWidth="80"
                                 AutomationProperties.HelpText="Stop the current response and any live command still running. Esc does the same.">
                             <Button.Style>
-                                <Style TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.CopperOutlineButton}">
+                                <Style TargetType="Button" BasedOn="{StaticResource Assistant.Outline}">
                                     <Style.Triggers>
                                         <Trigger Property="IsEnabled" Value="False">
                                             <Setter Property="Visibility" Value="Collapsed" />
@@ -321,7 +435,7 @@
                 </TextBlock>
                 <!-- Nothing is sent until Clear memory here; Cancel changes nothing. -->
                 <Border x:Name="ClearMemoryConfirmCard" Visibility="{Binding ConfirmingReset, Converter={StaticResource BoolToVisibility}}"
-                        BorderBrush="{DynamicResource GameCenter.Danger}" BorderThickness="1" CornerRadius="6" Padding="10,8,10,2" Margin="0,0,0,10"
+                        BorderBrush="{DynamicResource GameCenter.Danger}" BorderThickness="1" CornerRadius="10" Padding="10,8,10,2" Margin="0,0,0,10"
                         Background="{DynamicResource GameCenter.Panel}"
                         AutomationProperties.Name="Confirm clearing all Assistant memories">
                     <WrapPanel>
@@ -346,7 +460,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- Conversation -->
-                <Border x:Name="ChatCard" Style="{StaticResource GameCenter.Card}" Padding="0" CornerRadius="8"
+                <Border x:Name="ChatCard" Style="{StaticResource Assistant.Card}" Padding="0"
                         BorderBrush="{StaticResource Assistant.SoftBorder}">
                     <Grid x:Name="ChatGrid">
                         <Grid.RowDefinitions>
@@ -389,7 +503,7 @@
                         </RichTextBox>
 
                         <!-- Not connected, reading the kept conversation: says so, and leads back to the setup card. -->
-                        <Border x:Name="OfflineConversationStrip" Grid.Row="0" Background="{DynamicResource GameCenter.CopperTint}" CornerRadius="8,8,0,0"
+                        <Border x:Name="OfflineConversationStrip" Grid.Row="0" Background="{DynamicResource GameCenter.CopperTint}" CornerRadius="11,11,0,0"
                                 BorderBrush="{StaticResource Assistant.SoftBorder}" BorderThickness="0,0,0,1" Padding="14,7"
                                 Visibility="{Binding IsOfflineConversationShown, Converter={StaticResource BoolToVisibility}}">
                             <WrapPanel VerticalAlignment="Center">
@@ -410,7 +524,7 @@
                                       Visibility="{Binding IsOnboardingShown, Converter={StaticResource BoolToVisibility}}"
                                       IsKeyboardFocusWithinChanged="OnboardingOverlay_IsKeyboardFocusWithinChanged">
                             <Border x:Name="OnboardingCard" MaxWidth="500" Margin="16,18" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                    Background="{StaticResource Assistant.ReplyBubble}" BorderThickness="1" CornerRadius="12" Padding="26,22"
+                                    Background="{StaticResource Assistant.ReplyBubble}" BorderThickness="1" CornerRadius="16" Padding="26,22"
                                     Focusable="True" KeyboardNavigation.IsTabStop="False" FocusVisualStyle="{x:Null}"
                                     AutomationProperties.Name="{Binding OnboardingTitle}" AutomationProperties.HelpText="{Binding OnboardingDetail}">
                                 <Border.Style>
@@ -454,7 +568,7 @@
 
                                     <!-- Sign-in: the supported URL and code are shown here; the browser opens only on click. -->
                                     <Border Visibility="{Binding IsSignInPanelShown, Converter={StaticResource BoolToVisibility}}"
-                                            BorderBrush="{DynamicResource GameCenter.CopperEdge}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,14,0,0">
+                                            BorderBrush="{DynamicResource GameCenter.CopperEdge}" BorderThickness="1" CornerRadius="10" Padding="12,10" Margin="0,14,0,0">
                                         <StackPanel>
                                             <TextBlock x:Name="SignInUrlLabel" Text="Sign-in page" Style="{StaticResource GameCenter.Caption}" />
                                             <TextBox Text="{Binding SignInUrl, Mode=OneWay}" IsReadOnly="True" Style="{StaticResource Assistant.TextBox}" FontFamily="Consolas"
@@ -467,7 +581,7 @@
                                                 <Button Content="Copy code" Click="CopySignInCode_Click" Style="{StaticResource Assistant.Action}" Margin="8,0,0,0" />
                                             </StackPanel>
                                             <Button x:Name="OpenSignInPageButton" Content="Open sign-in page" Command="{Binding OpenSignInUrlCommand}"
-                                                    Style="{StaticResource GameCenter.ModAction.PrimaryButton}" HorizontalAlignment="Center" MinWidth="150"
+                                                    Style="{StaticResource Assistant.Primary}" HorizontalAlignment="Center" MinWidth="150"
                                                     AutomationProperties.HelpText="Open the sign-in page in your browser." />
                                         </StackPanel>
                                     </Border>
@@ -475,14 +589,14 @@
                                     <!-- Only for the broker's account_home_unmanaged_config refusal when Core's dry run found the one file it can repair.
                                          The detail above explains it; nothing changes until Repair here, and Cancel changes nothing. -->
                                     <Border x:Name="HomeConfigRepairCard" Visibility="{Binding IsHomeConfigRepairOffered, Converter={StaticResource BoolToVisibility}}"
-                                            BorderBrush="{DynamicResource GameCenter.CopperEdge}" BorderThickness="1" CornerRadius="8" Padding="12,10,12,4" Margin="0,14,0,0"
+                                            BorderBrush="{DynamicResource GameCenter.CopperEdge}" BorderThickness="1" CornerRadius="10" Padding="12,10,12,4" Margin="0,14,0,0"
                                             AutomationProperties.Name="Confirm repairing the assistant's account settings file">
                                         <StackPanel>
                                             <TextBlock x:Name="HomeConfigRepairText" Text="Move config.toml into quarantine and reconnect?" FontWeight="SemiBold"
                                                        Foreground="{DynamicResource GameCenter.Text}" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,8" />
                                             <WrapPanel HorizontalAlignment="Center">
                                                 <Button x:Name="RepairHomeConfigButton" Content="Repair" Command="{Binding RepairHomeConfigCommand}"
-                                                        Style="{StaticResource GameCenter.ModAction.PrimaryButton}" Margin="0,0,8,6" MinWidth="96"
+                                                        Style="{StaticResource Assistant.Primary}" Margin="0,0,8,6" MinWidth="96"
                                                         AutomationProperties.HelpText="Move the file, unchanged, into DwemerDistro's private quarantine with a receipt, then reconnect. Sign-in and chats are kept." />
                                                 <Button x:Name="CancelHomeConfigRepairButton" Content="Cancel" Command="{Binding CancelHomeConfigRepairCommand}" Style="{StaticResource Assistant.Action}"
                                                         AutomationProperties.HelpText="Leave the file where it is. Nothing is changed; the assistant stays off." />
@@ -492,19 +606,19 @@
 
                                     <!-- The one step for this state; at most one of these is shown. -->
                                     <Button x:Name="ConnectButton" Content="{Binding ConnectActionLabel}" Command="{Binding ConnectCommand}"
-                                            Style="{StaticResource GameCenter.ModAction.PrimaryButton}" HorizontalAlignment="Center" MinWidth="150" Margin="0,16,0,0"
+                                            Style="{StaticResource Assistant.Primary}" HorizontalAlignment="Center" MinWidth="150" Margin="0,16,0,0"
                                             Visibility="{Binding IsConnectPrimary, Converter={StaticResource BoolToVisibility}}"
                                             AutomationProperties.HelpText="Check DwemerDistro and start the assistant for the current task." />
                                     <Button x:Name="SignInButton" Content="Sign in with ChatGPT" Command="{Binding SignInCommand}"
-                                            Style="{StaticResource GameCenter.ModAction.PrimaryButton}" HorizontalAlignment="Center" MinWidth="150" Margin="0,16,0,0"
+                                            Style="{StaticResource Assistant.Primary}" HorizontalAlignment="Center" MinWidth="150" Margin="0,16,0,0"
                                             Visibility="{Binding IsSignInPrimary, Converter={StaticResource BoolToVisibility}}"
                                             AutomationProperties.HelpText="Request a ChatGPT sign-in code. Nothing opens until you click Open sign-in page." />
                                     <Button x:Name="OpenApiKeysButton" Content="Open API Keys" Command="{Binding OpenApiKeysCommand}"
-                                            Style="{StaticResource GameCenter.ModAction.PrimaryButton}" HorizontalAlignment="Center" MinWidth="150" Margin="0,16,0,0"
+                                            Style="{StaticResource Assistant.Primary}" HorizontalAlignment="Center" MinWidth="150" Margin="0,16,0,0"
                                             Visibility="{Binding IsApiKeysPrimary, Converter={StaticResource BoolToVisibility}}"
                                             AutomationProperties.HelpText="Go to API Keys to add or restore your OpenRouter key." />
                                     <Button x:Name="RunProbeButton" Content="Run isolation check" Command="{Binding RunProbeCommand}"
-                                            Style="{StaticResource GameCenter.ModAction.PrimaryButton}" HorizontalAlignment="Center" MinWidth="150" Margin="0,16,0,0"
+                                            Style="{StaticResource Assistant.Primary}" HorizontalAlignment="Center" MinWidth="150" Margin="0,16,0,0"
                                             Visibility="{Binding IsProbePrimary, Converter={StaticResource BoolToVisibility}}"
                                             AutomationProperties.HelpText="Run DwemerDistro's assistant isolation check again." />
                                     <TextBlock x:Name="SetupBlockedReasonText" Text="{Binding SetupBlockedReason}" Style="{StaticResource GameCenter.Caption}"
@@ -544,7 +658,7 @@
                                  A destructive live command (routine ones run without a card) has a danger border and only Confirm and run or Cancel. -->
                             <Border x:Name="RestartProposalCard" Visibility="{Binding IsActionProposed, Converter={StaticResource BoolToVisibility}}"
                                     Background="{DynamicResource GameCenter.CopperTint}"
-                                    CornerRadius="8" Padding="12,10" Margin="0,0,0,6">
+                                    CornerRadius="10" Padding="12,10" Margin="0,0,0,6">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
@@ -650,7 +764,7 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Background="#252525" BorderBrush="{StaticResource Assistant.SoftBorder}" BorderThickness="1" CornerRadius="10" Margin="0,0,6,4" Padding="10,2,2,2"
+                                        <Border Background="#252525" BorderBrush="{StaticResource Assistant.SoftBorder}" BorderThickness="1" CornerRadius="12" Margin="0,0,6,4" Padding="10,2,2,2"
                                                 MaxWidth="320">
                                             <DockPanel>
                                                 <Button DockPanel.Dock="Right" Content="✕" Click="RemoveAttachment_Click" Style="{StaticResource Assistant.Action}"
@@ -676,7 +790,7 @@
                                     AutomationProperties.HelpText="Choose screenshots or text, log, config or code files to send with the next message. Their contents are data for the assistant, never instructions." />
                             <!-- Send also waits for a usable session (an OpenRouter key included); the reason is under the composer. -->
                             <Button x:Name="SendButton" Grid.Row="1" Grid.Column="2" Content="Send" Command="{Binding SendCommand}"
-                                    IsEnabled="{Binding IsSessionUsable}" Style="{StaticResource GameCenter.ModAction.PrimaryButton}"
+                                    IsEnabled="{Binding IsSessionUsable}" Style="{StaticResource Assistant.Primary}"
                                     Margin="8,0,0,0" MinWidth="80" VerticalAlignment="Bottom" ToolTipService.ShowOnDisabled="True"
                                     AutomationProperties.HelpText="{Binding SendBlockedReason}">
                                 <Button.ToolTip>
@@ -741,19 +855,19 @@
                 <ScrollViewer x:Name="SidePanel" Grid.Column="1" Margin="10,0,0,0" VerticalScrollBarVisibility="Auto" Focusable="False"
                               Visibility="{Binding IsSidePanelVisible, Converter={StaticResource BoolToVisibility}}">
                     <StackPanel>
-                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.CopperStrong}"
+                        <Border Style="{StaticResource Assistant.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.CopperStrong}"
                                 Visibility="{Binding IsChangesVisible, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel>
                                 <TextBlock Text="CHANGES READY" Style="{StaticResource GameCenter.SectionHeading}" />
                                 <TextBlock Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,8" TextWrapping="Wrap"
                                            Text="The assistant edited files in its isolated copy. Nothing is live yet." />
-                                <Button Content="Review changes" Command="{Binding ReviewCommand}" Style="{StaticResource GameCenter.PrimaryButton}"
+                                <Button Content="Review changes" Command="{Binding ReviewCommand}" Style="{StaticResource Assistant.ReviewPrimary}"
                                         HorizontalAlignment="Left" MinWidth="96"
                                         AutomationProperties.HelpText="Freeze the assistant's current changes into one exact batch and show its diff." />
                             </StackPanel>
                         </Border>
 
-                        <Border Style="{StaticResource GameCenter.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.CopperStrong}"
+                        <Border Style="{StaticResource Assistant.Card}" Padding="12" Margin="0,0,0,10" BorderBrush="{DynamicResource GameCenter.CopperStrong}"
                                 Visibility="{Binding IsReviewVisible, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel>
                                 <DockPanel>
@@ -768,7 +882,7 @@
                                                TextWrapping="Wrap" />
                                 </ScrollViewer>
                                 <!-- Validation sits above Approve; a check DwemerDistro could not run is a warning, never shown as passed. -->
-                                <Border x:Name="ReviewValidation" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="0,0,0,8">
+                                <Border x:Name="ReviewValidation" BorderThickness="1" CornerRadius="8" Padding="8,6" Margin="0,0,0,8">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Border}" />
@@ -796,7 +910,7 @@
                                     </ScrollViewer>
                                 </Border>
                                 <WrapPanel Margin="0,0,0,2">
-                                    <Button Content="Approve and apply" Command="{Binding ApproveCommand}" Style="{StaticResource GameCenter.SuccessButton}"
+                                    <Button Content="Approve and apply" Command="{Binding ApproveCommand}" Style="{StaticResource Assistant.Success}"
                                             Margin="0,0,6,6" IsDefault="False"
                                             AutomationProperties.HelpText="Apply exactly this reviewed batch to the live CHIM files, once." />
                                     <Button Content="Reject" Command="{Binding RejectCommand}" Style="{StaticResource Assistant.Action}"
@@ -809,7 +923,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Border Style="{StaticResource GameCenter.Card}" Padding="12"
+                        <Border Style="{StaticResource Assistant.Card}" Padding="12"
                                 Visibility="{Binding HasOutcome, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel>
                                 <TextBlock Text="LAST LIVE CHANGE" Style="{StaticResource GameCenter.SectionHeading}" />
