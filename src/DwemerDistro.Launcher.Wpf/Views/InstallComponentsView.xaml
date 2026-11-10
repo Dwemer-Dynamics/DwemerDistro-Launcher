@@ -37,7 +37,7 @@
             </Style.Triggers>
         </Style>
 
-        <Style x:Key="CardPrimaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.PrimaryButton}">
+        <Style x:Key="CardPrimaryButton" TargetType="Button" BasedOn="{StaticResource GameCenter.GoButton}">
             <Setter Property="Padding" Value="12,3" />
             <Setter Property="MinHeight" Value="28" />
             <Setter Property="MinWidth" Value="76" />
@@ -184,11 +184,78 @@
         </Style>
     </UserControl.Resources>
 
+    <Grid>
+    <!-- Until the first installed-state probe settles, the cards would only guess "Not installed" and
+         offer Install, so the page shows this instead. It waits on the real probe, never a timer. -->
+    <StackPanel x:Name="LoadingPanel"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                MaxWidth="320"
+                Margin="14"
+                AutomationProperties.Name="Loading components">
+        <StackPanel.Style>
+            <Style TargetType="StackPanel">
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsLoadingComponents}" Value="False">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </StackPanel.Style>
+        <TextBlock Text="Loading components"
+                   Foreground="{StaticResource Components.Text}"
+                   FontSize="16"
+                   FontWeight="SemiBold"
+                   HorizontalAlignment="Center"
+                   AutomationProperties.HeadingLevel="Level1" />
+        <TextBlock Text="Checking installed components."
+                   Style="{StaticResource MutedText}"
+                   Margin="0,4,0,12"
+                   TextAlignment="Center"
+                   HorizontalAlignment="Center"
+                   AutomationProperties.LiveSetting="Polite" />
+        <!-- Animates only while visible and while Windows client-area animation is on. -->
+        <ProgressBar Width="200"
+                     Height="4"
+                     Background="#151515"
+                     BorderThickness="0"
+                     Foreground="{DynamicResource GameCenter.CopperStrong}"
+                     IsTabStop="False"
+                     Focusable="False"
+                     AutomationProperties.Name="Checking installed components">
+            <ProgressBar.Style>
+                <Style TargetType="ProgressBar">
+                    <Setter Property="IsIndeterminate" Value="False" />
+                    <Style.Triggers>
+                        <MultiDataTrigger>
+                            <MultiDataTrigger.Conditions>
+                                <Condition Binding="{Binding IsLoadingComponents}" Value="True" />
+                                <Condition Binding="{Binding Path=(SystemParameters.ClientAreaAnimation)}" Value="True" />
+                            </MultiDataTrigger.Conditions>
+                            <Setter Property="IsIndeterminate" Value="True" />
+                        </MultiDataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </ProgressBar.Style>
+        </ProgressBar>
+    </StackPanel>
+
     <ScrollViewer x:Name="PageScroller"
                   VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled"
                   Padding="14"
                   ScrollChanged="PageScroller_ScrollChanged">
+        <ScrollViewer.Style>
+            <!-- Hidden unless the probe has settled, so an unresolved binding can never flash the cards. -->
+            <Style TargetType="ScrollViewer" BasedOn="{StaticResource {x:Type ScrollViewer}}">
+                <Setter Property="Visibility" Value="Collapsed" />
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsLoadingComponents}" Value="False">
+                        <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </ScrollViewer.Style>
         <StackPanel x:Name="PageContent"
                     SizeChanged="PageContent_SizeChanged">
 
@@ -693,4 +760,5 @@
             </Grid>
         </StackPanel>
     </ScrollViewer>
+    </Grid>
 </UserControl>

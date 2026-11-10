@@ -22,8 +22,8 @@ The current source has six top-level destinations: **Mods**, **Components**, **S
 
 | Python UI group | Current WPF location |
 | --- | --- |
-| Server Controls | persistent header actions (**Update Distro**, **Start Server**, **Force Stop**) |
-| Updater | **Update Distro** in the header, plus per-mod branch and **Update** controls on each **Mods** card |
+| Server Controls | persistent header actions (**Start Server**, **Force Stop**); **Update Distro** in **Settings** |
+| Updater | **Update Distro** in **Settings**, plus per-mod branch and **Update** controls on each **Mods** card |
 | Server Configuration | **Settings** and **Components** pages |
 | External Links | left sidebar on **Mods** (Server Folder, Terminal, Wiki, Discord, Patreon) and each mod card's webpage link |
 | Install Components menu | top-level **Components** page |

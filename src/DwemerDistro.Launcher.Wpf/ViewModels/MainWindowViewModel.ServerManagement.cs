@@ -26,6 +26,8 @@ public sealed partial class MainWindowViewModel
 
     // Set by the last failed shared distro update: " <stage> (exit N): <evidence>. Full output: ..." or null.
     private string? _systemUpdateFailure;
+    // The marked stage that failed alongside _systemUpdateFailure, or null.
+    private string? _systemUpdateFailureStage;
 
     private ServerManagementService? _serverManagement;
 

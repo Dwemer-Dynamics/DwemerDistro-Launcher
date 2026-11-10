@@ -988,6 +988,317 @@
         </Setter>
     </Style>
 
+    <!-- Official mod action rows. One copper Open, then quiet grouped lists (Update, Files & logs,
+         Manage): each group is a short label over one rounded container, rows are separated by a
+         hairline, and only hover, focus and the uninstall row's red text add colour. -->
+    <SolidColorBrush x:Key="GameCenter.ModAction.ListBackground" Color="#262626" />
+    <SolidColorBrush x:Key="GameCenter.ModAction.ListLine" Color="#3A3A3A" />
+    <SolidColorBrush x:Key="GameCenter.ModAction.RowHover" Color="#333333" />
+    <SolidColorBrush x:Key="GameCenter.ModAction.DangerRowHover" Color="#3A1A1A" />
+
+    <!-- Leading Segoe MDL2 glyph from the button's Tag, then the plain label string. -->
+    <DataTemplate x:Key="GameCenter.ModAction.GlyphLabelTemplate">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="{Binding Tag, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                       FontFamily="Segoe MDL2 Assets" FontSize="13" FontWeight="Normal"
+                       Margin="0,0,9,0" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+        </StackPanel>
+    </DataTemplate>
+
+    <!-- Every-state primary (Install, Repair): the copper fill at 40px with a leading glyph
+         carried in Tag. Content stays the plain label string. -->
+    <Style x:Key="GameCenter.ModAction.OpenButton" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.PrimaryButton}">
+        <Setter Property="Height" Value="40" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Tag" Value="&#xE8A7;" />
+        <Setter Property="ContentTemplate" Value="{StaticResource GameCenter.ModAction.GlyphLabelTemplate}" />
+    </Style>
+
+    <!-- Group: a quiet label over one rounded container. Decorative only: no focus, no tab stop and
+         no automation peer, so the tab order and screen-reader walk are those of the rows inside. -->
+    <Style x:Key="GameCenter.ModAction.RowGroup" TargetType="HeaderedContentControl">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Margin" Value="0,14,0,0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="HeaderedContentControl">
+                    <StackPanel>
+                        <TextBlock Text="{Binding Header, RelativeSource={RelativeSource TemplatedParent}}"
+                                   Style="{StaticResource GameCenter.ModAction.GroupLabel}" />
+                        <Border Background="{DynamicResource GameCenter.ModAction.ListBackground}"
+                                BorderBrush="{DynamicResource GameCenter.ModAction.ListLine}" BorderThickness="1"
+                                CornerRadius="10" Padding="3" SnapsToDevicePixels="True">
+                            <ContentPresenter />
+                        </Border>
+                    </StackPanel>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Hairline between two rows of one group; decorative, never hit-tested. -->
+    <Style x:Key="GameCenter.ModAction.RowSeparator" TargetType="Border">
+        <Setter Property="Height" Value="1" />
+        <Setter Property="Margin" Value="8,2" />
+        <Setter Property="Background" Value="{DynamicResource GameCenter.ModAction.ListLine}" />
+        <Setter Property="IsHitTestVisible" Value="False" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+    </Style>
+
+    <!-- One full-width row: leading MDL2 glyph from Tag, then the label. The glyph takes its colour
+         from BorderBrush (the row draws no border), so a derived style can tint it without a new
+         template. Disabled rows fade their content; focus draws the shared white ring inside the row. -->
+    <Style x:Key="GameCenter.ModAction.Row" TargetType="Button">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.TextMuted}" />
+        <Setter Property="Padding" Value="9,0" />
+        <Setter Property="MinHeight" Value="36" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border x:Name="Border" Background="{TemplateBinding Background}" CornerRadius="7"
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <Grid x:Name="Content">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="24" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                           FontWeight="Normal" Foreground="{TemplateBinding BorderBrush}"
+                                           VerticalAlignment="Center" />
+                                <ContentPresenter Grid.Column="1" VerticalAlignment="Center"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  RecognizesAccessKey="True">
+                                    <ContentPresenter.Resources>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground"
+                                                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}, FallbackValue=White}" />
+                                            <Setter Property="FontFamily" Value="Segoe UI" />
+                                            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                        </Style>
+                                    </ContentPresenter.Resources>
+                                </ContentPresenter>
+                            </Grid>
+                        </Border>
+                        <Border x:Name="FocusRing" Margin="1" CornerRadius="6" BorderThickness="1"
+                                BorderBrush="{DynamicResource GameCenter.Focus}"
+                                Visibility="Collapsed" IsHitTestVisible="False" SnapsToDevicePixels="True" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Content" Property="RenderTransform">
+                                <Setter.Value>
+                                    <TranslateTransform Y="1" />
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Content" Property="Opacity" Value="0.45" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.ModAction.RowHover}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelPressed}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Rows that leave the launcher show a quiet trailing glyph: external page or File Explorer. -->
+    <Style x:Key="GameCenter.ModAction.ExternalRow" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.Row}">
+        <Setter Property="ContentTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding}" />
+                        <TextBlock Grid.Column="1" Text="&#xE8A7;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                   FontWeight="Normal" Margin="8,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource GameCenter.TextMuted}" />
+                    </Grid>
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.LogFileRow" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.Row}">
+        <Setter Property="Tag" Value="&#xE8A5;" />
+        <Setter Property="ContentTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding}" />
+                        <TextBlock Grid.Column="1" Text="&#xE838;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                   FontWeight="Normal" Margin="8,0,0,0" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource GameCenter.TextMuted}" />
+                    </Grid>
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Update row. Its DataContext is the mod's ServerManagerItemViewModel. Copper glyph, bolder
+         label and an "Available" tag only when IsUpdateAvailable confirms the selected release is
+         ahead; every other state (current, unknown, busy, failed) stays the quiet row. -->
+    <Style x:Key="GameCenter.ModAction.UpdateRow" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.Row}">
+        <Setter Property="Tag" Value="&#xE777;" />
+        <Setter Property="ContentTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding}" />
+                        <Border x:Name="Available" Grid.Column="1" Margin="8,0,0,0" Padding="7,1" CornerRadius="8"
+                                BorderThickness="1" BorderBrush="{DynamicResource GameCenter.CopperEdge}"
+                                Background="{DynamicResource GameCenter.CopperTint}" Visibility="Collapsed">
+                            <TextBlock Text="Available" FontSize="11" />
+                        </Border>
+                    </Grid>
+                    <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding DataContext.IsUpdateAvailable, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Value="True">
+                            <Setter TargetName="Available" Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </DataTemplate.Triggers>
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding IsUpdateAvailable}" Value="True">
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+                <Setter Property="FontWeight" Value="Bold" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Uninstall: red text and glyph in the Manage list, no outline; a dark red wash on hover. The
+         typed confirmation dialog keeps the filled red. -->
+    <Style x:Key="GameCenter.ModAction.DangerRow" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.Row}">
+        <Setter Property="Tag" Value="&#xE74D;" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.DangerText}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.DangerText}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.ModAction.DangerRowHover}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.DangerPressed}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Release row: a non-interactive label row holding the segmented release choice. -->
+    <Style x:Key="GameCenter.ModAction.ReleaseRow" TargetType="Grid">
+        <Setter Property="MinHeight" Value="38" />
+        <Setter Property="Margin" Value="9,0,3,0" />
+    </Style>
+
+    <!-- Segmented release choice over the manager's own Branches list and SelectedBranch: one
+         segment per real option, so Main/Dev mods show two and Dev-only mods show one. A ListBox
+         keeps single selection, Tab lands once on the selected segment, and the arrow keys move the
+         selection, as in a radio group. Disabled fades the whole control. -->
+    <Style x:Key="GameCenter.ModAction.ReleaseSegmentItem" TargetType="ListBoxItem">
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="MinWidth" Value="52" />
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Grid>
+                        <Border x:Name="Segment" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <ContentPresenter.Resources>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground"
+                                                Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}, FallbackValue=White}" />
+                                    </Style>
+                                </ContentPresenter.Resources>
+                            </ContentPresenter>
+                        </Border>
+                        <Border x:Name="FocusRing" Margin="1" CornerRadius="5" BorderThickness="1"
+                                BorderBrush="{DynamicResource GameCenter.Focus}"
+                                Visibility="Collapsed" IsHitTestVisible="False" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Segment" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.ReleaseSelector" TargetType="ListBox">
+        <Setter Property="SelectionMode" Value="Single" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+        <Setter Property="ItemContainerStyle" Value="{StaticResource GameCenter.ModAction.ReleaseSegmentItem}" />
+        <Setter Property="ItemsPanel">
+            <Setter.Value>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBox">
+                    <Border x:Name="Track" Background="#1A1A1A" CornerRadius="8" Padding="2" SnapsToDevicePixels="True">
+                        <ItemsPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Track" Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="GameCenter.SuccessButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
         <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
         <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
@@ -1273,6 +1584,72 @@
                 <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
             </MultiDataTrigger>
         </Style.Triggers>
+    </Style>
+
+    <!-- Constructive actions (Install, Generate logs) in Start Server's green: the same fills, darker hover
+         and press, neutral disabled tier, and high-contrast system colours last so they win. It has no
+         Stop state; destructive actions keep the burgundy and red styles. -->
+    <Style x:Key="GameCenter.GoButton" TargetType="Button" BasedOn="{StaticResource GameCenter.Button}">
+        <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessHover}" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessEdge}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.SuccessEdge}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+            </Trigger>
+            <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+            </DataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="False" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+            </MultiDataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <!-- Open on the official mod panels: the OpenButton shape (40px, leading glyph) in the GoButton
+         green, keeping GoButton's hover, pressed, disabled and high-contrast states. -->
+    <Style x:Key="GameCenter.ModAction.GoOpenButton" TargetType="Button" BasedOn="{StaticResource GameCenter.GoButton}">
+        <Setter Property="Height" Value="40" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Tag" Value="&#xE8A7;" />
+        <Setter Property="ContentTemplate" Value="{StaticResource GameCenter.ModAction.GlyphLabelTemplate}" />
     </Style>
 
     <!-- Dark action menus. Items keep the button type system: Segoe UI

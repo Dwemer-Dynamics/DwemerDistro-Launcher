@@ -40,5 +40,9 @@ this project's license. Sources (`src/DwemerDistro.Launcher.Wpf/Assets/`):
   https://cdn.openai.com/brand/OpenAI-Logos-2025.zip (linked from https://openai.com/brand/)
   on transparent
 - `component-lmstudio.png`: LM Studio app icon (https://lmstudio.ai/brand)
-- `nvidia.png` (NVIDIA branding also used for Parakeet STT):
+- `component-parakeet.png`: Twemoji parrot U+1F99C (https://github.com/jdecked/twemoji, v15.1.0),
+  Copyright Twitter, Inc. and other contributors, licensed CC-BY 4.0
+  (https://creativecommons.org/licenses/by/4.0/); `assets/svg/1f99c.svg` rendered unmodified
+  to a 96x96 PNG on transparent
+- `nvidia.png` (NVIDIA GPU badges and CUDA):
   NVIDIA logo

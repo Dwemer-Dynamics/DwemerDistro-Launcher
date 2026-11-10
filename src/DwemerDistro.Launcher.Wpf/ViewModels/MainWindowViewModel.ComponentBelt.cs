@@ -47,7 +47,8 @@ public sealed partial class MainWindowViewModel
                 return new($"Port {probe.Port}\n" + (IsServerRunning
                     ? "Stopped. The server is running, but this component is not. Check its configuration and live logs, then try again."
                     : $"Stopped. {StartServerAdvice}"));
-            if (!sample || probe.Health is "closed" or "other")
+            // With no voice configured a speech sample cannot succeed, so only the service check is reported.
+            if (!sample || probe.Health is "closed" or "other" or "novoices")
                 return new($"Port {probe.Port}\n{status}" + (probe.Health == "closed" ? ""
                     : "\n\nService check only. No speech, transcription or model inference was tested."));
             var result = await ComponentQuickTestService.RunSampleAsync(id, probe.Port, text, file, timeout.Token);

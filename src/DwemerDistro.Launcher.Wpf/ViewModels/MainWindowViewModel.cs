@@ -978,25 +978,34 @@ echo "CHIM-MCP installed and enabled."
     public async Task InitializeAsync()
     {
         LauncherLogService.Startup("MainWindowViewModel initialization started.");
-        StartProxyAndDiscovery();
-        await RunStartupStepAsync("Load dashboard auto-open setting", LoadDashboardAutoOpenAsync, StartupSettingsTimeout).ConfigureAwait(true);
-        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
-        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
-        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
-        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true);
-        QueueSystemUpdateCheck();
+        try
+        {
+            StartProxyAndDiscovery();
+            await RunStartupStepAsync("Load dashboard auto-open setting", LoadDashboardAutoOpenAsync, StartupSettingsTimeout).ConfigureAwait(true);
+        }
+        catch
+        {
+            // The startup check that would end the assistant's startup hold never runs after this.
+            ReleaseAssistantStartupHold(AssistantStartupIncompleteDetail);
+            throw;
+        }
+        QueueBackgroundTask("Installed server check", cancellationToken => RefreshServerManagementAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true, startupData: true);
+        QueueBackgroundTask("Herika version check", cancellationToken => CheckForUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true, startupData: true);
+        QueueBackgroundTask("Stobe version check", cancellationToken => CheckStobeServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true, startupData: true);
+        QueueBackgroundTask("Dialectic version check", cancellationToken => CheckDialecticServerUpdatesAsync(cancellationToken), StartupVersionCheckTimeout, accessesDistro: true, startupData: true);
+        QueueSystemUpdateCheck(startupData: true);
         QueueServerStatusRefresh();
         LauncherLogService.Startup("MainWindowViewModel initialization completed.");
     }
 
     public async Task ShutdownAsync()
     {
+        _shutdownCts.Cancel();
         // Stops only the assistant's own Linux process group; nothing else in the distro.
         if (_assistant is { } assistant) await assistant.ShutdownAsync().ConfigureAwait(true);
-        _shutdownCts.Cancel();
         if (_distroUpdateTask is { } updateTask)
         {
-            try { await updateTask.ConfigureAwait(false); }
+            try { await updateTask.ConfigureAwait(true); }
             catch (Exception ex) { LauncherLogService.Operation($"Distro update stopped during shutdown: {ex.GetType().Name}"); }
         }
         _connectionDetailsClosed = true;
@@ -1013,7 +1022,24 @@ echo "CHIM-MCP installed and enabled."
         LauncherLogService.Startup("Launcher shutdown completed.");
     }
 
+    /// <summary>
+    /// Startup's first-time setup check, then the launcher-version sync. The assistant's startup hold ends on every path: the
+    /// sync ends it once queued; every other outcome (setup needed, a failed or timed-out check, an error) here, with why.
+    /// </summary>
     public async Task RunFirstRunSetupStartupCheckAsync()
+    {
+        try
+        {
+            await RunFirstRunSetupStartupCheckCoreAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            // Queued after any specific reason the check gave, so this generic one only covers an unexpected exit.
+            if (!Volatile.Read(ref _assistantStartupSyncQueued)) ReleaseAssistantStartupHold(AssistantStartupIncompleteDetail);
+        }
+    }
+
+    private async Task RunFirstRunSetupStartupCheckCoreAsync()
     {
         LauncherLogService.Startup("First-time setup startup check started.");
 
@@ -1037,6 +1063,7 @@ echo "CHIM-MCP installed and enabled."
         {
             LauncherLogService.Startup($"First-time setup startup check timed out after {StartupFirstRunProbeTimeout.TotalSeconds:0} seconds.");
             AppendLog("First-time setup check timed out. Open Settings > First-Time Setup if this is a fresh install." + Environment.NewLine, "yellow");
+            ReleaseAssistantStartupHold("Startup checks took too long. You can connect now; if this is a fresh install, open Settings > First-Time Setup first.");
             QueueLauncherUpdateCheck();
             return;
         }
@@ -1044,6 +1071,7 @@ echo "CHIM-MCP installed and enabled."
         {
             LauncherLogService.Startup("First-time setup startup check failed.", ex);
             AppendLog($"First-time setup check failed: {ex.Message}{Environment.NewLine}", "yellow");
+            ReleaseAssistantStartupHold(AssistantStartupIncompleteDetail);
             QueueLauncherUpdateCheck();
             return;
         }
@@ -1071,6 +1099,7 @@ echo "CHIM-MCP installed and enabled."
         }
 
         LauncherLogService.Startup("Opening first-time setup from startup check.");
+        ReleaseAssistantStartupHold("Finish First-Time Setup, then press Connect.");
         OpenFirstRunSetupWindow();
     }
 
@@ -1082,13 +1111,13 @@ echo "CHIM-MCP installed and enabled."
             StartupVersionCheckTimeout);
     }
 
-    private void QueueSystemUpdateCheck()
+    private void QueueSystemUpdateCheck(bool startupData = false)
     {
         QueueBackgroundTask(
             "System update check",
             cancellationToken => CheckSystemUpdatesAsync(cancellationToken),
             StartupVersionCheckTimeout,
-            accessesDistro: true);
+            accessesDistro: true, startupData: startupData);
     }
 
     /// <summary>
@@ -1098,7 +1127,8 @@ echo "CHIM-MCP installed and enabled."
     /// </summary>
     private void QueueLauncherVersionSync()
     {
-        QueueBackgroundTask(
+        SetAssistantStartupPhase(AssistantStartupPhaseSyncCheck);
+        var queued = QueueBackgroundTask(
             "Launcher version sync",
             async cancellationToken =>
             {
@@ -1108,11 +1138,21 @@ echo "CHIM-MCP installed and enabled."
                 }
                 finally
                 {
-                    QueueAssistantStartupConnect();
+                    // Initial status reads must settle too; otherwise a busy server check can skip the one connection.
+                    if (_startupDataTasks.Any(task => !task.IsCompleted))
+                        SetAssistantStartupPhase("Finishing startup data checks.");
+                    try { await Task.WhenAll(_startupDataTasks).ConfigureAwait(false); }
+                    catch (Exception ex) { LauncherLogService.Startup($"Startup data checks ended with {ex.GetType().Name}."); }
+                    // A sync refused by an update still running (often one left behind by a launcher closed moments
+                    // ago) has not settled: Core is mid-update, so the session would start and end at once.
+                    if (Volatile.Read(ref _otherDistroUpdateRunning)) QueueAssistantStartupConnectAfterOtherUpdate();
+                    else QueueAssistantStartupConnect();
                 }
             },
             LauncherVersionSyncTimeout,
             accessesDistro: true);
+        if (queued) Volatile.Write(ref _assistantStartupSyncQueued, true);
+        else ReleaseAssistantStartupHold("DwemerDistro maintenance is running, so the assistant did not connect automatically. Press Connect when it finishes.");
     }
 
     private void ShowPendingDedicatedTtsPortsNotice()
@@ -1246,19 +1286,21 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
-    private void QueueBackgroundTask(
+    /// <returns>False when critical distro maintenance deferred it, so it will not run.</returns>
+    private bool QueueBackgroundTask(
         string name,
         Func<CancellationToken, Task> action,
         TimeSpan timeout,
-        bool accessesDistro = false)
+        bool accessesDistro = false,
+        bool startupData = false)
     {
         if (accessesDistro && !TryBeginPassiveDistroActivity())
         {
             LauncherLogService.Startup($"{name} deferred because critical distro maintenance is running.");
-            return;
+            return false;
         }
 
-        _ = Task.Run(async () =>
+        var backgroundTask = Task.Run(async () =>
         {
             using var timeoutCts = new CancellationTokenSource(timeout);
             try
@@ -1282,6 +1324,8 @@ echo "CHIM-MCP installed and enabled."
                 }
             }
         });
+        if (startupData) _startupDataTasks.Add(backgroundTask);
+        return true;
     }
 
     private void StartProxyAndDiscovery()
@@ -2149,10 +2193,20 @@ echo "CHIM-MCP installed and enabled."
         string sourceLabel,
         CancellationToken cancellationToken = default)
     {
+        return await RunSystemUpdateCoreAsync(requireConfirmation, sourceLabel, cancellationToken).ConfigureAwait(true)
+            == SystemUpdateRunResult.Succeeded;
+    }
+
+    /// <summary>The same run as <see cref="RunSystemUpdateAsync"/>, also saying why a run did not succeed.</summary>
+    private async Task<SystemUpdateRunResult> RunSystemUpdateCoreAsync(
+        bool requireConfirmation,
+        string sourceLabel,
+        CancellationToken cancellationToken = default)
+    {
         if (!CanRunUpdateOperation())
         {
             AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
-            return false;
+            return SystemUpdateRunResult.NotRun;
         }
 
         if (requireConfirmation &&
@@ -2163,7 +2217,7 @@ echo "CHIM-MCP installed and enabled."
                 MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             AppendLog("System update canceled." + Environment.NewLine);
-            return false;
+            return SystemUpdateRunResult.NotRun;
         }
 
         IsDistroUpdateInProgress = true;
@@ -2184,25 +2238,28 @@ echo "CHIM-MCP installed and enabled."
                     : $"System update failed{_systemUpdateFailure}" + Environment.NewLine,
                 succeeded ? "green" : "red");
             ReportSystemUpdateOutcome(succeeded);
-            return succeeded;
+            return succeeded ? SystemUpdateRunResult.Succeeded
+                : _otherDistroUpdateRunning ? SystemUpdateRunResult.OtherUpdateRunning
+                : SystemUpdateRunResult.Failed;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             AppendLog("System update canceled." + Environment.NewLine);
             ReportSystemUpdateOutcome(false);
-            return false;
+            return SystemUpdateRunResult.Canceled;
         }
         catch (OperationCanceledException)
         {
             AppendLog("System update stopped: it timed out or the launcher is closing." + Environment.NewLine, "red");
             ReportSystemUpdateOutcome(false);
-            return false;
+            return SystemUpdateRunResult.TimedOut;
         }
         catch (Exception ex)
         {
             AppendLog($"System update failed: {ex.Message}{Environment.NewLine}", "red");
             ReportSystemUpdateOutcome(false);
-            return false;
+            _systemUpdateFailure = DiagnosticEvidenceService.Sanitize(ex.Message);
+            return SystemUpdateRunResult.Error;
         }
         finally
         {
@@ -2258,22 +2315,36 @@ echo "CHIM-MCP installed and enabled."
 
         AppendLog(
             $"Launcher {currentVersion} sync: updating DwemerDistro core and shared components. Mods are unchanged.{Environment.NewLine}");
+        SetAssistantStartupUpdateStage(UpdateStagePreparing);
 
         // Marshalled to the UI thread because the update drives button text, the operation lock, and
         // command states, exactly as the Components button does.
-        var succeeded = await _dispatcher
-            .InvokeAsync(() => RunSystemUpdateAsync(
-                requireConfirmation: false,
-                sourceLabel: "Launcher sync",
-                cancellationToken))
-            .Task
-            .Unwrap()
-            .ConfigureAwait(false);
+        SystemUpdateRunResult result;
+        try
+        {
+            result = await _dispatcher
+                .InvokeAsync(() => RunSystemUpdateCoreAsync(
+                    requireConfirmation: false,
+                    sourceLabel: "Launcher sync",
+                    cancellationToken))
+                .Task
+                .Unwrap()
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!_shutdownCts.IsCancellationRequested)
+        {
+            RaiseStartupDistroUpdateNotice(BuildStartupDistroUpdateNotice(
+                SystemUpdateRunResult.Error, null, ex.Message, shuttingDown: false, markerRecorded: false));
+            throw;
+        }
 
-        if (!succeeded)
+        if (result != SystemUpdateRunResult.Succeeded)
         {
             // RunSystemUpdateAsync already printed the failure; only the retry schedule is new here.
             AppendLog("Launcher sync will retry on the next launch." + Environment.NewLine);
+            RaiseStartupDistroUpdateNotice(BuildStartupDistroUpdateNotice(
+                result, _systemUpdateFailureStage, _systemUpdateFailure,
+                _shutdownCts.IsCancellationRequested, markerRecorded: false));
             return;
         }
 
@@ -2292,6 +2363,8 @@ echo "CHIM-MCP installed and enabled."
             AppendLog(
                 "Launcher sync finished but could not be recorded; it will run again on the next launch." + Environment.NewLine,
                 "yellow");
+            RaiseStartupDistroUpdateNotice(BuildStartupDistroUpdateNotice(
+                SystemUpdateRunResult.Succeeded, null, null, _shutdownCts.IsCancellationRequested, markerRecorded: false));
             return;
         }
 
@@ -2304,6 +2377,8 @@ echo "CHIM-MCP installed and enabled."
         AppendLog(
             "Launcher sync finished but could not be recorded; it will run again on the next launch." + Environment.NewLine,
             "yellow");
+        RaiseStartupDistroUpdateNotice(BuildStartupDistroUpdateNotice(
+            SystemUpdateRunResult.Succeeded, null, null, _shutdownCts.IsCancellationRequested, markerRecorded: false));
     }
 
     /// <summary>
@@ -2616,6 +2691,8 @@ echo "CHIM-MCP installed and enabled."
         var stage = UpdateStagePreparing;
         string? evidence = null;
         _systemUpdateFailure = null;
+        _systemUpdateFailureStage = null;
+        _otherDistroUpdateRunning = false;
         LauncherLogService.Operation("START distro and shared components update");
         try
         {
@@ -2630,6 +2707,7 @@ echo "CHIM-MCP installed and enabled."
                 {
                     stage = marker;
                     evidence = null;
+                    SetAssistantStartupUpdateStage(marker);
                     // update_gws prints its own one-line title, so the marker itself stays silent.
                     sharedComponentsStarted |= marker == UpdateStageShared;
                     return;
@@ -2644,10 +2722,12 @@ echo "CHIM-MCP installed and enabled."
             var result = await _distroUpdateTask.ConfigureAwait(false);
 
             LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; stage {stage}; shared components started={sharedComponentsStarted}");
+            _otherDistroUpdateRunning = result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode;
             var succeeded = result.Succeeded && sharedComponentsStarted;
             if (!succeeded)
             {
                 _systemUpdateFailure = DescribeSystemUpdateFailure(stage, result.ExitCode, evidence);
+                _systemUpdateFailureStage = stage;
             }
 
             return succeeded;

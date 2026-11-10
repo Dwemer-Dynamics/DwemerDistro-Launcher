@@ -7,7 +7,7 @@ This is a historical record of how the retired Python launcher (`chim_launcher.p
 The current source (`src/DwemerDistro.Launcher.Wpf/MainWindow.xaml`) differs from the 3.3.0 layout:
 
 - Six top-level destinations: **Mods**, **Components**, **Settings**, **API Keys**, **Assistant**, and **Logs**.
-- Persistent header actions: **Update Distro**, **Start Server**, and **Force Stop**.
+- Persistent header actions: **Start Server** and **Force Stop**. **Update Distro** is in **Settings**.
 - Left sidebar on **Mods**: **Official mods** (CHIM, LORKHAN, DIALECTIC, STOBE, REIGN) and **Custom mods** lists, plus Server Folder, Terminal, Wiki, Discord, and Patreon links.
 - Per-mod controls on each mod card: webpage, update branch, an **Update** button, logs, rollback, and uninstall.
 - Launcher self-update button in the bottom-left corner (**Check Update** / **Up To Date**).

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows;
+using DwemerDistro.Launcher.Wpf.Models;
 using DwemerDistro.Launcher.Wpf.Services;
 using MessageBox = System.Windows.MessageBox;
 
@@ -11,6 +12,21 @@ public sealed partial class MainWindowViewModel : IAssistantHost
     private bool _isAssistantLiveChangeInProgress;
     // The connected session's own passive lease, apart from the short leases each assistant CLI call holds.
     private bool _isAssistantSessionLeaseHeld;
+    // The last shared update found another one holding its lock (see QueueAssistantStartupConnectAfterOtherUpdate).
+    private bool _otherDistroUpdateRunning;
+    // UI thread only. Held from construction, so the page never offers Connect while startup may still change the distro, until
+    // ReleaseAssistantStartupHold. Startup's sync takes it over once queued (see RunFirstRunSetupStartupCheckAsync).
+    private bool _isAssistantStartupHeld = true;
+    private string _assistantStartupPhase = AssistantStartupPhaseChecks;
+    private bool _assistantStartupSyncQueued;
+    // Populated during InitializeAsync, before the startup sync is queued; later refreshes are not included.
+    private readonly List<Task> _startupDataTasks = [];
+
+    internal const string AssistantStartupPhaseChecks = "Waiting for startup checks.";
+    internal const string AssistantStartupPhaseSyncCheck = "Checking whether DwemerDistro needs an update.";
+    internal const string AssistantStartupPhaseOtherUpdate = "Waiting for another DwemerDistro update to finish.";
+    internal const string AssistantStartupIncompleteDetail =
+        "Startup checks did not finish. You can connect now; if this is a fresh install, run First-Time Setup first.";
 
     /// <summary>Created on first use. It runs nothing until Connect, or the one startup connection below.</summary>
     public AssistantViewModel Assistant => _assistant ??= CreateAssistant();
@@ -27,8 +43,48 @@ public sealed partial class MainWindowViewModel : IAssistantHost
             new AssistantConnectionPreferenceStore());
         // Whether an idle session can be closed for maintenance follows its state, so the maintenance buttons do too.
         assistant.PropertyChanged += Assistant_PropertyChanged;
+        // Before the page first binds to it: created during startup, it waits for startup like Connect does.
+        if (_isAssistantStartupHeld) assistant.BeginStartupHold(_assistantStartupPhase);
         return assistant;
     }
+
+    /// <summary>Names what startup is doing on the assistant's waiting card; ignored once the hold has ended.</summary>
+    private void SetAssistantStartupPhase(string phase)
+    {
+        _ = _dispatcher.BeginInvoke(() =>
+        {
+            if (!_isAssistantStartupHeld) return;
+            _assistantStartupPhase = phase;
+            _assistant?.SetStartupPhase(phase);
+        });
+    }
+
+    /// <summary>
+    /// Ends startup's hold on the assistant, once: later calls do nothing. <paramref name="detail"/> says why startup will not
+    /// connect; null when startup's connection follows. Queued on the UI thread, in order with the other startup calls.
+    /// </summary>
+    private void ReleaseAssistantStartupHold(string? detail)
+    {
+        _ = _dispatcher.BeginInvoke(() => EndAssistantStartupHold(detail));
+    }
+
+    private void EndAssistantStartupHold(string? detail)
+    {
+        if (!_isAssistantStartupHeld) return;
+        _isAssistantStartupHeld = false;
+        LauncherLogService.Startup(detail is null ? "Assistant startup hold ended." : "Assistant startup hold ended without a startup connection.");
+        _assistant?.EndStartupHold(detail);
+    }
+
+    /// <summary>The waiting card's phase for an update stage marker; a later update, after the hold ended, changes nothing.</summary>
+    private void SetAssistantStartupUpdateStage(string stage) => SetAssistantStartupPhase(stage switch
+    {
+        UpdateStageDownload => "Updating DwemerDistro: downloading the latest distro files.",
+        UpdateStageCore => "Updating DwemerDistro core.",
+        UpdateStageShared => "Updating DwemerDistro's shared components.",
+        UpdateStageRelease => "Finishing the DwemerDistro update.",
+        _ => "Preparing the DwemerDistro update."
+    });
 
     private void Assistant_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -92,10 +148,51 @@ public sealed partial class MainWindowViewModel : IAssistantHost
             if (_shutdownCts.IsCancellationRequested || IsCriticalMaintenanceInProgress || !CanRunUpdateOperation())
             {
                 LauncherLogService.Startup("Assistant startup connection skipped: the launcher is closing or busy.");
+                EndAssistantStartupHold("Another DwemerDistro operation is running, so the assistant did not connect automatically. Press Connect when it finishes.");
                 return;
             }
 
+            EndAssistantStartupHold(null);
             _ = Assistant.ConnectOnStartupAsync();
+        });
+    }
+
+    /// <summary>
+    /// Startup's connection when the sync found another update still running: it waits for that update to release
+    /// its lock, then takes the same path as <see cref="QueueAssistantStartupConnect"/>, with all its checks. It holds
+    /// no distro lease while it waits, and gives up (leaving Connect) if the update outlives its own time limit or the
+    /// launcher closes. Connect pressed meanwhile wins: the startup connection then does nothing.
+    /// </summary>
+    private void QueueAssistantStartupConnectAfterOtherUpdate()
+    {
+        LauncherLogService.Startup("Assistant startup connection waiting: another distro update is still running.");
+        SetAssistantStartupPhase(AssistantStartupPhaseOtherUpdate);
+        const string otherUpdateDetail = "Another DwemerDistro update did not finish in time, so the assistant did not connect automatically. "
+            + "Press Connect once it is done.";
+        _ = Task.Run(async () =>
+        {
+            CommandResult released;
+            try
+            {
+                released = await _wsl.RunBashAsync(DistroUpdateRunner.BuildWaitForOtherUpdateCommand(), loginShell: false,
+                    cancellationToken: _shutdownCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LauncherLogService.Startup($"Assistant startup connection skipped: waiting for the other distro update ended ({ex.GetType().Name}).");
+                ReleaseAssistantStartupHold(otherUpdateDetail);
+                return;
+            }
+
+            if (!released.Succeeded)
+            {
+                LauncherLogService.Startup($"Assistant startup connection skipped: the other distro update did not finish (exit code {released.ExitCode}).");
+                ReleaseAssistantStartupHold(otherUpdateDetail);
+                return;
+            }
+
+            LauncherLogService.Startup("Assistant startup connection resumed: the other distro update finished.");
+            QueueAssistantStartupConnect();
         });
     }
 

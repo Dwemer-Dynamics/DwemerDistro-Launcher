@@ -552,8 +552,15 @@
                                                AutomationProperties.LiveSetting="Polite" />
                                     <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False" Margin="0,8,0,0">
                                         <TextBlock x:Name="OnboardingDetailText" Text="{Binding OnboardingDetail}" Style="{StaticResource GameCenter.Caption}"
-                                                   FontSize="12.5" TextAlignment="Center" TextWrapping="Wrap" />
+                                                   FontSize="12.5" TextAlignment="Center" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                                     </ScrollViewer>
+
+                                    <!-- While startup settles or a connection is made: indeterminate, since neither reports how far along it is. -->
+                                    <ProgressBar x:Name="SetupProgress" IsIndeterminate="{Binding IsSetupProgressShown}" Height="4" Width="160" Margin="0,14,0,0"
+                                                 HorizontalAlignment="Center" Background="{StaticResource Assistant.SoftBorder}" BorderThickness="0"
+                                                 Foreground="{DynamicResource GameCenter.CopperStrong}" IsTabStop="False" Focusable="False"
+                                                 Visibility="{Binding IsSetupProgressShown, Converter={StaticResource BoolToVisibility}}"
+                                                 AutomationProperties.Name="{Binding OnboardingTitle}" />
 
                                     <!-- Provider: ChatGPT, local Claude or OpenRouter. Each keeps its own chats; switching waits until nothing is running. -->
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
@@ -624,17 +631,6 @@
                                     <TextBlock x:Name="SetupBlockedReasonText" Text="{Binding SetupBlockedReason}" Style="{StaticResource GameCenter.Caption}"
                                                TextAlignment="Center" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite"
                                                Visibility="{Binding HasSetupBlockedReason, Converter={StaticResource BoolToVisibility}}" />
-
-                                    <Grid Margin="0,16,0,0" MaxWidth="420" HorizontalAlignment="Center"
-                                          Visibility="{Binding HasOnboardingNextStep, Converter={StaticResource BoolToVisibility}}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="Next" FontWeight="SemiBold" FontSize="12" Foreground="{DynamicResource GameCenter.Text}" Margin="0,0,10,0" />
-                                        <TextBlock x:Name="OnboardingNextText" Grid.Column="1" Text="{Binding OnboardingNextStep}" Style="{StaticResource GameCenter.Caption}"
-                                                   AutomationProperties.Name="{Binding OnboardingNextStep, StringFormat=Next: {0}}" />
-                                    </Grid>
 
                                     <!-- The kept conversation stays readable while not connected. -->
                                     <Border BorderBrush="{StaticResource Assistant.SoftBorder}" BorderThickness="0,1,0,0" Margin="0,16,0,0" Padding="0,10,0,0"

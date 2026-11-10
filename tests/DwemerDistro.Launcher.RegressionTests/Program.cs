@@ -705,6 +705,17 @@ try
            && !ConsoleOutputFilter.IsRoutineLine("[SKIP] /home/dwemer/db.sqlite has no core_tts_connector table.\n")
            && !ConsoleOutputFilter.IsRoutineLine("[SKIP] Database migration skipped; connector left unchanged.\n"),
         "Only Core not-installed skips are routine; any other [SKIP] line stays visible.");
+    var omniVoiceService = ComponentServiceStatus.Services.Single(service => service.Id == "omnivoice");
+    var omniVoiceNoVoices = ComponentServiceStatus.ParseProbe("{\"items\":[{\"id\":\"omnivoice\",\"installed\":\"present\",\"enabled\":null,\"port\":8021,\"health\":\"novoices\"}]}")?.SingleOrDefault();
+    var omniVoiceNoVoicesStatus = omniVoiceNoVoices is null ? default : ComponentServiceStatus.Describe(omniVoiceService, omniVoiceNoVoices, false);
+    Assert(omniVoiceNoVoicesStatus.State == ComponentServiceState.Running
+           && omniVoiceNoVoicesStatus.Text.StartsWith("Running - no voices configured", StringComparison.Ordinal)
+           && ComponentServiceStatus.Describe(omniVoiceService, omniVoiceNoVoices! with { Health = "other" }, false).State == ComponentServiceState.NotResponding,
+        "An identified OmniVoice with no voices is running with a no-voices note; an unidentified listener stays not responding.");
+    var omniVoiceScript = ComponentServiceStatus.BuildProbeScript("omnivoice");
+    Assert(omniVoiceScript.Contains("'omnivoice' not in str(document.get('model') or '').lower()", StringComparison.Ordinal)
+           && omniVoiceScript.Contains("{'ok': 'ok', 'no_voices': 'novoices'}.get(document.get('status'), 'other')", StringComparison.Ordinal),
+        "The belt probe identifies OmniVoice by its model before reading readiness; any other status stays 'other'.");
     Assert(ConsoleOutputFilter.IsRoutineLine("0 upgraded, 3 newly installed, 0 to remove and 12 not upgraded.\n")
            && !ConsoleOutputFilter.IsRoutineLine("0 upgraded, 0 newly installed, 2 to remove and 0 not upgraded.\n")
            && !ConsoleOutputFilter.IsRoutineLine("1 upgraded, 0 newly installed, 10 to remove and 0 not upgraded.\n"),
@@ -2071,6 +2082,106 @@ try
            && MainWindowViewModel.SanitizeLauncherSyncVersion("3.3.2'") is null
            && MainWindowViewModel.SanitizeLauncherSyncVersion("$(id)") is null,
         "Nothing but digits and dots may reach the launcher sync marker command.");
+
+    // The startup sync's failure notice: only an actual failure, never a quiet or deferred path.
+    Assert(MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Succeeded, null, null, false, markerRecorded: true) is null
+           && MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.NotRun, null, null, false, false) is null
+           && MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.OtherUpdateRunning, MainWindowViewModel.UpdateStageCore,
+                  MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageCore, 75, null), false, false) is null,
+        "A successful, blocked, or deferred (exit 75) startup sync must not raise the failure notice.");
+    Assert(new[] { SystemUpdateRunResult.Failed, SystemUpdateRunResult.TimedOut, SystemUpdateRunResult.Canceled, SystemUpdateRunResult.Error, SystemUpdateRunResult.Succeeded }
+               .All(result => MainWindowViewModel.BuildStartupDistroUpdateNotice(result, MainWindowViewModel.UpdateStageCore, "x", shuttingDown: true, false) is null),
+        "Closing the launcher must never raise the startup update notice, whatever the run reported.");
+    var coreNotice = MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Failed, MainWindowViewModel.UpdateStageCore,
+        MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageCore, 1, "\u0001error: token=hf_abcdefghijklmnopqrstuvwxyz"), false, false);
+    Assert(coreNotice is { IsWarning: false }
+           && coreNotice.Heading == "Automatic distro update failed"
+           && coreNotice.Details!.StartsWith("Stopped during the core update (exit 1):", StringComparison.Ordinal)
+           && coreNotice.Details.Contains("[redacted]", StringComparison.Ordinal)
+           && !coreNotice.Details.Contains("hf_abcdefghijklmnopqrstuvwxyz", StringComparison.Ordinal)
+           && coreNotice.NextStep.Contains("Open Settings", StringComparison.Ordinal)
+           && coreNotice.NextStep.Contains("show the console", StringComparison.Ordinal),
+        "A failed startup sync must reuse the redacted stage/exit summary and point to Settings without retrying.");
+    var timeoutNotice = MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.TimedOut, null, null, false, false);
+    var errorNotice = MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Error, null, "boom token=hf_abcdefghijklmnopqrstuvwxyz " + new string('x', 400), false, false);
+    Assert(timeoutNotice is { IsWarning: false, Details: null } && timeoutNotice.Heading.Contains("timed out", StringComparison.Ordinal)
+           && errorNotice is { IsWarning: false } && errorNotice.Details!.Length <= "Error: ".Length + 203
+           && !errorNotice.Details.Contains("hf_abcdefghijklmnopqrstuvwxyz", StringComparison.Ordinal),
+        "A startup sync timeout or exception must get its own short, redacted notice.");
+    var unrecordedNotice = MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Succeeded, null, null, false, markerRecorded: false);
+    var releaseNotice = MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Failed, MainWindowViewModel.UpdateStageRelease,
+        MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageRelease, 1, null), false, false);
+    Assert(unrecordedNotice is { IsWarning: true } && unrecordedNotice.Heading.Contains("couldn't record", StringComparison.Ordinal)
+           && !unrecordedNotice.ToPlainText().Contains("failed", StringComparison.OrdinalIgnoreCase)
+           && releaseNotice is { IsWarning: true } && releaseNotice.Heading.StartsWith("DwemerDistro updated", StringComparison.Ordinal),
+        "A sync that updated but could not record itself must say so, not claim the update failed.");
+
+    // LLM Studio status: helper slots keep models in place, an older helper keeps one slot, and saved defaults keep
+    // every SDK option. The load request carries only the exact key, a free slot and the helper's own ranges.
+    var lmStatus = System.Text.Json.JsonDocument.Parse("""
+        {"installed":true,"running":true,"maxLoaded":2,"slots":{"2":"pub/a"},"advancedAvailable":true,
+         "models":[{"type":"llm","key":"pub/a","display_name":"A","loaded_instances":[{"id":"pub/a:2","config":{"context_length":4096}}]},
+                   {"type":"embedding","key":"emb","loaded_instances":[{"id":"emb"}]}],
+         "inventory":[{"type":"llm","key":"pub/a","display_name":"A","size_bytes":1000},{"type":"llm","key":"pub/b","display_name":"B"}],
+         "modelDefaults":{"pub/b":{"context":8192,"gpu":50,"ttl":90,"advanced":{"seed":7,"flashAttention":true}}},
+         "job":{"state":"running","action":"download","message":"x","downloaded":5,"total":10}}
+        """).RootElement;
+    var lmOverview = LmStudioOverview.FromStatus(lmStatus);
+    Assert(lmOverview.Models.Single() is { Slot: 2, InstanceId: "pub/a:2", Key: "pub/a" } && lmOverview.MaxLoaded == 2
+           && lmOverview.Downloaded.Count == 2 && lmOverview.Job is { Action: "download", Percent: 50 } && lmOverview.JobRunning,
+        "LLM Studio status must keep the helper's slot, the exact instance id and the running job.");
+    Assert(LmStudioOverview.FromStatus(System.Text.Json.JsonDocument.Parse(
+               """{"installed":true,"running":true,"models":[{"type":"llm","key":"a","loaded_instances":[{"id":"a"}]}]}""").RootElement)
+           is { MaxLoaded: 1 } old && old.Models.Single().Slot == 1,
+        "An older LLM Studio helper without slots must keep its one-model limit.");
+    var lmForm = new LmStudioLoadForm("pub/b", "B", lmOverview.Defaults["pub/b"], advancedAvailable: true, () => { });
+    lmForm.SetFreeSlots([1]);
+    var lmRequest = lmForm.BuildRequest()!;
+    Assert(lmRequest.ToJsonString() == """{"model":"pub/b","context":8192,"gpu":50,"ttl":120,"slot":1,"advanced":{"seed":7,"flashAttention":true}}""",
+        "An LLM Studio load must use the exact key, a free slot and keep saved SDK options it does not edit: " + lmRequest.ToJsonString());
+    lmForm.FlashAttention = "Default";
+    lmForm.VCache = "q4_0";
+    Assert(lmForm.BuildRequest() is null && lmForm.HasError, "A quantized V cache without Flash attention must be refused before sending.");
+    lmForm.FlashAttention = "On";
+    lmForm.IdleMinutes = "0";
+    Assert(lmForm.BuildRequest() is null, "An idle unload outside 1-1,440 minutes must be refused before sending.");
+    lmForm.SetFreeSlots([]);
+    lmForm.IdleMinutes = "10";
+    Assert(lmForm.BuildRequest() is null && lmForm.Error!.Contains("No slot", StringComparison.Ordinal), "Loading with every slot in use must be refused.");
+
+    // LLM Studio Delete: only a helper that advertises it, never a loaded or saved startup model, never while busy or stopped.
+    var lmDeleteStatus = System.Text.Json.JsonDocument.Parse("""
+        {"installed":true,"running":true,"capabilities":["delete-model"],"settings":{"startupModel":"pub/s"},
+         "models":[{"type":"llm","key":"pub/a","loaded_instances":[{"id":"pub/a"}]}],
+         "inventory":[{"type":"llm","key":"pub/a","size_bytes":10},{"type":"llm","key":"pub/s","size_bytes":10},
+                      {"type":"llm","key":"pub/f","display_name":"Free","publisher":"pub","quantization":{"name":"Q4_K_M"},"size_bytes":4200000000}]}
+        """).RootElement;
+    var lmDeleteOverview = LmStudioOverview.FromStatus(lmDeleteStatus);
+    var lmLoadedRow = new LmStudioLibraryItem(lmDeleteOverview.Downloaded[0], "A", 1, string.Empty, false);
+    var lmStartupRow = new LmStudioLibraryItem(lmDeleteOverview.Downloaded[1], "S", 0, "Startup dialogue", false);
+    var lmFreeRow = new LmStudioLibraryItem(lmDeleteOverview.Downloaded[2], "Free", 0, string.Empty, false);
+    Assert(lmDeleteOverview.CanDeleteModels && !lmOverview.CanDeleteModels
+           && LmStudioLibraryItem.DeleteProblem(lmFreeRow, lmDeleteOverview, busy: false, distroAvailable: true) is null
+           && LmStudioLibraryItem.DeleteProblem(lmFreeRow, lmOverview, false, true)!.Contains("Update Distro", StringComparison.Ordinal)
+           && LmStudioLibraryItem.DeleteProblem(lmLoadedRow, lmDeleteOverview, false, true)!.StartsWith("Unload", StringComparison.Ordinal)
+           && LmStudioLibraryItem.DeleteProblem(lmStartupRow, lmDeleteOverview, false, true)!.Contains("save", StringComparison.Ordinal)
+           && LmStudioLibraryItem.DeleteProblem(lmFreeRow, lmDeleteOverview, busy: true, true) is not null
+           && LmStudioLibraryItem.DeleteProblem(lmFreeRow, lmDeleteOverview, false, distroAvailable: false) is not null
+           && LmStudioLibraryItem.DeleteProblem(lmFreeRow, lmDeleteOverview with { Running = false }, false, true) is not null,
+        "LLM Studio Delete must need the helper capability, a running engine and an idle manager, and never offer a loaded or startup model.");
+    Assert(lmFreeRow.DeleteConfirmation.Contains("Free", StringComparison.Ordinal) && lmFreeRow.DeleteConfirmation.Contains("pub · Q4_K_M", StringComparison.Ordinal)
+           && lmFreeRow.DeleteConfirmation.Contains("4.20 GB", StringComparison.Ordinal) && lmFreeRow.DeleteConfirmation.Contains("cannot be restored", StringComparison.Ordinal),
+        "The delete confirmation must name the model, its variant and size, and say the deletion is permanent.");
+
+    var otherUpdateWait = DistroUpdateRunner.BuildWaitForOtherUpdateCommand();
+    Assert(DistroUpdateRunner.OtherUpdateRunningExitCode == 75
+           && otherUpdateWait.Contains($"flock -s -w 1830 {DistroUpdateRunner.LockPath} true", StringComparison.Ordinal)
+           && otherUpdateWait.StartsWith($"[ -e {DistroUpdateRunner.LockPath} ] || exit 0;", StringComparison.Ordinal)
+           && otherUpdateWait.Contains("timeout 1840", StringComparison.Ordinal)
+           && !otherUpdateWait.Contains('$')
+           && !otherUpdateWait.Contains(" -n ", StringComparison.Ordinal)
+           && !otherUpdateWait.Contains(" -x ", StringComparison.Ordinal),
+        "Startup's assistant connection must wait, bounded and with only a shared lock, for another launcher's update to release the update lock.");
 
     var syncMarkerRead = MainWindowViewModel.BuildLauncherSyncMarkerReadCommand();
     Assert(syncMarkerRead.Contains("cat /home/dwemer/.launcher_synced_version", StringComparison.Ordinal)
@@ -3746,6 +3857,62 @@ try
                && preferenceStore.Load() is { ReconnectOnStartup: true, Provider: AssistantViewModel.ClaudeProviderId },
             "Startup must never connect a provider other than the remembered one, and must keep the preference when it cannot offer it.");
         await unavailableProvider.vm.ShutdownAsync();
+
+        // Startup hold: until the launcher's startup settles, nothing connects or switches, the card says what it waits for and
+        // promises a connection only when one will follow; it ends once, then startup's one connection runs as before.
+        preferenceStore.Save(new AssistantConnectionPreference(AssistantConnectionPreference.CurrentVersion, true, AssistantViewModel.ChatGptProviderId));
+        Task? heldStartup = null;
+        var held = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm =>
+            {
+                vm.BeginStartupHold(MainWindowViewModel.AssistantStartupPhaseChecks);
+                heldStartup = vm.ConnectOnStartupAsync();
+                return Task.CompletedTask;
+            });
+        await heldStartup!;
+        Assert(held.vm.IsStartupHeld && held.vm.State == AssistantState.NotChecked && held.cli.Calls.Count == 0 && !held.host.SessionLeaseHeld
+               && !held.vm.ConnectCommand.CanExecute(null) && !held.vm.CanSwitchProvider && !held.vm.CheckOutcomeCommand.CanExecute(null)
+               && held.vm.IsOnboardingShown && held.vm.IsSetupProgressShown && held.vm.SetupAction == AssistantSetupAction.None
+               && !held.vm.HasSetupBlockedReason && held.vm.OnboardingTitle == "Preparing your assistant"
+               && held.vm.OnboardingDetail == MainWindowViewModel.AssistantStartupPhaseChecks
+               && held.vm.OnboardingNextStep.Contains("connect automatically") && held.vm.HasSendBlockedReason,
+            "While startup is held, nothing may connect or switch, and the card must wait calmly, promising the connection startup will make.");
+        held.vm.SetStartupPhase(MainWindowViewModel.AssistantStartupPhaseOtherUpdate);
+        Assert(held.vm.OnboardingDetail == MainWindowViewModel.AssistantStartupPhaseOtherUpdate && held.cli.Calls.Count == 0,
+            "The card must name the startup step it waits for.");
+        held.vm.EndStartupHold();
+        held.vm.BeginStartupHold(MainWindowViewModel.AssistantStartupPhaseChecks);
+        held.vm.SetStartupPhase("ignored");
+        Assert(!held.vm.IsStartupHeld && held.vm.StartupPhase.Length == 0 && held.vm.ConnectCommand.CanExecute(null) && !held.vm.IsSetupProgressShown,
+            "The startup hold must end exactly once and never begin again.");
+        await held.vm.ConnectOnStartupAsync();
+        Assert(held.vm.State == AssistantState.Ready && held.cli.Calls.Count(call => call == "capabilities") == 1 && StartupQuiet(held.cli, held.transport),
+            "A startup call held off must still make startup's one connection once the hold ends, without a turn or sign-in.");
+        await held.vm.ShutdownAsync();
+
+        preferenceStore.Save(new AssistantConnectionPreference(AssistantConnectionPreference.CurrentVersion, false, AssistantViewModel.ChatGptProviderId));
+        var heldAfterDisconnect = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm => { vm.BeginStartupHold(MainWindowViewModel.AssistantStartupPhaseChecks); return Task.CompletedTask; });
+        Assert(heldAfterDisconnect.vm.IsStartupHeld && !heldAfterDisconnect.vm.OnboardingNextStep.Contains("automatically"),
+            "After the user's Disconnect, the waiting card must not promise an automatic connection.");
+        heldAfterDisconnect.vm.EndStartupHold(MainWindowViewModel.AssistantStartupIncompleteDetail);
+        await heldAfterDisconnect.vm.ConnectOnStartupAsync();
+        Assert(heldAfterDisconnect.vm.State == AssistantState.NotChecked && heldAfterDisconnect.cli.Calls.Count == 0
+               && heldAfterDisconnect.vm.ConnectCommand.CanExecute(null) && heldAfterDisconnect.vm.SetupAction == AssistantSetupAction.Connect
+               && heldAfterDisconnect.vm.OnboardingDetail == MainWindowViewModel.AssistantStartupIncompleteDetail,
+            "A startup that ends without connecting must leave Connect available with its reason, and keep the user's Disconnect.");
+        await heldAfterDisconnect.vm.ShutdownAsync();
+
+        var heldMaintenance = await ConnectAssistantAsync(stateStore, savedReference, installationId, statusTask: savedReference.TaskId,
+            connectionPreference: preferenceStore, connect: vm => { vm.BeginStartupHold(MainWindowViewModel.AssistantStartupPhaseChecks); return Task.CompletedTask; });
+        Assert(await heldMaintenance.vm.SuspendForMaintenanceAsync(), "Maintenance must proceed past a held assistant.");
+        heldMaintenance.vm.EndStartupHold();
+        Assert(!heldMaintenance.vm.ConnectCommand.CanExecute(null) && heldMaintenance.vm.HasSetupBlockedReason,
+            "Ending the startup hold must not release Connect while maintenance still holds the distro.");
+        heldMaintenance.vm.ResumeAfterMaintenance(reconnect: true);
+        Assert(heldMaintenance.vm.ConnectCommand.CanExecute(null) && heldMaintenance.cli.Calls.Count == 0,
+            "Connect must return when maintenance ends, without connecting on its own.");
+        await heldMaintenance.vm.ShutdownAsync();
         stateStore.Save(savedReference);
 
         // Maintenance waits a bounded time for a Core command the last response started. If it is still running, the

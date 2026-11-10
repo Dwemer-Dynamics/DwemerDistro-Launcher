@@ -31,7 +31,7 @@ public enum ComponentHealthCheck
     PortOnly,
     /// <summary>/provider_info or /openapi.json identifies the expected provider (the voice engine's rules).</summary>
     Provider,
-    /// <summary>OmniVoice's GET /health answers status "ok".</summary>
+    /// <summary>OmniVoice's GET /health names an OmniVoice model; status "ok" or "no_voices" (running, no voices yet).</summary>
     OmniVoiceHealth,
     /// <summary>Higgs's GET /v1/models lists higgs-v3 of family higgs_audio_tts (the voice engine's rule).</summary>
     HiggsModels,
@@ -80,14 +80,14 @@ public static class ComponentServiceStatus
         new("omnivoice", "Multilingual OmniVoice TTS", "component-omnivoice.png", 8021, ComponentHealthCheck.OmniVoiceHealth),
         new("xtts", "Dwemer Distro XTTS", "component-xtts.png", 8020, ComponentHealthCheck.Provider, Provider: "xtts"),
         new("pipertts", "Piper-TTS", "component-piper.png", 5000, ComponentHealthCheck.PortOnly),
-        new("parakeet", "Parakeet STT", "nvidia.png", 8022, ComponentHealthCheck.PortOnly),
+        new("parakeet", "Parakeet STT", "component-parakeet.png", 8022, ComponentHealthCheck.PortOnly),
         new("localwhisper", "LocalWhisper", "component-whisper.png", 9876, ComponentHealthCheck.PortOnly),
         new("lmstudio", "LM Studio", "component-lmstudio.png", 1234, ComponentHealthCheck.LmStudioApi),
         new("minime", "Minime and TXT2VEC", "DwemerDistro.png", 8082, ComponentHealthCheck.PortOnly),
     ];
 
     private static readonly HashSet<string> InstalledWords = ["present", "absent", "unknown"];
-    private static readonly HashSet<string> HealthWords = ["ok", "closed", "other", "open"];
+    private static readonly HashSet<string> HealthWords = ["ok", "novoices", "closed", "other", "open"];
 
     /// <summary>
     /// After the server reports ready, services that are enabled but not answering yet still count as starting
@@ -181,6 +181,7 @@ public static class ComponentServiceStatus
             "ok" => (ComponentServiceState.Running, service.Check == ComponentHealthCheck.LmStudioApi
                 ? "Running. The LM Studio API is answering."
                 : $"Running. {service.Name} answered its health check."),
+            "novoices" => (ComponentServiceState.Running, $"Running - no voices configured. {service.Name} answered its health check; add a voice before speech will work."),
             "open" => (ComponentServiceState.Unverified, service.Check == ComponentHealthCheck.PortOnly
                 ? "Port is open. This service has no health check, so it is not confirmed running."
                 : "Port is open, but the service could not be confirmed."),
@@ -244,10 +245,16 @@ public static class ComponentServiceStatus
             except (OSError, TypeError, ValueError):
                 return fallback
 
+        def omnivoice_health(document):
+            # Identity first (the model name), then readiness: no_voices is a running OmniVoice with no voice yet.
+            if not isinstance(document, dict) or 'omnivoice' not in str(document.get('model') or '').lower():
+                return 'other'
+            return {'ok': 'ok', 'no_voices': 'novoices'}.get(document.get('status'), 'other')
+
         def verified(check, port):
             try:
                 if check == 'OmniVoiceHealth':
-                    return get_json(port, '/health').get('status') == 'ok'
+                    return omnivoice_health(get_json(port, '/health'))
                 if check == 'HiggsModels':
                     return any(m.get('id') == 'higgs-v3' and m.get('family') == 'higgs_audio_tts' for m in get_json(port, '/v1/models').get('data', []))
                 if check == 'AudioCppModels':
@@ -298,6 +305,8 @@ public static class ComponentServiceStatus
                 return result
             if check == 'PortOnly':
                 result['health'] = 'open'
+            elif check == 'OmniVoiceHealth':
+                result['health'] = verified(check, port) or 'other'
             elif verified(check, port):
                 result['health'] = 'ok'
             else:

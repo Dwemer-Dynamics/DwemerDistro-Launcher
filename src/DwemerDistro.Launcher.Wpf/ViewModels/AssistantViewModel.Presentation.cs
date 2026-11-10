@@ -57,7 +57,8 @@ public sealed partial class AssistantViewModel
     /// Ready then. Otherwise exactly <see cref="StatusText"/>.
     /// </summary>
     public string HeaderStatusText =>
-        IsOpenRouter && _client is not null && !IsOpenRouterConnected && State is AssistantState.Ready or AssistantState.Busy
+        _isStartupHeld ? "Preparing…"
+        : IsOpenRouter && _client is not null && !IsOpenRouterConnected && State is AssistantState.Ready or AssistantState.Busy
             ? IsOpenRouterKeyMissing ? "OpenRouter key needed" : "Checking OpenRouter key…"
             : StatusText;
 
@@ -84,7 +85,9 @@ public sealed partial class AssistantViewModel
         && _claudeCode is { State: not ClaudeCodeState.Ready };
 
     public AssistantSetupAction SetupAction =>
-        IsHomeConfigRepairOffered ? AssistantSetupAction.Repair
+        // Startup's wait offers no step: Connect would only be refused, and nothing else applies yet.
+        _isStartupHeld ? AssistantSetupAction.None
+        : IsHomeConfigRepairOffered ? AssistantSetupAction.Repair
         : State == AssistantState.IsolationFailed ? AssistantSetupAction.RunProbe
         : State == AssistantState.SigningIn ? (SignInUrl.Length > 0 ? AssistantSetupAction.OpenSignInPage : AssistantSetupAction.None)
         : State == AssistantState.SignedOut && _client is not null && IsChatGptSignInShown ? AssistantSetupAction.SignIn
@@ -100,12 +103,16 @@ public sealed partial class AssistantViewModel
     /// <summary>The supported sign-in page and code, once Core has issued them.</summary>
     public bool IsSignInPanelShown => IsSignInVisible && SignInUrl.Length > 0;
 
+    /// <summary>Startup is still settling, or a connection is being made: the card shows indeterminate progress, never a percentage.</summary>
+    public bool IsSetupProgressShown => _isStartupHeld || State == AssistantState.Checking;
+
     // Always Connect (the state's own detail says "press Connect"), except while it is already connecting.
     public string ConnectActionLabel => State == AssistantState.Checking ? "Connecting…" : "Connect";
 
     /// <summary>The card's explanation: the OpenRouter key's own status while that is what blocks, otherwise the state's detail.</summary>
     public string OnboardingDetail =>
-        IsOpenRouter && _client is not null && !IsOpenRouterConnected && State != AssistantState.Checking ? OpenRouterKeyStatus : StatusDetail;
+        _isStartupHeld ? _startupPhase
+        : IsOpenRouter && _client is not null && !IsOpenRouterConnected && State != AssistantState.Checking ? OpenRouterKeyStatus : StatusDetail;
 
     /// <summary>Why the one action cannot run now; empty when it can, or while Connecting… says it.</summary>
     public string SetupBlockedReason =>
@@ -116,7 +123,8 @@ public sealed partial class AssistantViewModel
     public bool HasSetupBlockedReason => SetupBlockedReason.Length > 0;
 
     public string OnboardingTitle =>
-        SetupAction == AssistantSetupAction.Repair ? "Repair the assistant's settings file?"
+        _isStartupHeld ? "Preparing your assistant"
+        : SetupAction == AssistantSetupAction.Repair ? "Repair the assistant's settings file?"
         : IsClaudeCodeNotReady ? "Claude Code is not ready"
         : SetupAction == AssistantSetupAction.SignIn ? "Sign in to continue"
         : SetupAction == AssistantSetupAction.OpenSignInPage ? "Finish signing in"
@@ -131,7 +139,9 @@ public sealed partial class AssistantViewModel
             _ => StatusText
         };
 
-    public string OnboardingNextStep => SetupAction switch
+    public string OnboardingNextStep => _isStartupHeld
+        ? _startupWillConnect ? "We'll connect automatically when setup is ready." : "You can connect once the startup checks finish."
+        : SetupAction switch
     {
         AssistantSetupAction.Connect when IsClaudeCodeNotReady =>
             "Fix it in a terminal as described above, then press Connect to check again. DwemerDistro never signs in to Claude for you.",
@@ -158,6 +168,7 @@ public sealed partial class AssistantViewModel
     /// <summary>Why Send is not available, under the composer; empty when messages can be sent.</summary>
     public string SendBlockedReason =>
         IsSessionUsable ? string.Empty
+        : _isStartupHeld ? "The assistant is getting ready while the launcher finishes its startup checks."
         : IsHomeConfigRepairOffered ? "Repair or cancel the settings-file prompt before connecting."
         : IsExporting ? "Wait for the chat export to finish, or cancel it."
         : State switch
@@ -187,7 +198,7 @@ public sealed partial class AssistantViewModel
                  {
                      nameof(HeaderStatusText), nameof(IsSessionConnected), nameof(IsSessionUsable), nameof(IsOnboardingShown), nameof(IsOfflineConversationShown),
                      nameof(SetupAction), nameof(IsConnectPrimary), nameof(IsSignInPrimary), nameof(IsApiKeysPrimary), nameof(IsProbePrimary),
-                     nameof(IsSignInPanelShown), nameof(ConnectActionLabel), nameof(SetupBlockedReason), nameof(HasSetupBlockedReason),
+                     nameof(IsSignInPanelShown), nameof(IsSetupProgressShown), nameof(ConnectActionLabel), nameof(SetupBlockedReason), nameof(HasSetupBlockedReason),
                      nameof(OnboardingTitle), nameof(OnboardingDetail), nameof(OnboardingNextStep), nameof(HasOnboardingNextStep),
                      nameof(SendBlockedReason), nameof(HasSendBlockedReason)
                  })
