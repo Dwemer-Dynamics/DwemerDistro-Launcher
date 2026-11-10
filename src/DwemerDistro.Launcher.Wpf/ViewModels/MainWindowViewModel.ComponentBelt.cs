@@ -20,6 +20,8 @@ public sealed partial class MainWindowViewModel
     /// <summary>Held by whichever of the Components page or the belt is probing component status.</summary>
     internal SemaphoreSlim ComponentStatusProbeGate { get; } = new(1, 1);
 
+    private const string StartServerAdvice = "Click Start Server in the launcher, then try the test again.";
+
     /// <summary>Holds the existing maintenance lease and probe gate for one user-requested component test.</summary>
     public async Task<ComponentTestResult> TestComponentAsync(string id, bool sample, string text, string? file, CancellationToken token)
     {
@@ -34,14 +36,20 @@ public sealed partial class MainWindowViewModel
         {
             ownsActivity = TryBeginPassiveDistroActivity();
             if (!ownsActivity || IsComponentBeltPaused()) return new("Another distro operation is in progress. Try again when it finishes.");
-            if (!await _wsl.DistroRunningAsync(timeout.Token)) return new("Dwemer Distro is stopped. Start the server before testing.");
+            if (!await _wsl.DistroRunningAsync(timeout.Token)) return new($"Dwemer Distro is stopped. {StartServerAdvice}");
             var response = await _wsl.RunBashAsync(ComponentServiceStatus.BuildProbeScript(id), loginShell: false, cancellationToken: timeout.Token);
             var probe = response.Succeeded ? ComponentServiceStatus.ParseProbe(response.StandardOutput)?.SingleOrDefault() : null;
             if (probe is null) return new("Could not check the component. Check the distro connection and try again.");
             if (probe.Installed != "present") return new("The component is not installed or its installation could not be verified.");
-            var status = ComponentServiceStatus.Describe(definition, probe, false).Text;
+            var (state, status) = ComponentServiceStatus.Describe(definition, probe, false);
+            // A stopped service gets the fix, not the no-inference note; nothing answered to infer with.
+            if (state == ComponentServiceState.Stopped)
+                return new($"Port {probe.Port}\n" + (IsServerRunning
+                    ? "Stopped. The server is running, but this component is not. Check its configuration and live logs, then try again."
+                    : $"Stopped. {StartServerAdvice}"));
             if (!sample || probe.Health is "closed" or "other")
-                return new($"Port {probe.Port}\n{status}\n\nService check only. No speech, transcription or model inference was tested.");
+                return new($"Port {probe.Port}\n{status}" + (probe.Health == "closed" ? ""
+                    : "\n\nService check only. No speech, transcription or model inference was tested."));
             var result = await ComponentQuickTestService.RunSampleAsync(id, probe.Port, text, file, timeout.Token);
             return result with { Message = $"Port {probe.Port}\n{result.Message}" };
         }
