@@ -5,7 +5,11 @@ using System.IO;
 namespace DwemerDistro.Launcher.Wpf.Services;
 
 /// <param name="distroName">Only tests pass another name, to run the same commands against an isolated distro.</param>
-public sealed class WslService(ProcessRunner processRunner, string distroName = LauncherConstants.DistroName)
+/// <param name="lxssKeyPath">Only tests pass another HKCU key, to read registrations without touching WSL's own.</param>
+public sealed class WslService(
+    ProcessRunner processRunner,
+    string distroName = LauncherConstants.DistroName,
+    string lxssKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Lxss")
 {
     public string DistroName { get; } = distroName;
 
@@ -200,14 +204,16 @@ public sealed class WslService(ProcessRunner processRunner, string distroName = 
     public string? GetDistroBasePath() => ReadDistroRegistration((_, distroKey) => distroKey.GetValue("BasePath") as string);
 
     /// <summary>
-    /// The WSL registration GUID of the DwemerDistro distro. A reinstall or re-import registers a new
-    /// one, so it identifies this installation without asking WSL anything.
+    /// The WSL registration GUID of the DwemerDistro distro, exactly as WSL names its key; compare it
+    /// ignoring case. A reinstall or re-import registers a new one, so it identifies this installation
+    /// without asking WSL anything. A key that is not a GUID is no registration id.
     /// </summary>
-    public string? GetDistroRegistrationId() => ReadDistroRegistration((subKeyName, _) => subKeyName);
+    public string? GetDistroRegistrationId() =>
+        ReadDistroRegistration((subKeyName, _) => Guid.TryParse(subKeyName, out var _) ? subKeyName : null);
 
     private string? ReadDistroRegistration(Func<string, RegistryKey, string?> read)
     {
-        using var lxssKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Lxss");
+        using var lxssKey = Registry.CurrentUser.OpenSubKey(lxssKeyPath);
         if (lxssKey is null)
         {
             return null;

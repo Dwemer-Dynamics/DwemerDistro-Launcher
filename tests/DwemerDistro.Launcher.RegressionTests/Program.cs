@@ -1809,6 +1809,42 @@ try
     Assert(!new UpdatePreferencesService(updatePreferencesDirectory).GetForceGitUpdates()
            && File.ReadAllText(updatePreferences.StatePath).Contains("futureSetting", StringComparison.Ordinal),
         "Turning the option off must persist, and must keep preferences this build does not know.");
+    Assert(new UpdatePreferencesService(updatePreferencesDirectory).GetPg15DeletedRegistrationId() is null
+           && updatePreferences.TrySetForceGitUpdates(true, out _)
+           && updatePreferences.TrySetPg15DeletedRegistrationId("{0F7E5A3C-1B2D-4E6F-8A9B-C0D1E2F3A4B5}", out _)
+           && new UpdatePreferencesService(updatePreferencesDirectory) is var reloadedPreferences
+           && reloadedPreferences.GetPg15DeletedRegistrationId() == "{0F7E5A3C-1B2D-4E6F-8A9B-C0D1E2F3A4B5}"
+           && reloadedPreferences.GetForceGitUpdates()
+           && updatePreferences.TrySetPg15DeletedRegistrationId(null, out _)
+           && new UpdatePreferencesService(updatePreferencesDirectory).GetPg15DeletedRegistrationId() is null
+           && File.ReadAllText(updatePreferences.StatePath).Contains("futureSetting", StringComparison.Ordinal),
+        "The PostgreSQL 15 deletion marker must survive a restart, clear, and leave other preferences alone.");
+
+    // WslService reads the registration GUID from a throwaway HKCU key, never WSL's own.
+    var lxssTestKey = $@"Software\DwemerDistroRegressionTests-Lxss-{Guid.NewGuid():N}";
+    try
+    {
+        using (var lxss = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(lxssTestKey))
+        {
+            using (var other = lxss.CreateSubKey("{11111111-1111-1111-1111-111111111111}")) other.SetValue("DistributionName", "Ubuntu");
+            using (var junk = lxss.CreateSubKey("not-a-guid")) junk.SetValue("DistributionName", "Broken");
+            using (var mine = lxss.CreateSubKey("{2A3B4C5D-6E7F-4081-92A3-B4C5D6E7F809}"))
+            {
+                mine.SetValue("DistributionName", LauncherConstants.DistroName.ToLowerInvariant());
+                mine.SetValue("BasePath", root);
+            }
+        }
+
+        Assert(new WslService(new ProcessRunner(), LauncherConstants.DistroName, lxssTestKey).GetDistroRegistrationId() == "{2A3B4C5D-6E7F-4081-92A3-B4C5D6E7F809}"
+               && new WslService(new ProcessRunner(), LauncherConstants.DistroName, lxssTestKey).GetDistroBasePath() == root
+               && new WslService(new ProcessRunner(), "Broken", lxssTestKey).GetDistroRegistrationId() is null
+               && new WslService(new ProcessRunner(), "Missing", lxssTestKey).GetDistroRegistrationId() is null,
+            "WslService must return the matching distro's actual WSL registration GUID, and nothing for a non-GUID key.");
+    }
+    finally
+    {
+        Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(lxssTestKey, false);
+    }
 
     var systemUpdateConfirmation = MainWindowViewModel.BuildSystemUpdateConfirmation();
     Assert(systemUpdateConfirmation.Contains("DwemerDistro and its shared components", StringComparison.Ordinal)
@@ -1856,6 +1892,88 @@ try
            && MainWindowViewModel.BuildDatabaseRollbackConfirmation().Contains("before anything has been written", StringComparison.Ordinal)
            && MainWindowViewModel.BuildDatabaseRollbackConfirmation().Contains("not carried back", StringComparison.Ordinal),
         "Database maintenance confirmations must warn that rollback is only safe before the upgraded database is written to.");
+
+    // Delete old PostgreSQL 15 data: preview, confirm (default No), delete. Fakes only, no WSL.
+    Assert(MainWindowViewModel.BuildDatabaseMaintenanceArguments("cleanup-preview").SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "cleanup-preview"])
+           && MainWindowViewModel.BuildDatabaseMaintenanceArguments("cleanup-pg15").SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "cleanup-pg15"]),
+        "PostgreSQL 15 cleanup must invoke only the maintenance tool's cleanup-preview and cleanup-pg15 verbs.");
+    Assert(MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":1234567,"reason":""}""") is { Eligible: true, Bytes: 1234567 }
+           && MainWindowViewModel.ParseCleanupPreview("checking\n{\"eligible\":false,\"bytes\":0,\"reason\":\"Still on PostgreSQL 15.\"}\n") is { Eligible: false, Reason: "Still on PostgreSQL 15." }
+           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":"true","bytes":1,"reason":""}""") is null
+           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":-1,"reason":""}""") is null
+           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":1.5,"reason":""}""") is null
+           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":1}""") is null
+           && MainWindowViewModel.ParseCleanupPreview("""[{"eligible":true,"bytes":1,"reason":""}]""") is null
+           && MainWindowViewModel.ParseCleanupPreview("{\"eligible\":true,\"bytes\":1,\"reason\":\"\"}\ndone") is null
+           && MainWindowViewModel.ParseCleanupPreview("") is null
+           && MainWindowViewModel.ParseCleanupPreview("{not json") is null,
+        "The cleanup preview must accept only {eligible:bool,bytes:non-negative int,reason:string} on its last line.");
+    Assert(MainWindowViewModel.ParseCleanupFreedBytes("""{"freed_bytes":42}""") == 42
+           && MainWindowViewModel.ParseCleanupFreedBytes("removing\n{\"freed_bytes\":0}\n") == 0
+           && MainWindowViewModel.ParseCleanupFreedBytes("""{"freed_bytes":-5}""") is null
+           && MainWindowViewModel.ParseCleanupFreedBytes("""{"freed":5}""") is null
+           && MainWindowViewModel.ParseCleanupFreedBytes("ok") is null,
+        "The cleanup result must accept only {freed_bytes:non-negative int}.");
+
+    var pg15Confirmation = MainWindowViewModel.BuildPg15CleanupConfirmation(1_610_612_736);
+    Assert(pg15Confirmation.Contains(" GB (1,610,612,736 bytes)", StringComparison.Ordinal)
+           && pg15Confirmation.Contains("One-click rollback to PostgreSQL 15 will no longer be possible", StringComparison.Ordinal)
+           && pg15Confirmation.Contains("Windows backup from the upgrade is kept", StringComparison.Ordinal)
+           && pg15Confirmation.Contains("not necessarily Windows free space", StringComparison.Ordinal),
+        "The cleanup confirmation must show the exact previewed bytes and say rollback ends, the Windows backup stays, and WSL space is not Windows free space.");
+    Assert(MainWindowViewModel.BuildPg15CleanupDoneStatus(2048).Contains(" KB (2,048 bytes)", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildPg15CleanupDoneStatus(null).Contains("did not report", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildPg15CleanupDoneStatus(null).Contains("rollback is no longer available", StringComparison.Ordinal),
+        "The cleanup result must report the tool's actual freed bytes, never a guess, and that rollback ended.");
+
+    async Task<(MainWindowViewModel.Pg15CleanupResult Result, List<string> Verbs, List<long> Asked)> RunFakePg15Cleanup(
+        CommandResult preview, bool answer, CommandResult? cleanup = null)
+    {
+        var verbs = new List<string>();
+        var asked = new List<long>();
+        var result = await MainWindowViewModel.RunPg15CleanupAsync(
+            (arguments, _) =>
+            {
+                Assert(arguments.Length == 2 && arguments[0] == "/usr/local/bin/ddistro_pg17_maintenance", "Cleanup runs only the maintenance tool.");
+                verbs.Add(arguments[1]);
+                return Task.FromResult(arguments[1] == "cleanup-preview" ? preview : cleanup ?? new CommandResult(0, """{"freed_bytes":900}""", ""));
+            },
+            bytes => { asked.Add(bytes); return answer; },
+            _ => { });
+        return (result, verbs, asked);
+    }
+
+    var pg15Eligible = new CommandResult(0, """{"eligible":true,"bytes":1000,"reason":"ok"}""", "");
+    var pg15Deleted = await RunFakePg15Cleanup(pg15Eligible, answer: true);
+    Assert(pg15Deleted.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.Deleted, FreedBytes: 900 }
+           && pg15Deleted.Verbs.SequenceEqual(["cleanup-preview", "cleanup-pg15"]) && pg15Deleted.Asked.SequenceEqual([1000L]),
+        "A confirmed cleanup must preview, ask with the previewed bytes, delete once, and report the tool's freed bytes.");
+    var pg15Declined = await RunFakePg15Cleanup(pg15Eligible, answer: false);
+    Assert(pg15Declined.Result.Outcome == MainWindowViewModel.Pg15CleanupOutcome.Canceled && pg15Declined.Verbs.SequenceEqual(["cleanup-preview"]),
+        "Declining (the default) must never run cleanup-pg15.");
+    var pg15Ineligible = await RunFakePg15Cleanup(new CommandResult(0, """{"eligible":false,"bytes":0,"reason":"Rollback is still pending."}""", ""), answer: true);
+    Assert(pg15Ineligible.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.NotEligible, Detail: "Rollback is still pending." }
+           && pg15Ineligible.Asked.Count == 0 && pg15Ineligible.Verbs.SequenceEqual(["cleanup-preview"]),
+        "An ineligible preview must show the tool's reason without asking or deleting.");
+    var pg15Garbled = await RunFakePg15Cleanup(new CommandResult(0, "eligible", ""), answer: true);
+    var pg15PreviewBusy = await RunFakePg15Cleanup(new CommandResult(75, "", ""), answer: true);
+    Assert(pg15Garbled.Result.Outcome == MainWindowViewModel.Pg15CleanupOutcome.PreviewFailed && pg15Garbled.Asked.Count == 0 && pg15Garbled.Verbs.Count == 1
+           && pg15PreviewBusy.Result.Outcome == MainWindowViewModel.Pg15CleanupOutcome.PreviewFailed && pg15PreviewBusy.Verbs.Count == 1
+           && pg15PreviewBusy.Result.Detail.Contains("distro update is still running", StringComparison.Ordinal),
+        "A failed or unreadable preview must never ask or delete.");
+    var pg15Failed = await RunFakePg15Cleanup(pg15Eligible, answer: true, new CommandResult(3, "", "cluster busy"));
+    Assert(pg15Failed.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.Failed, ExitCode: 3 }
+           && pg15Failed.Result.Detail.Contains("cluster busy", StringComparison.Ordinal),
+        "A nonzero cleanup exit must be a failure that carries the tool's error.");
+    var pg15Unreported = await RunFakePg15Cleanup(pg15Eligible, answer: true, new CommandResult(0, "done", ""));
+    Assert(pg15Unreported.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.Deleted, FreedBytes: null },
+        "Exit code 0 is the success signal even when freed bytes are not reported.");
+    Assert(MainWindowViewModel.IsDatabaseRollbackAvailable(null, "{a}")
+           && !MainWindowViewModel.IsDatabaseRollbackAvailable("{A}", "{a}")
+           && MainWindowViewModel.IsDatabaseRollbackAvailable("{a}", "{b}")
+           && MainWindowViewModel.IsDatabaseRollbackAvailable("{a}", null)
+           && !MainWindowViewModel.IsDatabaseRollbackAvailable("", null),
+        "Rollback must be off only for the same registration whose PostgreSQL 15 data was deleted, so a reinstall or import is not blocked.");
 
     // Unattended PostgreSQL 17 step of the normal update, driven entirely by fakes: no WSL, no disk, no game.
     Assert(Pg17UpdateMigration.ParseStatus("needed\n") == Pg17Status.Needed

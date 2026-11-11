@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Windows;
 using DwemerDistro.Launcher.Wpf.Models;
 using DwemerDistro.Launcher.Wpf.Services;
@@ -17,14 +18,20 @@ public sealed partial class MainWindowViewModel
     internal const string DatabaseMaintenanceToolPath = Pg17UpdateMigration.ToolPath;
     internal const string DatabaseMaintenanceUpgradeVerb = "upgrade";
     internal const string DatabaseMaintenanceRollbackVerb = "rollback";
+    internal const string DatabaseCleanupPreviewVerb = "cleanup-preview";
+    internal const string DatabaseCleanupVerb = "cleanup-pg15";
 
     private string _databaseMaintenanceStatusText = string.Empty;
     private string _databaseMaintenanceStatusColor = CompactDistroNeutralColor;
     private bool _isDatabaseUpgradeWaiting;
     private CancellationTokenSource? _databaseUpgradeWaitCts;
+    // The WSL registration whose PostgreSQL 15 data was deleted, saved in update preferences so Roll back stays
+    // off after a restart without probing WSL. A reinstall or import registers a new id; a real upgrade clears it.
+    private string? _pg15DeletedRegistrationId;
 
     public AsyncRelayCommand UpgradeDatabaseCommand { get; private set; } = null!;
     public AsyncRelayCommand RollbackDatabaseCommand { get; private set; } = null!;
+    public AsyncRelayCommand DeletePg15DataCommand { get; private set; } = null!;
 
     /// <summary>Ends the update's wait for open games. The upgrade is postponed and the update is not recorded as finished.</summary>
     public RelayCommand StopDatabaseUpgradeWaitCommand { get; private set; } = null!;
@@ -64,10 +71,14 @@ public sealed partial class MainWindowViewModel
 
     private void InitializeDatabaseMaintenanceCommands()
     {
+        _pg15DeletedRegistrationId = _updatePreferences.GetPg15DeletedRegistrationId();
         UpgradeDatabaseCommand = new AsyncRelayCommand(
             () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceUpgradeVerb), CanStartExclusiveDistroOperation);
         RollbackDatabaseCommand = new AsyncRelayCommand(
-            () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceRollbackVerb), CanStartExclusiveDistroOperation);
+            () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceRollbackVerb),
+            () => CanStartExclusiveDistroOperation()
+                  && IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId()));
+        DeletePg15DataCommand = new AsyncRelayCommand(DeletePg15DataAsync, CanStartExclusiveDistroOperation);
         StopDatabaseUpgradeWaitCommand = new RelayCommand(StopDatabaseUpgradeWait, () => IsDatabaseUpgradeWaiting);
     }
 
@@ -75,11 +86,30 @@ public sealed partial class MainWindowViewModel
     {
         UpgradeDatabaseCommand?.RaiseCanExecuteChanged();
         RollbackDatabaseCommand?.RaiseCanExecuteChanged();
+        DeletePg15DataCommand?.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>Rollback stays offered unless the PostgreSQL 15 data of this same registration was deleted.</summary>
+    internal static bool IsDatabaseRollbackAvailable(string? deletedRegistrationId, string? currentRegistrationId) =>
+        deletedRegistrationId is null
+        || !string.Equals(deletedRegistrationId, currentRegistrationId ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Null after a real upgrade, which leaves fresh PostgreSQL 15 data behind, so rollback is the tool's call again.</summary>
+    private void SetPg15DeletedRegistration(string? registrationId)
+    {
+        _pg15DeletedRegistrationId = registrationId;
+        if (!_updatePreferences.TrySetPg15DeletedRegistrationId(registrationId, out var error))
+        {
+            AppendLog($"Could not save the PostgreSQL 15 cleanup state: {error}{Environment.NewLine}", "yellow");
+        }
+
+        RaiseDatabaseMaintenanceCommandStates();
     }
 
     internal static string[] BuildDatabaseMaintenanceArguments(string verb) => verb switch
     {
-        DatabaseMaintenanceUpgradeVerb or DatabaseMaintenanceRollbackVerb => [DatabaseMaintenanceToolPath, verb],
+        DatabaseMaintenanceUpgradeVerb or DatabaseMaintenanceRollbackVerb
+            or DatabaseCleanupPreviewVerb or DatabaseCleanupVerb => [DatabaseMaintenanceToolPath, verb],
         _ => throw new ArgumentOutOfRangeException(nameof(verb), verb, "Unknown database maintenance action.")
     };
 
@@ -99,6 +129,275 @@ public sealed partial class MainWindowViewModel
                "the server or playing after the upgrade. Anything written to PostgreSQL 17 since the upgrade is not " +
                "carried back.\n\n" +
                "If you have new saves, keep PostgreSQL 17 running. Rollback checks for changes and refuses to discard them.\n\nContinue?";
+    }
+
+    internal sealed record Pg15CleanupPreview(bool Eligible, long Bytes, string Reason);
+
+    internal enum Pg15CleanupOutcome
+    {
+        PreviewFailed,
+        NotEligible,
+        Canceled,
+        Failed,
+        Deleted
+    }
+
+    /// <summary><see cref="Detail"/> is the tool's reason or error; <see cref="FreedBytes"/> is null when the tool did not report it.</summary>
+    internal sealed record Pg15CleanupResult(Pg15CleanupOutcome Outcome, string Detail, long? FreedBytes = null, int ExitCode = 0);
+
+    /// <summary><c>cleanup-preview</c>: the last non-empty line must be {"eligible":bool,"bytes":int,"reason":string}.</summary>
+    internal static Pg15CleanupPreview? ParseCleanupPreview(string? output)
+    {
+        using var document = ReadLastJsonObject(output);
+        if (document is null) return null;
+        var root = document.RootElement;
+        return root.TryGetProperty("eligible", out var eligible) && eligible.ValueKind is JsonValueKind.True or JsonValueKind.False
+               && root.TryGetProperty("bytes", out var bytes) && bytes.ValueKind == JsonValueKind.Number
+               && bytes.TryGetInt64(out var count) && count >= 0
+               && root.TryGetProperty("reason", out var reason) && reason.ValueKind == JsonValueKind.String
+            ? new Pg15CleanupPreview(eligible.GetBoolean(), count, reason.GetString()!)
+            : null;
+    }
+
+    /// <summary><c>cleanup-pg15</c> on success: the last non-empty line must be {"freed_bytes":int}.</summary>
+    internal static long? ParseCleanupFreedBytes(string? output)
+    {
+        using var document = ReadLastJsonObject(output);
+        return document is not null
+               && document.RootElement.TryGetProperty("freed_bytes", out var freed) && freed.ValueKind == JsonValueKind.Number
+               && freed.TryGetInt64(out var count) && count >= 0
+            ? count
+            : null;
+    }
+
+    private static JsonDocument? ReadLastJsonObject(string? output)
+    {
+        var line = (output ?? string.Empty)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .LastOrDefault();
+        if (line is null || !line.StartsWith('{')) return null;
+        try
+        {
+            var document = JsonDocument.Parse(line);
+            if (document.RootElement.ValueKind == JsonValueKind.Object) return document;
+            document.Dispose();
+        }
+        catch (JsonException)
+        {
+        }
+
+        return null;
+    }
+
+    internal static string DescribeExactBytes(long bytes) =>
+        $"{FormatByteSize(bytes)} ({bytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} bytes)";
+
+    internal static string BuildPg15CleanupConfirmation(long bytes)
+    {
+        return "Delete the old PostgreSQL 15 data inside DwemerDistro?\n\n" +
+               $"This frees {DescribeExactBytes(bytes)} inside the distro.\n\n" +
+               "One-click rollback to PostgreSQL 15 will no longer be possible, and Roll back is turned off.\n\n" +
+               "Your Windows backup from the upgrade is kept. Nothing outside the distro is deleted.\n\n" +
+               "The space is freed inside the WSL virtual disk, which is not necessarily Windows free space. " +
+               "Compact Distro hands freed space back to Windows.\n\nContinue?";
+    }
+
+    internal static string BuildPg15CleanupDoneStatus(long? freedBytes) =>
+        (freedBytes is { } freed
+            ? $"Done. Deleted the old PostgreSQL 15 data and freed {DescribeExactBytes(freed)} inside the distro."
+            : "Done. Deleted the old PostgreSQL 15 data. The tool did not report how much space was freed.") +
+        " One-click rollback is no longer available. Your Windows backup was kept.";
+
+    /// <summary>
+    /// Previews, asks, and only then deletes. Nothing is deleted unless the preview is well-formed and eligible
+    /// and <paramref name="confirm"/>, shown the previewed byte count, returns true. The tool's exit code is the
+    /// only success signal for the deletion.
+    /// </summary>
+    internal static async Task<Pg15CleanupResult> RunPg15CleanupAsync(
+        Func<string[], Action<string>, Task<CommandResult>> runToolAsRoot,
+        Func<long, bool> confirm,
+        Action<string> output)
+    {
+        var previewResult = await runToolAsRoot(BuildDatabaseMaintenanceArguments(DatabaseCleanupPreviewVerb), _ => { })
+            .ConfigureAwait(true);
+        if (!previewResult.Succeeded)
+        {
+            return new(Pg15CleanupOutcome.PreviewFailed, DescribeDatabaseToolFailure(previewResult), ExitCode: previewResult.ExitCode);
+        }
+
+        if (ParseCleanupPreview(previewResult.StandardOutput) is not { } preview)
+        {
+            return new(Pg15CleanupOutcome.PreviewFailed, "The database maintenance tool's cleanup preview could not be read.");
+        }
+
+        if (!preview.Eligible)
+        {
+            var reason = string.IsNullOrWhiteSpace(preview.Reason) ? "There is no old PostgreSQL 15 data to delete." : preview.Reason.Trim();
+            return new(Pg15CleanupOutcome.NotEligible, reason);
+        }
+
+        if (!confirm(preview.Bytes))
+        {
+            return new(Pg15CleanupOutcome.Canceled, "Canceled. Nothing was changed.");
+        }
+
+        var result = await runToolAsRoot(BuildDatabaseMaintenanceArguments(DatabaseCleanupVerb), output).ConfigureAwait(true);
+        return result.Succeeded
+            ? new(Pg15CleanupOutcome.Deleted, string.Empty, ParseCleanupFreedBytes(result.StandardOutput))
+            : new(Pg15CleanupOutcome.Failed, DescribeDatabaseToolFailure(result), ExitCode: result.ExitCode);
+    }
+
+    /// <summary>
+    /// Explicit only, never automatic. The preview, the question and the deletion all happen inside one exclusive
+    /// slot, so what is shown is what is removed.
+    /// </summary>
+    private async Task DeletePg15DataAsync()
+    {
+        const string actionName = "PostgreSQL 15 cleanup";
+        if (!CanStartExclusiveDistroOperation())
+        {
+            ReportExclusiveDistroOperationBusy(DatabaseMaintenanceSettingName);
+            return;
+        }
+
+        if (!await _wsl.DistroExistsAsync().ConfigureAwait(true))
+        {
+            SetDatabaseMaintenanceStatus(
+                $"{LauncherConstants.DistroName} is not installed. Nothing was changed.",
+                CompactDistroWarningColor);
+            MessageBox.Show(
+                $"{LauncherConstants.DistroName} is not currently installed.",
+                DatabaseMaintenanceSettingName,
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        if (!await PauseAssistantForMaintenanceAsync(DatabaseMaintenanceSettingName).ConfigureAwait(true))
+        {
+            SetDatabaseMaintenanceStatus(AssistantBusyForMaintenanceMessage, CompactDistroWarningColor);
+            return;
+        }
+
+        if (!TryBeginExclusiveDistroOperation())
+        {
+            ResumeAssistantAfterMaintenance(reconnect: true);
+            SetDatabaseMaintenanceStatus(ExclusiveDistroOperationBusyMessage, CompactDistroWarningColor);
+            ReportExclusiveDistroOperationBusy(DatabaseMaintenanceSettingName);
+            return;
+        }
+
+        SetDatabaseMaintenanceStatus("Checking for old PostgreSQL 15 data...", CompactDistroBusyColor);
+        var endedSafely = true;
+        try
+        {
+            if (!await EnsureDatabaseToolAsync(actionName).ConfigureAwait(true))
+            {
+                return;
+            }
+
+            var registrationId = _wsl.GetDistroRegistrationId();
+            var wsl = _wsl;
+            var cleanup = await RunPg15CleanupAsync(
+                    (arguments, output) => wsl.RunDatabaseMaintenanceAsync(arguments, output),
+                    bytes =>
+                    {
+                        // Defaults to No: the deletion cannot be undone from the launcher.
+                        if (MessageBox.Show(
+                                BuildPg15CleanupConfirmation(bytes),
+                                "Confirm Delete Old PostgreSQL 15 Data",
+                                MessageBoxButton.YesNo,
+                                MessageBoxImage.Warning,
+                                MessageBoxResult.No) != MessageBoxResult.Yes)
+                        {
+                            return false;
+                        }
+
+                        SetDatabaseMaintenanceStatus("Deleting the old PostgreSQL 15 data...", CompactDistroBusyColor);
+                        AppendLog($"Starting {actionName.ToLowerInvariant()}...{Environment.NewLine}");
+                        return true;
+                    },
+                    text => AppendLog(text))
+                .ConfigureAwait(true);
+
+            switch (cleanup.Outcome)
+            {
+                case Pg15CleanupOutcome.Deleted:
+                    SetPg15DeletedRegistration(registrationId ?? string.Empty);
+                    var done = BuildPg15CleanupDoneStatus(cleanup.FreedBytes);
+                    AppendLog($"{actionName} finished.{Environment.NewLine}", "green");
+                    SetDatabaseMaintenanceStatus(done, CompactDistroSuccessColor);
+                    MessageBox.Show(done, DatabaseMaintenanceSettingName, MessageBoxButton.OK, MessageBoxImage.Information);
+                    break;
+                case Pg15CleanupOutcome.Canceled:
+                    SetDatabaseMaintenanceStatus(cleanup.Detail, CompactDistroNeutralColor);
+                    AppendLog($"{actionName} canceled.{Environment.NewLine}");
+                    break;
+                case Pg15CleanupOutcome.NotEligible:
+                    AppendLog($"{actionName} not available: {cleanup.Detail}{Environment.NewLine}");
+                    SetDatabaseMaintenanceStatus($"Nothing to delete. {cleanup.Detail}", CompactDistroNeutralColor);
+                    MessageBox.Show($"{cleanup.Detail}\n\nNothing was changed.",
+                        DatabaseMaintenanceSettingName, MessageBoxButton.OK, MessageBoxImage.Information);
+                    break;
+                case Pg15CleanupOutcome.PreviewFailed:
+                    AppendLog($"{actionName} preview failed: {cleanup.Detail}{Environment.NewLine}", "red");
+                    SetDatabaseMaintenanceStatus(
+                        "Could not check for old PostgreSQL 15 data. Nothing was changed. Open the console for details.",
+                        CompactDistroErrorColor);
+                    MessageBox.Show($"Could not check for old PostgreSQL 15 data.\n\n{cleanup.Detail}\n\nNothing was changed.",
+                        DatabaseMaintenanceSettingName, MessageBoxButton.OK, MessageBoxImage.Error);
+                    break;
+                default:
+                    AppendLog($"{actionName} failed: {cleanup.Detail}{Environment.NewLine}", "red");
+                    SetDatabaseMaintenanceStatus(
+                        $"{actionName} failed (exit code {cleanup.ExitCode}). Open the console for details.",
+                        CompactDistroErrorColor);
+                    MessageBox.Show($"{actionName} failed.\n\n{cleanup.Detail}",
+                        DatabaseMaintenanceSettingName, MessageBoxButton.OK, MessageBoxImage.Error);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            endedSafely = false;
+            AppendLog($"{actionName} error: {ex.Message}{Environment.NewLine}", "red");
+            SetDatabaseMaintenanceStatus($"{actionName} could not finish. Open the console for details.", CompactDistroErrorColor);
+            MessageBox.Show($"{actionName} could not finish.\n\n{ex.Message}",
+                DatabaseMaintenanceSettingName, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetExclusiveDistroOperationInProgress(false);
+            QueueServerStatusRefresh();
+            ResumeAssistantAfterMaintenance(endedSafely);
+        }
+    }
+
+    private static string DescribeDatabaseToolFailure(CommandResult result) =>
+        result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode
+            ? "A distro update is still running. Nothing was changed; try again once it finishes."
+            : GetCommandError(result);
+
+    private async Task<bool> EnsureDatabaseToolAsync(string actionName)
+    {
+        var probe = await _wsl.RunDistroAsUserAsync("root", ["test", "-x", DatabaseMaintenanceToolPath])
+            .ConfigureAwait(true);
+        if (probe.Succeeded)
+        {
+            return true;
+        }
+
+        AppendLog($"{actionName} unavailable: {DatabaseMaintenanceToolPath} was not found.{Environment.NewLine}", "red");
+        SetDatabaseMaintenanceStatus(
+            "Failed. This distro does not have the database maintenance tool. Run Update Distro first. Nothing was changed.",
+            CompactDistroErrorColor);
+        MessageBox.Show(
+            "This installation does not have the database maintenance tool yet.\n\n" +
+            "Run Update Distro, then try again. Nothing was changed.",
+            DatabaseMaintenanceSettingName,
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+        return false;
     }
 
     private async Task RunDatabaseMaintenanceAsync(string verb)
@@ -160,22 +459,19 @@ public sealed partial class MainWindowViewModel
         var endedSafely = true;
         try
         {
-            var probe = await _wsl.RunDistroAsUserAsync(
-                    "root", ["test", "-x", DatabaseMaintenanceToolPath])
-                .ConfigureAwait(true);
-            if (!probe.Succeeded)
+            if (!await EnsureDatabaseToolAsync(actionName).ConfigureAwait(true))
             {
-                AppendLog($"{actionName} unavailable: {DatabaseMaintenanceToolPath} was not found.{Environment.NewLine}", "red");
-                SetDatabaseMaintenanceStatus(
-                    "Failed. This distro does not have the database maintenance tool. Run Update Distro first. Nothing was changed.",
-                    CompactDistroErrorColor);
-                MessageBox.Show(
-                    "This installation does not have the database maintenance tool yet.\n\n" +
-                    "Run Update Distro, then try again. Nothing was changed.",
-                    DatabaseMaintenanceSettingName,
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
                 return;
+            }
+
+            // Only an upgrade from PostgreSQL 15 re-enables Roll back; a zero exit on an already current
+            // database does not bring deleted data back.
+            var restoresRollback = false;
+            if (isUpgrade && !IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId()))
+            {
+                var status = await _wsl.RunDatabaseMaintenanceAsync(Pg17UpdateMigration.BuildStatusArguments(), _ => { })
+                    .ConfigureAwait(true);
+                restoresRollback = status.Succeeded && Pg17UpdateMigration.ParseStatus(status.StandardOutput) == Pg17Status.Needed;
             }
 
             if (isUpgrade)
@@ -197,9 +493,7 @@ public sealed partial class MainWindowViewModel
                 .ConfigureAwait(true);
             if (!result.Succeeded)
             {
-                var error = result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode
-                    ? "A distro update is still running. Nothing was changed; try again once it finishes."
-                    : GetCommandError(result);
+                var error = DescribeDatabaseToolFailure(result);
                 AppendLog($"{actionName} failed: {error}{Environment.NewLine}", "red");
                 SetDatabaseMaintenanceStatus(
                     $"{actionName} failed (exit code {result.ExitCode}). Open the console for details.",
@@ -210,6 +504,11 @@ public sealed partial class MainWindowViewModel
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
                 return;
+            }
+
+            if (restoresRollback)
+            {
+                SetPg15DeletedRegistration(null);
             }
 
             AppendLog($"{actionName} finished.{Environment.NewLine}", "green");
