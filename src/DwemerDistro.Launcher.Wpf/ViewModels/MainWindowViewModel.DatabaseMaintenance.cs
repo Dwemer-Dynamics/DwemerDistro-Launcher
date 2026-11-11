@@ -20,6 +20,7 @@ public sealed partial class MainWindowViewModel
     internal const string DatabaseMaintenanceRollbackVerb = "rollback";
     internal const string DatabaseCleanupPreviewVerb = "cleanup-preview";
     internal const string DatabaseCleanupVerb = "cleanup-pg15";
+    internal const string DatabaseCleanupConfirmPreviewOption = "--confirm-preview";
 
     private string _databaseMaintenanceStatusText = string.Empty;
     private string _databaseMaintenanceStatusColor = CompactDistroNeutralColor;
@@ -109,9 +110,17 @@ public sealed partial class MainWindowViewModel
     internal static string[] BuildDatabaseMaintenanceArguments(string verb) => verb switch
     {
         DatabaseMaintenanceUpgradeVerb or DatabaseMaintenanceRollbackVerb
-            or DatabaseCleanupPreviewVerb or DatabaseCleanupVerb => [DatabaseMaintenanceToolPath, verb],
+            or DatabaseCleanupPreviewVerb => [DatabaseMaintenanceToolPath, verb],
         _ => throw new ArgumentOutOfRangeException(nameof(verb), verb, "Unknown database maintenance action.")
     };
+
+    /// <summary><c>cleanup-pg15</c> only ever runs bound to the token of the preview the user was shown.</summary>
+    internal static string[] BuildPg15CleanupArguments(string previewToken) => IsCleanupPreviewToken(previewToken)
+        ? [DatabaseMaintenanceToolPath, DatabaseCleanupVerb, DatabaseCleanupConfirmPreviewOption, previewToken]
+        : throw new ArgumentException("The cleanup preview token must be 64 lowercase hex characters.", nameof(previewToken));
+
+    internal static bool IsCleanupPreviewToken(string? token) =>
+        token is { Length: 64 } && token.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     internal static string BuildDatabaseUpgradeConfirmation()
     {
@@ -131,21 +140,44 @@ public sealed partial class MainWindowViewModel
                "If you have new saves, keep PostgreSQL 17 running. Rollback checks for changes and refuses to discard them.\n\nContinue?";
     }
 
-    internal sealed record Pg15CleanupPreview(bool Eligible, long Bytes, string Reason);
+    /// <summary><see cref="Token"/> is null unless the tool sent a well-formed one; an older tool sends none.</summary>
+    internal sealed record Pg15CleanupPreview(bool Eligible, long Bytes, string Reason, string? Token = null);
 
     internal enum Pg15CleanupOutcome
     {
         PreviewFailed,
+        RegistrationUnknown,
+        RegistrationChanged,
         NotEligible,
         Canceled,
         Failed,
         Deleted
     }
 
-    /// <summary><see cref="Detail"/> is the tool's reason or error; <see cref="FreedBytes"/> is null when the tool did not report it.</summary>
-    internal sealed record Pg15CleanupResult(Pg15CleanupOutcome Outcome, string Detail, long? FreedBytes = null, int ExitCode = 0);
+    /// <summary>
+    /// <see cref="Detail"/> is the tool's reason or error; <see cref="FreedBytes"/> is null when the tool did not report it.
+    /// <see cref="RegistrationId"/> is the previewed WSL registration GUID, set only when its data was deleted.
+    /// </summary>
+    internal sealed record Pg15CleanupResult(
+        Pg15CleanupOutcome Outcome, string Detail, long? FreedBytes = null, int ExitCode = 0, string? RegistrationId = null);
 
-    /// <summary><c>cleanup-preview</c>: the last non-empty line must be {"eligible":bool,"bytes":int,"reason":string}.</summary>
+    internal const string Pg15CleanupRegistrationUnknownMessage =
+        "The launcher could not identify this DwemerDistro installation in WSL, so it cannot keep Roll back turned off " +
+        "after deleting. Nothing was deleted.";
+
+    internal const string Pg15CleanupRegistrationChangedMessage =
+        "DwemerDistro was reinstalled or re-imported after the preview, so the preview no longer describes it. " +
+        "Nothing was deleted. Choose Delete PG15 data again for a fresh preview.";
+
+    internal const string Pg15CleanupTokenMissingMessage =
+        "The database maintenance tool's cleanup preview did not include a valid confirmation token, so the launcher " +
+        "cannot prove the deletion matches the preview. Nothing was deleted. Update DwemerDistro, then choose " +
+        "Delete PG15 data again for a fresh preview.";
+
+    /// <summary>
+    /// <c>cleanup-preview</c>: the last non-empty line must be {"eligible":bool,"bytes":int,"reason":string}, plus
+    /// "token" (64 lowercase hex characters) when eligible. A missing or malformed token leaves <see cref="Pg15CleanupPreview.Token"/> null.
+    /// </summary>
     internal static Pg15CleanupPreview? ParseCleanupPreview(string? output)
     {
         using var document = ReadLastJsonObject(output);
@@ -155,7 +187,9 @@ public sealed partial class MainWindowViewModel
                && root.TryGetProperty("bytes", out var bytes) && bytes.ValueKind == JsonValueKind.Number
                && bytes.TryGetInt64(out var count) && count >= 0
                && root.TryGetProperty("reason", out var reason) && reason.ValueKind == JsonValueKind.String
-            ? new Pg15CleanupPreview(eligible.GetBoolean(), count, reason.GetString()!)
+            ? new Pg15CleanupPreview(eligible.GetBoolean(), count, reason.GetString()!,
+                root.TryGetProperty("token", out var token) && token.ValueKind == JsonValueKind.String
+                && IsCleanupPreviewToken(token.GetString()) ? token.GetString() : null)
             : null;
     }
 
@@ -209,15 +243,24 @@ public sealed partial class MainWindowViewModel
         " One-click rollback is no longer available. Your Windows backup was kept.";
 
     /// <summary>
-    /// Previews, asks, and only then deletes. Nothing is deleted unless the preview is well-formed and eligible
-    /// and <paramref name="confirm"/>, shown the previewed byte count, returns true. The tool's exit code is the
-    /// only success signal for the deletion.
+    /// Previews, asks, and only then deletes. Nothing is deleted unless the preview is well-formed, eligible and
+    /// tokened and <paramref name="confirm"/>, shown the previewed byte count, returns true. The deletion is passed
+    /// exactly that token, so the tool refuses if what it would delete is no longer what was previewed. The answer is bound to the
+    /// WSL registration GUID read before the preview: an unknown one is refused, and one that differs once the
+    /// user has answered means the preview is stale. The tool's exit code is the only success signal for the deletion.
     /// </summary>
     internal static async Task<Pg15CleanupResult> RunPg15CleanupAsync(
         Func<string[], Action<string>, Task<CommandResult>> runToolAsRoot,
         Func<long, bool> confirm,
-        Action<string> output)
+        Action<string> output,
+        Func<string?> readRegistrationId)
     {
+        var registrationId = readRegistrationId();
+        if (!Guid.TryParse(registrationId, out _))
+        {
+            return new(Pg15CleanupOutcome.RegistrationUnknown, Pg15CleanupRegistrationUnknownMessage);
+        }
+
         var previewResult = await runToolAsRoot(BuildDatabaseMaintenanceArguments(DatabaseCleanupPreviewVerb), _ => { })
             .ConfigureAwait(true);
         if (!previewResult.Succeeded)
@@ -236,14 +279,24 @@ public sealed partial class MainWindowViewModel
             return new(Pg15CleanupOutcome.NotEligible, reason);
         }
 
+        if (preview.Token is not { } previewToken)
+        {
+            return new(Pg15CleanupOutcome.PreviewFailed, Pg15CleanupTokenMissingMessage);
+        }
+
         if (!confirm(preview.Bytes))
         {
             return new(Pg15CleanupOutcome.Canceled, "Canceled. Nothing was changed.");
         }
 
-        var result = await runToolAsRoot(BuildDatabaseMaintenanceArguments(DatabaseCleanupVerb), output).ConfigureAwait(true);
+        if (!string.Equals(readRegistrationId(), registrationId, StringComparison.OrdinalIgnoreCase))
+        {
+            return new(Pg15CleanupOutcome.RegistrationChanged, Pg15CleanupRegistrationChangedMessage);
+        }
+
+        var result = await runToolAsRoot(BuildPg15CleanupArguments(previewToken), output).ConfigureAwait(true);
         return result.Succeeded
-            ? new(Pg15CleanupOutcome.Deleted, string.Empty, ParseCleanupFreedBytes(result.StandardOutput))
+            ? new(Pg15CleanupOutcome.Deleted, string.Empty, ParseCleanupFreedBytes(result.StandardOutput), RegistrationId: registrationId)
             : new(Pg15CleanupOutcome.Failed, DescribeDatabaseToolFailure(result), ExitCode: result.ExitCode);
     }
 
@@ -296,7 +349,6 @@ public sealed partial class MainWindowViewModel
                 return;
             }
 
-            var registrationId = _wsl.GetDistroRegistrationId();
             var wsl = _wsl;
             var cleanup = await RunPg15CleanupAsync(
                     (arguments, output) => wsl.RunDatabaseMaintenanceAsync(arguments, output),
@@ -317,13 +369,14 @@ public sealed partial class MainWindowViewModel
                         AppendLog($"Starting {actionName.ToLowerInvariant()}...{Environment.NewLine}");
                         return true;
                     },
-                    text => AppendLog(text))
+                    text => AppendLog(text),
+                    wsl.GetDistroRegistrationId)
                 .ConfigureAwait(true);
 
             switch (cleanup.Outcome)
             {
                 case Pg15CleanupOutcome.Deleted:
-                    SetPg15DeletedRegistration(registrationId ?? string.Empty);
+                    SetPg15DeletedRegistration(cleanup.RegistrationId);
                     var done = BuildPg15CleanupDoneStatus(cleanup.FreedBytes);
                     AppendLog($"{actionName} finished.{Environment.NewLine}", "green");
                     SetDatabaseMaintenanceStatus(done, CompactDistroSuccessColor);
@@ -332,6 +385,11 @@ public sealed partial class MainWindowViewModel
                 case Pg15CleanupOutcome.Canceled:
                     SetDatabaseMaintenanceStatus(cleanup.Detail, CompactDistroNeutralColor);
                     AppendLog($"{actionName} canceled.{Environment.NewLine}");
+                    break;
+                case Pg15CleanupOutcome.RegistrationUnknown or Pg15CleanupOutcome.RegistrationChanged:
+                    AppendLog($"{actionName} refused: {cleanup.Detail}{Environment.NewLine}", "yellow");
+                    SetDatabaseMaintenanceStatus(cleanup.Detail, CompactDistroWarningColor);
+                    MessageBox.Show(cleanup.Detail, DatabaseMaintenanceSettingName, MessageBoxButton.OK, MessageBoxImage.Warning);
                     break;
                 case Pg15CleanupOutcome.NotEligible:
                     AppendLog($"{actionName} not available: {cleanup.Detail}{Environment.NewLine}");
@@ -425,17 +483,8 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        // Defaults to No: both directions rewrite the database cluster.
-        var confirmed = MessageBox.Show(
-            isUpgrade ? BuildDatabaseUpgradeConfirmation() : BuildDatabaseRollbackConfirmation(),
-            isUpgrade ? "Confirm Database Upgrade" : "Confirm Database Rollback",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning,
-            MessageBoxResult.No);
-        if (confirmed != MessageBoxResult.Yes)
+        if (RefuseDatabaseMaintenanceWhileGameOpen(actionName))
         {
-            SetDatabaseMaintenanceStatus("Canceled. Nothing was changed.", CompactDistroNeutralColor);
-            AppendLog($"{actionName} canceled.{Environment.NewLine}");
             return;
         }
 
@@ -453,10 +502,9 @@ public sealed partial class MainWindowViewModel
             return;
         }
 
-        SetDatabaseMaintenanceStatus(
-            isUpgrade ? "Upgrading the database..." : "Rolling the database back...",
-            CompactDistroBusyColor);
+        SetDatabaseMaintenanceStatus("Checking the database...", CompactDistroBusyColor);
         var endedSafely = true;
+        DatabaseBackupFolder? backup = null;
         try
         {
             if (!await EnsureDatabaseToolAsync(actionName).ConfigureAwait(true))
@@ -464,14 +512,37 @@ public sealed partial class MainWindowViewModel
                 return;
             }
 
-            // Only an upgrade from PostgreSQL 15 re-enables Roll back; a zero exit on an already current
-            // database does not bring deleted data back.
             var restoresRollback = false;
-            if (isUpgrade && !IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId()))
+            if (isUpgrade)
             {
+                // Status first: a database already on PostgreSQL 17 needs no backup folder, and its PostgreSQL 15
+                // data may already be deleted, so there is nothing to size or copy.
                 var status = await _wsl.RunDatabaseMaintenanceAsync(Pg17UpdateMigration.BuildStatusArguments(), _ => { })
                     .ConfigureAwait(true);
-                restoresRollback = status.Succeeded && Pg17UpdateMigration.ParseStatus(status.StandardOutput) == Pg17Status.Needed;
+                if (DescribeManualUpgradeNotStarted(status) is { } notStarted)
+                {
+                    AppendLog($"{actionName} not started: {notStarted.Text}{Environment.NewLine}");
+                    SetDatabaseMaintenanceStatus(notStarted.Text, notStarted.Color);
+                    MessageBox.Show(notStarted.Text, DatabaseMaintenanceSettingName, MessageBoxButton.OK, notStarted.Icon);
+                    return;
+                }
+
+                // Only an upgrade from PostgreSQL 15 re-enables Roll back; it leaves fresh PostgreSQL 15 data behind.
+                restoresRollback = !IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId());
+            }
+
+            // Defaults to No: both directions rewrite the database cluster.
+            var confirmed = MessageBox.Show(
+                isUpgrade ? BuildDatabaseUpgradeConfirmation() : BuildDatabaseRollbackConfirmation(),
+                isUpgrade ? "Confirm Database Upgrade" : "Confirm Database Rollback",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+            if (confirmed != MessageBoxResult.Yes)
+            {
+                SetDatabaseMaintenanceStatus("Canceled. Nothing was changed.", CompactDistroNeutralColor);
+                AppendLog($"{actionName} canceled.{Environment.NewLine}");
+                return;
             }
 
             if (isUpgrade)
@@ -486,13 +557,44 @@ public sealed partial class MainWindowViewModel
                     SetDatabaseMaintenanceStatus("Upgrade cancelled.", CompactDistroNeutralColor);
                     return;
                 }
-                arguments = [.. arguments, await PrepareDatabaseBackupAsync(_wsl, picker.SelectedPath).ConfigureAwait(true)];
+
+                try
+                {
+                    backup = await PrepareDatabaseBackupAsync(_wsl, picker.SelectedPath).ConfigureAwait(true);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    var notStarted = $"Upgrade not started. {ex.Message} Nothing was changed.";
+                    AppendLog($"{actionName} not started: {ex.Message}{Environment.NewLine}", "yellow");
+                    SetDatabaseMaintenanceStatus(notStarted, CompactDistroWarningColor);
+                    MessageBox.Show(notStarted, DatabaseMaintenanceSettingName, MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                arguments = [.. arguments, backup.DistroPath];
             }
+
+            // Again right before the tool runs: the questions and the folder picker can stay open any length of time.
+            if (RefuseDatabaseMaintenanceWhileGameOpen(actionName))
+            {
+                if (backup is not null) TryRemoveUnusedBackupFolder(backup.WindowsPath);
+                return;
+            }
+
+            SetDatabaseMaintenanceStatus(
+                isUpgrade ? "Upgrading the database..." : "Rolling the database back...",
+                CompactDistroBusyColor);
             AppendLog($"Starting {actionName.ToLowerInvariant()}...{Environment.NewLine}");
             var result = await _wsl.RunDatabaseMaintenanceAsync(arguments, text => AppendLog(text))
                 .ConfigureAwait(true);
             if (!result.Succeeded)
             {
+                // The update lock refused the tool before it started, so its backup folder is still empty.
+                if (backup is not null && result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode)
+                {
+                    TryRemoveUnusedBackupFolder(backup.WindowsPath);
+                }
+
                 var error = DescribeDatabaseToolFailure(result);
                 AppendLog($"{actionName} failed: {error}{Environment.NewLine}", "red");
                 SetDatabaseMaintenanceStatus(
@@ -547,11 +649,60 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
+    /// Manual upgrade and rollback never wait for a game the way Update Distro does; they refuse on the same
+    /// game check, before asking anything and again right before the tool runs.
+    /// </summary>
+    private bool RefuseDatabaseMaintenanceWhileGameOpen(string actionName)
+    {
+        var games = Pg17UpdateMigration.FindRunningGames();
+        if (games.Count == 0)
+        {
+            return false;
+        }
+
+        var message = BuildDatabaseMaintenanceGameOpenMessage(actionName, games);
+        AppendLog(message + Environment.NewLine, "yellow");
+        SetDatabaseMaintenanceStatus(message, CompactDistroWarningColor);
+        MessageBox.Show(message, DatabaseMaintenanceSettingName, MessageBoxButton.OK, MessageBoxImage.Warning);
+        return true;
+    }
+
+    internal static string BuildDatabaseMaintenanceGameOpenMessage(string actionName, IReadOnlyList<string> games) =>
+        $"{actionName} not started because {string.Join(", ", games)} is open. Close the game, then try again. Nothing was changed.";
+
+    /// <summary>
+    /// What the manual upgrade reports from the tool's <c>status</c> instead of asking for a backup folder;
+    /// null when the database still needs the upgrade or is held on PostgreSQL 15.
+    /// </summary>
+    internal static (string Text, string Color, MessageBoxImage Icon)? DescribeManualUpgradeNotStarted(CommandResult status)
+    {
+        if (!status.Succeeded)
+        {
+            var error = DescribeDatabaseToolFailure(status).Trim();
+            return ($"Could not check the database version. {error}" +
+                    (error.Contains("Nothing was changed", StringComparison.Ordinal) ? string.Empty : " Nothing was changed."),
+                CompactDistroErrorColor, MessageBoxImage.Error);
+        }
+
+        return Pg17UpdateMigration.ParseStatus(status.StandardOutput) switch
+        {
+            Pg17Status.Needed or Pg17Status.Held => null,
+            Pg17Status.Current => ("Nothing to do. The database already runs PostgreSQL 17.",
+                CompactDistroSuccessColor, MessageBoxImage.Information),
+            Pg17Status.Unsupported => ("This database layout can't be upgraded by the launcher. Nothing was changed.",
+                CompactDistroWarningColor, MessageBoxImage.Warning),
+            _ => ("Could not check the database version: the maintenance tool gave an unrecognized answer. Nothing was changed.",
+                CompactDistroErrorColor, MessageBoxImage.Error)
+        };
+    }
+
+    /// <summary>
     /// The normal distro update: core provisioning and shared components, then the unattended PostgreSQL 17
     /// step, and only then the release marker, so an update never records success before the database is
     /// migrated. Each scripted phase gets its own <paramref name="phaseTimeout"/>, so time spent waiting for
     /// a game to close is not charged to the release step. Takes a <see cref="WslService"/> rather than the
-    /// view model's, so a test can run the same sequence against an isolated distro.
+    /// view model's, so a test can run the same sequence against an isolated distro. <paramref name="databaseFinished"/>
+    /// gets the database step's result as soon as it ends, before a cancellation can still stop the update.
     /// </summary>
     internal static async Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
         WslService wsl,
@@ -560,7 +711,8 @@ public sealed partial class MainWindowViewModel
         Action<string> migrationLog,
         TimeSpan phaseTimeout,
         CancellationToken cancellationToken,
-        CancellationToken waitToken)
+        CancellationToken waitToken,
+        Action<Pg17MigrationResult>? databaseFinished = null)
     {
         try
         {
@@ -584,6 +736,7 @@ public sealed partial class MainWindowViewModel
 
         output(UpdateStageMarkerLine(UpdateStageDatabase));
         var database = await migration.RunAsync(migrationLog, waitToken).ConfigureAwait(false);
+        databaseFinished?.Invoke(database);
         cancellationToken.ThrowIfCancellationRequested();
         if (!database.AllowsUpdateToFinish)
         {
@@ -606,12 +759,18 @@ public sealed partial class MainWindowViewModel
     private Pg17UpdateMigration CreateUpdateMigration(PausableDeadline? deadline)
     {
         var wsl = _wsl;
+        DatabaseBackupFolder? backup = null;
         var migration = new Pg17UpdateMigration(
             (arguments, output, token) => wsl.RunDatabaseMaintenanceAsync(arguments, output, token),
             Pg17UpdateMigration.FindRunningGames,
-            token => PrepareDatabaseBackupAsync(wsl, Pg17UpdateMigration.DefaultBackupRoot, token),
+            async token => (backup = await PrepareDatabaseBackupAsync(wsl, Pg17UpdateMigration.DefaultBackupRoot, token)
+                .ConfigureAwait(false)).DistroPath,
             PauseDeadlineDuringDelay(Task.Delay, deadline),
-            Pg17UpdateMigration.DefaultRecheckInterval);
+            Pg17UpdateMigration.DefaultRecheckInterval,
+            () =>
+            {
+                if (backup is not null) TryRemoveUnusedBackupFolder(backup.WindowsPath);
+            });
         var hintShown = false;
         migration.WaitingForGamesChanged += games =>
         {
@@ -673,6 +832,18 @@ public sealed partial class MainWindowViewModel
         _ => waited ? (result.Message, CompactDistroNeutralColor) : null
     };
 
+    /// <summary>
+    /// The row's line when the update stops with an exception. Once the database step has ended, its own result
+    /// stands, because <c>auto</c> runs to its end and a timeout or shutdown after it does not undo it.
+    /// </summary>
+    internal static (string Text, string Color)? BuildInterruptedUpdateDatabaseStatus(Pg17MigrationResult? result, bool waited) =>
+        result is not null
+            ? BuildUpdateDatabaseStatus(result, waited)
+            : waited
+                ? ("Upgrade postponed. Nothing was changed. Update Distro finishes the upgrade the next time it runs with no game open.",
+                    CompactDistroNeutralColor)
+                : null;
+
     internal static string DescribeDatabaseUpdateFailure(Pg17MigrationResult result) =>
         $" during the PostgreSQL 17 database upgrade: {result.Message.TrimEnd('.')}." +
         (result.Outcome == Pg17MigrationOutcome.Deferred
@@ -710,14 +881,28 @@ public sealed partial class MainWindowViewModel
         }
     }
 
+    /// <summary>A backup folder this launcher just created, by its Windows path and its distro path.</summary>
+    internal sealed record DatabaseBackupFolder(string WindowsPath, string DistroPath);
+
+    internal const string DatabaseBackupFolderPrefix = "Dwemer-PG15-";
+
+    /// <summary>Null when <paramref name="parentFolder"/> can hold a backup; otherwise why it can't.</summary>
+    internal static string? DescribeUnsupportedBackupFolder(string parentFolder) =>
+        System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(parentFolder)) is { } root && root.StartsWith(@"\\", StringComparison.Ordinal)
+            ? @"Network folders (paths starting with \\) can't hold the database backup. Choose a folder on a local Windows drive, such as C:."
+            : null;
+
     /// <summary>
     /// Checks Windows free space for staging and the backup, creates a backup folder only the current
-    /// Windows account can open under <paramref name="parentFolder"/>, and returns its distro path.
-    /// Both the manual upgrade and the unattended update upgrade use this.
+    /// Windows account can open under <paramref name="parentFolder"/>, and returns it. The folder is removed
+    /// again, if still empty, when the distro cannot see it. Both the manual upgrade and the unattended update
+    /// upgrade use this.
     /// </summary>
-    internal static async Task<string> PrepareDatabaseBackupAsync(
+    internal static async Task<DatabaseBackupFolder> PrepareDatabaseBackupAsync(
         WslService wsl, string parentFolder, CancellationToken cancellationToken = default)
     {
+        if (DescribeUnsupportedBackupFolder(parentFolder) is { } unsupported)
+            throw new InvalidOperationException(unsupported);
         var size = await wsl.RunDistroAsUserAsync("root", ["du", "-sb", "/var/lib/postgresql/15/main"],
             cancellationToken: cancellationToken).ConfigureAwait(false);
         var disk = NormalizeDistroVhdxPath(wsl.GetDistroVhdxPath());
@@ -731,7 +916,11 @@ public sealed partial class MainWindowViewModel
         if (backingDrive.AvailableFreeSpace < checked(bytes * (sameVolume ? 6 : 4))
             || backupDrive.AvailableFreeSpace < checked(bytes * 11 / 10))
             throw new InvalidOperationException("Insufficient Windows disk space for staging and backup.");
-        var privateFolder = new System.IO.DirectoryInfo(System.IO.Path.Combine(parentFolder, $"Dwemer-PG15-{Guid.NewGuid():N}"));
+        var privateFolder = new System.IO.DirectoryInfo(System.IO.Path.Combine(parentFolder, $"{DatabaseBackupFolderPrefix}{Guid.NewGuid():N}"));
+        // Creating a folder that already exists succeeds silently, so a fresh name must be free first;
+        // only then is a later removal limited to what this created.
+        if (privateFolder.Exists)
+            throw new InvalidOperationException("The new backup folder name is already in use. Try again.");
         var acl = new System.Security.AccessControl.DirectorySecurity();
         acl.SetAccessRuleProtection(true, false);
         var owner = System.Security.Principal.WindowsIdentity.GetCurrent().User
@@ -741,11 +930,49 @@ public sealed partial class MainWindowViewModel
             System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit,
             System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
         System.IO.FileSystemAclExtensions.Create(privateFolder, acl);
-        var path = await wsl.RunWslAsync(["-d", wsl.DistroName, "--exec", "wslpath", "-a", "-u", privateFolder.FullName],
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (!path.Succeeded || !path.StandardOutput.Trim().StartsWith("/mnt/", StringComparison.Ordinal))
-            throw new InvalidOperationException("Choose a Windows backup folder outside the distro.");
-        return path.StandardOutput.Trim();
+        try
+        {
+            var path = await wsl.RunWslAsync(["-d", wsl.DistroName, "--exec", "wslpath", "-a", "-u", privateFolder.FullName],
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (!path.Succeeded || !path.StandardOutput.Trim().StartsWith("/mnt/", StringComparison.Ordinal))
+                throw new InvalidOperationException("Choose a Windows backup folder outside the distro.");
+            // wslpath maps any drive letter, mounted or not. A network, subst or removable drive WSL did not mount
+            // would put the backup in the distro's own disk under /mnt; only the folder just created proves the mapping.
+            var visible = await wsl.RunWslAsync(["-d", wsl.DistroName, "-u", "root", "--exec", "test", "-d", path.StandardOutput.Trim()],
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (!visible.Succeeded)
+                throw new InvalidOperationException("The distro cannot see the backup folder. Choose a folder on a local Windows drive.");
+            return new(privateFolder.FullName, path.StandardOutput.Trim());
+        }
+        catch
+        {
+            TryRemoveUnusedBackupFolder(privateFolder.FullName);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Removes a backup folder from <see cref="PrepareDatabaseBackupAsync"/> that nothing was written to. Never
+    /// recursive: a folder holding anything, a backup included, stays, and so does any folder not named like ours.
+    /// </summary>
+    internal static bool TryRemoveUnusedBackupFolder(string windowsPath)
+    {
+        if (!System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(windowsPath))
+                .StartsWith(DatabaseBackupFolderPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (System.IO.Directory.EnumerateFileSystemEntries(windowsPath).Any()) return false;
+            System.IO.Directory.Delete(windowsPath, recursive: false);
+            return true;
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private void SetDatabaseMaintenanceStatus(string text, string color)

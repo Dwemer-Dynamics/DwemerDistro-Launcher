@@ -33,13 +33,16 @@ internal sealed record Pg17MigrationResult(Pg17MigrationOutcome Outcome, string 
 /// asks anything, and waits while a supported game is open so a live save is never migrated underneath
 /// it. The distro's maintenance tool owns the database work; its exit code is the only success signal.
 /// Every dependency is a delegate so the orchestration runs against fakes or an isolated distro.
+/// <paramref name="discardUnusedBackup"/> runs when the upgrade is postponed after the backup folder was
+/// prepared but before <c>auto</c> could write to it.
 /// </summary>
 internal sealed class Pg17UpdateMigration(
     Func<string[], Action<string>, CancellationToken, Task<CommandResult>> runToolAsRoot,
     Func<IReadOnlyList<string>> findRunningGames,
     Func<CancellationToken, Task<string>> prepareBackupAsync,
     Func<TimeSpan, CancellationToken, Task> delayAsync,
-    TimeSpan recheckInterval)
+    TimeSpan recheckInterval,
+    Action? discardUnusedBackup = null)
 {
     internal const string ToolPath = "/usr/local/bin/ddistro_pg17_maintenance";
     internal static readonly TimeSpan DefaultRecheckInterval = TimeSpan.FromSeconds(30);
@@ -145,7 +148,7 @@ internal sealed class Pg17UpdateMigration(
     /// </summary>
     public async Task<Pg17MigrationResult> RunAsync(Action<string> log, CancellationToken waitToken)
     {
-        string backupPath;
+        string? backupPath = null;
         var announcedGames = string.Empty;
         try
         {
@@ -210,6 +213,7 @@ internal sealed class Pg17UpdateMigration(
         catch (OperationCanceledException) when (waitToken.IsCancellationRequested)
         {
             if (announcedGames.Length > 0) WaitingForGamesChanged?.Invoke([]);
+            if (backupPath is not null) discardUnusedBackup?.Invoke();
             return new(Pg17MigrationOutcome.Deferred,
                 "the PostgreSQL 17 database upgrade was postponed before it started; nothing was changed");
         }

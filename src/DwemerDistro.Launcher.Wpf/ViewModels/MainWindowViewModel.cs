@@ -2712,6 +2712,7 @@ echo "CHIM-MCP installed and enabled."
         var stage = UpdateStagePreparing;
         string? evidence = null;
         var waitedForGames = false;
+        Pg17MigrationResult? databaseResult = null;
         _systemUpdateFailure = null;
         _systemUpdateFailureStage = null;
         _otherDistroUpdateRunning = false;
@@ -2746,7 +2747,7 @@ echo "CHIM-MCP installed and enabled."
             {
                 LauncherLogService.Operation(text);
                 AppendLog(text);
-            }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token);
+            }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token, database => databaseResult = database);
             _distroUpdateTask = updateTask;
             var outcome = await updateTask.ConfigureAwait(false);
             var result = outcome.Command;
@@ -2776,11 +2777,11 @@ echo "CHIM-MCP installed and enabled."
         catch (Exception ex)
         {
             LauncherLogService.Operation($"END distro and shared components update; no exit code: {ex.GetType().Name}; stage {stage}");
-            if (waitedForGames)
+            // A timeout or shutdown can still stop the update after auto ended; the database step's own result stands.
+            if (databaseResult is not null) LauncherLogService.Operation("PostgreSQL 17 update step: " + databaseResult.Message);
+            if (BuildInterruptedUpdateDatabaseStatus(databaseResult, waitedForGames) is { } status)
             {
-                SetDatabaseMaintenanceStatus(
-                    "Upgrade postponed. Nothing was changed. Update Distro finishes the upgrade the next time it runs with no game open.",
-                    CompactDistroNeutralColor);
+                SetDatabaseMaintenanceStatus(status.Text, status.Color);
             }
 
             throw;
