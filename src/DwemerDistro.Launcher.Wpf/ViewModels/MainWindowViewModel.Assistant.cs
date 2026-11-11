@@ -82,6 +82,7 @@ public sealed partial class MainWindowViewModel : IAssistantHost
         UpdateStageDownload => "Updating DwemerDistro: downloading the latest distro files.",
         UpdateStageCore => "Updating DwemerDistro core.",
         UpdateStageShared => "Updating DwemerDistro's shared components.",
+        UpdateStageDatabase => "Upgrading the DwemerDistro database to PostgreSQL 17.",
         UpdateStageRelease => "Finishing the DwemerDistro update.",
         _ => "Preparing the DwemerDistro update."
     });

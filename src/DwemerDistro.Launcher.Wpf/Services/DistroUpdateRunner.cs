@@ -16,6 +16,15 @@ internal static class DistroUpdateRunner
     internal static string BuildWaitForOtherUpdateCommand() =>
         $"[ -e {LockPath} ] || exit 0; exec timeout 1840 flock -s -w 1830 {LockPath} true";
 
+    /// <summary>
+    /// Runs a root command under the same update lock, so database maintenance never overlaps core provisioning,
+    /// including an update or <c>auto</c> left running in the distro by a launcher that closed. The lock is closed
+    /// before exec so a database server the command starts does not inherit it.
+    /// </summary>
+    internal static string[] BuildLockedRootArguments(IEnumerable<string> arguments) =>
+        ["flock", "-n", "-E", OtherUpdateRunningExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "--close", LockPath, .. arguments];
+
     internal static async Task<Models.CommandResult> RunAsync(
         WslService wsl, string command, Action<string> output, CancellationToken cancellationToken)
     {

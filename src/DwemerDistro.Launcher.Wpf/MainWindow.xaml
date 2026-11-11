@@ -2908,6 +2908,43 @@
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Database Maintenance" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Upgrade the database to PostgreSQL 17, or roll back to PostgreSQL 15."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                    <TextBlock Text="Update Distro also does this on its own, with no questions. It waits while a supported game is open and finishes once you close it."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                    <TextBlock Text="Rollback checks for changed data before restoring PostgreSQL 15."
+                                               Foreground="{DynamicResource GameCenter.DangerText}"
+                                               FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding DatabaseMaintenanceStatusText}"
+                                               Foreground="{Binding DatabaseMaintenanceStatusColor}"
+                                               Visibility="{Binding HasDatabaseMaintenanceStatus, Converter={StaticResource BoolToVisibility}}"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <Button Content="Upgrade" Command="{Binding UpgradeDatabaseCommand}"
+                                            Style="{StaticResource GameCenter.SettingRowButton}"
+                                            AutomationProperties.Name="Upgrade database to PostgreSQL 17"
+                                            AutomationProperties.HelpText="Runs the distro's PostgreSQL 17 upgrade as root. You are asked to confirm first, and the confirmation defaults to No. Rollback is only possible before anything is written to the upgraded database." />
+                                    <Button Content="Roll back" Command="{Binding RollbackDatabaseCommand}"
+                                            Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
+                                            AutomationProperties.Name="Roll back PostgreSQL 17 database upgrade"
+                                            AutomationProperties.HelpText="Rolls back a PostgreSQL 17 upgrade. Only use this before anything is written to the upgraded database; data written since the upgrade is not carried back. You are asked to confirm first, and the confirmation defaults to No." />
+                                    <!-- Shown only while Update Distro holds its database upgrade for an open game, so
+                                         the wait can always be ended from where its status is shown. -->
+                                    <Button Content="Stop waiting" Command="{Binding StopDatabaseUpgradeWaitCommand}"
+                                            Visibility="{Binding IsDatabaseUpgradeWaiting, Converter={StaticResource BoolToVisibility}}"
+                                            Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
+                                            AutomationProperties.Name="Stop waiting to upgrade the database"
+                                            AutomationProperties.HelpText="Update Distro is waiting for an open game to close before upgrading the database to PostgreSQL 17. Stopping postpones the upgrade, changes nothing, and leaves the distro update unfinished so it runs again later." />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
                                     <TextBlock Text="Export Distro Backup" Style="{StaticResource GameCenter.SettingRowTitle}" />
                                     <TextBlock Text="Create a backup of the distro before major updates, installs, or configuration changes."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />

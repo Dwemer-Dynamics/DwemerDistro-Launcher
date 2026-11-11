@@ -21,6 +21,7 @@ public sealed partial class MainWindowViewModel
     internal const string UpdateStageDownload = "download";
     internal const string UpdateStageCore = "core";
     internal const string UpdateStageShared = "shared";
+    internal const string UpdateStageDatabase = "database";
     internal const string UpdateStageRelease = "release";
     private const int UpdateFailureEvidenceLimit = 240;
 
@@ -782,8 +783,11 @@ public sealed partial class MainWindowViewModel
 
     internal static string BuildUpdateStageMarker(string stage)
     {
-        return $"echo '{UpdateStageMarkerPrefix}{stage}=====' && ";
+        return $"echo '{UpdateStageMarkerLine(stage)}' && ";
     }
+
+    /// <summary>The marker line itself, for a stage the launcher runs rather than the update script.</summary>
+    internal static string UpdateStageMarkerLine(string stage) => $"{UpdateStageMarkerPrefix}{stage}=====";
 
     /// <summary>Returns the stage named by an explicit update marker line, or null for ordinary output.</summary>
     internal static string? ParseUpdateStageMarker(string line)
@@ -811,12 +815,14 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Keeps the latest explicit error line of the current stage (fatal:, error:, E:, Permission denied),
-    /// otherwise the latest non-empty line. This only picks evidence; it never decides the stage.
+    /// Keeps the latest explicit error line of the current stage (fatal:, error:, E:, [ERROR], Permission denied),
+    /// otherwise the latest non-empty line. Color codes are dropped first, so the core update's own colored
+    /// [ERROR] summary, printed last, wins over an earlier error line it tolerated. This only picks evidence; it
+    /// never decides the stage.
     /// </summary>
     internal static string? SelectUpdateFailureEvidence(string? current, string line)
     {
-        var trimmed = line.Trim();
+        var trimmed = RemoveAnsiEscapeSequences(line).Trim();
         if (trimmed.Length == 0)
         {
             return current;
@@ -825,6 +831,7 @@ public sealed partial class MainWindowViewModel
         var isError = trimmed.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("error:", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("E:", StringComparison.Ordinal)
+            || trimmed.StartsWith("[ERROR]", StringComparison.Ordinal)
             || trimmed.Contains("Permission denied", StringComparison.OrdinalIgnoreCase);
         if (isError)
         {
@@ -845,6 +852,7 @@ public sealed partial class MainWindowViewModel
             UpdateStageDownload => "while updating the distro checkout",
             UpdateStageCore => "during the core update",
             UpdateStageShared => "during the shared components update",
+            UpdateStageDatabase => "during the PostgreSQL 17 database upgrade",
             UpdateStageRelease => "while recording the system release",
             _ => "while preparing the update"
         };

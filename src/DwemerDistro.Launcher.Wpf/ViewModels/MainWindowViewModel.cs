@@ -167,7 +167,7 @@ echo "CHIM-MCP installed and enabled."
     private string? _wslIp;
     private CancellationTokenSource? _connectionDetailsCts;
     private readonly CancellationTokenSource _shutdownCts = new();
-    private Task<CommandResult>? _distroUpdateTask;
+    private Task? _distroUpdateTask;
     private bool _connectionDetailsClosed;
     private string _thisPcAddressText = "Not checked";
     private string _wslAddressText = "Not checked";
@@ -319,6 +319,7 @@ echo "CHIM-MCP installed and enabled."
         FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanStartExclusiveDistroOperation);
         DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
         CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanStartExclusiveDistroOperation);
+        InitializeDatabaseMaintenanceCommands();
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
         OpenApiKeysCommand = new RelayCommand(OpenApiKeysWindow, CanAccessDistro);
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
@@ -1123,18 +1124,20 @@ echo "CHIM-MCP installed and enabled."
     /// <summary>
     /// Runs the automatic launcher-version system sync on the shared background-task path, so a slow
     /// or failing update is logged rather than blocking startup. The assistant connects only after it
-    /// settles, so the session never starts while the sync is updating DwemerDistro.
+    /// settles, so the session never starts while the sync is updating DwemerDistro. Its timeout stands
+    /// still during the idle rechecks while the update waits for a game to close, however long the session,
+    /// so the update continues in this launch once the game closes; closing the launcher still ends the wait.
     /// </summary>
     private void QueueLauncherVersionSync()
     {
         SetAssistantStartupPhase(AssistantStartupPhaseSyncCheck);
-        var queued = QueueBackgroundTask(
+        var queued = QueuePausableBackgroundTask(
             "Launcher version sync",
-            async cancellationToken =>
+            async deadline =>
             {
                 try
                 {
-                    await SyncLauncherVersionAsync(cancellationToken).ConfigureAwait(false);
+                    await SyncLauncherVersionAsync(deadline).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -1292,6 +1295,18 @@ echo "CHIM-MCP installed and enabled."
         Func<CancellationToken, Task> action,
         TimeSpan timeout,
         bool accessesDistro = false,
+        bool startupData = false) =>
+        QueuePausableBackgroundTask(name, deadline => action(deadline.Token), timeout, accessesDistro, startupData);
+
+    /// <summary>
+    /// <see cref="QueueBackgroundTask"/> for a task that can idle on the user: it may pause its own
+    /// <paramref name="timeout"/> while it waits, so the timeout bounds only the work.
+    /// </summary>
+    private bool QueuePausableBackgroundTask(
+        string name,
+        Func<PausableDeadline, Task> action,
+        TimeSpan timeout,
+        bool accessesDistro = false,
         bool startupData = false)
     {
         if (accessesDistro && !TryBeginPassiveDistroActivity())
@@ -1302,10 +1317,10 @@ echo "CHIM-MCP installed and enabled."
 
         var backgroundTask = Task.Run(async () =>
         {
-            using var timeoutCts = new CancellationTokenSource(timeout);
+            using var deadline = new PausableDeadline(timeout);
             try
             {
-                await action(timeoutCts.Token).ConfigureAwait(false);
+                await action(deadline).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -2112,6 +2127,7 @@ echo "CHIM-MCP installed and enabled."
     {
         UpdateSystemCommand?.RaiseCanExecuteChanged();
         CompactDistroCommand?.RaiseCanExecuteChanged();
+        RaiseDatabaseMaintenanceCommandStates();
         ExportDistroCommand?.RaiseCanExecuteChanged();
         ImportDistroCommand?.RaiseCanExecuteChanged();
         FixWslDnsCommand?.RaiseCanExecuteChanged();
@@ -2201,7 +2217,8 @@ echo "CHIM-MCP installed and enabled."
     private async Task<SystemUpdateRunResult> RunSystemUpdateCoreAsync(
         bool requireConfirmation,
         string sourceLabel,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        PausableDeadline? deadline = null)
     {
         if (!CanRunUpdateOperation())
         {
@@ -2231,7 +2248,7 @@ echo "CHIM-MCP installed and enabled."
             AppendLog("Updating DwemerDistro core and shared components..." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken).ConfigureAwait(true);
+            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken, deadline).ConfigureAwait(true);
             AppendLog(
                 succeeded
                     ? "System update complete." + Environment.NewLine
@@ -2276,8 +2293,9 @@ echo "CHIM-MCP installed and enabled."
     /// successful update, so a failed or blocked attempt simply retries on a later launch. Game
     /// server repositories are never touched: this reuses the same server-free system update.
     /// </summary>
-    private async Task SyncLauncherVersionAsync(CancellationToken cancellationToken = default)
+    private async Task SyncLauncherVersionAsync(PausableDeadline deadline)
     {
+        var cancellationToken = deadline.Token;
         var currentVersion = SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion);
         if (currentVersion is null)
         {
@@ -2326,7 +2344,8 @@ echo "CHIM-MCP installed and enabled."
                 .InvokeAsync(() => RunSystemUpdateCoreAsync(
                     requireConfirmation: false,
                     sourceLabel: "Launcher sync",
-                    cancellationToken))
+                    cancellationToken,
+                    deadline))
                 .Task
                 .Unwrap()
                 .ConfigureAwait(false);
@@ -2679,27 +2698,33 @@ echo "CHIM-MCP installed and enabled."
 
     /// <summary>
     /// Pulls the distro scripts, runs update.sh, then runs update_gws with every application-server
-    /// skip flag so only shared services are touched.
+    /// skip flag so only shared services are touched. The unattended PostgreSQL 17 upgrade follows, and the
+    /// system release is recorded only after it, see <see cref="RunSharedDistroUpdatePipelineAsync"/>.
+    /// <paramref name="deadline"/>, when given, is the caller's own timeout behind <paramref name="cancellationToken"/>;
+    /// it stands still during each idle recheck while the update waits for a game to close.
     /// </summary>
-    private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default)
+    private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default, PausableDeadline? deadline = null)
     {
         using var updateCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
-        updateCts.CancelAfter(LauncherVersionSyncTimeout);
-        var bashCommand = BuildSystemUpdateCommand();
+        using var waitCts = BeginDatabaseUpgradeWait(updateCts.Token);
 
         var sharedComponentsStarted = false;
         var stage = UpdateStagePreparing;
         string? evidence = null;
+        var waitedForGames = false;
+        Pg17MigrationResult? databaseResult = null;
         _systemUpdateFailure = null;
         _systemUpdateFailureStage = null;
         _otherDistroUpdateRunning = false;
         LauncherLogService.Operation("START distro and shared components update");
+        var migration = CreateUpdateMigration(deadline);
+        migration.WaitingForGamesChanged += games => waitedForGames |= games.Count > 0;
         try
         {
             // Raw output always goes to the operations log; the console shows only core and shared
             // component steps, minus known routine apt/pip/git chatter. Stages come from explicit
-            // markers, never from output wording.
-            _distroUpdateTask = DistroUpdateRunner.RunAsync(_wsl, bashCommand, line =>
+            // markers, never from output wording. The database step speaks for itself in full.
+            var updateTask = RunSharedDistroUpdatePipelineAsync(_wsl, migration, line =>
             {
                 LauncherLogService.Operation(line);
                 var marker = ParseUpdateStageMarker(line);
@@ -2718,15 +2743,32 @@ echo "CHIM-MCP installed and enabled."
                 {
                     AppendLog(line);
                 }
-            }, updateCts.Token);
-            var result = await _distroUpdateTask.ConfigureAwait(false);
+            }, text =>
+            {
+                LauncherLogService.Operation(text);
+                AppendLog(text);
+            }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token, database => databaseResult = database);
+            _distroUpdateTask = updateTask;
+            var outcome = await updateTask.ConfigureAwait(false);
+            var result = outcome.Command;
 
-            LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; stage {stage}; shared components started={sharedComponentsStarted}");
+            LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; stage {stage}; shared components started={sharedComponentsStarted}; database {outcome.Database?.Outcome.ToString() ?? "not reached"}");
+            if (outcome.Database is { } database)
+            {
+                LauncherLogService.Operation("PostgreSQL 17 update step: " + database.Message);
+                if (BuildUpdateDatabaseStatus(database, waitedForGames) is { } status)
+                {
+                    SetDatabaseMaintenanceStatus(status.Text, status.Color);
+                }
+            }
+
             _otherDistroUpdateRunning = result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode;
-            var succeeded = result.Succeeded && sharedComponentsStarted;
+            var succeeded = outcome.Succeeded && sharedComponentsStarted;
             if (!succeeded)
             {
-                _systemUpdateFailure = DescribeSystemUpdateFailure(stage, result.ExitCode, evidence);
+                _systemUpdateFailure = outcome.Database is { AllowsUpdateToFinish: false } blocked
+                    ? DescribeDatabaseUpdateFailure(blocked)
+                    : DescribeSystemUpdateFailure(stage, result.ExitCode, evidence);
                 _systemUpdateFailureStage = stage;
             }
 
@@ -2735,11 +2777,26 @@ echo "CHIM-MCP installed and enabled."
         catch (Exception ex)
         {
             LauncherLogService.Operation($"END distro and shared components update; no exit code: {ex.GetType().Name}; stage {stage}");
+            // A timeout or shutdown can still stop the update after auto ended; the database step's own result stands.
+            if (databaseResult is not null) LauncherLogService.Operation("PostgreSQL 17 update step: " + databaseResult.Message);
+            if (BuildInterruptedUpdateDatabaseStatus(databaseResult, waitedForGames) is { } status)
+            {
+                SetDatabaseMaintenanceStatus(status.Text, status.Color);
+            }
+
             throw;
+        }
+        finally
+        {
+            EndDatabaseUpgradeWait(waitCts);
         }
     }
 
-    /// <summary>Bootstraps the distro checkout when an empty-base installer ships source files without Git metadata.</summary>
+    /// <summary>
+    /// Bootstraps the distro checkout when an empty-base installer ships source files without Git metadata,
+    /// then provisions the core and shared components. It does not record the release; see
+    /// <see cref="BuildSystemReleaseCommand"/>.
+    /// </summary>
     internal static string BuildSystemUpdateCommand()
     {
         return
@@ -2758,9 +2815,13 @@ echo "CHIM-MCP installed and enabled."
             "git -c credential.helper= fetch origin && git reset --hard origin/main && " +
             BuildUpdateStageMarker(UpdateStageCore) +
             "chmod +x update.sh && echo 'dwemer' | sudo -S -p '' ./update.sh && " +
-            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand() + " && " +
-            BuildUpdateStageMarker(UpdateStageRelease) +
-            BuildSystemReleaseMarkerWriteCommand();
+            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand();
+    }
+
+    /// <summary>Records the installed system release. Runs only after the core, shared and database steps succeeded.</summary>
+    internal static string BuildSystemReleaseCommand()
+    {
+        return BuildUpdateStageMarker(UpdateStageRelease) + BuildSystemReleaseMarkerWriteCommand();
     }
 
     private async Task<string?> GetCurrentBranchAsync(CancellationToken cancellationToken = default)
@@ -4754,6 +4815,19 @@ fi
             return;
         }
 
+        if (IsDatabaseBackupArtifact(archivePath))
+        {
+            AppendLog($"Full distro import refused: {archivePath} is a database-only backup, not a full distro export.{Environment.NewLine}", "red");
+            MessageBox.Show(
+                $"This file is a PostgreSQL database backup, not a full distro export:\n\n{archivePath}\n\n" +
+                "Importing it would replace the whole distro with only the database. Choose a full distro export " +
+                "(.tar) made with Export Distro Backup instead.",
+                "Import Full Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
         var installPath = GetImportInstallPath(archivePath);
         if (string.IsNullOrWhiteSpace(installPath))
         {
@@ -5360,18 +5434,23 @@ fi
 
     private string? GetImportArchivePath()
     {
-        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         var dialog = new OpenFileDialog
         {
             Title = "Import Full Dwemer Distro",
             Filter = "Tar Archive (*.tar)|*.tar|All Files (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = false,
-            InitialDirectory = desktop
+            InitialDirectory = GetImportArchiveInitialDirectory()
         };
 
         return dialog.ShowDialog() == true ? Path.GetFullPath(dialog.FileName) : null;
     }
+
+    // Opens the folder earlier launcher builds kept backups in when it exists, without creating it; Desktop otherwise.
+    private static string GetImportArchiveInitialDirectory() =>
+        Directory.Exists(DatabaseBackupRoot)
+            ? DatabaseBackupRoot
+            : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
 
     private string? GetImportInstallPath(string archivePath)
     {

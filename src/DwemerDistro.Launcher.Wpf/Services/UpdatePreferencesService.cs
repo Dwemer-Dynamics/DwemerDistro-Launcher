@@ -41,17 +41,32 @@ public sealed class UpdatePreferencesService
     }
 
     /// <summary>
-    /// Rewrites the file with the new value, keeping any keys a newer launcher build wrote, so
-    /// toggling this option in an older build does not silently drop unrelated preferences.
+    /// The WSL registration GUID whose PostgreSQL 15 data an earlier launcher build deleted, or null. Keyed to the
+    /// registration so a reinstall or import is not affected by an older deletion.
     /// </summary>
-    public bool TrySetForceGitUpdates(bool enabled, out string? error)
+    public string? GetPg15DeletedRegistrationId()
+    {
+        return Read().Pg15DeletedRegistrationId;
+    }
+
+    public bool TrySetForceGitUpdates(bool enabled, out string? error) =>
+        TryUpdate(preferences => preferences.ForceGitUpdates = enabled, out error);
+
+    public bool TrySetPg15DeletedRegistrationId(string? registrationId, out string? error) =>
+        TryUpdate(preferences => preferences.Pg15DeletedRegistrationId = registrationId, out error);
+
+    /// <summary>
+    /// Rewrites the file with the new value, keeping any keys a newer launcher build wrote, so
+    /// changing one option in an older build does not silently drop unrelated preferences.
+    /// </summary>
+    private bool TryUpdate(Action<UpdatePreferences> change, out string? error)
     {
         error = null;
 
         try
         {
             var preferences = Read();
-            preferences.ForceGitUpdates = enabled;
+            change(preferences);
 
             var directory = Path.GetDirectoryName(StatePath)!;
             Directory.CreateDirectory(directory);
@@ -104,6 +119,10 @@ public sealed class UpdatePreferences
     /// unless the file says otherwise.
     /// </summary>
     public bool ForceGitUpdates { get; set; }
+
+    /// <summary>Keeps Roll back off across restarts for the registration whose PostgreSQL 15 data was deleted.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Pg15DeletedRegistrationId { get; set; }
 
     /// <summary>Preferences this build does not know about, preserved across a save.</summary>
     [JsonExtensionData]

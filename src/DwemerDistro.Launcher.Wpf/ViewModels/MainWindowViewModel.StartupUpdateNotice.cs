@@ -76,6 +76,14 @@ public sealed partial class MainWindowViewModel
                     BuildStartupNoticeDetails(failure),
                     retry,
                     IsWarning: true);
+            case SystemUpdateRunResult.Failed when failedStage == UpdateStageDatabase:
+                return new StartupDistroUpdateNotice(
+                    title,
+                    "DwemerDistro's database upgrade didn't finish",
+                    "Core and shared components updated, but the PostgreSQL 17 database upgrade did not finish, so the update is not recorded yet. A game that was still open postpones it; nothing in the database was changed then. Installed mods were not changed.",
+                    BuildStartupNoticeDetails(failure),
+                    "Close any open game, then use Update Distro in Settings. The launcher will also try again next time it opens.",
+                    IsWarning: true);
             case SystemUpdateRunResult.Canceled:
             case SystemUpdateRunResult.TimedOut:
                 return new StartupDistroUpdateNotice(
