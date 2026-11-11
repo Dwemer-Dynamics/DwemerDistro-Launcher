@@ -1451,7 +1451,7 @@ echo "CHIM-MCP installed and enabled."
             "CHIM" => LauncherConstants.ChimServerUiUrl,
             "STOBE" => LauncherConstants.StobeServerUiUrl,
             "DIALECTIC" => LauncherConstants.DialecticServerUiUrl,
-            "REIGN" => "http://127.0.0.1:8089/",
+            "REIGN" => $"http://127.0.0.1:{LauncherConstants.ReignServerPort}/",
             "LORKHAN" => "http://127.0.0.1:7514/LorkhanServer/ui/home.php",
             _ => null
         };

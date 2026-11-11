@@ -6882,7 +6882,7 @@ finally
 static async Task RunReignLifecycleChecksAsync()
 {
     Assert(MainWindowViewModel.BuildReignStartArguments().SequenceEqual(new[] { "sudo", "/usr/local/bin/ddistro_reign", "start" })
-           && MainWindowViewModel.ReignHealthUrl == "http://127.0.0.1:8089/health",
+           && MainWindowViewModel.ReignHealthUrl == "http://127.0.0.1:8091/health",
         "Open REIGN must start only Reign through the existing runtime command and check its public health endpoint.");
     Assert(MainWindowViewModel.IsReignHealthPayloadHealthy(
                """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":4,"requiredDatabaseSchemaVersion":4,"databaseSchemaUpToDate":true}"""),

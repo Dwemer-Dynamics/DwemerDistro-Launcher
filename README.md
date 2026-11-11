@@ -84,7 +84,7 @@ Fresh installs give each local TTS service its own port. Existing Chatterbox or 
 | `8085` | Legacy/development Apache listener | Kept by some existing distro images for compatibility; the launcher does not use it as Dialectic's canonical URL. |
 | `8087` | Starfield | Reserved for the Starfield server. |
 | `8088` | Dialectic / Fallout New Vegas | Canonical Dialectic web and API server. |
-| `8089` | Reign | Reserved for the Reign server. |
+| `8091` | Reign | Reserved for the Reign server. |
 
 ### Internal Runtime Services
 
