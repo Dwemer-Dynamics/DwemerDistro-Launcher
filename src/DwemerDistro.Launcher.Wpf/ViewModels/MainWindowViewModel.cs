@@ -1727,8 +1727,12 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
-        // Probe the page itself so a stale IsServerRunning flag never blocks a reachable page.
-        if (await IsServerWebPageReachableAsync(url).ConfigureAwait(true))
+        // Probe the page itself so a stale IsServerRunning flag never blocks a reachable page. Reign
+        // sits behind an Apache proxy that answers even when Reign is down, so it must pass its own
+        // health check instead.
+        var isReign = gameKey == "REIGN";
+        Func<Task<bool>> probe = isReign ? IsReignHealthyAsync : () => IsServerWebPageReachableAsync(url);
+        if (await probe().ConfigureAwait(true))
         {
             _processRunner.OpenExternalUrl(url);
             return;
@@ -1736,6 +1740,12 @@ echo "CHIM-MCP installed and enabled."
 
         if (IsServerRunning)
         {
+            if (isReign)
+            {
+                await StartReignAndOpenAsync(url).ConfigureAwait(true);
+                return;
+            }
+
             MessageBox.Show(
                 $"The server is running, but the {gameKey} Webpage is not responding.\n\n" +
                 "Wait a few moments and try again.",
@@ -1771,9 +1781,19 @@ echo "CHIM-MCP installed and enabled."
         StartServerCommand.Execute(null);
         AppendLog($"Waiting up to {ServerWebPageStartupTimeout.TotalSeconds:0} seconds for the {gameKey} Webpage.{Environment.NewLine}");
 
-        if (await WaitForServerWebPageAsync(url).ConfigureAwait(true))
+        if (await WaitForServerWebPageAsync(probe).ConfigureAwait(true))
         {
             _processRunner.OpenExternalUrl(url);
+            return;
+        }
+
+        // start_env starts Reign itself; a running distro with an unhealthy Reign is a Reign failure.
+        if (isReign && IsServerRunning)
+        {
+            AppendLog($"DwemerDistro started, but Reign did not pass its health check.{Environment.NewLine}", "red");
+            await ShowReignStartFailureAsync(
+                    "DwemerDistro started, but Reign did not pass its health check at " + ReignHealthUrl + ".")
+                .ConfigureAwait(true);
             return;
         }
 
@@ -1787,12 +1807,12 @@ echo "CHIM-MCP installed and enabled."
     }
 
     // Bounded wait: polls on a fixed interval and gives up at ServerWebPageStartupTimeout.
-    private async Task<bool> WaitForServerWebPageAsync(string url)
+    private async Task<bool> WaitForServerWebPageAsync(Func<Task<bool>> probe)
     {
         var elapsed = Stopwatch.StartNew();
         while (true)
         {
-            if (await IsServerWebPageReachableAsync(url).ConfigureAwait(true))
+            if (await probe().ConfigureAwait(true))
             {
                 return true;
             }

@@ -238,14 +238,15 @@ public sealed class ServerManagementService(WslService wsl)
         };
     }
 
-    /// <summary>Maps a launcher branch choice ("Main"/"Dev") onto the manager's channel.</summary>
+    /// <summary>Maps a launcher branch choice ("Main"/"Dev", or Reign's retained "Reign"/"Unstable") onto the manager's channel.</summary>
     public static ServerBranchChannel ParseBranchChannel(string? choice)
     {
         return choice?.Trim().ToLowerInvariant() switch
         {
             "dev" => ServerBranchChannel.Dev,
             "reign" => ServerBranchChannel.Reign,
-            "unstable" => ServerBranchChannel.Dev,
+            // Only a retained Reign install carries this choice; other products never offer it.
+            "unstable" => ServerBranchChannel.Unstable,
             _ => ServerBranchChannel.Main
         };
     }
