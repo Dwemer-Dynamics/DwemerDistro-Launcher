@@ -319,12 +319,13 @@ public sealed class ServerManagerItemViewModel : ObservableObject
                 return $"{UpdateActionName} is unavailable until {RailProductName} is installed.";
             }
 
+            var release = ServerManagementService.ToBranchDisplayName(SelectedBranch);
             var lead = IsUpdateAvailable
-                ? $"Update Available for {RailProductName} on the selected {SelectedBranch} release. "
+                ? $"Update Available for {RailProductName} on the selected {release} release. "
                 : string.Empty;
 
             return lead +
-                   $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {SelectedBranch} release. " +
+                   $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {release} release. " +
                    "Other mods are left unchanged.";
         }
     }

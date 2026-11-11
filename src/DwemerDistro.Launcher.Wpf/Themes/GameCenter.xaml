@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:themes="clr-namespace:DwemerDistro.Launcher.Wpf.Themes">
     <SolidColorBrush x:Key="GameCenter.Window" Color="#2C2C2C" />
     <SolidColorBrush x:Key="GameCenter.Panel" Color="#1F1F1F" />
     <SolidColorBrush x:Key="GameCenter.PanelRaised" Color="#303030" />
@@ -1225,8 +1226,12 @@
     <!-- Segmented release choice over the manager's own Branches list and SelectedBranch: one
          segment per real option, so Main/Dev mods show two and Dev-only mods show one. A ListBox
          keeps single selection, Tab lands once on the selected segment, and the arrow keys move the
-         selection, as in a radio group. Disabled fades the whole control. -->
+         selection, as in a radio group. Disabled fades the whole control. Segments show and announce
+         the release label (Dev reads as Beta); the bound choice itself stays "Main"/"Dev". -->
+    <themes:BranchDisplayNameConverter x:Key="GameCenter.BranchDisplayName" />
+
     <Style x:Key="GameCenter.ModAction.ReleaseSegmentItem" TargetType="ListBoxItem">
+        <Setter Property="AutomationProperties.Name" Value="{Binding Converter={StaticResource GameCenter.BranchDisplayName}}" />
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
         <Setter Property="FontFamily" Value="Segoe UI" />
         <Setter Property="FontSize" Value="12" />
@@ -1276,6 +1281,13 @@
         <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="HorizontalAlignment" Value="Right" />
         <Setter Property="ItemContainerStyle" Value="{StaticResource GameCenter.ModAction.ReleaseSegmentItem}" />
+        <Setter Property="ItemTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Converter={StaticResource GameCenter.BranchDisplayName}}" />
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
         <Setter Property="ItemsPanel">
             <Setter.Value>
                 <ItemsPanelTemplate>
