@@ -599,14 +599,39 @@ public sealed partial class MainWindowViewModel
             cancellationToken: cancellationToken).ConfigureAwait(false);
         var disk = NormalizeDistroVhdxPath(wsl.GetDistroVhdxPath());
         if (!size.Succeeded || !long.TryParse(size.StandardOutput.Split('\t')[0], out var bytes)
-            || bytes <= 0 || string.IsNullOrEmpty(disk))
+            || bytes <= 0 || string.IsNullOrEmpty(disk) || ReadBackingVolumeFreeSpace(disk) is not { } backing)
             throw new InvalidOperationException("Could not determine database size and WSL backing volume.");
-        var backingDrive = new System.IO.DriveInfo(System.IO.Path.GetPathRoot(disk)!);
-        if (!HasRoomForDatabaseUpgrade(bytes, backingDrive.AvailableFreeSpace))
+        if (!HasRoomForDatabaseUpgrade(bytes, backing.FreeBytes))
             throw new InvalidOperationException(
-                $"Not enough free space on {backingDrive.Name}, which holds the distro's virtual disk: the upgrade needs " +
-                $"{FormatByteSize(checked(bytes * 4))} free and {FormatByteSize(backingDrive.AvailableFreeSpace)} is available.");
+                $"Not enough free space on {backing.Volume}, which holds the distro's virtual disk: the upgrade needs " +
+                $"{FormatByteSize(checked(bytes * 4))} free and {FormatByteSize(backing.FreeBytes)} is available.");
     }
+
+    /// <summary>
+    /// The Windows volume that holds <paramref name="path"/> and the free space the current user may use on it. WSL
+    /// registers the disk as <c>\\?\C:\...</c>, which <see cref="System.IO.DriveInfo"/> rejects, and a folder can be
+    /// a mounted volume or a junction to one, so the drive letter in the path is not always the volume written to.
+    /// Windows resolves both. Null when Windows cannot name the volume or read its free space.
+    /// </summary>
+    internal static (string Volume, long FreeBytes)? ReadBackingVolumeFreeSpace(string path)
+    {
+        var buffer = new char[32768];
+        if (!GetVolumePathNameW(path, buffer, buffer.Length)) return null;
+        var volume = new string(buffer, 0, Array.IndexOf(buffer, '\0'));
+        if (!GetDiskFreeSpaceExW(volume, out var available, out _, out _) || available > long.MaxValue) return null;
+        // "\\?\D:\" reads as "D:\"; a volume without a drive letter keeps its full name.
+        if (volume.StartsWith(@"\\?\", StringComparison.Ordinal) && volume.Length == 7 && volume[5] == ':')
+            volume = volume[4..];
+        return (volume, (long)available);
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool GetVolumePathNameW(string fileName, [System.Runtime.InteropServices.Out] char[] volumePathName, int bufferLength);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool GetDiskFreeSpaceExW(string directoryName, out ulong freeBytesAvailable, out ulong totalBytes, out ulong totalFreeBytes);
 
     private void SetDatabaseMaintenanceStatus(string text, string color)
     {

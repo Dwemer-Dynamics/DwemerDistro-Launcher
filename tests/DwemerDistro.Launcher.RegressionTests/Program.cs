@@ -702,6 +702,20 @@ try
            && !downloadFailure.Contains("may", StringComparison.OrdinalIgnoreCase)
            && !downloadFailure.Contains("Doctor", StringComparison.Ordinal),
         "A failed update must name its marked stage, exit code and the latest real error line, without guessing a repair.");
+    string? coreEvidence = null;
+    foreach (var line in new[]
+             {
+                 "error: credential helper 'manager' is not available\n",
+                 ">> Copying scripts to /usr/local/bin...\n",
+                 "/tmp/tmp.Q1:1:12: syntax error\n",
+                 "\u001b[1;31m[ERROR] Core update failed at step: validating and installing the dashboard keys sudoers rule (exit 1).\u001b[0m\n"
+             })
+    {
+        coreEvidence = MainWindowViewModel.SelectUpdateFailureEvidence(coreEvidence, line);
+    }
+    Assert(MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageCore, 1, coreEvidence)
+               .Contains("during the core update (exit 1): [ERROR] Core update failed at step: validating and installing the dashboard keys sudoers rule (exit 1).", StringComparison.Ordinal),
+        "The core update's own colored [ERROR] summary for the dashboard step must win over an earlier tolerated error line, without color codes.");
     Assert(MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageCore, 75, "x").Contains("another distro update is already running", StringComparison.Ordinal)
            && MainWindowViewModel.DescribeSystemUpdateFailure("preparing", 1, "token=hf_abcdefghijklmnopqrstuvwxyz").Contains("[redacted]", StringComparison.Ordinal),
         "Update failure reasons must map explicit exit codes and redact secrets.");
@@ -2074,6 +2088,52 @@ try
     Assert(MainWindowViewModel.HasRoomForDatabaseUpgrade(1_000, 4_000)
            && !MainWindowViewModel.HasRoomForDatabaseUpgrade(1_000, 3_999),
         "The upgrade needs four times the PostgreSQL 15 data free on the drive holding the distro's virtual disk.");
+
+    // WSL registers the disk as \\?\X:\...; the free-space check must read the real volume, on any drive and through
+    // a junction to another volume, from the same extended path the registry gives.
+    var pg17SpaceRun = Guid.NewGuid().ToString("N");
+    var pg17SpaceHere = Path.Combine(AppContext.BaseDirectory, "pg17-space-" + pg17SpaceRun);
+    var pg17SpaceTemp = Path.Combine(Path.GetTempPath(), "pg17-space-" + pg17SpaceRun);
+    var pg17SpaceJunction = Path.Combine(pg17SpaceHere, "linked");
+    try
+    {
+        Directory.CreateDirectory(pg17SpaceHere);
+        Directory.CreateDirectory(pg17SpaceTemp);
+        File.WriteAllBytes(Path.Combine(pg17SpaceHere, "ext4.vhdx"), []);
+        File.WriteAllBytes(Path.Combine(pg17SpaceTemp, "ext4.vhdx"), []);
+        using (var junction = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+               {
+                   ArgumentList = { "/d", "/c", "mklink", "/J", pg17SpaceJunction, pg17SpaceTemp },
+                   UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true
+               })!)
+        {
+            junction.StandardOutput.ReadToEnd();
+            junction.WaitForExit();
+            Assert(junction.ExitCode == 0, "The free-space regression needs a directory junction.");
+        }
+
+        foreach (var (folder, expectedRoot) in new[]
+                 {
+                     (pg17SpaceHere, Path.GetPathRoot(pg17SpaceHere)!),
+                     (pg17SpaceTemp, Path.GetPathRoot(pg17SpaceTemp)!),
+                     (pg17SpaceJunction, Path.GetPathRoot(pg17SpaceTemp)!)
+                 })
+        {
+            var extended = MainWindowViewModel.NormalizeDistroVhdxPath(@"\\?\" + Path.Combine(folder, "ext4.vhdx"));
+            var expectedFree = new DriveInfo(expectedRoot).AvailableFreeSpace;
+            Assert(extended is not null && extended.StartsWith(@"\\?\", StringComparison.Ordinal)
+                   && MainWindowViewModel.ReadBackingVolumeFreeSpace(extended) is { } backing
+                   && string.Equals(backing.Volume, expectedRoot, StringComparison.OrdinalIgnoreCase)
+                   && Math.Abs(backing.FreeBytes - expectedFree) < 256L * 1024 * 1024,
+                $"An extended WSL disk path under {folder} must report the free space of {expectedRoot}.");
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(pg17SpaceJunction)) Directory.Delete(pg17SpaceJunction);
+        if (Directory.Exists(pg17SpaceHere)) Directory.Delete(pg17SpaceHere, recursive: true);
+        if (Directory.Exists(pg17SpaceTemp)) Directory.Delete(pg17SpaceTemp, recursive: true);
+    }
 
     // Manual upgrade decides from status before asking for a folder; manual upgrade and rollback refuse while a game is open.
     Assert(MainWindowViewModel.DescribeManualUpgradeNotStarted(pg17Ok("current")) is { } pg17ManualCurrent

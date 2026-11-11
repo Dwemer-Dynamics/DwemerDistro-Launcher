@@ -815,12 +815,14 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Keeps the latest explicit error line of the current stage (fatal:, error:, E:, Permission denied),
-    /// otherwise the latest non-empty line. This only picks evidence; it never decides the stage.
+    /// Keeps the latest explicit error line of the current stage (fatal:, error:, E:, [ERROR], Permission denied),
+    /// otherwise the latest non-empty line. Color codes are dropped first, so the core update's own colored
+    /// [ERROR] summary, printed last, wins over an earlier error line it tolerated. This only picks evidence; it
+    /// never decides the stage.
     /// </summary>
     internal static string? SelectUpdateFailureEvidence(string? current, string line)
     {
-        var trimmed = line.Trim();
+        var trimmed = RemoveAnsiEscapeSequences(line).Trim();
         if (trimmed.Length == 0)
         {
             return current;
@@ -829,6 +831,7 @@ public sealed partial class MainWindowViewModel
         var isError = trimmed.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("error:", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("E:", StringComparison.Ordinal)
+            || trimmed.StartsWith("[ERROR]", StringComparison.Ordinal)
             || trimmed.Contains("Permission denied", StringComparison.OrdinalIgnoreCase);
         if (isError)
         {
