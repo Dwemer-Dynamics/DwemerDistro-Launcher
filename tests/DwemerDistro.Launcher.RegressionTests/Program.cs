@@ -2195,6 +2195,16 @@ try
            && !MainWindowViewModel.TryRemoveUnusedBackupFolder(pg17EmptyBackup),
         "Discarding a backup folder must remove only an empty, launcher-named folder, and never anything inside one.");
 
+    const string pg17BackupHex = "0123456789abcdef0123456789ABCDEF";
+    Assert(MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\Dwemer-PG15-{pg17BackupHex}.tar")
+           && MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\dwemer-pg15-{pg17BackupHex}.TAR")
+           && MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\Dwemer-PG15-{pg17BackupHex}.tar.recovery.json")
+           && MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\Dwemer-PG15-{pg17BackupHex}.recovery.json")
+           && !MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\Dwemer-PG15-{pg17BackupHex[..31]}g.tar")
+           && !MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\Dwemer-PG15-{pg17BackupHex}0.tar")
+           && !MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\{LauncherConstants.DistroName}-20260101-120000.tar"),
+        "Full distro import must recognise only the generated database-only backup tar and its recovery companion.");
+
     Assert(MainWindowViewModel.DescribeUnsupportedBackupFolder(@"\\nas\backups\dwemer") is { } pg17UncReason
            && pg17UncReason.Contains("Network folders", StringComparison.Ordinal)
            && MainWindowViewModel.DescribeUnsupportedBackupFolder(@"C:\Users\a\Backups") is null,

@@ -886,6 +886,31 @@ public sealed partial class MainWindowViewModel
 
     internal const string DatabaseBackupFolderPrefix = "Dwemer-PG15-";
 
+    /// <summary>
+    /// True for the database-only <c>Dwemer-PG15-&lt;32 hex&gt;.tar</c> backup or its <c>.recovery.json</c>
+    /// companion. Neither is a full distro export, so a full distro import must refuse them.
+    /// </summary>
+    internal static bool IsDatabaseBackupArtifact(string path)
+    {
+        var name = System.IO.Path.GetFileName(path);
+        string[] suffixes = [".tar", ".tar.recovery.json", ".recovery.json"];
+        foreach (var suffix in suffixes)
+        {
+            if (name.Length != DatabaseBackupFolderPrefix.Length + 32 + suffix.Length
+                || !name.StartsWith(DatabaseBackupFolderPrefix, StringComparison.OrdinalIgnoreCase)
+                || !name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (name.AsSpan(DatabaseBackupFolderPrefix.Length, 32).ContainsAnyExcept("0123456789abcdefABCDEF"))
+                continue;
+            return true;
+        }
+
+        return false;
+    }
+
     /// <summary>Null when <paramref name="parentFolder"/> can hold a backup; otherwise why it can't.</summary>
     internal static string? DescribeUnsupportedBackupFolder(string parentFolder) =>
         System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(parentFolder)) is { } root && root.StartsWith(@"\\", StringComparison.Ordinal)

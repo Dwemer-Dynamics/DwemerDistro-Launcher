@@ -4815,6 +4815,19 @@ fi
             return;
         }
 
+        if (IsDatabaseBackupArtifact(archivePath))
+        {
+            AppendLog($"Full distro import refused: {archivePath} is a database-only backup, not a full distro export.{Environment.NewLine}", "red");
+            MessageBox.Show(
+                $"This file is a PostgreSQL database backup, not a full distro export:\n\n{archivePath}\n\n" +
+                "Importing it would replace the whole distro with only the database. Choose a full distro export " +
+                "(.tar) made with Export Distro Backup instead.",
+                "Import Full Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
         var installPath = GetImportInstallPath(archivePath);
         if (string.IsNullOrWhiteSpace(installPath))
         {
@@ -5421,17 +5434,29 @@ fi
 
     private string? GetImportArchivePath()
     {
-        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         var dialog = new OpenFileDialog
         {
             Title = "Import Full Dwemer Distro",
             Filter = "Tar Archive (*.tar)|*.tar|All Files (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = false,
-            InitialDirectory = desktop
+            InitialDirectory = GetImportArchiveInitialDirectory()
         };
 
         return dialog.ShowDialog() == true ? Path.GetFullPath(dialog.FileName) : null;
+    }
+
+    // Opens where the launcher keeps its backups, creating the folder on first use; Desktop when it can't be used.
+    private static string GetImportArchiveInitialDirectory()
+    {
+        try
+        {
+            return Directory.CreateDirectory(Pg17UpdateMigration.DefaultBackupRoot).FullName;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        }
     }
 
     private string? GetImportInstallPath(string archivePath)
