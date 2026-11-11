@@ -255,6 +255,17 @@ public sealed class ServerManagementService(WslService wsl)
         return branch.ToString();
     }
 
+    /// <summary>
+    /// The label the release selector shows for a branch choice. Display only: the "Dev" choice
+    /// reads as "Beta" but still selects <see cref="ServerBranchChannel.Dev"/> and sends "dev".
+    /// </summary>
+    public static string ToBranchDisplayName(string? choice)
+    {
+        return string.Equals(choice?.Trim(), "Dev", StringComparison.OrdinalIgnoreCase)
+            ? "Beta"
+            : choice ?? string.Empty;
+    }
+
     /// <summary>The display name used in the Mods page, the console, and the uninstall dialog.</summary>
     public static string GetDisplayName(ServerProduct product)
     {
