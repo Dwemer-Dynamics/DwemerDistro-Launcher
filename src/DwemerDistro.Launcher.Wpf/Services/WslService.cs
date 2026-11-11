@@ -6,6 +6,9 @@ namespace DwemerDistro.Launcher.Wpf.Services;
 
 public sealed class WslService(ProcessRunner processRunner)
 {
+    internal Task<CommandResult> RunDatabaseMaintenanceAsync(string distroName, string[] arguments, Action<string> output)
+        => RunWslAsync(["-d", distroName, "-u", "root", "--exec", .. arguments], output);
+
     public Task<CommandResult> RunWslAsync(
         IEnumerable<string> arguments,
         Action<string>? output = null,

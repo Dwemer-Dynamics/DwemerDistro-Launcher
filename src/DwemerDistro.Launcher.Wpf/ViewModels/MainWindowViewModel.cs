@@ -319,6 +319,7 @@ echo "CHIM-MCP installed and enabled."
         FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanStartExclusiveDistroOperation);
         DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
         CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanStartExclusiveDistroOperation);
+        InitializeDatabaseMaintenanceCommands();
         OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
         OpenApiKeysCommand = new RelayCommand(OpenApiKeysWindow, CanAccessDistro);
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
@@ -2112,6 +2113,7 @@ echo "CHIM-MCP installed and enabled."
     {
         UpdateSystemCommand?.RaiseCanExecuteChanged();
         CompactDistroCommand?.RaiseCanExecuteChanged();
+        RaiseDatabaseMaintenanceCommandStates();
         ExportDistroCommand?.RaiseCanExecuteChanged();
         ImportDistroCommand?.RaiseCanExecuteChanged();
         FixWslDnsCommand?.RaiseCanExecuteChanged();

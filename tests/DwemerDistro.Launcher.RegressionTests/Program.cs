@@ -1795,6 +1795,18 @@ try
            && compactConfirmation.Contains("server stays stopped", StringComparison.Ordinal),
         "Compact Distro must explain what is preserved and that WSL stops, elevation is required, and the server remains stopped.");
 
+    Assert(MainWindowViewModel.BuildDatabaseMaintenanceArguments("upgrade").SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "upgrade"])
+           && MainWindowViewModel.BuildDatabaseMaintenanceArguments("rollback").SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "rollback"]),
+        "Database maintenance must invoke only the PG17 maintenance tool with the chosen verb.");
+    var unknownDatabaseVerbRejected = false;
+    try { MainWindowViewModel.BuildDatabaseMaintenanceArguments("upgrade; reboot"); }
+    catch (ArgumentOutOfRangeException) { unknownDatabaseVerbRejected = true; }
+    Assert(unknownDatabaseVerbRejected, "Database maintenance must refuse any verb other than upgrade or rollback.");
+    Assert(MainWindowViewModel.BuildDatabaseUpgradeConfirmation().Contains("only possible before anything is written", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildDatabaseRollbackConfirmation().Contains("before anything has been written", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildDatabaseRollbackConfirmation().Contains("not carried back", StringComparison.Ordinal),
+        "Database maintenance confirmations must warn that rollback is only safe before the upgraded database is written to.");
+
     Assert(MainWindowViewModel.ParseDistroUsedBytes("Used\n 12345\n") == 12345
            && MainWindowViewModel.ParseDistroUsedBytes("not-a-number") is null,
         "Compact Distro must parse only a valid non-negative filesystem byte count.");

@@ -2904,6 +2904,34 @@
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="Database Maintenance" Style="{StaticResource GameCenter.SettingRowTitle}" />
+                                    <TextBlock Text="Upgrade to PostgreSQL 17 and save a verified backup in a private Windows folder."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
+                                    <TextBlock Text="Rollback checks for changed data before restoring PostgreSQL 15."
+                                               Foreground="{DynamicResource GameCenter.DangerText}"
+                                               FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding DatabaseMaintenanceStatusText}"
+                                               Foreground="{Binding DatabaseMaintenanceStatusColor}"
+                                               Visibility="{Binding HasDatabaseMaintenanceStatus, Converter={StaticResource BoolToVisibility}}"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <Button Content="Upgrade" Command="{Binding UpgradeDatabaseCommand}"
+                                            Style="{StaticResource GameCenter.SettingRowButton}"
+                                            AutomationProperties.Name="Upgrade database to PostgreSQL 17"
+                                            AutomationProperties.HelpText="Runs the distro's PostgreSQL 17 upgrade as root. You are asked to confirm first, and the confirmation defaults to No. Rollback is only possible before anything is written to the upgraded database." />
+                                    <Button Content="Roll back" Command="{Binding RollbackDatabaseCommand}"
+                                            Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
+                                            AutomationProperties.Name="Roll back PostgreSQL 17 database upgrade"
+                                            AutomationProperties.HelpText="Rolls back a PostgreSQL 17 upgrade. Only use this before anything is written to the upgraded database; data written since the upgrade is not carried back. You are asked to confirm first, and the confirmation defaults to No." />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <Border Style="{StaticResource GameCenter.SettingRow}">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
                                     <TextBlock Text="Export Distro Backup" Style="{StaticResource GameCenter.SettingRowTitle}" />
                                     <TextBlock Text="Create a backup of the distro before major updates, installs, or configuration changes."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
