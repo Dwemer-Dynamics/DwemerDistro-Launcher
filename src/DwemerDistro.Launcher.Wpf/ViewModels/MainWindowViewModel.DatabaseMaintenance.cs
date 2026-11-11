@@ -155,6 +155,7 @@ public sealed partial class MainWindowViewModel
     private async Task RunDatabaseMaintenanceAsync(string verb)
     {
         var isUpgrade = verb == DatabaseMaintenanceUpgradeVerb;
+        var cleanupOnly = false;
         var actionName = isUpgrade ? "Database upgrade" : "Database rollback";
         var arguments = BuildDatabaseMaintenanceArguments(verb);
 
@@ -220,12 +221,23 @@ public sealed partial class MainWindowViewModel
                     return;
                 }
 
-                // Only an upgrade from PostgreSQL 15 re-enables Roll back; it leaves fresh PostgreSQL 15 data behind.
-                restoresRollback = !IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId());
+                cleanupOnly = IsDatabaseStagingCleanupOnly(status);
+                if (cleanupOnly)
+                {
+                    // PostgreSQL 17 already serves, so this removes only the staging copies through Core's
+                    // cleanup-staging, which refuses rather than upgrades if the state changed since status.
+                    actionName = "Database cleanup";
+                    arguments = Pg17UpdateMigration.BuildCleanupStagingArguments();
+                }
+                else
+                {
+                    // Only an upgrade from PostgreSQL 15 re-enables Roll back; it leaves fresh PostgreSQL 15 data behind.
+                    restoresRollback = !IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId());
+                }
             }
 
-            // Defaults to No: both directions rewrite the database cluster.
-            var confirmed = MessageBox.Show(
+            // Defaults to No: both directions rewrite the database cluster. The staging cleanup rewrites nothing that serves.
+            var confirmed = cleanupOnly ? MessageBoxResult.Yes : MessageBox.Show(
                 isUpgrade ? BuildDatabaseUpgradeConfirmation() : BuildDatabaseRollbackConfirmation(),
                 isUpgrade ? "Confirm Database Upgrade" : "Confirm Database Rollback",
                 MessageBoxButton.YesNo,
@@ -238,7 +250,7 @@ public sealed partial class MainWindowViewModel
                 return;
             }
 
-            if (isUpgrade)
+            if (isUpgrade && !cleanupOnly)
             {
                 try
                 {
@@ -261,7 +273,8 @@ public sealed partial class MainWindowViewModel
             }
 
             SetDatabaseMaintenanceStatus(
-                isUpgrade ? "Upgrading the database..." : "Rolling the database back...",
+                cleanupOnly ? "Removing the upgrade's staging copies..."
+                    : isUpgrade ? "Upgrading the database..." : "Rolling the database back...",
                 CompactDistroBusyColor);
             AppendLog($"Starting {actionName.ToLowerInvariant()}...{Environment.NewLine}");
             var result = await _wsl.RunDatabaseMaintenanceAsync(arguments, text => AppendLog(text))
@@ -286,16 +299,15 @@ public sealed partial class MainWindowViewModel
                 ClearPg15DeletedRegistration();
             }
 
-            AppendLog($"{actionName} finished.{Environment.NewLine}", "green");
-            SetDatabaseMaintenanceStatus(
-                isUpgrade
-                    ? "Done. The database was upgraded to PostgreSQL 17."
-                    : "Done. The database was rolled back.",
-                CompactDistroSuccessColor);
-            MessageBox.Show(
-                isUpgrade
+            var done = cleanupOnly
+                ? "PostgreSQL 17 was already serving. The upgrade's leftover staging copies were removed."
+                : isUpgrade
                     ? "The database was upgraded to PostgreSQL 17."
-                    : "The database was rolled back.",
+                    : "The database was rolled back.";
+            AppendLog($"{actionName} finished.{Environment.NewLine}", "green");
+            SetDatabaseMaintenanceStatus($"Done. {done}", CompactDistroSuccessColor);
+            MessageBox.Show(
+                done,
                 DatabaseMaintenanceSettingName,
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -344,8 +356,15 @@ public sealed partial class MainWindowViewModel
         $"{actionName} not started because {string.Join(", ", games)} is open. Close the game, then try again. Nothing was changed.";
 
     /// <summary>
+    /// True when the manual upgrade's <c>status</c> leaves only the staging cleanup: it runs <c>cleanup-staging</c>
+    /// with no free-space check or confirmation, never <c>upgrade</c>.
+    /// </summary>
+    internal static bool IsDatabaseStagingCleanupOnly(CommandResult status) =>
+        status.Succeeded && Pg17UpdateMigration.ParseStatus(status.StandardOutput) == Pg17Status.CleanupNeeded;
+
+    /// <summary>
     /// What the manual upgrade reports from the tool's <c>status</c> instead of asking to upgrade;
-    /// null when the database still needs the upgrade or is held on PostgreSQL 15.
+    /// null when the database still needs the upgrade or its staging cleanup, or is held on PostgreSQL 15.
     /// </summary>
     internal static (string Text, string Color, MessageBoxImage Icon)? DescribeManualUpgradeNotStarted(CommandResult status)
     {
@@ -359,7 +378,7 @@ public sealed partial class MainWindowViewModel
 
         return Pg17UpdateMigration.ParseStatus(status.StandardOutput) switch
         {
-            Pg17Status.Needed or Pg17Status.Held => null,
+            Pg17Status.Needed or Pg17Status.Held or Pg17Status.CleanupNeeded => null,
             Pg17Status.Current => ("Nothing to do. The database already runs PostgreSQL 17.",
                 CompactDistroSuccessColor, MessageBoxImage.Information),
             Pg17Status.Unsupported => ("This database layout can't be upgraded by the launcher. Nothing was changed.",
@@ -489,6 +508,13 @@ public sealed partial class MainWindowViewModel
     {
         Pg17MigrationOutcome.Upgraded => (
             "Done. The distro update upgraded the database to PostgreSQL 17.", CompactDistroSuccessColor),
+        Pg17MigrationOutcome.CleanedUp => (
+            "Done. PostgreSQL 17 was already serving; the distro update removed the upgrade's leftover staging copies.",
+            CompactDistroSuccessColor),
+        Pg17MigrationOutcome.Failed when result.CleanupOnly => (
+            "PostgreSQL 17 is serving, but the distro update could not remove the upgrade's staging copies, so the update " +
+            "was not finished. Open the console for details.",
+            CompactDistroErrorColor),
         Pg17MigrationOutcome.Deferred => (
             "Upgrade postponed. Nothing was changed. Update Distro finishes the upgrade the next time it runs with no game open.",
             CompactDistroNeutralColor),

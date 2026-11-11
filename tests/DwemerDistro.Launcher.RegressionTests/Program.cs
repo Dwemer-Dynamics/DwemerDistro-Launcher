@@ -1925,10 +1925,12 @@ try
            && Pg17UpdateMigration.ParseStatus("checking cluster\ncurrent\n") == Pg17Status.Current
            && Pg17UpdateMigration.ParseStatus(" held \r\n") == Pg17Status.Held
            && Pg17UpdateMigration.ParseStatus("unsupported") == Pg17Status.Unsupported
+           && Pg17UpdateMigration.ParseStatus("cleanup-needed\n") == Pg17Status.CleanupNeeded
+           && Pg17UpdateMigration.ParseStatus("cleanup") is null
            && Pg17UpdateMigration.ParseStatus("Needed") is null
            && Pg17UpdateMigration.ParseStatus("needed please") is null
            && Pg17UpdateMigration.ParseStatus("") is null,
-        "PG17 status must be exactly one of needed, current, held or unsupported on its last line.");
+        "PG17 status must be exactly one of needed, current, held, unsupported or cleanup-needed on its last line.");
     Assert(Pg17UpdateMigration.BuildStatusArguments().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "status"])
            && Pg17UpdateMigration.BuildAutoArguments().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "auto"]),
         "The update must call only the maintenance tool's status and auto verbs, and auto with no backup path.");
@@ -2073,6 +2075,51 @@ try
             "A game opened after the free-space check must still postpone the upgrade before auto.");
     }
 
+    var pg17LowSpaceFailure = new InvalidOperationException("Not enough free space on C:\\.");
+    string[] pg17CleanupCall = ["/usr/local/bin/ddistro_pg17_maintenance", "cleanup-staging"];
+    var pg17CleanedUp = await RunFakeMigration(_ => pg17Ok("cleanup-needed"), check => check < 2 ? ["Skyrim Special Edition"] : [],
+        spaceFailure: pg17LowSpaceFailure);
+    Assert(pg17CleanedUp.Result.Outcome == Pg17MigrationOutcome.CleanedUp && pg17CleanedUp.Result.AllowsUpdateToFinish
+           && pg17CleanedUp.Result.CleanupOnly && pg17CleanedUp.SpaceChecks == 0 && pg17CleanedUp.Delays == 2
+           && pg17CleanedUp.WaitEvents.SequenceEqual([1, 1, 0]) && pg17CleanedUp.Calls.Last().SequenceEqual(pg17CleanupCall)
+           && !pg17CleanedUp.Calls.Any(call => call.Contains("auto"))
+           && MainWindowViewModel.BuildUpdateDatabaseStatus(pg17CleanedUp.Result, waited: true) is { } pg17CleanedStatus
+           && pg17CleanedStatus.Text.StartsWith("Done.", StringComparison.Ordinal)
+           && pg17CleanedStatus.Text.Contains("staging copies", StringComparison.Ordinal),
+        "PG17 'cleanup-needed' must still wait for games, skip the free-space check even on a full drive, and run only cleanup-staging.");
+
+    var pg17BecameCleanup = await RunFakeMigration(count => pg17Ok(count == 0 ? "needed" : "cleanup-needed"),
+        check => check == 0 ? ["Kenshi"] : [], spaceFailure: pg17LowSpaceFailure);
+    var pg17BecameNeeded = await RunFakeMigration(count => pg17Ok(count == 0 ? "cleanup-needed" : "needed"),
+        check => check == 0 ? ["Kenshi"] : [], spaceFailure: pg17LowSpaceFailure);
+    Assert(pg17BecameCleanup.Result.Outcome == Pg17MigrationOutcome.CleanedUp && pg17BecameCleanup.SpaceChecks == 0
+           && pg17BecameCleanup.Calls.Last().SequenceEqual(pg17CleanupCall)
+           && pg17BecameNeeded.Result.Outcome == Pg17MigrationOutcome.Failed && pg17BecameNeeded.SpaceChecks == 1
+           && !pg17BecameNeeded.Calls.Any(call => call.Contains("auto") || call.Contains("cleanup-staging")),
+        "Only the status read after the game wait decides; a 'needed' recheck must check free space again rather than skip it.");
+
+    foreach (var pg17CleanupExit in new[] { 1, DistroUpdateRunner.OtherUpdateRunningExitCode })
+    {
+        var pg17CleanupFailed = await RunFakeMigration(_ => pg17Ok("cleanup-needed"), pg17NoGames,
+            auto: new CommandResult(pg17CleanupExit, "", "Maintenance stopped: the active PostgreSQL 17 upgrade changed"));
+        Assert(pg17CleanupFailed.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17CleanupFailed.Result.AllowsUpdateToFinish
+               && pg17CleanupFailed.Result.CleanupOnly && pg17CleanupFailed.Calls.Count(call => call.Contains("cleanup-staging")) == 1
+               && !pg17CleanupFailed.Calls.Any(call => call.Contains("auto"))
+               && pg17CleanupFailed.Result.Message.Contains($"exit {pg17CleanupExit}", StringComparison.Ordinal)
+               && MainWindowViewModel.BuildUpdateDatabaseStatus(pg17CleanupFailed.Result, waited: false) is { } pg17CleanupFailedStatus
+               && pg17CleanupFailedStatus.Text.Contains("could not remove the upgrade's staging copies", StringComparison.Ordinal),
+            $"A refused or locked cleanup-staging (exit {pg17CleanupExit}) must keep the update unfinished without falling back to auto.");
+    }
+
+    using (var pg17StopCleanupWait = new CancellationTokenSource())
+    {
+        var pg17CleanupPostponed = await RunFakeMigration(_ => pg17Ok("cleanup-needed"), _ => ["Fallout 4"],
+            waitToken: pg17StopCleanupWait.Token, onDelay: pg17StopCleanupWait.Cancel);
+        Assert(pg17CleanupPostponed.Result.Outcome == Pg17MigrationOutcome.Deferred
+               && !pg17CleanupPostponed.Calls.Any(call => call.Contains("cleanup-staging") || call.Contains("auto")),
+            "Stopping the wait must postpone the staging cleanup too.");
+    }
+
     const string pg17BackupHex = "0123456789abcdef0123456789ABCDEF";
     Assert(MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\Dwemer-PG15-{pg17BackupHex}.tar")
            && MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\dwemer-pg15-{pg17BackupHex}.TAR")
@@ -2141,6 +2188,7 @@ try
            && pg17ManualCurrent.Icon == System.Windows.MessageBoxImage.Information
            && MainWindowViewModel.DescribeManualUpgradeNotStarted(pg17Ok("needed")) is null
            && MainWindowViewModel.DescribeManualUpgradeNotStarted(pg17Ok("held")) is null
+           && MainWindowViewModel.DescribeManualUpgradeNotStarted(pg17Ok("cleanup-needed")) is null
            && MainWindowViewModel.DescribeManualUpgradeNotStarted(pg17Ok("unsupported")) is { } pg17ManualUnsupported
            && pg17ManualUnsupported.Text.Contains("Nothing was changed", StringComparison.Ordinal)
            && MainWindowViewModel.DescribeManualUpgradeNotStarted(pg17Ok("maybe")) is { Icon: System.Windows.MessageBoxImage.Error }
@@ -2148,7 +2196,13 @@ try
                is { } pg17ManualBusy
            && pg17ManualBusy.Text.Contains("distro update is still running", StringComparison.Ordinal)
            && pg17ManualBusy.Text.Split("Nothing was changed").Length == 2,
-        "A manual upgrade on PostgreSQL 17 must report current without sizing; only needed or held proceeds.");
+        "A manual upgrade on PostgreSQL 17 must report current without sizing; only needed, cleanup-needed or held proceeds.");
+    Assert(MainWindowViewModel.IsDatabaseStagingCleanupOnly(pg17Ok("cleanup-needed"))
+           && !MainWindowViewModel.IsDatabaseStagingCleanupOnly(pg17Ok("needed"))
+           && !MainWindowViewModel.IsDatabaseStagingCleanupOnly(pg17Ok("held"))
+           && !MainWindowViewModel.IsDatabaseStagingCleanupOnly(pg17Ok("maybe"))
+           && !MainWindowViewModel.IsDatabaseStagingCleanupOnly(new CommandResult(1, "cleanup-needed\n", "")),
+        "Only a successful 'cleanup-needed' status may send the manual upgrade to cleanup-staging without the free-space check.");
     Assert(MainWindowViewModel.BuildDatabaseMaintenanceGameOpenMessage("Database rollback", ["Skyrim Special Edition"]) is { } pg17ManualGame
            && pg17ManualGame.Contains("Skyrim Special Edition is open", StringComparison.Ordinal)
            && pg17ManualGame.Contains("Nothing was changed", StringComparison.Ordinal),

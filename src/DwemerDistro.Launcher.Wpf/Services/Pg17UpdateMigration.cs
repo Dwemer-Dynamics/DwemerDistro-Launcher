@@ -9,7 +9,9 @@ internal enum Pg17Status
     Needed,
     Current,
     Held,
-    Unsupported
+    Unsupported,
+    /// <summary>PostgreSQL 17 serves, but the upgrade's staging copies are still on disk. Earlier tools report this as needed.</summary>
+    CleanupNeeded
 }
 
 internal enum Pg17MigrationOutcome
@@ -17,14 +19,18 @@ internal enum Pg17MigrationOutcome
     /// <summary>Nothing to do: already PostgreSQL 17, held on 15 by the user, unsupported, or no tool shipped.</summary>
     NotNeeded,
     Upgraded,
+    /// <summary>PostgreSQL 17 already served; only the upgrade's staging copies were removed.</summary>
+    CleanedUp,
     /// <summary>A game was still running and the wait was stopped. Nothing was changed.</summary>
     Deferred,
     Failed
 }
 
-internal sealed record Pg17MigrationResult(Pg17MigrationOutcome Outcome, string Message)
+/// <param name="CleanupOnly">The step ran, or would have run, only the staging cleanup, never an upgrade.</param>
+internal sealed record Pg17MigrationResult(Pg17MigrationOutcome Outcome, string Message, bool CleanupOnly = false)
 {
-    public bool AllowsUpdateToFinish => Outcome is Pg17MigrationOutcome.NotNeeded or Pg17MigrationOutcome.Upgraded;
+    public bool AllowsUpdateToFinish => Outcome is Pg17MigrationOutcome.NotNeeded or Pg17MigrationOutcome.Upgraded
+        or Pg17MigrationOutcome.CleanedUp;
 }
 
 /// <summary>
@@ -69,6 +75,13 @@ internal sealed class Pg17UpdateMigration(
     internal static string[] BuildAutoArguments() => [ToolPath, "auto"];
 
     /// <summary>
+    /// Removes only the staging copies of the active PostgreSQL 17 upgrade. Core checks that same upgrade is still
+    /// active under its lock and refuses otherwise, so this can never start an upgrade even if the state changed
+    /// after <c>status</c>.
+    /// </summary>
+    internal static string[] BuildCleanupStagingArguments() => [ToolPath, "cleanup-staging"];
+
+    /// <summary>
     /// An older maintenance tool still requires a Windows backup folder, which the launcher no longer passes.
     /// It refuses with this reason before touching the database.
     /// </summary>
@@ -83,7 +96,7 @@ internal sealed class Pg17UpdateMigration(
         "This distro's database maintenance tool is from an older release that needs a backup folder, so the upgrade " +
         "did not start and the database is still on PostgreSQL 15. Run Update Distro to install the current tool, then try again.";
 
-    /// <summary>The last non-empty output line must be exactly one of the four documented words.</summary>
+    /// <summary>The last non-empty output line must be exactly one of the five documented words.</summary>
     internal static Pg17Status? ParseStatus(string? output)
     {
         var line = (output ?? string.Empty)
@@ -95,6 +108,7 @@ internal sealed class Pg17UpdateMigration(
             "current" => Pg17Status.Current,
             "held" => Pg17Status.Held,
             "unsupported" => Pg17Status.Unsupported,
+            "cleanup-needed" => Pg17Status.CleanupNeeded,
             _ => null
         };
     }
@@ -141,14 +155,16 @@ internal sealed class Pg17UpdateMigration(
     }
 
     /// <summary>
-    /// Runs status, waits for games, checks free space and runs <c>auto</c>. Cancelling
-    /// <paramref name="waitToken"/> before <c>auto</c> starts returns <see cref="Pg17MigrationOutcome.Deferred"/>;
-    /// once <c>auto</c> starts it always runs to its own end, because stopping wsl.exe does not stop root
+    /// Runs status, waits for games, checks free space and runs <c>auto</c>. When the latest status is
+    /// <c>cleanup-needed</c> it skips the free-space check and runs only <c>cleanup-staging</c>, never <c>auto</c>.
+    /// Cancelling <paramref name="waitToken"/> before the tool starts returns <see cref="Pg17MigrationOutcome.Deferred"/>;
+    /// once it starts it always runs to its own end, because stopping wsl.exe does not stop root
     /// work inside the distro and the tool is idempotent on the next run.
     /// </summary>
     public async Task<Pg17MigrationResult> RunAsync(Action<string> log, CancellationToken waitToken)
     {
         var announcedGames = string.Empty;
+        var cleanupOnly = false;
         try
         {
             var probe = await runToolAsRoot(["test", "-x", ToolPath], _ => { }, waitToken).ConfigureAwait(false);
@@ -175,7 +191,10 @@ internal sealed class Pg17UpdateMigration(
                         $"the PostgreSQL 17 status check failed (exit {status.ExitCode}): {LastLine(status)}");
                 }
 
-                switch (ParseStatus(status.StandardOutput))
+                var parsed = ParseStatus(status.StandardOutput);
+                // Only the status read last decides: it can change while the update waits for a game.
+                cleanupOnly = parsed == Pg17Status.CleanupNeeded;
+                switch (parsed)
                 {
                     case Pg17Status.Current:
                         return new(Pg17MigrationOutcome.NotNeeded, "The database already runs PostgreSQL 17.");
@@ -205,7 +224,8 @@ internal sealed class Pg17UpdateMigration(
             }
 
             if (announcedGames.Length > 0) WaitingForGamesChanged?.Invoke([]);
-            await checkFreeSpaceAsync(waitToken).ConfigureAwait(false);
+            // Removing the staging copies frees space rather than using it.
+            if (!cleanupOnly) await checkFreeSpaceAsync(waitToken).ConfigureAwait(false);
             await WaitForIdleAsync(log, waitToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (waitToken.IsCancellationRequested)
@@ -218,6 +238,17 @@ internal sealed class Pg17UpdateMigration(
         {
             if (announcedGames.Length > 0) WaitingForGamesChanged?.Invoke([]);
             return new(Pg17MigrationOutcome.Failed, $"the PostgreSQL 17 upgrade could not start: {ex.Message.TrimEnd('.')}");
+        }
+
+        if (cleanupOnly)
+        {
+            var cleanup = await runToolAsRoot(BuildCleanupStagingArguments(), log, CancellationToken.None).ConfigureAwait(false);
+            return cleanup.Succeeded
+                ? new(Pg17MigrationOutcome.CleanedUp,
+                    "PostgreSQL 17 was already serving; the upgrade's leftover staging copies were removed.", CleanupOnly: true)
+                : new(Pg17MigrationOutcome.Failed,
+                    $"PostgreSQL 17 is serving, but removing the upgrade's staging copies failed (exit {cleanup.ExitCode}): {LastLine(cleanup)}",
+                    CleanupOnly: true);
         }
 
         var result = await runToolAsRoot(BuildAutoArguments(), log, CancellationToken.None).ConfigureAwait(false);
