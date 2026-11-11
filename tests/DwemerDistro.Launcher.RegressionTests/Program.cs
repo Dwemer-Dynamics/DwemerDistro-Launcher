@@ -83,6 +83,14 @@ if (args.Length == 2 && args[0] == "--render-community")
     return 0;
 }
 
+// Reign lifecycle checks alone, so they can run while an unrelated suite assertion is failing.
+if (args.Length == 1 && args[0] == "--reign")
+{
+    await RunReignLifecycleChecksAsync();
+    Console.WriteLine("Reign lifecycle regression tests: OK");
+    return 0;
+}
+
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
 var installDirectory = Path.Combine(root, "install");
 var localAppDataDirectory = Path.Combine(root, "local-app-data");
@@ -515,9 +523,9 @@ try
         "Every game profile must use local hero and rail artwork.");
     Assert(gameCatalog.Single(game => game.Key == "REIGN").HeroImageSource == "pack://application:,,,/Assets/ReignLogo.png"
            && ServerManagementService.ToProductToken(ServerProduct.Reign) == "reign"
-           && ServerManagementService.ParseBranchChannel("unstable") == ServerBranchChannel.Dev
+           && ServerManagementService.ParseBranchChannel("unstable") == ServerBranchChannel.Unstable
            && ServerManagementService.ParseBranchChannel("Reign") == ServerBranchChannel.Reign,
-        "Reign must use bundled artwork and map development installs onto the exposed Dev channel.");
+        "Reign must use bundled artwork and keep its retained reign and unstable channels.");
 
     Assert(MainWindowViewModel.ResolveServerBranchChoice("Main", "aiagent") == "aiagent"
            && MainWindowViewModel.ResolveServerBranchChoice("Main", "stobe") == "stobe"
@@ -1363,35 +1371,7 @@ try
         Assert(lorkhanItem.SelectedBranchChannel == ServerBranchChannel.Dev,
             "LORKHAN install, update and repair must target Dev even after a stale selection.");
     }
-    var reignItem = new ServerManagerItemViewModel(ServerProduct.Reign, "REIGN",
-        _ => Task.CompletedTask, _ => Task.CompletedTask,
-        _ => Task.CompletedTask, _ => Task.CompletedTask);
-    reignItem.ApplyStatus(stobeStatus with
-    {
-        Product = ServerProduct.Reign, State = ServerInstallState.Installed,
-        Branch = "unstable", ProductionBranch = "reign", Version = "0.1.0"
-    });
-    Assert(reignItem.Branches.SequenceEqual(new[] { "Dev" })
-           && reignItem.SelectedBranch == "Dev"
-           && reignItem.StatusText == "0.1.0" && reignItem.StatusColor == "LimeGreen",
-        "Reign exposes only Dev, with the shared green installed-version status.");
-    foreach (var hiddenBranch in new[] { "main", "reign", "unstable" })
-    {
-        reignItem.ApplyStatus(stobeStatus with
-        {
-            Product = ServerProduct.Reign, State = ServerInstallState.Installed,
-            Branch = hiddenBranch, ProductionBranch = "reign", Version = "0.1.0"
-        });
-        Assert(reignItem.SelectedBranch == "Dev", "Installed branches cannot restore a hidden Reign choice.");
-        reignItem.SelectedBranch = hiddenBranch;
-        Assert(reignItem.SelectedBranchChannel == ServerBranchChannel.Dev,
-            "Reign install, update and repair must target Dev even for a stale branch selection.");
-    }
-    reignItem.ApplyVersionStatus("dev | 09-14-2026 | 0.1.0 | Update Available", "Yellow", true);
-    Assert(reignItem.StatusColor == "Yellow", "Reign update notices use the same yellow as the other mods.");
-    reignItem.ApplyStatusError("Version check failed");
-    Assert(reignItem.StatusColor == ServerManagerItemViewModel.ErrorColor,
-        "Reign errors use the shared red status color.");
+    await RunReignLifecycleChecksAsync();
 
     Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "aiagent", "dev") == ServerBranchChannel.Main
            && ServerManagerItemViewModel.MapBranchToChannel("dev", "aiagent", "dev") == ServerBranchChannel.Dev
@@ -6897,6 +6877,180 @@ finally
     }
 }
 
+// Open REIGN, the retained Reign release, and Quickstart's Reign default. The main suite runs these in
+// place; --reign runs them alone.
+static async Task RunReignLifecycleChecksAsync()
+{
+    Assert(MainWindowViewModel.BuildReignStartArguments().SequenceEqual(new[] { "sudo", "/usr/local/bin/ddistro_reign", "start" })
+           && MainWindowViewModel.ReignHealthUrl == "http://127.0.0.1:8091/health",
+        "Open REIGN must start only Reign through the existing runtime command and check its public health endpoint.");
+    Assert(MainWindowViewModel.IsReignHealthPayloadHealthy(
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":4,"requiredDatabaseSchemaVersion":4,"databaseSchemaUpToDate":true}"""),
+        "A current, schema-ready Reign must pass the open check.");
+    Assert(!MainWindowViewModel.IsReignHealthPayloadHealthy(null)
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy("<html>503 Service Unavailable</html>")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":true,"service":"BannerlordReignServer","protocolVersion":1}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":false,"service":"BannerlordReignServer","protocolVersion":1}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":true,"service":"Other","protocolVersion":1}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":true,"service":"BannerlordReignServer","protocolVersion":2}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy(
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":3,"requiredDatabaseSchemaVersion":4,"databaseSchemaUpToDate":false}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy(
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaUpToDate":true}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy(
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":4,"requiredDatabaseSchemaVersion":4}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy(
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":4,"requiredDatabaseSchemaVersion":4,"databaseSchemaUpToDate":"true"}"""),
+        "A proxy error page, wrong service, payload without schema readiness or mismatched schema must never open the REIGN Webpage.");
+    var reignStartFailure = MainWindowViewModel.BuildReignStartFailureContent(
+        "Reign internal port 5101 is already in use.",
+        string.Join("\n", Enumerable.Range(1, 30).Select(index => $"log line {index}")));
+    var reignStartFailureText = reignStartFailure.ToPlainText();
+    Assert(!reignStartFailure.IsConfirmation
+           && reignStartFailureText.Contains("port 5101 is already in use", StringComparison.Ordinal)
+           && reignStartFailureText.Contains("log line 30", StringComparison.Ordinal)
+           && !reignStartFailureText.Contains("log line 18\n", StringComparison.Ordinal)
+           && reignStartFailureText.Contains(MainWindowViewModel.ReignServerLogPath, StringComparison.Ordinal)
+           && reignStartFailureText.Contains("were not restarted", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildReignStartFailureContent("x", null).Details.Contains("could not be read", StringComparison.Ordinal),
+        "A failed Reign start must explain the reason, show the bounded log tail and name the full log.");
+    foreach (var protocol in new[] { "\"1\"", "true", "1.5", "null", "[1]" })
+    {
+        Assert(!MainWindowViewModel.IsReignHealthPayloadHealthy(
+                $$"""{"ok":true,"service":"BannerlordReignServer","protocolVersion":{{protocol}}}"""),
+            $"A protocolVersion of {protocol} must fail the open check without throwing.");
+    }
+    var healthyBody = """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1}""";
+    using (var unknownLength = new UnknownLengthContent(new byte[1024 * 1024]))
+    using (var atLimit = new UnknownLengthContent(System.Text.Encoding.UTF8.GetBytes("abcd")))
+    using (var overLimit = new UnknownLengthContent(System.Text.Encoding.UTF8.GetBytes("abcde")))
+    using (var healthyContent = new UnknownLengthContent(System.Text.Encoding.UTF8.GetBytes(healthyBody)))
+    {
+        Assert(unknownLength.Headers.ContentLength is null
+               && await MainWindowViewModel.ReadBoundedBodyAsync(unknownLength, 65536, default) is null
+               && await MainWindowViewModel.ReadBoundedBodyAsync(atLimit, 4, default) == "abcd"
+               && await MainWindowViewModel.ReadBoundedBodyAsync(overLimit, 4, default) is null
+               && await MainWindowViewModel.ReadBoundedBodyAsync(healthyContent, 65536, default) == healthyBody,
+            "A health body without Content-Length must be read only up to the limit and rejected beyond it.");
+    }
+
+    var reignStatus = new ServerStatus(
+        ServerProduct.Reign, ServerInstallState.NotInstalled, ServerRepositoryState.Absent,
+        DatabasePresent: false, Root: null, Database: null, Branch: null, Version: null,
+        ProductionBranch: "reign", DevelopmentBranch: "dev", Port: null);
+    var reignItem = new ServerManagerItemViewModel(ServerProduct.Reign, "REIGN",
+        _ => Task.CompletedTask, _ => Task.CompletedTask,
+        _ => Task.CompletedTask, _ => Task.CompletedTask);
+    Assert(reignItem.Branches.SequenceEqual(new[] { "Dev" }) && reignItem.SelectedBranchChannel == ServerBranchChannel.Dev,
+        "A fresh Reign install defaults to Dev and offers no other release.");
+    reignItem.ApplyStatus(reignStatus with
+    {
+        Product = ServerProduct.Reign, State = ServerInstallState.NotInstalled,
+        Branch = null, ProductionBranch = "reign", Version = null
+    });
+    reignItem.SelectedBranch = "Unstable";
+    Assert(reignItem.Branches.SequenceEqual(new[] { "Dev" }) && reignItem.SelectedBranchChannel == ServerBranchChannel.Dev,
+        "Unstable must never become a new Reign install option.");
+    reignItem.ApplyStatus(reignStatus with
+    {
+        Product = ServerProduct.Reign, State = ServerInstallState.Installed,
+        Branch = "unstable", ProductionBranch = "reign", Version = "0.1.0"
+    });
+    Assert(reignItem.Branches.SequenceEqual(new[] { "Unstable" })
+           && reignItem.SelectedBranch == "Unstable"
+           && reignItem.SelectedBranchChannel == ServerBranchChannel.Unstable
+           && reignItem.StatusText == "0.1.0" && reignItem.StatusColor == "LimeGreen",
+        "An installed unstable Reign must report and keep Unstable, with the shared green installed-version status.");
+    foreach (var (installedBranch, state, retainedChoice, channel) in new[]
+             {
+                 ("dev", ServerInstallState.Installed, "Dev", ServerBranchChannel.Dev),
+                 ("reign", ServerInstallState.Installed, "Reign", ServerBranchChannel.Reign),
+                 ("unstable", ServerInstallState.Installed, "Unstable", ServerBranchChannel.Unstable),
+                 ("reign", ServerInstallState.NeedsRepair, "Reign", ServerBranchChannel.Reign),
+                 ("unstable", ServerInstallState.NeedsRepair, "Unstable", ServerBranchChannel.Unstable),
+                 ("feature/x", ServerInstallState.Installed, "Dev", ServerBranchChannel.Dev),
+                 ((string)null!, ServerInstallState.NeedsRepair, "Dev", ServerBranchChannel.Dev),
+                 ("unstable", ServerInstallState.NotInstalled, "Dev", ServerBranchChannel.Dev)
+             })
+    {
+        reignItem.ApplyStatus(reignStatus with
+        {
+            Product = ServerProduct.Reign, State = state,
+            Branch = installedBranch, ProductionBranch = "reign", Version = "0.1.0"
+        });
+        Assert(reignItem.SelectedBranch == retainedChoice && reignItem.Branches.SequenceEqual(new[] { retainedChoice })
+               && reignItem.SelectedBranchChannel == channel,
+            $"Reign {state} on '{installedBranch}' must retain {retainedChoice} for update and repair.");
+        foreach (var stale in new[] { "Main", "Dev", "Reign", "Unstable", null })
+        {
+            reignItem.SelectedBranch = stale!;
+        }
+        Assert(reignItem.SelectedBranchChannel == channel,
+            "A stale Reign selection must never switch the retained release.");
+    }
+    reignItem.ApplyStatus(reignStatus with
+    {
+        Product = ServerProduct.Reign, State = ServerInstallState.Installed,
+        Branch = "unstable", ProductionBranch = "reign", Version = "0.1.0"
+    });
+    var retainedReignUpdates = MainWindowViewModel.SnapshotModUpdates([reignItem]);
+    Assert(retainedReignUpdates.Count == 1 && retainedReignUpdates[0].Branch == ServerBranchChannel.Unstable
+           && ServerManagementService.BuildUpdateArguments(ServerProduct.Reign, retainedReignUpdates[0].Branch)
+               .SequenceEqual(new[] { "stdbuf", "-oL", "-eL", "/usr/local/bin/ddistro_server", "update", "reign", "--branch", "unstable" })
+           && MainWindowViewModel.BuildModsUpdateConfirmation(retainedReignUpdates).Contains("ReignServer target branch: Unstable", StringComparison.Ordinal),
+        "The shared update path must update an unstable Reign on unstable, never switch it to dev.");
+    var retainedReignRefresh = MainWindowViewModel.MergeConfirmedBranches(retainedReignUpdates, [(reignItem, ServerBranchChannel.Dev)]);
+    Assert(retainedReignRefresh.Single().Branch == ServerBranchChannel.Unstable,
+        "A post-system status refresh must keep the confirmed Reign release.");
+    Assert(ServerManagementService.BuildRepairArguments(ServerProduct.Reign, ServerBranchChannel.Reign)[^1] == "reign"
+           && ServerManagementService.ParseBranchChannel(ServerManagementService.ToBranchChoice(ServerBranchChannel.Unstable)) == ServerBranchChannel.Unstable
+           && ServerManagementService.ParseBranchChannel(ServerManagementService.ToBranchChoice(ServerBranchChannel.Reign)) == ServerBranchChannel.Reign,
+        "Retained Reign choices must round-trip to the manager's reign and unstable tokens.");
+    reignItem.ApplyStatus(null);
+    Assert(reignItem.SelectedBranchChannel == ServerBranchChannel.Unstable,
+        "An unanswered status probe must not reset the retained Reign release.");
+    reignItem.ApplyStatus(reignStatus with
+    {
+        Product = ServerProduct.Reign, State = ServerInstallState.Installed,
+        Branch = "dev", ProductionBranch = "reign", Version = "0.1.0"
+    });
+    reignItem.ApplyVersionStatus("dev | 09-14-2026 | 0.1.0 | Update Available", "Yellow", true);
+    Assert(reignItem.StatusColor == "Yellow", "Reign update notices use the same yellow as the other mods.");
+    reignItem.ApplyStatusError("Version check failed");
+    Assert(reignItem.StatusColor == ServerManagerItemViewModel.ErrorColor,
+        "Reign errors use the shared red status color.");
+
+    // Quickstart installs Reign on Dev and leaves every other product on Main.
+    var gameCatalog = GameProfile.CreateCatalog();
+    foreach (var (key, product, channel, label) in new[]
+             {
+                 ("CHIM", ServerProduct.Herika, ServerBranchChannel.Main, "Main"),
+                 ("STOBE", ServerProduct.Stobe, ServerBranchChannel.Main, "Main"),
+                 ("DIALECTIC", ServerProduct.Dialectic, ServerBranchChannel.Main, "Main"),
+                 ("LORKHAN", ServerProduct.Lorkhan, ServerBranchChannel.Main, "Main"),
+                 ("REIGN", ServerProduct.Reign, ServerBranchChannel.Dev, "Beta")
+             })
+    {
+        var row = new QuickstartProductViewModel(
+            gameCatalog.First(game => game.Key == key), product, _ => Task.CompletedTask, _ => { });
+        row.ApplyStatus(ServerInstallState.NotInstalled);
+        var installHelpText = row.AccessibleHelpText;
+        var quickstartLog = new System.Text.StringBuilder();
+        await FirstRunSetupViewModel.InstallProductGuardedAsync(
+            row,
+            _ => Task.FromResult(StatusFor(product, ServerInstallState.NotInstalled)),
+            () => Task.FromResult(new CommandResult(0, string.Empty, string.Empty)),
+            text => quickstartLog.Append(text));
+        Assert(row.InstallChannel == channel
+               && ServerManagementService.BuildInstallArguments(product, row.InstallChannel)[^1] == ServerManagementService.ToBranchToken(channel)
+               && installHelpText.Contains($"on the {label} branch", StringComparison.Ordinal)
+               && quickstartLog.ToString().Contains($"on the {label} branch", StringComparison.Ordinal)
+               && row.InstallState == QuickstartProductInstallState.Installed,
+            $"Quickstart must install {key} on {label}.");
+    }
+}
+
+
 static bool Throws(Action action)
 {
     try
@@ -7218,6 +7372,20 @@ sealed class FakeAssistantCli(FakeAssistantTransport transport, string? statusTa
     {
         ServeSignInReuse.Add(reuseCodexSignIn);
         return StartServeAsync(taskId, cancellationToken);
+    }
+}
+
+// A response body with no Content-Length, read as a live response stream would be.
+sealed class UnknownLengthContent(byte[] body) : HttpContent
+{
+    protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => stream.WriteAsync(body).AsTask();
+
+    protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(new MemoryStream(body, writable: false));
+
+    protected override bool TryComputeLength(out long length)
+    {
+        length = 0;
+        return false;
     }
 }
 

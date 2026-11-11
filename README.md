@@ -34,7 +34,7 @@ Having Ubuntu (or any other WSL distro) installed does not supply DwemerDistro. 
 
 ## Optional Game Servers
 
-Fresh DwemerDistro packages contain no game servers. The Quickstart **Choose Your Mods** step installs any selected products from their Main branch; selecting none is valid. The Mods page then shows each server as Not installed, Installed, or Needs repair and exposes only the actions valid for that state.
+Fresh DwemerDistro packages contain no game servers. The Quickstart **Choose Your Mods** step installs any selected products from their Main branch, except REIGN, which installs on Dev (shown as Beta); selecting none is valid. The Mods page then shows each server as Not installed, Installed, or Needs repair and exposes only the actions valid for that state.
 
 Uninstall is destructive. It requires the product-specific `PURGE-*` confirmation and removes that server's files and PostgreSQL database. It does not remove shared voice/components or another game server.
 
@@ -84,7 +84,7 @@ Fresh installs give each local TTS service its own port. Existing Chatterbox or 
 | `8085` | Legacy/development Apache listener | Kept by some existing distro images for compatibility; the launcher does not use it as Dialectic's canonical URL. |
 | `8087` | Starfield | Reserved for the Starfield server. |
 | `8088` | Dialectic / Fallout New Vegas | Canonical Dialectic web and API server. |
-| `8089` | Reign | Reserved for the Reign server. |
+| `8091` | Reign | Reserved for the Reign server. |
 
 ### Internal Runtime Services
 

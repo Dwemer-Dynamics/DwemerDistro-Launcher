@@ -62,6 +62,17 @@ public sealed class QuickstartProductViewModel : ObservableObject
 
     public ServerProduct Product { get; }
 
+    /// <summary>
+    /// The release Quickstart installs: the production branch, except Reign, whose fresh installs
+    /// start on Dev.
+    /// </summary>
+    public ServerBranchChannel InstallChannel =>
+        Product is ServerProduct.Reign ? ServerBranchChannel.Dev : ServerBranchChannel.Main;
+
+    /// <summary>The release selector's label for <see cref="InstallChannel"/>, for example Main or Beta.</summary>
+    public string InstallBranchName =>
+        ServerManagementService.ToBranchDisplayName(ServerManagementService.ToBranchChoice(InstallChannel));
+
     public string Title { get; }
 
     public string GameTitle { get; }
@@ -148,7 +159,7 @@ public sealed class QuickstartProductViewModel : ObservableObject
     public string AccessibleHelpText => _reportedState switch
     {
         ServerInstallState.Installed => $"{Title} is already installed. Manage or remove it from the Mods page.",
-        ServerInstallState.NotInstalled => $"Select {Title} to install it on the Main branch during Quickstart.",
+        ServerInstallState.NotInstalled => $"Select {Title} to install it on the {InstallBranchName} branch during Quickstart.",
         ServerInstallState.NeedsRepair => $"{Title} needs repair. Repair or reinstall it from the Mods page.",
         _ => $"{Title} install status is unavailable. Refresh installed mods before installing it."
     };

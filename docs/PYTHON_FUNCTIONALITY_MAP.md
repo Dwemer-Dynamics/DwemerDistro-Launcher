@@ -57,7 +57,8 @@ The current source has six top-level destinations: **Mods**, **Components**, **S
 | HerikaServer target branches | `aiagent`, `dev` | **Main** / **Dev** (Core maps **Main** to `aiagent`) |
 | StobeServer target branches | `stobe`, `dev` | **Main** / **Dev** (Core maps **Main** to `stobe`) |
 | DialecticServer target branches | not in Python | **Main** / **Dev** (Core maps **Main** to `dialectic`) |
-| ReignServer and LorkhanServer target branches | not in Python | **Dev** only in the launcher |
+| ReignServer target branches | not in Python | **Dev** for a fresh install (including Quickstart); an installed or repairable Reign keeps its `dev`, `reign`, or `unstable` release |
+| LorkhanServer target branches | not in Python | **Dev** only in the launcher |
 
 ## Version Checks
 

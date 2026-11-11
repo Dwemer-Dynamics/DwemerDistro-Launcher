@@ -1852,7 +1852,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Installs the ticked products one at a time on the production branch. A failure stops that
+    /// Installs the ticked products one at a time on their Quickstart release. A failure stops that
     /// product only: earlier successes stay installed and the row offers Retry or Skip.
     /// </summary>
     private async Task InstallSelectedProductsAsync()
@@ -1934,15 +1934,15 @@ public sealed class FirstRunSetupViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Runs one install on the production branch. Quickstart never offers the development branch: a
-    /// first-run user should land on the branch the mod ships to players.
+    /// Runs one install on the product's Quickstart release: the branch the mod ships to players, or
+    /// Dev for Reign. Quickstart never offers a branch choice.
     /// </summary>
     private Task InstallProductCoreAsync(QuickstartProductViewModel product)
     {
         return InstallProductGuardedAsync(
             product,
             token => _serverManagement.GetStatusAsync(token),
-            () => _serverManagement.InstallAsync(product.Product, ServerBranchChannel.Main, AppendSetupLog),
+            () => _serverManagement.InstallAsync(product.Product, product.InstallChannel, AppendSetupLog),
             AppendSetupLog);
     }
 
@@ -1993,7 +1993,7 @@ public sealed class FirstRunSetupViewModel : ObservableObject
             return;
         }
 
-        log($"Installing {product.Title} on the Main branch...{Environment.NewLine}");
+        log($"Installing {product.Title} on the {product.InstallBranchName} branch...{Environment.NewLine}");
 
         try
         {

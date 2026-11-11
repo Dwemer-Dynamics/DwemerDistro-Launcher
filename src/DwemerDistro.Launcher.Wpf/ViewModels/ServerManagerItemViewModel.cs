@@ -210,7 +210,15 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         get => _selectedBranch;
         set
         {
-            if (SetProperty(ref _selectedBranch, Product is ServerProduct.Reign or ServerProduct.Lorkhan ? "Dev" : value))
+            // Reign offers only the release it is installed on (or Dev for a fresh install), so a
+            // stale or null selection can never point an install, update or repair elsewhere.
+            var next = Product switch
+            {
+                ServerProduct.Lorkhan => "Dev",
+                ServerProduct.Reign => value is not null && Branches.Contains(value) ? value : _selectedBranch,
+                _ => value
+            };
+            if (SetProperty(ref _selectedBranch, next))
             {
                 _hasExplicitBranchSelection = true;
                 OnPropertyChanged(nameof(UpdateActionHelpText));
@@ -362,6 +370,11 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         _version = status?.Version;
         _port = status?.Port;
         _errorText = null;
+        if (Product is ServerProduct.Reign && status is not null)
+        {
+            ApplyReignRetainedBranch(ResolveReignRetainedBranch(status.State, status.Branch));
+        }
+
         if (Product is ServerProduct.Reign or ServerProduct.Lorkhan)
         {
             _versionStatusText = status?.Version ?? "Version unavailable";
@@ -383,6 +396,49 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         }
 
         RaiseDerivedState();
+    }
+
+    /// <summary>
+    /// The Reign release an install, update or repair targets. An installed or repairable Reign keeps
+    /// the dev, reign or unstable release it is on; anything else - a fresh install, or a checkout
+    /// the manager cannot name - uses the Dev default. Unstable is never offered for a new install.
+    /// </summary>
+    internal static string ResolveReignRetainedBranch(ServerInstallState state, string? installedBranch)
+    {
+        if (state is not (ServerInstallState.Installed or ServerInstallState.NeedsRepair))
+        {
+            return "Dev";
+        }
+
+        return installedBranch?.Trim().ToLowerInvariant() switch
+        {
+            "reign" => ServerManagementService.ToBranchChoice(ServerBranchChannel.Reign),
+            "unstable" => ServerManagementService.ToBranchChoice(ServerBranchChannel.Unstable),
+            _ => "Dev"
+        };
+    }
+
+    // The new choice joins the list before the old one leaves, so the bound release selector never
+    // loses its selection and pushes a null back.
+    private void ApplyReignRetainedBranch(string choice)
+    {
+        if (!Branches.Contains(choice))
+        {
+            Branches.Insert(0, choice);
+        }
+
+        if (SetProperty(ref _selectedBranch, choice, nameof(SelectedBranch)))
+        {
+            OnPropertyChanged(nameof(UpdateActionHelpText));
+        }
+
+        for (var index = Branches.Count - 1; index >= 0; index--)
+        {
+            if (Branches[index] != choice)
+            {
+                Branches.RemoveAt(index);
+            }
+        }
     }
 
     /// <summary>Records a status-probe failure without discarding what the UI already showed.</summary>

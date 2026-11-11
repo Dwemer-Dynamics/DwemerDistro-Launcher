@@ -17,7 +17,7 @@ public static class LauncherConstants
     public const int StobeServerPort = 8083;
     public const int StarfieldServerPort = 8087;
     public const int DialecticServerPort = 8088;
-    public const int ReignServerPort = 8089;
+    public const int ReignServerPort = 8091;
     public const int LorkhanServerPort = 8090;
 
     public const string WikiUrl = "https://dwemerdynamics.com/index.html";

@@ -32,10 +32,10 @@ Items are kept for reference. Where the current source behaves differently, the 
   - discovery service on port `7135` (`DiscoveryService`)
   - `GET /discover?game=skyrim` (default) returns WSL IP port `8081`
   - `GET /discover?game=kenshi` or `game=stobe` returns WSL IP port `8083`
-  - current source also maps `starfield` to `8087`, `dialectic`/`fallout`/`fnv`/`newvegas` to `8088`, and `reign` to `8089`, and returns `127.0.0.1:7514` for `lorkhan`/`morrowind`/`openmw`
+  - current source also maps `starfield` to `8087`, `dialectic`/`fallout`/`fnv`/`newvegas` to `8088`, and `reign` to `8091`, and returns `127.0.0.1:7514` for `lorkhan`/`morrowind`/`openmw`
 - Updater:
   - Python branch selectors were `aiagent`/`dev` (HerikaServer) and `stobe`/`dev` (StobeServer).
-  - Current source offers **Main** and **Dev** for CHIM (HerikaServer), STOBE, and DIALECTIC, and **Dev** only for REIGN and LORKHAN. The launcher sends `main`, `dev`, `reign`, or `unstable` to `/usr/local/bin/ddistro_server`, and DwemerDistro-Core maps **Main** to each server's production branch (for example `aiagent`, `stobe`, `dialectic`).
+  - Current source offers **Main** and **Dev** for CHIM (HerikaServer), STOBE, and DIALECTIC, and **Dev** only for LORKHAN. A fresh REIGN install (including Quickstart) uses **Dev**; an installed or repairable REIGN keeps the `dev`, `reign`, or `unstable` release it is on for update and repair, and `unstable` is never offered for a new install. The launcher sends `main`, `dev`, `reign`, or `unstable` to `/usr/local/bin/ddistro_server`, and DwemerDistro-Core maps **Main** to each server's production branch (for example `aiagent`, `stobe`, `dialectic`).
   - Server install, update, repair, and uninstall run through `/usr/local/bin/ddistro_server`.
   - Python persisted update include flags under `/home/dwemer`. Current update preferences live launcher-side in `%LOCALAPPDATA%\DwemerDistro\update-preferences.json` (`UpdatePreferencesService`).
   - distro update command
