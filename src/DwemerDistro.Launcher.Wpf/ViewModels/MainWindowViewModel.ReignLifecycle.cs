@@ -35,8 +35,8 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Mirrors <c>ddistro_reign start</c>'s own acceptance: the Reign service on protocol 1, and either
-    /// an older build without schema reporting or a current, matching database schema.
+    /// Mirrors <c>ddistro_reign start</c>'s own acceptance for the current ReignServer deployment: the Reign
+    /// service on protocol 1 reporting a current database schema that matches its required version.
     /// </summary>
     internal static bool IsReignHealthPayloadHealthy(string? payload)
     {
@@ -59,18 +59,13 @@ public sealed partial class MainWindowViewModel
                 return false;
             }
 
-            var hasVersion = root.TryGetProperty("databaseSchemaVersion", out var schema);
-            var hasRequired = root.TryGetProperty("requiredDatabaseSchemaVersion", out var required);
-            var hasUpToDate = root.TryGetProperty("databaseSchemaUpToDate", out var upToDate);
-            if (!hasVersion && !hasRequired && !hasUpToDate)
-            {
-                return true;
-            }
-
-            return hasVersion && schema.ValueKind == JsonValueKind.Number && schema.TryGetInt32(out var version) && version > 0
-                   && hasRequired && required.ValueKind == JsonValueKind.Number && required.TryGetInt32(out var requiredVersion)
+            return root.TryGetProperty("databaseSchemaVersion", out var schema)
+                   && schema.ValueKind == JsonValueKind.Number && schema.TryGetInt32(out var version) && version > 0
+                   && root.TryGetProperty("requiredDatabaseSchemaVersion", out var required)
+                   && required.ValueKind == JsonValueKind.Number && required.TryGetInt32(out var requiredVersion)
                    && version == requiredVersion
-                   && hasUpToDate && upToDate.ValueKind == JsonValueKind.True;
+                   && root.TryGetProperty("databaseSchemaUpToDate", out var upToDate)
+                   && upToDate.ValueKind == JsonValueKind.True;
         }
         catch (JsonException)
         {

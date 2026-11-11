@@ -6885,19 +6885,23 @@ static async Task RunReignLifecycleChecksAsync()
            && MainWindowViewModel.ReignHealthUrl == "http://127.0.0.1:8089/health",
         "Open REIGN must start only Reign through the existing runtime command and check its public health endpoint.");
     Assert(MainWindowViewModel.IsReignHealthPayloadHealthy(
-               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":4,"requiredDatabaseSchemaVersion":4,"databaseSchemaUpToDate":true}""")
-           && MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":true,"service":"BannerlordReignServer","protocolVersion":1}"""),
-        "A current or older healthy Reign must pass the open check.");
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":4,"requiredDatabaseSchemaVersion":4,"databaseSchemaUpToDate":true}"""),
+        "A current, schema-ready Reign must pass the open check.");
     Assert(!MainWindowViewModel.IsReignHealthPayloadHealthy(null)
            && !MainWindowViewModel.IsReignHealthPayloadHealthy("<html>503 Service Unavailable</html>")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":true,"service":"BannerlordReignServer","protocolVersion":1}""")
            && !MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":false,"service":"BannerlordReignServer","protocolVersion":1}""")
            && !MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":true,"service":"Other","protocolVersion":1}""")
            && !MainWindowViewModel.IsReignHealthPayloadHealthy("""{"ok":true,"service":"BannerlordReignServer","protocolVersion":2}""")
            && !MainWindowViewModel.IsReignHealthPayloadHealthy(
                """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":3,"requiredDatabaseSchemaVersion":4,"databaseSchemaUpToDate":false}""")
            && !MainWindowViewModel.IsReignHealthPayloadHealthy(
-               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaUpToDate":true}"""),
-        "A proxy error page, wrong service or mismatched schema must never open the REIGN Webpage.");
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaUpToDate":true}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy(
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":4,"requiredDatabaseSchemaVersion":4}""")
+           && !MainWindowViewModel.IsReignHealthPayloadHealthy(
+               """{"ok":true,"service":"BannerlordReignServer","protocolVersion":1,"databaseSchemaVersion":4,"requiredDatabaseSchemaVersion":4,"databaseSchemaUpToDate":"true"}"""),
+        "A proxy error page, wrong service, payload without schema readiness or mismatched schema must never open the REIGN Webpage.");
     var reignStartFailure = MainWindowViewModel.BuildReignStartFailureContent(
         "Reign internal port 5101 is already in use.",
         string.Join("\n", Enumerable.Range(1, 30).Select(index => $"log line {index}")));
