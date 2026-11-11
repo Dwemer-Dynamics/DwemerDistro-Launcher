@@ -5446,18 +5446,11 @@ fi
         return dialog.ShowDialog() == true ? Path.GetFullPath(dialog.FileName) : null;
     }
 
-    // Opens where the launcher keeps its backups, creating the folder on first use; Desktop when it can't be used.
-    private static string GetImportArchiveInitialDirectory()
-    {
-        try
-        {
-            return Directory.CreateDirectory(Pg17UpdateMigration.DefaultBackupRoot).FullName;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            return Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        }
-    }
+    // Opens the folder earlier launcher builds kept backups in when it exists, without creating it; Desktop otherwise.
+    private static string GetImportArchiveInitialDirectory() =>
+        Directory.Exists(DatabaseBackupRoot)
+            ? DatabaseBackupRoot
+            : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
 
     private string? GetImportInstallPath(string archivePath)
     {

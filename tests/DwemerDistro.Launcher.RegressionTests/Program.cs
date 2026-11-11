@@ -85,7 +85,7 @@ if (args.Length == 2 && args[0] == "--render-community")
 
 // An opt-in isolated-distro run of the normal update: core and shared provisioning, the unattended PostgreSQL 17
 // step, then the release marker, exactly as Update Distro runs them. It refuses the live distro by name and
-// writes its backup under a temporary Windows folder. Usage: --pg17-isolated-update <registered test distro>
+// writes nothing on Windows. Usage: --pg17-isolated-update <registered test distro>
 if (args.Length == 2 && args[0] == "--pg17-isolated-update")
 {
     var testDistro = args[1];
@@ -102,11 +102,10 @@ if (args.Length == 2 && args[0] == "--pg17-isolated-update")
         return 2;
     }
 
-    var backupRoot = Path.Combine(Path.GetTempPath(), "DwemerDistro", "Pg17IsolatedUpdate", Guid.NewGuid().ToString("N"));
     var isolatedMigration = new Pg17UpdateMigration(
         (arguments, output, token) => isolatedWsl.RunDatabaseMaintenanceAsync(arguments, output, token),
         Pg17UpdateMigration.FindRunningGames,
-        async token => (await MainWindowViewModel.PrepareDatabaseBackupAsync(isolatedWsl, backupRoot, token)).DistroPath,
+        token => MainWindowViewModel.CheckDatabaseUpgradeSpaceAsync(isolatedWsl, token),
         Task.Delay,
         Pg17UpdateMigration.DefaultRecheckInterval);
     isolatedMigration.WaitingForGamesChanged += games =>
@@ -116,7 +115,6 @@ if (args.Length == 2 && args[0] == "--pg17-isolated-update")
     var outcome = await MainWindowViewModel.RunSharedDistroUpdatePipelineAsync(
         isolatedWsl, isolatedMigration, Console.Write, Console.Write, TimeSpan.FromMinutes(30), CancellationToken.None, stop.Token);
     Console.WriteLine($"Update exit {outcome.Command.ExitCode}; database {outcome.Database?.Outcome.ToString() ?? "not reached"}: {outcome.Database?.Message}");
-    Console.WriteLine("Backup root: " + backupRoot);
     Console.WriteLine(outcome.Succeeded ? "PG17 ISOLATED UPDATE PASSED" : "PG17 ISOLATED UPDATE DID NOT FINISH");
     return outcome.Succeeded ? 0 : 1;
 }
@@ -1893,141 +1891,20 @@ try
            && MainWindowViewModel.BuildDatabaseRollbackConfirmation().Contains("not carried back", StringComparison.Ordinal),
         "Database maintenance confirmations must warn that rollback is only safe before the upgraded database is written to.");
 
-    // Delete old PostgreSQL 15 data: preview, confirm (default No), delete. Fakes only, no WSL.
-    const string pg15Token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    var pg15TokenlessCleanupRejected = false;
-    try { MainWindowViewModel.BuildDatabaseMaintenanceArguments("cleanup-pg15"); } catch (ArgumentOutOfRangeException) { pg15TokenlessCleanupRejected = true; }
-    Assert(MainWindowViewModel.BuildDatabaseMaintenanceArguments("cleanup-preview").SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "cleanup-preview"])
-           && MainWindowViewModel.BuildPg15CleanupArguments(pg15Token).SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "cleanup-pg15", "--confirm-preview", pg15Token])
-           && pg15TokenlessCleanupRejected,
-        "PostgreSQL 15 cleanup must invoke only cleanup-preview and cleanup-pg15 --confirm-preview <token>, never a tokenless cleanup-pg15.");
-    foreach (var pg15BadToken in new[] { "", pg15Token.ToUpperInvariant(), pg15Token[..63], pg15Token + "0", pg15Token[..63] + "g", pg15Token[..63] + " " })
+    foreach (var pg15CleanupVerb in new[] { "cleanup-preview", "cleanup-pg15" })
     {
-        var pg15BadTokenRejected = false;
-        try { MainWindowViewModel.BuildPg15CleanupArguments(pg15BadToken); } catch (ArgumentException) { pg15BadTokenRejected = true; }
-        Assert(pg15BadTokenRejected, "cleanup-pg15 must refuse any token that is not 64 lowercase hex characters.");
+        var pg15CleanupRejected = false;
+        try { MainWindowViewModel.BuildDatabaseMaintenanceArguments(pg15CleanupVerb); } catch (ArgumentOutOfRangeException) { pg15CleanupRejected = true; }
+        Assert(pg15CleanupRejected, $"The launcher no longer offers PostgreSQL 15 cleanup, so it must never build '{pg15CleanupVerb}'.");
     }
-    Assert(MainWindowViewModel.ParseCleanupPreview($$"""{"eligible":true,"bytes":1234567,"reason":"","token":"{{pg15Token}}"}""") is { Eligible: true, Bytes: 1234567, Token: pg15Token }
-           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":1234567,"reason":""}""") is { Eligible: true, Token: null }
-           && MainWindowViewModel.ParseCleanupPreview($$"""{"eligible":true,"bytes":1,"reason":"","token":"{{pg15Token.ToUpperInvariant()}}"}""") is { Eligible: true, Token: null }
-           && MainWindowViewModel.ParseCleanupPreview($$"""{"eligible":true,"bytes":1,"reason":"","token":"{{pg15Token[..62]}}"}""") is { Eligible: true, Token: null }
-           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":1,"reason":"","token":42}""") is { Eligible: true, Token: null }
-           && MainWindowViewModel.ParseCleanupPreview("checking\n{\"eligible\":false,\"bytes\":0,\"reason\":\"Still on PostgreSQL 15.\"}\n") is { Eligible: false, Reason: "Still on PostgreSQL 15." }
-           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":"true","bytes":1,"reason":""}""") is null
-           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":-1,"reason":""}""") is null
-           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":1.5,"reason":""}""") is null
-           && MainWindowViewModel.ParseCleanupPreview("""{"eligible":true,"bytes":1}""") is null
-           && MainWindowViewModel.ParseCleanupPreview("""[{"eligible":true,"bytes":1,"reason":""}]""") is null
-           && MainWindowViewModel.ParseCleanupPreview("{\"eligible\":true,\"bytes\":1,\"reason\":\"\"}\ndone") is null
-           && MainWindowViewModel.ParseCleanupPreview("") is null
-           && MainWindowViewModel.ParseCleanupPreview("{not json") is null,
-        "The cleanup preview must accept only {eligible:bool,bytes:non-negative int,reason:string} on its last line, keeping only a 64 lowercase hex token.");
-    Assert(MainWindowViewModel.ParseCleanupFreedBytes("""{"freed_bytes":42}""") == 42
-           && MainWindowViewModel.ParseCleanupFreedBytes("removing\n{\"freed_bytes\":0}\n") == 0
-           && MainWindowViewModel.ParseCleanupFreedBytes("""{"freed_bytes":-5}""") is null
-           && MainWindowViewModel.ParseCleanupFreedBytes("""{"freed":5}""") is null
-           && MainWindowViewModel.ParseCleanupFreedBytes("ok") is null,
-        "The cleanup result must accept only {freed_bytes:non-negative int}.");
-
-    var pg15Confirmation = MainWindowViewModel.BuildPg15CleanupConfirmation(1_610_612_736);
-    Assert(pg15Confirmation.Contains(" GB (1,610,612,736 bytes)", StringComparison.Ordinal)
-           && pg15Confirmation.Contains("One-click rollback to PostgreSQL 15 will no longer be possible", StringComparison.Ordinal)
-           && pg15Confirmation.Contains("Windows backup from the upgrade is kept", StringComparison.Ordinal)
-           && pg15Confirmation.Contains("not necessarily Windows free space", StringComparison.Ordinal),
-        "The cleanup confirmation must show the exact previewed bytes and say rollback ends, the Windows backup stays, and WSL space is not Windows free space.");
-    Assert(MainWindowViewModel.BuildPg15CleanupDoneStatus(2048).Contains(" KB (2,048 bytes)", StringComparison.Ordinal)
-           && MainWindowViewModel.BuildPg15CleanupDoneStatus(null).Contains("did not report", StringComparison.Ordinal)
-           && MainWindowViewModel.BuildPg15CleanupDoneStatus(null).Contains("rollback is no longer available", StringComparison.Ordinal),
-        "The cleanup result must report the tool's actual freed bytes, never a guess, and that rollback ended.");
-
-    const string pg15Registration = "{6f1d0c4e-2a8b-4e7f-9c3d-1b2a3c4d5e6f}";
-    async Task<(MainWindowViewModel.Pg15CleanupResult Result, List<string> Verbs, List<long> Asked, List<string[]> Calls)> RunFakePg15Cleanup(
-        CommandResult preview, bool answer, CommandResult? cleanup = null, Func<int, string?>? registration = null)
-    {
-        var verbs = new List<string>();
-        var asked = new List<long>();
-        var calls = new List<string[]>();
-        var registrationReads = 0;
-        var result = await MainWindowViewModel.RunPg15CleanupAsync(
-            (arguments, _) =>
-            {
-                Assert(arguments.Length >= 2 && arguments[0] == "/usr/local/bin/ddistro_pg17_maintenance", "Cleanup runs only the maintenance tool.");
-                verbs.Add(arguments[1]);
-                calls.Add(arguments);
-                return Task.FromResult(arguments[1] == "cleanup-preview" ? preview : cleanup ?? new CommandResult(0, """{"freed_bytes":900}""", ""));
-            },
-            bytes => { asked.Add(bytes); return answer; },
-            _ => { },
-            () => (registration ?? (_ => pg15Registration))(registrationReads++));
-        return (result, verbs, asked, calls);
-    }
-
-    var pg15Eligible = new CommandResult(0, $$"""{"eligible":true,"bytes":1000,"reason":"ok","token":"{{pg15Token}}"}""", "");
-    var pg15Deleted = await RunFakePg15Cleanup(pg15Eligible, answer: true);
-    Assert(pg15Deleted.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.Deleted, FreedBytes: 900 }
-           && pg15Deleted.Verbs.SequenceEqual(["cleanup-preview", "cleanup-pg15"]) && pg15Deleted.Asked.SequenceEqual([1000L]),
-        "A confirmed cleanup must preview, ask with the previewed bytes, delete once, and report the tool's freed bytes.");
-    Assert(pg15Deleted.Calls[0].SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "cleanup-preview"])
-           && pg15Deleted.Calls[1].SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "cleanup-pg15", "--confirm-preview", pg15Token]),
-        "The deletion must pass exactly the previewed token, and nothing else, to cleanup-pg15 --confirm-preview.");
-    foreach (var pg15BadPreviewToken in new[] { "", ",\"token\":\"\"", ",\"token\":null", $",\"token\":\"{pg15Token.ToUpperInvariant()}\"", $",\"token\":\"{pg15Token[..63]}\"" })
-    {
-        var pg15Tokenless = await RunFakePg15Cleanup(
-            new CommandResult(0, $$"""{"eligible":true,"bytes":1000,"reason":"ok"{{pg15BadPreviewToken}}}""", ""), answer: true);
-        Assert(pg15Tokenless.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.PreviewFailed, RegistrationId: null }
-               && pg15Tokenless.Verbs.SequenceEqual(["cleanup-preview"]) && pg15Tokenless.Asked.Count == 0
-               && pg15Tokenless.Result.Detail.Contains("Update DwemerDistro", StringComparison.Ordinal)
-               && pg15Tokenless.Result.Detail.Contains("fresh preview", StringComparison.Ordinal),
-            "An eligible preview without a valid token (older Core) must fail closed without asking or deleting, and say to update and preview again.");
-    }
-    Assert(pg15Deleted.Result.RegistrationId == pg15Registration,
-        "A deletion must record the registration that was previewed.");
-    foreach (var pg15UnknownRegistration in new string?[] { null, "", "DwemerDistro" })
-    {
-        var pg15Unknown = await RunFakePg15Cleanup(pg15Eligible, answer: true, registration: _ => pg15UnknownRegistration);
-        Assert(pg15Unknown.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.RegistrationUnknown, RegistrationId: null }
-               && pg15Unknown.Verbs.Count == 0 && pg15Unknown.Asked.Count == 0,
-            "Cleanup must refuse, before previewing or asking, when the WSL registration GUID is unknown.");
-    }
-    foreach (var pg15LaterRegistration in new string?[] { "{00000000-0000-0000-0000-000000000001}", null })
-    {
-        var pg15Changed = await RunFakePg15Cleanup(pg15Eligible, answer: true,
-            registration: read => read == 0 ? pg15Registration : pg15LaterRegistration);
-        Assert(pg15Changed.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.RegistrationChanged, RegistrationId: null }
-               && pg15Changed.Verbs.SequenceEqual(["cleanup-preview"]) && pg15Changed.Asked.Count == 1
-               && pg15Changed.Result.Detail.Contains("fresh preview", StringComparison.Ordinal),
-            "A registration that changes or vanishes between preview and delete must never run cleanup-pg15 and must ask for a fresh preview.");
-    }
-    var pg15SameRegistrationOtherCase = await RunFakePg15Cleanup(pg15Eligible, answer: true,
-        registration: read => read == 0 ? pg15Registration : pg15Registration.ToUpperInvariant());
-    Assert(pg15SameRegistrationOtherCase.Result.Outcome == MainWindowViewModel.Pg15CleanupOutcome.Deleted,
-        "Registration GUIDs compare ignoring case, as WSL's key names do.");
-    var pg15Declined = await RunFakePg15Cleanup(pg15Eligible, answer: false);
-    Assert(pg15Declined.Result.Outcome == MainWindowViewModel.Pg15CleanupOutcome.Canceled && pg15Declined.Verbs.SequenceEqual(["cleanup-preview"]),
-        "Declining (the default) must never run cleanup-pg15.");
-    var pg15Ineligible = await RunFakePg15Cleanup(new CommandResult(0, """{"eligible":false,"bytes":0,"reason":"Rollback is still pending."}""", ""), answer: true);
-    Assert(pg15Ineligible.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.NotEligible, Detail: "Rollback is still pending." }
-           && pg15Ineligible.Asked.Count == 0 && pg15Ineligible.Verbs.SequenceEqual(["cleanup-preview"]),
-        "An ineligible preview must show the tool's reason without asking or deleting.");
-    var pg15Garbled = await RunFakePg15Cleanup(new CommandResult(0, "eligible", ""), answer: true);
-    var pg15PreviewBusy = await RunFakePg15Cleanup(new CommandResult(75, "", ""), answer: true);
-    Assert(pg15Garbled.Result.Outcome == MainWindowViewModel.Pg15CleanupOutcome.PreviewFailed && pg15Garbled.Asked.Count == 0 && pg15Garbled.Verbs.Count == 1
-           && pg15PreviewBusy.Result.Outcome == MainWindowViewModel.Pg15CleanupOutcome.PreviewFailed && pg15PreviewBusy.Verbs.Count == 1
-           && pg15PreviewBusy.Result.Detail.Contains("distro update is still running", StringComparison.Ordinal),
-        "A failed or unreadable preview must never ask or delete.");
-    var pg15Failed = await RunFakePg15Cleanup(pg15Eligible, answer: true, new CommandResult(3, "", "cluster busy"));
-    Assert(pg15Failed.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.Failed, ExitCode: 3 }
-           && pg15Failed.Result.Detail.Contains("cluster busy", StringComparison.Ordinal),
-        "A nonzero cleanup exit must be a failure that carries the tool's error.");
-    var pg15Unreported = await RunFakePg15Cleanup(pg15Eligible, answer: true, new CommandResult(0, "done", ""));
-    Assert(pg15Unreported.Result is { Outcome: MainWindowViewModel.Pg15CleanupOutcome.Deleted, FreedBytes: null },
-        "Exit code 0 is the success signal even when freed bytes are not reported.");
+    Assert(!MainWindowViewModel.BuildDatabaseUpgradeConfirmation().Contains("backup", StringComparison.OrdinalIgnoreCase),
+        "The manual upgrade confirmation must not promise or ask for a Windows backup.");
     Assert(MainWindowViewModel.IsDatabaseRollbackAvailable(null, "{a}")
            && !MainWindowViewModel.IsDatabaseRollbackAvailable("{A}", "{a}")
            && MainWindowViewModel.IsDatabaseRollbackAvailable("{a}", "{b}")
            && MainWindowViewModel.IsDatabaseRollbackAvailable("{a}", null)
            && !MainWindowViewModel.IsDatabaseRollbackAvailable("", null),
-        "Rollback must be off only for the same registration whose PostgreSQL 15 data was deleted, so a reinstall or import is not blocked.");
+        "Rollback must stay off for the same registration whose PostgreSQL 15 data an earlier build deleted, so a reinstall or import is not blocked.");
 
     // Unattended PostgreSQL 17 step of the normal update, driven entirely by fakes: no WSL, no disk, no game.
     Assert(Pg17UpdateMigration.ParseStatus("needed\n") == Pg17Status.Needed
@@ -2039,30 +1916,28 @@ try
            && Pg17UpdateMigration.ParseStatus("") is null,
         "PG17 status must be exactly one of needed, current, held or unsupported on its last line.");
     Assert(Pg17UpdateMigration.BuildStatusArguments().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "status"])
-           && Pg17UpdateMigration.BuildAutoArguments("/mnt/c/Users/a/Dwemer-PG15-x").SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "auto", "/mnt/c/Users/a/Dwemer-PG15-x"]),
-        "The update must call only the maintenance tool's status and auto verbs.");
-    foreach (var pg17BadBackup in new[] { "", "/var/lib/backup", "/mnt/c/x\nreboot" })
-    {
-        var pg17BadBackupRejected = false;
-        try { Pg17UpdateMigration.BuildAutoArguments(pg17BadBackup); } catch (ArgumentException) { pg17BadBackupRejected = true; }
-        Assert(pg17BadBackupRejected, "Automatic upgrade must refuse a backup path that is not a Windows folder: " + pg17BadBackup.Replace("\n", "\\n"));
-    }
+           && Pg17UpdateMigration.BuildAutoArguments().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "auto"]),
+        "The update must call only the maintenance tool's status and auto verbs, and auto with no backup path.");
+    const string pg17OldToolRefusal = "Maintenance stopped: Select a Windows backup directory outside this distro. See /var/lib/dwemer-pg17/maintenance.log";
+    Assert(Pg17UpdateMigration.IsBackupFolderRequiredRefusal(new CommandResult(1, "", pg17OldToolRefusal))
+           && !Pg17UpdateMigration.IsBackupFolderRequiredRefusal(new CommandResult(0, pg17OldToolRefusal, ""))
+           && !Pg17UpdateMigration.IsBackupFolderRequiredRefusal(new CommandResult(1, "", "Maintenance stopped: pg_upgrade failed")),
+        "Only a failed run with the older tool's missing-backup refusal counts as that refusal.");
 
-    async Task<(Pg17MigrationResult Result, List<string[]> Calls, int Prepared, int Delays, List<int> WaitEvents, int Discarded)> RunFakeMigration(
+    async Task<(Pg17MigrationResult Result, List<string[]> Calls, int SpaceChecks, int Delays, List<int> WaitEvents)> RunFakeMigration(
         Func<int, CommandResult> status,
         Func<int, IReadOnlyList<string>> games,
         CommandResult? auto = null,
         CommandResult? probe = null,
-        Exception? prepareFailure = null,
+        Exception? spaceFailure = null,
         CancellationToken waitToken = default,
         Action? onDelay = null)
     {
         var calls = new List<string[]>();
         var statusCalls = 0;
         var gameChecks = 0;
-        var prepared = 0;
+        var spaceChecks = 0;
         var delays = 0;
-        var discarded = 0;
         var waitEvents = new List<int>();
         var migration = new Pg17UpdateMigration(
             (arguments, _, token) =>
@@ -2077,9 +1952,9 @@ try
             () => games(gameChecks++),
             _ =>
             {
-                prepared++;
-                if (prepareFailure is not null) throw prepareFailure;
-                return Task.FromResult("/mnt/c/backups/Dwemer-PG15-test");
+                spaceChecks++;
+                if (spaceFailure is not null) throw spaceFailure;
+                return Task.CompletedTask;
             },
             (_, token) =>
             {
@@ -2088,11 +1963,10 @@ try
                 token.ThrowIfCancellationRequested();
                 return Task.CompletedTask;
             },
-            TimeSpan.FromSeconds(30),
-            () => discarded++);
+            TimeSpan.FromSeconds(30));
         migration.WaitingForGamesChanged += list => waitEvents.Add(list.Count);
         var result = await migration.RunAsync(_ => { }, waitToken);
-        return (result, calls, prepared, delays, waitEvents, discarded);
+        return (result, calls, spaceChecks, delays, waitEvents);
     }
 
     var pg17Ok = (string text) => new CommandResult(0, text + "\n", "");
@@ -2102,8 +1976,8 @@ try
         var pg17Skipped = await RunFakeMigration(_ => pg17Ok(pg17Word), pg17NoGames);
         Assert(pg17Skipped.Result.Outcome == Pg17MigrationOutcome.NotNeeded && pg17Skipped.Result.AllowsUpdateToFinish
                && pg17Skipped.Result.Message.Contains(pg17Expected, StringComparison.Ordinal)
-               && pg17Skipped.Prepared == 0 && !pg17Skipped.Calls.Any(call => call.Contains("auto")),
-            $"PG17 status '{pg17Word}' must let the update finish without a backup or upgrade.");
+               && pg17Skipped.SpaceChecks == 0 && !pg17Skipped.Calls.Any(call => call.Contains("auto")),
+            $"PG17 status '{pg17Word}' must let the update finish without a free-space check or upgrade.");
     }
 
     var pg17MissingTool = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, probe: new CommandResult(1, "", ""));
@@ -2113,14 +1987,14 @@ try
     {
         var pg17ProbeFailed = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, probe: new CommandResult(pg17ProbeExit, "", "wsl error"));
         Assert(pg17ProbeFailed.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17ProbeFailed.Result.AllowsUpdateToFinish
-               && pg17ProbeFailed.Calls.Count == 1 && pg17ProbeFailed.Prepared == 0
+               && pg17ProbeFailed.Calls.Count == 1 && pg17ProbeFailed.SpaceChecks == 0
                && pg17ProbeFailed.Result.Message.Contains($"exit {pg17ProbeExit}", StringComparison.Ordinal),
             $"A tool check that fails for any reason but absence (exit {pg17ProbeExit}) must not let the update record a release over PostgreSQL 15.");
     }
 
-    var pg17LockedArguments = DistroUpdateRunner.BuildLockedRootArguments(Pg17UpdateMigration.BuildAutoArguments("/mnt/c/b/Dwemer-PG15-x"));
+    var pg17LockedArguments = DistroUpdateRunner.BuildLockedRootArguments(Pg17UpdateMigration.BuildAutoArguments());
     Assert(pg17LockedArguments.SequenceEqual(["flock", "-n", "-E", "75", "--close", DistroUpdateRunner.LockPath,
-               "/usr/local/bin/ddistro_pg17_maintenance", "auto", "/mnt/c/b/Dwemer-PG15-x"]),
+               "/usr/local/bin/ddistro_pg17_maintenance", "auto"]),
         "Database maintenance must run under the distro update lock, never overlapping core provisioning or another upgrade, without leaking the lock to the database server.");
 
     var pg17StatusFailed = await RunFakeMigration(_ => new CommandResult(3, "", "cluster unreadable"), pg17NoGames);
@@ -2132,20 +2006,25 @@ try
         "An unrecognized PG17 status must fail the update rather than guess.");
 
     var pg17Upgraded = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames);
-    Assert(pg17Upgraded.Result.Outcome == Pg17MigrationOutcome.Upgraded && pg17Upgraded.Prepared == 1 && pg17Upgraded.Delays == 0
-           && pg17Upgraded.Calls.Last().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "auto", "/mnt/c/backups/Dwemer-PG15-test"]),
-        "PG17 'needed' with no game open must back up privately, then run auto with that backup.");
+    Assert(pg17Upgraded.Result.Outcome == Pg17MigrationOutcome.Upgraded && pg17Upgraded.SpaceChecks == 1 && pg17Upgraded.Delays == 0
+           && pg17Upgraded.Calls.Last().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "auto"]),
+        "PG17 'needed' with no game open must check free space, then run auto without a backup path.");
 
     var pg17UpgradeFailed = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, auto: new CommandResult(9, "", "pg_upgrade failed"));
     Assert(pg17UpgradeFailed.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17UpgradeFailed.Result.AllowsUpdateToFinish
            && pg17UpgradeFailed.Result.Message.Contains("exit 9", StringComparison.Ordinal),
         "A failed automatic upgrade must keep the update from being recorded as finished.");
+    var pg17OldTool = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, auto: new CommandResult(1, "", pg17OldToolRefusal));
+    Assert(pg17OldTool.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17OldTool.Result.AllowsUpdateToFinish
+           && pg17OldTool.Result.Message.Contains("older release", StringComparison.Ordinal)
+           && pg17OldTool.Result.Message.Contains("still on PostgreSQL 15", StringComparison.Ordinal),
+        "An older tool that refuses auto without a backup folder must keep the update unfinished and say the database was not upgraded.");
 
     var pg17LowSpace = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames,
-        prepareFailure: new InvalidOperationException("Insufficient Windows disk space for staging and backup."));
+        spaceFailure: new InvalidOperationException("Not enough free space on C:\\."));
     Assert(pg17LowSpace.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17LowSpace.Calls.Any(call => call.Contains("auto"))
-           && pg17LowSpace.Result.Message.Contains("Insufficient Windows disk space", StringComparison.Ordinal),
-        "A failed free-space or backup check must stop before auto and fail the update.");
+           && pg17LowSpace.Result.Message.Contains("Not enough free space", StringComparison.Ordinal),
+        "A failed free-space check must stop before auto and fail the update.");
 
     var pg17Waited = await RunFakeMigration(_ => pg17Ok("needed"), check => check < 2 ? ["Skyrim Special Edition"] : []);
     Assert(pg17Waited.Result.Outcome == Pg17MigrationOutcome.Upgraded && pg17Waited.Delays == 2
@@ -2154,7 +2033,7 @@ try
         "An open game must defer the upgrade with delayed rechecks of status and games, then continue once it closes.");
 
     var pg17ClosedAfterWait = await RunFakeMigration(count => pg17Ok(count == 0 ? "needed" : "current"), _ => ["Kenshi"]);
-    Assert(pg17ClosedAfterWait.Result.Outcome == Pg17MigrationOutcome.NotNeeded && pg17ClosedAfterWait.Prepared == 0,
+    Assert(pg17ClosedAfterWait.Result.Outcome == Pg17MigrationOutcome.NotNeeded && pg17ClosedAfterWait.SpaceChecks == 0,
         "A status that changes during the wait must be honored on the recheck.");
 
     using (var pg17StopWaiting = new CancellationTokenSource())
@@ -2162,38 +2041,23 @@ try
         var pg17Stopped = await RunFakeMigration(_ => pg17Ok("needed"), _ => ["Fallout: New Vegas"],
             waitToken: pg17StopWaiting.Token, onDelay: pg17StopWaiting.Cancel);
         Assert(pg17Stopped.Result.Outcome == Pg17MigrationOutcome.Deferred && !pg17Stopped.Result.AllowsUpdateToFinish
-               && pg17Stopped.Prepared == 0 && !pg17Stopped.Calls.Any(call => call.Contains("auto"))
+               && pg17Stopped.SpaceChecks == 0 && !pg17Stopped.Calls.Any(call => call.Contains("auto"))
                && pg17Stopped.WaitEvents.SequenceEqual([1, 0]),
             "Stopping the wait must postpone the upgrade, change nothing, and keep the update unfinished.");
-        Assert(pg17Stopped.Discarded == 0, "A wait stopped before the backup folder exists has nothing to discard.");
         Assert(MainWindowViewModel.DescribeDatabaseUpdateFailure(pg17Stopped.Result).Contains("run Update Distro again", StringComparison.Ordinal)
                && MainWindowViewModel.BuildUpdateDatabaseStatus(pg17Stopped.Result, waited: true) is { } pg17Postponed
                && pg17Postponed.Text.Contains("Nothing was changed", StringComparison.Ordinal),
             "A postponed upgrade must say nothing changed and how it finishes.");
     }
 
-    using (var pg17StopAfterBackup = new CancellationTokenSource())
+    using (var pg17StopAfterSpaceCheck = new CancellationTokenSource())
     {
-        var pg17PostponedAfterBackup = await RunFakeMigration(_ => pg17Ok("needed"), check => check == 0 ? [] : ["Kenshi"],
-            waitToken: pg17StopAfterBackup.Token, onDelay: pg17StopAfterBackup.Cancel);
-        Assert(pg17PostponedAfterBackup.Result.Outcome == Pg17MigrationOutcome.Deferred && pg17PostponedAfterBackup.Prepared == 1
-               && pg17PostponedAfterBackup.Discarded == 1 && !pg17PostponedAfterBackup.Calls.Any(call => call.Contains("auto")),
-            "A game opened after the backup folder was made must postpone the upgrade and discard the unused folder.");
+        var pg17PostponedAfterSpaceCheck = await RunFakeMigration(_ => pg17Ok("needed"), check => check == 0 ? [] : ["Kenshi"],
+            waitToken: pg17StopAfterSpaceCheck.Token, onDelay: pg17StopAfterSpaceCheck.Cancel);
+        Assert(pg17PostponedAfterSpaceCheck.Result.Outcome == Pg17MigrationOutcome.Deferred && pg17PostponedAfterSpaceCheck.SpaceChecks == 1
+               && !pg17PostponedAfterSpaceCheck.Calls.Any(call => call.Contains("auto")),
+            "A game opened after the free-space check must still postpone the upgrade before auto.");
     }
-    Assert(pg17Upgraded.Discarded == 0 && pg17UpgradeFailed.Discarded == 0,
-        "A backup folder that auto ran with is never discarded, whatever auto's exit.");
-
-    // Only an empty folder the launcher named is removed, and never recursively.
-    var pg17BackupParent = Path.Combine(root, "pg17-backups");
-    var pg17EmptyBackup = Directory.CreateDirectory(Path.Combine(pg17BackupParent, MainWindowViewModel.DatabaseBackupFolderPrefix + "empty")).FullName;
-    var pg17UsedBackup = Directory.CreateDirectory(Path.Combine(pg17BackupParent, MainWindowViewModel.DatabaseBackupFolderPrefix + "used")).FullName;
-    Directory.CreateDirectory(Path.Combine(pg17UsedBackup, "dumps"));
-    var pg17OtherFolder = Directory.CreateDirectory(Path.Combine(pg17BackupParent, "Saves")).FullName;
-    Assert(MainWindowViewModel.TryRemoveUnusedBackupFolder(pg17EmptyBackup) && !Directory.Exists(pg17EmptyBackup)
-           && !MainWindowViewModel.TryRemoveUnusedBackupFolder(pg17UsedBackup) && Directory.Exists(Path.Combine(pg17UsedBackup, "dumps"))
-           && !MainWindowViewModel.TryRemoveUnusedBackupFolder(pg17OtherFolder) && Directory.Exists(pg17OtherFolder)
-           && !MainWindowViewModel.TryRemoveUnusedBackupFolder(pg17EmptyBackup),
-        "Discarding a backup folder must remove only an empty, launcher-named folder, and never anything inside one.");
 
     const string pg17BackupHex = "0123456789abcdef0123456789ABCDEF";
     Assert(MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\Dwemer-PG15-{pg17BackupHex}.tar")
@@ -2205,21 +2069,11 @@ try
            && !MainWindowViewModel.IsDatabaseBackupArtifact($@"C:\b\{LauncherConstants.DistroName}-20260101-120000.tar"),
         "Full distro import must recognise only the generated database-only backup tar and its recovery companion.");
 
-    Assert(MainWindowViewModel.DescribeUnsupportedBackupFolder(@"\\nas\backups\dwemer") is { } pg17UncReason
-           && pg17UncReason.Contains("Network folders", StringComparison.Ordinal)
-           && MainWindowViewModel.DescribeUnsupportedBackupFolder(@"C:\Users\a\Backups") is null,
-        "A UNC backup folder must be refused with a clear reason; a local drive folder is accepted.");
-    var pg17UncRefused = false;
-    try
-    {
-        // A distro name that is not registered: the UNC refusal must come before any WSL call, du included.
-        await MainWindowViewModel.PrepareDatabaseBackupAsync(new WslService(new ProcessRunner(), "DwemerDistro-NotRegistered-Test"), @"\\nas\backups");
-    }
-    catch (InvalidOperationException ex) when (ex.Message.Contains("Network folders", StringComparison.Ordinal))
-    {
-        pg17UncRefused = true;
-    }
-    Assert(pg17UncRefused, "Preparing a backup under a UNC folder must refuse with the network-folder reason.");
+    Assert(MainWindowViewModel.DatabaseBackupRoot.EndsWith(Path.Combine("DwemerDistro", "DatabaseBackups"), StringComparison.OrdinalIgnoreCase),
+        "Import Distro Backup must keep looking where earlier builds saved database backups.");
+    Assert(MainWindowViewModel.HasRoomForDatabaseUpgrade(1_000, 4_000)
+           && !MainWindowViewModel.HasRoomForDatabaseUpgrade(1_000, 3_999),
+        "The upgrade needs four times the PostgreSQL 15 data free on the drive holding the distro's virtual disk.");
 
     // Manual upgrade decides from status before asking for a folder; manual upgrade and rollback refuse while a game is open.
     Assert(MainWindowViewModel.DescribeManualUpgradeNotStarted(pg17Ok("current")) is { } pg17ManualCurrent
@@ -2234,7 +2088,7 @@ try
                is { } pg17ManualBusy
            && pg17ManualBusy.Text.Contains("distro update is still running", StringComparison.Ordinal)
            && pg17ManualBusy.Text.Split("Nothing was changed").Length == 2,
-        "A manual upgrade on PostgreSQL 17 must report current without a folder or sizing; only needed or held proceeds.");
+        "A manual upgrade on PostgreSQL 17 must report current without sizing; only needed or held proceeds.");
     Assert(MainWindowViewModel.BuildDatabaseMaintenanceGameOpenMessage("Database rollback", ["Skyrim Special Edition"]) is { } pg17ManualGame
            && pg17ManualGame.Contains("Skyrim Special Edition is open", StringComparison.Ordinal)
            && pg17ManualGame.Contains("Nothing was changed", StringComparison.Ordinal),
@@ -2279,7 +2133,7 @@ try
                 return new CommandResult(0, "", "");
             },
             () => games(gameChecks++),
-            _ => Task.FromResult("/mnt/c/backups/Dwemer-PG15-test"),
+            _ => Task.CompletedTask,
             MainWindowViewModel.PauseDeadlineDuringDelay((interval, token) =>
             {
                 delays++;
@@ -2317,10 +2171,11 @@ try
            && Pg17UpdateMigration.GameProcesses.ContainsKey("openmw") && Pg17UpdateMigration.GameProcesses.ContainsKey("Bannerlord"),
         "The upgrade must wait for every supported game.");
     Assert(MainWindowViewModel.BuildUpdateDatabaseStatus(pg17Upgraded.Result, waited: false) is { } pg17UpgradedStatus
-           && pg17UpgradedStatus.Text.Contains(Pg17UpdateMigration.DefaultBackupRoot, StringComparison.Ordinal)
+           && pg17UpgradedStatus.Text.StartsWith("Done.", StringComparison.Ordinal)
+           && !pg17UpgradedStatus.Text.Contains("backup", StringComparison.OrdinalIgnoreCase)
            && MainWindowViewModel.BuildUpdateDatabaseStatus(pg17MissingTool.Result, waited: false) is null
            && MainWindowViewModel.BuildDatabaseUpgradeWaitingStatus(["Skyrim VR"]).Contains("Skyrim VR to close", StringComparison.Ordinal),
-        "The Database Maintenance row must say where the automatic backup went, and stay quiet when nothing happened.");
+        "The Database Maintenance row must report the upgrade without promising a backup, and stay quiet when nothing happened.");
     Assert(MainWindowViewModel.BuildInterruptedUpdateDatabaseStatus(pg17Upgraded.Result, waited: true) is { } pg17TimedOutAfterAuto
            && pg17TimedOutAfterAuto.Text.StartsWith("Done.", StringComparison.Ordinal)
            && MainWindowViewModel.BuildInterruptedUpdateDatabaseStatus(pg17UpgradeFailed.Result, waited: true) is { } pg17TimedOutAfterFailure

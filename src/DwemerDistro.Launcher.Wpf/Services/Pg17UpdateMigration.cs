@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.IO;
 using DwemerDistro.Launcher.Wpf.Models;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
@@ -33,16 +32,15 @@ internal sealed record Pg17MigrationResult(Pg17MigrationOutcome Outcome, string 
 /// asks anything, and waits while a supported game is open so a live save is never migrated underneath
 /// it. The distro's maintenance tool owns the database work; its exit code is the only success signal.
 /// Every dependency is a delegate so the orchestration runs against fakes or an isolated distro.
-/// <paramref name="discardUnusedBackup"/> runs when the upgrade is postponed after the backup folder was
-/// prepared but before <c>auto</c> could write to it.
+/// <paramref name="checkFreeSpaceAsync"/> throws <see cref="InvalidOperationException"/> when Windows lacks room
+/// for the upgrade; it writes nothing.
 /// </summary>
 internal sealed class Pg17UpdateMigration(
     Func<string[], Action<string>, CancellationToken, Task<CommandResult>> runToolAsRoot,
     Func<IReadOnlyList<string>> findRunningGames,
-    Func<CancellationToken, Task<string>> prepareBackupAsync,
+    Func<CancellationToken, Task> checkFreeSpaceAsync,
     Func<TimeSpan, CancellationToken, Task> delayAsync,
-    TimeSpan recheckInterval,
-    Action? discardUnusedBackup = null)
+    TimeSpan recheckInterval)
 {
     internal const string ToolPath = "/usr/local/bin/ddistro_pg17_maintenance";
     internal static readonly TimeSpan DefaultRecheckInterval = TimeSpan.FromSeconds(30);
@@ -68,17 +66,22 @@ internal sealed class Pg17UpdateMigration(
 
     internal static string[] BuildStatusArguments() => [ToolPath, "status"];
 
-    internal static string[] BuildAutoArguments(string backupDistroPath)
-    {
-        if (string.IsNullOrWhiteSpace(backupDistroPath)
-            || !backupDistroPath.StartsWith("/mnt/", StringComparison.Ordinal)
-            || backupDistroPath.Any(char.IsControl))
-        {
-            throw new ArgumentException("The backup must be a Windows folder outside the distro.", nameof(backupDistroPath));
-        }
+    internal static string[] BuildAutoArguments() => [ToolPath, "auto"];
 
-        return [ToolPath, "auto", backupDistroPath];
-    }
+    /// <summary>
+    /// An older maintenance tool still requires a Windows backup folder, which the launcher no longer passes.
+    /// It refuses with this reason before touching the database.
+    /// </summary>
+    internal static bool IsBackupFolderRequiredRefusal(CommandResult result) =>
+        !result.Succeeded
+        && (result.StandardError.Contains(OlderToolBackupRefusal, StringComparison.Ordinal)
+            || result.StandardOutput.Contains(OlderToolBackupRefusal, StringComparison.Ordinal));
+
+    private const string OlderToolBackupRefusal = "Select a Windows backup directory";
+
+    internal const string BackupFolderRequiredMessage =
+        "This distro's database maintenance tool is from an older release that needs a backup folder, so the upgrade " +
+        "did not start and the database is still on PostgreSQL 15. Run Update Distro to install the current tool, then try again.";
 
     /// <summary>The last non-empty output line must be exactly one of the four documented words.</summary>
     internal static Pg17Status? ParseStatus(string? output)
@@ -116,7 +119,7 @@ internal sealed class Pg17UpdateMigration(
     }
 
     // Core provisioning can also start services and refresh grants. Wait before that phase
-    // and check once more after sizing the backup, immediately before starting cutover.
+    // and check once more after the free-space check, immediately before starting cutover.
     internal async Task WaitForIdleAsync(Action<string> log, CancellationToken token)
     {
         var announced = false;
@@ -137,18 +140,14 @@ internal sealed class Pg17UpdateMigration(
         }
     }
 
-    internal static string DefaultBackupRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DwemerDistro", "DatabaseBackups");
-
     /// <summary>
-    /// Runs status, waits for games, prepares the private backup and runs <c>auto</c>. Cancelling
+    /// Runs status, waits for games, checks free space and runs <c>auto</c>. Cancelling
     /// <paramref name="waitToken"/> before <c>auto</c> starts returns <see cref="Pg17MigrationOutcome.Deferred"/>;
     /// once <c>auto</c> starts it always runs to its own end, because stopping wsl.exe does not stop root
     /// work inside the distro and the tool is idempotent on the next run.
     /// </summary>
     public async Task<Pg17MigrationResult> RunAsync(Action<string> log, CancellationToken waitToken)
     {
-        string? backupPath = null;
         var announcedGames = string.Empty;
         try
         {
@@ -206,14 +205,12 @@ internal sealed class Pg17UpdateMigration(
             }
 
             if (announcedGames.Length > 0) WaitingForGamesChanged?.Invoke([]);
-            log("Backing up the database to a private Windows folder before upgrading to PostgreSQL 17..." + Environment.NewLine);
-            backupPath = await prepareBackupAsync(waitToken).ConfigureAwait(false);
+            await checkFreeSpaceAsync(waitToken).ConfigureAwait(false);
             await WaitForIdleAsync(log, waitToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (waitToken.IsCancellationRequested)
         {
             if (announcedGames.Length > 0) WaitingForGamesChanged?.Invoke([]);
-            if (backupPath is not null) discardUnusedBackup?.Invoke();
             return new(Pg17MigrationOutcome.Deferred,
                 "the PostgreSQL 17 database upgrade was postponed before it started; nothing was changed");
         }
@@ -223,10 +220,13 @@ internal sealed class Pg17UpdateMigration(
             return new(Pg17MigrationOutcome.Failed, $"the PostgreSQL 17 upgrade could not start: {ex.Message.TrimEnd('.')}");
         }
 
-        var result = await runToolAsRoot(BuildAutoArguments(backupPath), log, CancellationToken.None).ConfigureAwait(false);
+        var result = await runToolAsRoot(BuildAutoArguments(), log, CancellationToken.None).ConfigureAwait(false);
         return result.Succeeded
             ? new(Pg17MigrationOutcome.Upgraded, "The database was upgraded to PostgreSQL 17.")
-            : new(Pg17MigrationOutcome.Failed, $"the PostgreSQL 17 upgrade failed (exit {result.ExitCode}): {LastLine(result)}");
+            : IsBackupFolderRequiredRefusal(result)
+                ? new(Pg17MigrationOutcome.Failed, "the distro's database maintenance tool is from an older release that needs a backup folder, so the " +
+                    "PostgreSQL 17 upgrade did not start; the database is still on PostgreSQL 15")
+                : new(Pg17MigrationOutcome.Failed, $"the PostgreSQL 17 upgrade failed (exit {result.ExitCode}): {LastLine(result)}");
     }
 
     private static string LastLine(CommandResult result)

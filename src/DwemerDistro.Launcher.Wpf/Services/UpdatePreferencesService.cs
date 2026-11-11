@@ -41,7 +41,7 @@ public sealed class UpdatePreferencesService
     }
 
     /// <summary>
-    /// The WSL registration GUID whose PostgreSQL 15 data the launcher deleted, or null. Keyed to the
+    /// The WSL registration GUID whose PostgreSQL 15 data an earlier launcher build deleted, or null. Keyed to the
     /// registration so a reinstall or import is not affected by an older deletion.
     /// </summary>
     public string? GetPg15DeletedRegistrationId()

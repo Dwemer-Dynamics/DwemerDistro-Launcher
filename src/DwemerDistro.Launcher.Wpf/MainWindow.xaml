@@ -2909,9 +2909,9 @@
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <StackPanel Margin="0,0,16,0">
                                     <TextBlock Text="Database Maintenance" Style="{StaticResource GameCenter.SettingRowTitle}" />
-                                    <TextBlock Text="Upgrade to PostgreSQL 17 and save a verified backup in a private Windows folder."
+                                    <TextBlock Text="Upgrade the database to PostgreSQL 17, or roll back to PostgreSQL 15."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
-                                    <TextBlock Text="Update Distro also does this on its own, with no questions, backing up to your local DwemerDistro folder. It waits while a supported game is open and finishes once you close it."
+                                    <TextBlock Text="Update Distro also does this on its own, with no questions. It waits while a supported game is open and finishes once you close it."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
                                     <TextBlock Text="Rollback checks for changed data before restoring PostgreSQL 15."
                                                Foreground="{DynamicResource GameCenter.DangerText}"
@@ -2931,10 +2931,6 @@
                                             Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
                                             AutomationProperties.Name="Roll back PostgreSQL 17 database upgrade"
                                             AutomationProperties.HelpText="Rolls back a PostgreSQL 17 upgrade. Only use this before anything is written to the upgraded database; data written since the upgrade is not carried back. You are asked to confirm first, and the confirmation defaults to No." />
-                                    <Button Content="Delete PG15 data" Command="{Binding DeletePg15DataCommand}"
-                                            Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
-                                            AutomationProperties.Name="Delete old PostgreSQL 15 data"
-                                            AutomationProperties.HelpText="Shows the size of the PostgreSQL 15 data the upgrade left inside the distro and asks first; the confirmation defaults to No. Deleting it turns off Roll back and keeps your Windows backup." />
                                     <!-- Shown only while Update Distro holds its database upgrade for an open game, so
                                          the wait can always be ended from where its status is shown. -->
                                     <Button Content="Stop waiting" Command="{Binding StopDatabaseUpgradeWaitCommand}"
