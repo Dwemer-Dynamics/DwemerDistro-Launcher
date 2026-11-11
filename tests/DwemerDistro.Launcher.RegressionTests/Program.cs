@@ -83,6 +83,44 @@ if (args.Length == 2 && args[0] == "--render-community")
     return 0;
 }
 
+// An opt-in isolated-distro run of the normal update: core and shared provisioning, the unattended PostgreSQL 17
+// step, then the release marker, exactly as Update Distro runs them. It refuses the live distro by name and
+// writes its backup under a temporary Windows folder. Usage: --pg17-isolated-update <registered test distro>
+if (args.Length == 2 && args[0] == "--pg17-isolated-update")
+{
+    var testDistro = args[1];
+    if (string.Equals(testDistro, LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase))
+    {
+        Console.Error.WriteLine($"Refusing to run against the live {LauncherConstants.DistroName} distro. Import a copy under another name.");
+        return 2;
+    }
+
+    var isolatedWsl = new WslService(new ProcessRunner(), testDistro);
+    if (!await isolatedWsl.DistroExistsAsync())
+    {
+        Console.Error.WriteLine($"WSL distro '{testDistro}' is not registered.");
+        return 2;
+    }
+
+    var backupRoot = Path.Combine(Path.GetTempPath(), "DwemerDistro", "Pg17IsolatedUpdate", Guid.NewGuid().ToString("N"));
+    var isolatedMigration = new Pg17UpdateMigration(
+        (arguments, output, token) => isolatedWsl.RunDatabaseMaintenanceAsync(arguments, output, token),
+        Pg17UpdateMigration.FindRunningGames,
+        token => MainWindowViewModel.PrepareDatabaseBackupAsync(isolatedWsl, backupRoot, token),
+        Task.Delay,
+        Pg17UpdateMigration.DefaultRecheckInterval);
+    isolatedMigration.WaitingForGamesChanged += games =>
+        Console.WriteLine(games.Count > 0 ? "Waiting for: " + string.Join(", ", games) + " (Ctrl+C postpones)" : "No game open.");
+    using var stop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
+    var outcome = await MainWindowViewModel.RunSharedDistroUpdatePipelineAsync(
+        isolatedWsl, isolatedMigration, Console.Write, Console.Write, TimeSpan.FromMinutes(30), CancellationToken.None, stop.Token);
+    Console.WriteLine($"Update exit {outcome.Command.ExitCode}; database {outcome.Database?.Outcome.ToString() ?? "not reached"}: {outcome.Database?.Message}");
+    Console.WriteLine("Backup root: " + backupRoot);
+    Console.WriteLine(outcome.Succeeded ? "PG17 ISOLATED UPDATE PASSED" : "PG17 ISOLATED UPDATE DID NOT FINISH");
+    return outcome.Succeeded ? 0 : 1;
+}
+
 var root = Path.Combine(Path.GetTempPath(), "DwemerDistro", "ReleaseNoticeTests", Guid.NewGuid().ToString("N"));
 var installDirectory = Path.Combine(root, "install");
 var localAppDataDirectory = Path.Combine(root, "local-app-data");
@@ -1481,9 +1519,10 @@ try
         "Update Distro must ignore stale global, system, and repository-local Git authentication, disable prompts, remove the unavailable image helper, and repair the Core origin before fetching.");
     var systemReleaseMarkerWrite = MainWindowViewModel.BuildSystemReleaseMarkerWriteCommand();
     Assert(systemUpdateCommand.Contains("git -c credential.helper= fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
-           && systemUpdateCommand.Contains(sharedUpdateCommand + " && ", StringComparison.Ordinal)
-           && systemUpdateCommand.EndsWith(systemReleaseMarkerWrite, StringComparison.Ordinal),
-        "Update Distro must update the distro and shared components before recording the successful system release.");
+           && systemUpdateCommand.EndsWith(sharedUpdateCommand, StringComparison.Ordinal)
+           && !systemUpdateCommand.Contains(systemReleaseMarkerWrite, StringComparison.Ordinal)
+           && MainWindowViewModel.BuildSystemReleaseCommand() == MainWindowViewModel.BuildUpdateStageMarker(MainWindowViewModel.UpdateStageRelease) + systemReleaseMarkerWrite,
+        "Update Distro must update the distro and shared components, and record the system release only in its own later step after the database step.");
     Assert(systemReleaseMarkerWrite.Contains("sudo -S -p '' install -D -m 0644", StringComparison.Ordinal)
            && systemReleaseMarkerWrite.Contains("/home/dwemer/dwemerdistro/system-release.json", StringComparison.Ordinal)
            && systemReleaseMarkerWrite.Contains("/var/lib/dwemerdistro/system-release.json", StringComparison.Ordinal),
@@ -1806,6 +1845,150 @@ try
            && MainWindowViewModel.BuildDatabaseRollbackConfirmation().Contains("before anything has been written", StringComparison.Ordinal)
            && MainWindowViewModel.BuildDatabaseRollbackConfirmation().Contains("not carried back", StringComparison.Ordinal),
         "Database maintenance confirmations must warn that rollback is only safe before the upgraded database is written to.");
+
+    // Unattended PostgreSQL 17 step of the normal update, driven entirely by fakes: no WSL, no disk, no game.
+    Assert(Pg17UpdateMigration.ParseStatus("needed\n") == Pg17Status.Needed
+           && Pg17UpdateMigration.ParseStatus("checking cluster\ncurrent\n") == Pg17Status.Current
+           && Pg17UpdateMigration.ParseStatus(" held \r\n") == Pg17Status.Held
+           && Pg17UpdateMigration.ParseStatus("unsupported") == Pg17Status.Unsupported
+           && Pg17UpdateMigration.ParseStatus("Needed") is null
+           && Pg17UpdateMigration.ParseStatus("needed please") is null
+           && Pg17UpdateMigration.ParseStatus("") is null,
+        "PG17 status must be exactly one of needed, current, held or unsupported on its last line.");
+    Assert(Pg17UpdateMigration.BuildStatusArguments().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "status"])
+           && Pg17UpdateMigration.BuildAutoArguments("/mnt/c/Users/a/Dwemer-PG15-x").SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "auto", "/mnt/c/Users/a/Dwemer-PG15-x"]),
+        "The update must call only the maintenance tool's status and auto verbs.");
+    foreach (var pg17BadBackup in new[] { "", "/var/lib/backup", "/mnt/c/x\nreboot" })
+    {
+        var pg17BadBackupRejected = false;
+        try { Pg17UpdateMigration.BuildAutoArguments(pg17BadBackup); } catch (ArgumentException) { pg17BadBackupRejected = true; }
+        Assert(pg17BadBackupRejected, "Automatic upgrade must refuse a backup path that is not a Windows folder: " + pg17BadBackup.Replace("\n", "\\n"));
+    }
+
+    async Task<(Pg17MigrationResult Result, List<string[]> Calls, int Prepared, int Delays, List<int> WaitEvents)> RunFakeMigration(
+        Func<int, CommandResult> status,
+        Func<int, IReadOnlyList<string>> games,
+        CommandResult? auto = null,
+        CommandResult? probe = null,
+        Exception? prepareFailure = null,
+        CancellationToken waitToken = default,
+        Action? onDelay = null)
+    {
+        var calls = new List<string[]>();
+        var statusCalls = 0;
+        var gameChecks = 0;
+        var prepared = 0;
+        var delays = 0;
+        var waitEvents = new List<int>();
+        var migration = new Pg17UpdateMigration(
+            (arguments, _, token) =>
+            {
+                calls.Add(arguments);
+                if (arguments[0] == "test") return Task.FromResult(probe ?? new CommandResult(0, "", ""));
+                token.ThrowIfCancellationRequested();
+                if (arguments[1] == "status") return Task.FromResult(status(statusCalls++));
+                Assert(!token.CanBeCanceled, "Automatic upgrade must run to its own end once started.");
+                return Task.FromResult(auto ?? new CommandResult(0, "pg17Upgraded", ""));
+            },
+            () => games(gameChecks++),
+            _ =>
+            {
+                prepared++;
+                if (prepareFailure is not null) throw prepareFailure;
+                return Task.FromResult("/mnt/c/backups/Dwemer-PG15-test");
+            },
+            (_, token) =>
+            {
+                delays++;
+                onDelay?.Invoke();
+                token.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            },
+            TimeSpan.FromSeconds(30));
+        migration.WaitingForGamesChanged += list => waitEvents.Add(list.Count);
+        var result = await migration.RunAsync(_ => { }, waitToken);
+        return (result, calls, prepared, delays, waitEvents);
+    }
+
+    var pg17Ok = (string text) => new CommandResult(0, text + "\n", "");
+    var pg17NoGames = (int _) => (IReadOnlyList<string>)Array.Empty<string>();
+    foreach (var (pg17Word, pg17Expected) in new[] { ("current", "PostgreSQL 17"), ("held", "held"), ("unsupported", "left unchanged") })
+    {
+        var pg17Skipped = await RunFakeMigration(_ => pg17Ok(pg17Word), pg17NoGames);
+        Assert(pg17Skipped.Result.Outcome == Pg17MigrationOutcome.NotNeeded && pg17Skipped.Result.AllowsUpdateToFinish
+               && pg17Skipped.Result.Message.Contains(pg17Expected, StringComparison.Ordinal)
+               && pg17Skipped.Prepared == 0 && !pg17Skipped.Calls.Any(call => call.Contains("auto")),
+            $"PG17 status '{pg17Word}' must let the update finish without a backup or upgrade.");
+    }
+
+    var pg17MissingTool = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, probe: new CommandResult(1, "", ""));
+    Assert(pg17MissingTool.Result.Outcome == Pg17MigrationOutcome.NotNeeded && pg17MissingTool.Calls.Count == 1,
+        "A distro release without the maintenance tool must leave the database alone and let the update finish.");
+
+    var pg17StatusFailed = await RunFakeMigration(_ => new CommandResult(3, "", "cluster unreadable"), pg17NoGames);
+    Assert(pg17StatusFailed.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17StatusFailed.Result.AllowsUpdateToFinish
+           && pg17StatusFailed.Result.Message.Contains("exit 3", StringComparison.Ordinal)
+           && pg17StatusFailed.Result.Message.Contains("cluster unreadable", StringComparison.Ordinal),
+        "A nonzero PG17 status must fail the update, with its exit code and error line.");
+    Assert((await RunFakeMigration(_ => pg17Ok("maybe"), pg17NoGames)).Result.Outcome == Pg17MigrationOutcome.Failed,
+        "An unrecognized PG17 status must fail the update rather than guess.");
+
+    var pg17Upgraded = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames);
+    Assert(pg17Upgraded.Result.Outcome == Pg17MigrationOutcome.Upgraded && pg17Upgraded.Prepared == 1 && pg17Upgraded.Delays == 0
+           && pg17Upgraded.Calls.Last().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "auto", "/mnt/c/backups/Dwemer-PG15-test"]),
+        "PG17 'needed' with no game open must back up privately, then run auto with that backup.");
+
+    var pg17UpgradeFailed = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, auto: new CommandResult(9, "", "pg_upgrade failed"));
+    Assert(pg17UpgradeFailed.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17UpgradeFailed.Result.AllowsUpdateToFinish
+           && pg17UpgradeFailed.Result.Message.Contains("exit 9", StringComparison.Ordinal),
+        "A failed automatic upgrade must keep the update from being recorded as finished.");
+
+    var pg17LowSpace = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames,
+        prepareFailure: new InvalidOperationException("Insufficient Windows disk space for staging and backup."));
+    Assert(pg17LowSpace.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17LowSpace.Calls.Any(call => call.Contains("auto"))
+           && pg17LowSpace.Result.Message.Contains("Insufficient Windows disk space", StringComparison.Ordinal),
+        "A failed free-space or backup check must stop before auto and fail the update.");
+
+    var pg17Waited = await RunFakeMigration(_ => pg17Ok("needed"), check => check < 2 ? ["Skyrim Special Edition"] : []);
+    Assert(pg17Waited.Result.Outcome == Pg17MigrationOutcome.Upgraded && pg17Waited.Delays == 2
+           && pg17Waited.Calls.Count(call => call.Contains("status")) == 3
+           && pg17Waited.WaitEvents.SequenceEqual([1, 1, 0]),
+        "An open game must defer the upgrade with delayed rechecks of status and games, then continue once it closes.");
+
+    var pg17ClosedAfterWait = await RunFakeMigration(count => pg17Ok(count == 0 ? "needed" : "current"), _ => ["Kenshi"]);
+    Assert(pg17ClosedAfterWait.Result.Outcome == Pg17MigrationOutcome.NotNeeded && pg17ClosedAfterWait.Prepared == 0,
+        "A status that changes during the wait must be honored on the recheck.");
+
+    using (var pg17StopWaiting = new CancellationTokenSource())
+    {
+        var pg17Stopped = await RunFakeMigration(_ => pg17Ok("needed"), _ => ["Fallout: New Vegas"],
+            waitToken: pg17StopWaiting.Token, onDelay: pg17StopWaiting.Cancel);
+        Assert(pg17Stopped.Result.Outcome == Pg17MigrationOutcome.Deferred && !pg17Stopped.Result.AllowsUpdateToFinish
+               && pg17Stopped.Prepared == 0 && !pg17Stopped.Calls.Any(call => call.Contains("auto"))
+               && pg17Stopped.WaitEvents.SequenceEqual([1, 0]),
+            "Stopping the wait must postpone the upgrade, change nothing, and keep the update unfinished.");
+        Assert(MainWindowViewModel.DescribeDatabaseUpdateFailure(pg17Stopped.Result).Contains("run Update Distro again", StringComparison.Ordinal)
+               && MainWindowViewModel.BuildUpdateDatabaseStatus(pg17Stopped.Result, waited: true) is { } pg17Postponed
+               && pg17Postponed.Text.Contains("Nothing was changed", StringComparison.Ordinal),
+            "A postponed upgrade must say nothing changed and how it finishes.");
+    }
+
+    Assert(Pg17UpdateMigration.GameProcesses.ContainsKey("SkyrimSE") && Pg17UpdateMigration.GameProcesses.ContainsKey("SkyrimVR")
+           && Pg17UpdateMigration.GameProcesses.ContainsKey("FalloutNV") && Pg17UpdateMigration.GameProcesses.ContainsKey("Kenshi_x64")
+           && Pg17UpdateMigration.GameProcesses.ContainsKey("openmw") && Pg17UpdateMigration.GameProcesses.ContainsKey("Bannerlord"),
+        "The upgrade must wait for every supported game.");
+    Assert(MainWindowViewModel.BuildUpdateDatabaseStatus(pg17Upgraded.Result, waited: false) is { } pg17UpgradedStatus
+           && pg17UpgradedStatus.Text.Contains(Pg17UpdateMigration.DefaultBackupRoot, StringComparison.Ordinal)
+           && MainWindowViewModel.BuildUpdateDatabaseStatus(pg17MissingTool.Result, waited: false) is null
+           && MainWindowViewModel.BuildDatabaseUpgradeWaitingStatus(["Skyrim VR"]).Contains("Skyrim VR to close", StringComparison.Ordinal),
+        "The Database Maintenance row must say where the automatic backup went, and stay quiet when nothing happened.");
+    Assert(MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageDatabase, 1, null).Contains("PostgreSQL 17", StringComparison.Ordinal)
+           && MainWindowViewModel.ParseUpdateStageMarker(MainWindowViewModel.UpdateStageMarkerLine(MainWindowViewModel.UpdateStageDatabase)) == MainWindowViewModel.UpdateStageDatabase,
+        "The database step must be a named update stage.");
+    Assert(MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Failed, MainWindowViewModel.UpdateStageDatabase, " during the PostgreSQL 17 database upgrade: x.", false, false)
+               is { IsWarning: true } pg17DatabaseNotice
+           && pg17DatabaseNotice.Heading.Contains("database upgrade", StringComparison.Ordinal),
+        "A held-back database step at startup must explain itself as a warning, not a generic failure.");
 
     Assert(MainWindowViewModel.ParseDistroUsedBytes("Used\n 12345\n") == 12345
            && MainWindowViewModel.ParseDistroUsedBytes("not-a-number") is null,

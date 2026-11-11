@@ -21,6 +21,7 @@ public sealed partial class MainWindowViewModel
     internal const string UpdateStageDownload = "download";
     internal const string UpdateStageCore = "core";
     internal const string UpdateStageShared = "shared";
+    internal const string UpdateStageDatabase = "database";
     internal const string UpdateStageRelease = "release";
     private const int UpdateFailureEvidenceLimit = 240;
 
@@ -782,8 +783,11 @@ public sealed partial class MainWindowViewModel
 
     internal static string BuildUpdateStageMarker(string stage)
     {
-        return $"echo '{UpdateStageMarkerPrefix}{stage}=====' && ";
+        return $"echo '{UpdateStageMarkerLine(stage)}' && ";
     }
+
+    /// <summary>The marker line itself, for a stage the launcher runs rather than the update script.</summary>
+    internal static string UpdateStageMarkerLine(string stage) => $"{UpdateStageMarkerPrefix}{stage}=====";
 
     /// <summary>Returns the stage named by an explicit update marker line, or null for ordinary output.</summary>
     internal static string? ParseUpdateStageMarker(string line)
@@ -845,6 +849,7 @@ public sealed partial class MainWindowViewModel
             UpdateStageDownload => "while updating the distro checkout",
             UpdateStageCore => "during the core update",
             UpdateStageShared => "during the shared components update",
+            UpdateStageDatabase => "during the PostgreSQL 17 database upgrade",
             UpdateStageRelease => "while recording the system release",
             _ => "while preparing the update"
         };

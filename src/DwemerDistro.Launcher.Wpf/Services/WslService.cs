@@ -4,10 +4,14 @@ using System.IO;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
 
-public sealed class WslService(ProcessRunner processRunner)
+/// <param name="distroName">Only tests pass another name, to run the same commands against an isolated distro.</param>
+public sealed class WslService(ProcessRunner processRunner, string distroName = LauncherConstants.DistroName)
 {
-    internal Task<CommandResult> RunDatabaseMaintenanceAsync(string distroName, string[] arguments, Action<string> output)
-        => RunWslAsync(["-d", distroName, "-u", "root", "--exec", .. arguments], output);
+    public string DistroName { get; } = distroName;
+
+    internal Task<CommandResult> RunDatabaseMaintenanceAsync(
+        string[] arguments, Action<string> output, CancellationToken cancellationToken = default)
+        => RunWslAsync(["-d", DistroName, "-u", "root", "--exec", .. arguments], output, cancellationToken);
 
     public Task<CommandResult> RunWslAsync(
         IEnumerable<string> arguments,
@@ -41,7 +45,7 @@ public sealed class WslService(ProcessRunner processRunner)
         CancellationToken cancellationToken = default)
     {
         return RunWslAsync(
-            new[] { "-d", LauncherConstants.DistroName }.Concat(arguments),
+            new[] { "-d", DistroName }.Concat(arguments),
             output,
             cancellationToken);
     }
@@ -53,7 +57,7 @@ public sealed class WslService(ProcessRunner processRunner)
         CancellationToken cancellationToken = default)
     {
         return RunWslAsync(
-            new[] { "-d", LauncherConstants.DistroName, "-u", user, "--" }.Concat(arguments),
+            new[] { "-d", DistroName, "-u", user, "--" }.Concat(arguments),
             output,
             cancellationToken);
     }
@@ -66,7 +70,7 @@ public sealed class WslService(ProcessRunner processRunner)
         CancellationToken cancellationToken = default)
     {
         return RunWslWithInputAsync(
-            new[] { "-d", LauncherConstants.DistroName, "-u", user, "--" }.Concat(arguments),
+            new[] { "-d", DistroName, "-u", user, "--" }.Concat(arguments),
             input,
             output,
             cancellationToken);
@@ -80,7 +84,7 @@ public sealed class WslService(ProcessRunner processRunner)
         CancellationToken cancellationToken = default)
     {
         return RunWslWithEnvironmentAsync(
-            new[] { "-d", LauncherConstants.DistroName, "-u", user, "--" }.Concat(arguments),
+            new[] { "-d", DistroName, "-u", user, "--" }.Concat(arguments),
             environment,
             output,
             cancellationToken);
@@ -118,14 +122,14 @@ public sealed class WslService(ProcessRunner processRunner)
         Action<string>? output = null,
         CancellationToken cancellationToken = default)
     {
-        return RunWslAsync(new[] { "-t", LauncherConstants.DistroName }, output, cancellationToken);
+        return RunWslAsync(new[] { "-t", DistroName }, output, cancellationToken);
     }
 
     public Task<CommandResult> UnregisterDistroAsync(
         Action<string>? output = null,
         CancellationToken cancellationToken = default)
     {
-        return RunWslAsync(new[] { "--unregister", LauncherConstants.DistroName }, output, cancellationToken);
+        return RunWslAsync(new[] { "--unregister", DistroName }, output, cancellationToken);
     }
 
     public Task<CommandResult> ExportDistroAsync(
@@ -133,7 +137,7 @@ public sealed class WslService(ProcessRunner processRunner)
         Action<string>? output = null,
         CancellationToken cancellationToken = default)
     {
-        return RunWslAsync(new[] { "--export", LauncherConstants.DistroName, archivePath }, output, cancellationToken);
+        return RunWslAsync(new[] { "--export", DistroName, archivePath }, output, cancellationToken);
     }
 
     public Task<CommandResult> ImportDistroAsync(
@@ -142,7 +146,7 @@ public sealed class WslService(ProcessRunner processRunner)
         Action<string>? output = null,
         CancellationToken cancellationToken = default)
     {
-        return RunWslAsync(new[] { "--import", LauncherConstants.DistroName, installPath, archivePath }, output, cancellationToken);
+        return RunWslAsync(new[] { "--import", DistroName, installPath, archivePath }, output, cancellationToken);
     }
 
     public async Task<bool> DistroExistsAsync(CancellationToken cancellationToken = default)
@@ -158,7 +162,7 @@ public sealed class WslService(ProcessRunner processRunner)
         var normalizedOutput = result.StandardOutput.Replace("\0", string.Empty);
         return normalizedOutput
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .Any(line => string.Equals(line.Trim(), LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase));
+            .Any(line => string.Equals(line.Trim(), DistroName, StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task<bool> DistroRunningAsync(CancellationToken cancellationToken = default)
@@ -174,7 +178,7 @@ public sealed class WslService(ProcessRunner processRunner)
         var normalizedOutput = result.StandardOutput.Replace("\0", string.Empty);
         return normalizedOutput
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .Any(line => string.Equals(line.Trim(), LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase));
+            .Any(line => string.Equals(line.Trim(), DistroName, StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task<string?> GetWslIpAsync(CancellationToken cancellationToken = default)
@@ -200,7 +204,7 @@ public sealed class WslService(ProcessRunner processRunner)
     /// </summary>
     public string? GetDistroRegistrationId() => ReadDistroRegistration((subKeyName, _) => subKeyName);
 
-    private static string? ReadDistroRegistration(Func<string, RegistryKey, string?> read)
+    private string? ReadDistroRegistration(Func<string, RegistryKey, string?> read)
     {
         using var lxssKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Lxss");
         if (lxssKey is null)
@@ -217,7 +221,7 @@ public sealed class WslService(ProcessRunner processRunner)
             }
 
             var distributionName = distroKey.GetValue("DistributionName") as string;
-            if (!string.Equals(distributionName, LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(distributionName, DistroName, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }

@@ -167,7 +167,7 @@ echo "CHIM-MCP installed and enabled."
     private string? _wslIp;
     private CancellationTokenSource? _connectionDetailsCts;
     private readonly CancellationTokenSource _shutdownCts = new();
-    private Task<CommandResult>? _distroUpdateTask;
+    private Task? _distroUpdateTask;
     private bool _connectionDetailsClosed;
     private string _thisPcAddressText = "Not checked";
     private string _wslAddressText = "Not checked";
@@ -2681,27 +2681,30 @@ echo "CHIM-MCP installed and enabled."
 
     /// <summary>
     /// Pulls the distro scripts, runs update.sh, then runs update_gws with every application-server
-    /// skip flag so only shared services are touched.
+    /// skip flag so only shared services are touched. The unattended PostgreSQL 17 upgrade follows, and the
+    /// system release is recorded only after it, see <see cref="RunSharedDistroUpdatePipelineAsync"/>.
     /// </summary>
     private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default)
     {
         using var updateCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
-        updateCts.CancelAfter(LauncherVersionSyncTimeout);
-        var bashCommand = BuildSystemUpdateCommand();
+        using var waitCts = BeginDatabaseUpgradeWait(updateCts.Token);
 
         var sharedComponentsStarted = false;
         var stage = UpdateStagePreparing;
         string? evidence = null;
+        var waitedForGames = false;
         _systemUpdateFailure = null;
         _systemUpdateFailureStage = null;
         _otherDistroUpdateRunning = false;
         LauncherLogService.Operation("START distro and shared components update");
+        var migration = CreateUpdateMigration();
+        migration.WaitingForGamesChanged += games => waitedForGames |= games.Count > 0;
         try
         {
             // Raw output always goes to the operations log; the console shows only core and shared
             // component steps, minus known routine apt/pip/git chatter. Stages come from explicit
-            // markers, never from output wording.
-            _distroUpdateTask = DistroUpdateRunner.RunAsync(_wsl, bashCommand, line =>
+            // markers, never from output wording. The database step speaks for itself in full.
+            var updateTask = RunSharedDistroUpdatePipelineAsync(_wsl, migration, line =>
             {
                 LauncherLogService.Operation(line);
                 var marker = ParseUpdateStageMarker(line);
@@ -2720,15 +2723,32 @@ echo "CHIM-MCP installed and enabled."
                 {
                     AppendLog(line);
                 }
-            }, updateCts.Token);
-            var result = await _distroUpdateTask.ConfigureAwait(false);
+            }, text =>
+            {
+                LauncherLogService.Operation(text);
+                AppendLog(text);
+            }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token);
+            _distroUpdateTask = updateTask;
+            var outcome = await updateTask.ConfigureAwait(false);
+            var result = outcome.Command;
 
-            LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; stage {stage}; shared components started={sharedComponentsStarted}");
+            LauncherLogService.Operation($"END distro and shared components update; exit code {result.ExitCode}; stage {stage}; shared components started={sharedComponentsStarted}; database {outcome.Database?.Outcome.ToString() ?? "not reached"}");
+            if (outcome.Database is { } database)
+            {
+                LauncherLogService.Operation("PostgreSQL 17 update step: " + database.Message);
+                if (BuildUpdateDatabaseStatus(database, waitedForGames) is { } status)
+                {
+                    SetDatabaseMaintenanceStatus(status.Text, status.Color);
+                }
+            }
+
             _otherDistroUpdateRunning = result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode;
-            var succeeded = result.Succeeded && sharedComponentsStarted;
+            var succeeded = outcome.Succeeded && sharedComponentsStarted;
             if (!succeeded)
             {
-                _systemUpdateFailure = DescribeSystemUpdateFailure(stage, result.ExitCode, evidence);
+                _systemUpdateFailure = outcome.Database is { AllowsUpdateToFinish: false } blocked
+                    ? DescribeDatabaseUpdateFailure(blocked)
+                    : DescribeSystemUpdateFailure(stage, result.ExitCode, evidence);
                 _systemUpdateFailureStage = stage;
             }
 
@@ -2737,11 +2757,26 @@ echo "CHIM-MCP installed and enabled."
         catch (Exception ex)
         {
             LauncherLogService.Operation($"END distro and shared components update; no exit code: {ex.GetType().Name}; stage {stage}");
+            if (waitedForGames)
+            {
+                SetDatabaseMaintenanceStatus(
+                    "Upgrade postponed. Nothing was changed. Update Distro finishes the upgrade the next time it runs with no game open.",
+                    CompactDistroNeutralColor);
+            }
+
             throw;
+        }
+        finally
+        {
+            EndDatabaseUpgradeWait(waitCts);
         }
     }
 
-    /// <summary>Bootstraps the distro checkout when an empty-base installer ships source files without Git metadata.</summary>
+    /// <summary>
+    /// Bootstraps the distro checkout when an empty-base installer ships source files without Git metadata,
+    /// then provisions the core and shared components. It does not record the release; see
+    /// <see cref="BuildSystemReleaseCommand"/>.
+    /// </summary>
     internal static string BuildSystemUpdateCommand()
     {
         return
@@ -2760,9 +2795,13 @@ echo "CHIM-MCP installed and enabled."
             "git -c credential.helper= fetch origin && git reset --hard origin/main && " +
             BuildUpdateStageMarker(UpdateStageCore) +
             "chmod +x update.sh && echo 'dwemer' | sudo -S -p '' ./update.sh && " +
-            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand() + " && " +
-            BuildUpdateStageMarker(UpdateStageRelease) +
-            BuildSystemReleaseMarkerWriteCommand();
+            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand();
+    }
+
+    /// <summary>Records the installed system release. Runs only after the core, shared and database steps succeeded.</summary>
+    internal static string BuildSystemReleaseCommand()
+    {
+        return BuildUpdateStageMarker(UpdateStageRelease) + BuildSystemReleaseMarkerWriteCommand();
     }
 
     private async Task<string?> GetCurrentBranchAsync(CancellationToken cancellationToken = default)
