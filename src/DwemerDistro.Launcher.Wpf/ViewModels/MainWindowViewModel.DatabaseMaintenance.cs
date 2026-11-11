@@ -76,7 +76,7 @@ public sealed partial class MainWindowViewModel
                "Only use this before anything has been written to the upgraded database, that is, before starting " +
                "the server or playing after the upgrade. Anything written to PostgreSQL 17 since the upgrade is not " +
                "carried back.\n\n" +
-               "If the database has already been used, cancel and use Import Distro Backup instead.\n\nContinue?";
+               "If you have new saves, keep PostgreSQL 17 running. Rollback checks for changes and refuses to discard them.\n\nContinue?";
     }
 
     private async Task RunDatabaseMaintenanceAsync(string verb)
