@@ -1799,7 +1799,11 @@
                                     </Image.Style>
                                 </Image>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <TextBlock Text="LLM Studio" FontSize="28" Foreground="White" AutomationProperties.HeadingLevel="Level1">
+                                    <!-- Pelagiad's capitals reach the top of its line box and leave empty descender room below, so
+                                         the heading moves down by that room; the block keeps its height and stays centred on the core.
+                                         Pelagiad's word space is narrow, so an en space separates the words; the accessible name keeps a normal space. -->
+                                    <TextBlock Text="LLM&#x2002;Studio" FontSize="28" Foreground="White" Margin="0,3,0,-3"
+                                               AutomationProperties.Name="LLM Studio" AutomationProperties.HeadingLevel="Level1">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Chim}" />
