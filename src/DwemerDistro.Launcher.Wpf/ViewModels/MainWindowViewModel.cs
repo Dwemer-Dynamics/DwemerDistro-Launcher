@@ -1124,18 +1124,20 @@ echo "CHIM-MCP installed and enabled."
     /// <summary>
     /// Runs the automatic launcher-version system sync on the shared background-task path, so a slow
     /// or failing update is logged rather than blocking startup. The assistant connects only after it
-    /// settles, so the session never starts while the sync is updating DwemerDistro.
+    /// settles, so the session never starts while the sync is updating DwemerDistro. Its timeout stands
+    /// still during the idle rechecks while the update waits for a game to close, however long the session,
+    /// so the update continues in this launch once the game closes; closing the launcher still ends the wait.
     /// </summary>
     private void QueueLauncherVersionSync()
     {
         SetAssistantStartupPhase(AssistantStartupPhaseSyncCheck);
-        var queued = QueueBackgroundTask(
+        var queued = QueuePausableBackgroundTask(
             "Launcher version sync",
-            async cancellationToken =>
+            async deadline =>
             {
                 try
                 {
-                    await SyncLauncherVersionAsync(cancellationToken).ConfigureAwait(false);
+                    await SyncLauncherVersionAsync(deadline).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -1293,6 +1295,18 @@ echo "CHIM-MCP installed and enabled."
         Func<CancellationToken, Task> action,
         TimeSpan timeout,
         bool accessesDistro = false,
+        bool startupData = false) =>
+        QueuePausableBackgroundTask(name, deadline => action(deadline.Token), timeout, accessesDistro, startupData);
+
+    /// <summary>
+    /// <see cref="QueueBackgroundTask"/> for a task that can idle on the user: it may pause its own
+    /// <paramref name="timeout"/> while it waits, so the timeout bounds only the work.
+    /// </summary>
+    private bool QueuePausableBackgroundTask(
+        string name,
+        Func<PausableDeadline, Task> action,
+        TimeSpan timeout,
+        bool accessesDistro = false,
         bool startupData = false)
     {
         if (accessesDistro && !TryBeginPassiveDistroActivity())
@@ -1303,10 +1317,10 @@ echo "CHIM-MCP installed and enabled."
 
         var backgroundTask = Task.Run(async () =>
         {
-            using var timeoutCts = new CancellationTokenSource(timeout);
+            using var deadline = new PausableDeadline(timeout);
             try
             {
-                await action(timeoutCts.Token).ConfigureAwait(false);
+                await action(deadline).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -2203,7 +2217,8 @@ echo "CHIM-MCP installed and enabled."
     private async Task<SystemUpdateRunResult> RunSystemUpdateCoreAsync(
         bool requireConfirmation,
         string sourceLabel,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        PausableDeadline? deadline = null)
     {
         if (!CanRunUpdateOperation())
         {
@@ -2233,7 +2248,7 @@ echo "CHIM-MCP installed and enabled."
             AppendLog("Updating DwemerDistro core and shared components..." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken).ConfigureAwait(true);
+            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken, deadline).ConfigureAwait(true);
             AppendLog(
                 succeeded
                     ? "System update complete." + Environment.NewLine
@@ -2278,8 +2293,9 @@ echo "CHIM-MCP installed and enabled."
     /// successful update, so a failed or blocked attempt simply retries on a later launch. Game
     /// server repositories are never touched: this reuses the same server-free system update.
     /// </summary>
-    private async Task SyncLauncherVersionAsync(CancellationToken cancellationToken = default)
+    private async Task SyncLauncherVersionAsync(PausableDeadline deadline)
     {
+        var cancellationToken = deadline.Token;
         var currentVersion = SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion);
         if (currentVersion is null)
         {
@@ -2328,7 +2344,8 @@ echo "CHIM-MCP installed and enabled."
                 .InvokeAsync(() => RunSystemUpdateCoreAsync(
                     requireConfirmation: false,
                     sourceLabel: "Launcher sync",
-                    cancellationToken))
+                    cancellationToken,
+                    deadline))
                 .Task
                 .Unwrap()
                 .ConfigureAwait(false);
@@ -2683,8 +2700,10 @@ echo "CHIM-MCP installed and enabled."
     /// Pulls the distro scripts, runs update.sh, then runs update_gws with every application-server
     /// skip flag so only shared services are touched. The unattended PostgreSQL 17 upgrade follows, and the
     /// system release is recorded only after it, see <see cref="RunSharedDistroUpdatePipelineAsync"/>.
+    /// <paramref name="deadline"/>, when given, is the caller's own timeout behind <paramref name="cancellationToken"/>;
+    /// it stands still during each idle recheck while the update waits for a game to close.
     /// </summary>
-    private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default)
+    private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default, PausableDeadline? deadline = null)
     {
         using var updateCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
         using var waitCts = BeginDatabaseUpgradeWait(updateCts.Token);
@@ -2697,7 +2716,7 @@ echo "CHIM-MCP installed and enabled."
         _systemUpdateFailureStage = null;
         _otherDistroUpdateRunning = false;
         LauncherLogService.Operation("START distro and shared components update");
-        var migration = CreateUpdateMigration();
+        var migration = CreateUpdateMigration(deadline);
         migration.WaitingForGamesChanged += games => waitedForGames |= games.Count > 0;
         try
         {

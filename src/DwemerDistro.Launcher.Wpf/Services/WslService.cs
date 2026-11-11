@@ -11,7 +11,8 @@ public sealed class WslService(ProcessRunner processRunner, string distroName = 
 
     internal Task<CommandResult> RunDatabaseMaintenanceAsync(
         string[] arguments, Action<string> output, CancellationToken cancellationToken = default)
-        => RunWslAsync(["-d", DistroName, "-u", "root", "--exec", .. arguments], output, cancellationToken);
+        => RunWslAsync(["-d", DistroName, "-u", "root", "--exec", .. DistroUpdateRunner.BuildLockedRootArguments(arguments)],
+            output, cancellationToken);
 
     public Task<CommandResult> RunWslAsync(
         IEnumerable<string> arguments,

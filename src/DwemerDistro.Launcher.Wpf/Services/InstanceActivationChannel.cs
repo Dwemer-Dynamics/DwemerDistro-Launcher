@@ -13,21 +13,30 @@ public sealed class InstanceActivationChannel : IDisposable
 {
     private static readonly TimeSpan SignalPollInterval = TimeSpan.FromMilliseconds(100);
     private readonly EventWaitHandle _event;
-    private readonly RegisteredWaitHandle _registration;
+    private readonly ManualResetEvent _stop = new(false);
+    private readonly Thread _listener;
 
     private InstanceActivationChannel(EventWaitHandle activationEvent, Action onActivate)
     {
         _event = activationEvent;
-        _registration = ThreadPool.RegisterWaitForSingleObject(activationEvent, (_, timedOut) =>
+        // A dedicated waiter rather than a thread-pool registration: joining it on Dispose proves nothing else still holds
+        // the event open, whereas the pool's wait thread drops its reference only some time after unregistering.
+        _listener = new Thread(() =>
         {
-            if (!timedOut) onActivate();
-        }, null, Timeout.Infinite, executeOnlyOnce: false);
+            WaitHandle[] handles = [_stop, _event];
+            while (WaitHandle.WaitAny(handles) == 1) onActivate();
+        })
+        {
+            IsBackground = true,
+            Name = "Launcher activation listener"
+        };
+        _listener.Start();
     }
 
     /// <summary>The activation event for one instance mutex name, in the same namespace.</summary>
     public static string BuildName(string instanceMutexName) => instanceMutexName + ".Activate";
 
-    /// <summary>Called by the instance that owns the mutex. <paramref name="onActivate"/> runs on a thread-pool thread.</summary>
+    /// <summary>Called by the instance that owns the mutex. <paramref name="onActivate"/> runs on a background thread.</summary>
     public static InstanceActivationChannel Listen(string name, Action onActivate) =>
         new(new EventWaitHandle(false, EventResetMode.AutoReset, name), onActivate);
 
@@ -55,10 +64,16 @@ public sealed class InstanceActivationChannel : IDisposable
         }
     }
 
+    /// <summary>
+    /// Stops listening. Once this returns the event is closed, so a later start sees no running launcher, and no activation
+    /// callback is still in flight. Must not be called from <c>onActivate</c>.
+    /// </summary>
     public void Dispose()
     {
-        _registration.Unregister(null);
+        _stop.Set();
+        _listener.Join();
         _event.Dispose();
+        _stop.Dispose();
     }
 
     /// <summary>

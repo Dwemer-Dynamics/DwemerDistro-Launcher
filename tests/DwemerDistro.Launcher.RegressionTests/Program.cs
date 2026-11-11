@@ -385,7 +385,18 @@ try
     Assert(!completed.Skipped, "Completing setup must clear the skipped state.");
     Assert(!await FirstRunSetupViewModel.ShouldShowFirstRunSetupAsync(default, onboarding),
         "A completed setup must not reopen QuickStart.");
-    Assert(LauncherConstants.LauncherVersion == "3.4.3", "Launcher constants must report version 3.4.3.");
+    var launcherAssembly = typeof(LauncherConstants).Assembly;
+    var launcherInformationalVersion = System.Reflection.CustomAttributeExtensions
+        .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(launcherAssembly)?.InformationalVersion.Split('+')[0];
+    var launcherFileVersion = System.Reflection.CustomAttributeExtensions
+        .GetCustomAttribute<System.Reflection.AssemblyFileVersionAttribute>(launcherAssembly)?.Version;
+    Assert(Version.TryParse(LauncherConstants.LauncherVersion, out var launcherConstantVersion)
+           && launcherConstantVersion.Build >= 0 && launcherConstantVersion.Revision < 0
+           && launcherInformationalVersion == LauncherConstants.LauncherVersion
+           && launcherFileVersion == LauncherConstants.LauncherVersion + ".0"
+           && launcherAssembly.GetName().Version == new Version(LauncherConstants.LauncherVersion + ".0"),
+        $"Launcher constants must report the assembled release version (constant {LauncherConstants.LauncherVersion}, " +
+        $"informational {launcherInformationalVersion}, file {launcherFileVersion}, assembly {launcherAssembly.GetName().Version}).");
     Assert(DiagnosticProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
                == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --download-diagnostics \"%1\"",
         "The server-page browser protocol must send the diagnostic report through the browser download manager.");
@@ -1924,6 +1935,19 @@ try
     var pg17MissingTool = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, probe: new CommandResult(1, "", ""));
     Assert(pg17MissingTool.Result.Outcome == Pg17MigrationOutcome.NotNeeded && pg17MissingTool.Calls.Count == 1,
         "A distro release without the maintenance tool must leave the database alone and let the update finish.");
+    foreach (var pg17ProbeExit in new[] { -1, DistroUpdateRunner.OtherUpdateRunningExitCode, 126 })
+    {
+        var pg17ProbeFailed = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, probe: new CommandResult(pg17ProbeExit, "", "wsl error"));
+        Assert(pg17ProbeFailed.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17ProbeFailed.Result.AllowsUpdateToFinish
+               && pg17ProbeFailed.Calls.Count == 1 && pg17ProbeFailed.Prepared == 0
+               && pg17ProbeFailed.Result.Message.Contains($"exit {pg17ProbeExit}", StringComparison.Ordinal),
+            $"A tool check that fails for any reason but absence (exit {pg17ProbeExit}) must not let the update record a release over PostgreSQL 15.");
+    }
+
+    var pg17LockedArguments = DistroUpdateRunner.BuildLockedRootArguments(Pg17UpdateMigration.BuildAutoArguments("/mnt/c/b/Dwemer-PG15-x"));
+    Assert(pg17LockedArguments.SequenceEqual(["flock", "-n", "-E", "75", "--close", DistroUpdateRunner.LockPath,
+               "/usr/local/bin/ddistro_pg17_maintenance", "auto", "/mnt/c/b/Dwemer-PG15-x"]),
+        "Database maintenance must run under the distro update lock, never overlapping core provisioning or another upgrade, without leaking the lock to the database server.");
 
     var pg17StatusFailed = await RunFakeMigration(_ => new CommandResult(3, "", "cluster unreadable"), pg17NoGames);
     Assert(pg17StatusFailed.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17StatusFailed.Result.AllowsUpdateToFinish
@@ -1971,6 +1995,78 @@ try
                && MainWindowViewModel.BuildUpdateDatabaseStatus(pg17Stopped.Result, waited: true) is { } pg17Postponed
                && pg17Postponed.Text.Contains("Nothing was changed", StringComparison.Ordinal),
             "A postponed upgrade must say nothing changed and how it finishes.");
+    }
+
+    // The launcher sync's own timeout stands still only while it idles on a game, with real timers scaled down.
+    using (var idleDeadline = new PausableDeadline(TimeSpan.FromMilliseconds(300)))
+    {
+        idleDeadline.Pause();
+        await Task.Delay(700);
+        Assert(!idleDeadline.Token.IsCancellationRequested, "A paused deadline must not expire.");
+        idleDeadline.Resume();
+        Assert(!idleDeadline.Token.IsCancellationRequested, "Resuming must restore the time that was left, not expire at once.");
+        await WaitUntilAsync(() => idleDeadline.Token.IsCancellationRequested);
+        Assert(idleDeadline.Token.IsCancellationRequested, "A resumed deadline must still expire.");
+        idleDeadline.Pause();
+        idleDeadline.Resume();
+        Assert(idleDeadline.Token.IsCancellationRequested, "An expired deadline must stay cancelled.");
+    }
+
+    async Task<(Pg17MigrationResult Result, bool DeadlineExpired, int Delays)> RunTimedSyncMigration(
+        bool pauseDuringDelay, Func<int, IReadOnlyList<string>> games,
+        Func<CancellationToken, Task>? statusHang = null, CancellationTokenSource? shutdown = null)
+    {
+        // The same token chain as the sync: the queued deadline, then shutdown, then the Stop waiting source.
+        using var deadline = new PausableDeadline(TimeSpan.FromMilliseconds(300));
+        using var update = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, shutdown?.Token ?? default);
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(update.Token);
+        var gameChecks = 0;
+        var statusCalls = 0;
+        var delays = 0;
+        var migration = new Pg17UpdateMigration(
+            async (arguments, _, token) =>
+            {
+                if (arguments[0] == "test") return new CommandResult(0, "", "");
+                if (arguments[1] == "status")
+                {
+                    if (statusCalls++ > 0 && statusHang is not null) await statusHang(token);
+                    return pg17Ok("needed");
+                }
+
+                return new CommandResult(0, "", "");
+            },
+            () => games(gameChecks++),
+            _ => Task.FromResult("/mnt/c/backups/Dwemer-PG15-test"),
+            MainWindowViewModel.PauseDeadlineDuringDelay((interval, token) =>
+            {
+                delays++;
+                if (shutdown is not null && delays == 2) shutdown.Cancel();
+                return Task.Delay(interval, token);
+            }, pauseDuringDelay ? deadline : null),
+            TimeSpan.FromMilliseconds(250));
+        var result = await migration.RunAsync(_ => { }, wait.Token);
+        return (result, deadline.Token.IsCancellationRequested, delays);
+    }
+
+    var pg17LongSession = (int check) => check < 4 ? (IReadOnlyList<string>)["Skyrim Special Edition"] : [];
+    var pg17SyncResumed = await RunTimedSyncMigration(pauseDuringDelay: true, pg17LongSession);
+    Assert(pg17SyncResumed.Result.Outcome == Pg17MigrationOutcome.Upgraded && !pg17SyncResumed.DeadlineExpired && pg17SyncResumed.Delays == 4,
+        "A game session longer than the launcher sync's timeout must not postpone the upgrade; it continues in the same launch once the game closes.");
+    var pg17SyncUnpaused = await RunTimedSyncMigration(pauseDuringDelay: false, pg17LongSession);
+    Assert(pg17SyncUnpaused.Result.Outcome == Pg17MigrationOutcome.Deferred && pg17SyncUnpaused.DeadlineExpired,
+        "Control: a timeout that keeps running through the wait postpones the upgrade, which is the failure the pause prevents.");
+    var pg17HungRecheck = System.Diagnostics.Stopwatch.StartNew();
+    var pg17SyncHung = await RunTimedSyncMigration(pauseDuringDelay: true, _ => ["Kenshi"],
+        statusHang: token => Task.Delay(Timeout.Infinite, token));
+    Assert(pg17SyncHung.Result.Outcome == Pg17MigrationOutcome.Deferred && pg17SyncHung.DeadlineExpired
+           && pg17HungRecheck.Elapsed < TimeSpan.FromSeconds(10),
+        "A status recheck that hangs during the wait must still be ended by the sync's timeout; only the idle delay is excused.");
+    using (var pg17Shutdown = new CancellationTokenSource())
+    {
+        var pg17SyncShutdown = await RunTimedSyncMigration(pauseDuringDelay: true, _ => ["Fallout 4"], shutdown: pg17Shutdown);
+        Assert(pg17SyncShutdown.Result.Outcome == Pg17MigrationOutcome.Deferred && !pg17SyncShutdown.DeadlineExpired
+               && pg17SyncShutdown.Delays == 2,
+            "Closing the launcher must still end a paused wait at once, changing nothing.");
     }
 
     Assert(Pg17UpdateMigration.GameProcesses.ContainsKey("SkyrimSE") && Pg17UpdateMigration.GameProcesses.ContainsKey("SkyrimVR")
@@ -4914,7 +5010,7 @@ try
             script: command => command == "capabilities" ? ActionCapabilities : null,
             respondFirst: (method, _) => method == "ddistro/action/decide" ? decideAnswer?.DeepClone() : null);
         string[] Decisions() { lock (action.transport.Requests) return action.transport.Bodies.Where(body => body.StartsWith("ddistro/action/decide ")).ToArray(); }
-        bool Said(string text) => action.vm.Transcript.Any(item => item.Text.Contains(text));
+        bool Said(string text) => TranscriptSnapshot(action.vm).Any(item => item.Text.Contains(text));
         void ActionNotify(string method, string json) => action.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
         void Propose(string id, string thread = "thr-act") => ActionNotify("ddistro/action/proposed", "{\"proposalId\":\"" + id + "\",\"threadId\":\"" + thread
             + "\",\"turnId\":\"turn-1\",\"action\":\"restart\",\"service\":\"apache\",\"label\":\"Apache web server\",\"impact\":\"Apache is shared.\","
@@ -5086,7 +5182,7 @@ try
             script: command => command == "capabilities" ? ModelCapabilities : null,
             respondFirst: (method, _) => method == "ddistro/action/decide" ? modelAnswer?.DeepClone() : null);
         string[] ModelDecisions() { lock (model.transport.Requests) return model.transport.Bodies.Where(body => body.StartsWith("ddistro/action/decide ")).ToArray(); }
-        bool ModelSaid(string text) => model.vm.Transcript.Any(item => item.Text.Contains(text));
+        bool ModelSaid(string text) => TranscriptSnapshot(model.vm).Any(item => item.Text.Contains(text));
         void ModelNotify(string method, string json) => model.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
         void ProposeModel(string id, string kind = "model_change") => ModelNotify("ddistro/action/proposed", "{\"proposalId\":\"" + id
             + "\",\"threadId\":\"thr-model\",\"turnId\":\"turn-1\",\"action\":\"" + kind + "\",\"label\":\"CHIM model assignment\","
@@ -5247,7 +5343,7 @@ try
             command.Execute(null);
             await WaitUntilAsync(() => FoundationDecisions().Length == decisions && foundation.vm.Transcript.Count > lines);
         }
-        bool FoundationSaid(string text) => foundation.vm.Transcript.Any(item => item.Text.Contains(text));
+        bool FoundationSaid(string text) => TranscriptSnapshot(foundation.vm).Any(item => item.Text.Contains(text));
         Assert(FoundationBodies().Single(body => body.StartsWith("initialize ")).Contains(
                    "\"ddistroActions\":[\"restart_service\",\"configure_model\",\"change_files\",\"service_control\"],\"ddistroTools\":[\"explore\",\"exec\"]")
                && FoundationBodies().Count(body => body.StartsWith("thread/start")) == 0
@@ -5383,7 +5479,7 @@ try
         void ProposeLive(string id, string change) => LiveNotify("ddistro/action/proposed", "{\"proposalId\":\"" + id + "\",\"threadId\":\"thr-new\",\"turnId\":\"turn-1\","
             + "\"action\":\"live_run\",\"label\":\"Run on the live distro as postgres\",\"impact\":\"Runs this code on the LIVE DwemerDistro.\",\"reason\":\"Read RECHAT_P.\","
             + "\"expiresAt\":\"2026-10-20T00:00:00Z\"," + change + "}");
-        bool LiveSaid(string text) => live.vm.Transcript.Any(item => item.Text.Contains(text));
+        bool LiveSaid(string text) => TranscriptSnapshot(live.vm).Any(item => item.Text.Contains(text));
         Assert(LiveBodies().Single(body => body.StartsWith("initialize ")).Contains(
                    "\"ddistroActions\":[\"restart_service\",\"configure_model\",\"change_files\",\"service_control\",\"live_run\"],\"ddistroTools\":[\"explore\",\"exec\"]"),
             "A launcher on a live-ready Core asks for live_run beside the foundation actions.");
@@ -5521,7 +5617,7 @@ try
             respondFirst: (method, _) => method == "ddistro/action/decide" ? System.Text.Json.Nodes.JsonNode.Parse("{\"state\":\"approved\"}") : null);
         string[] AutoBodies() { lock (auto.transport.Requests) return auto.transport.Bodies.ToArray(); }
         void AutoNotify(string method, string json) => auto.vm.OnNotification(method, System.Text.Json.JsonDocument.Parse(json).RootElement.Clone());
-        bool AutoSaid(string text) => auto.vm.Transcript.Any(item => item.Text.Contains(text));
+        bool AutoSaid(string text) => TranscriptSnapshot(auto.vm).Any(item => item.Text.Contains(text));
         Assert(AutoBodies().Single(body => body.StartsWith("initialize ")).Contains("\"service_control\",\"live_run\",\"live_run_auto\"]"),
             "A launcher on an automatic Core asks for live_run_auto beside live_run.");
         auto.vm.InputText = "what is RECHAT_P?";
@@ -6665,7 +6761,7 @@ try
             var endsBefore = EndCount();
             claudeVm.InputText = "maybe queued";
             claudeVm.SendCommand.Execute(null);
-            await WaitUntilAsync(() => claudeVm.Transcript.Any(item => item.Text.StartsWith("DwemerDistro did not confirm this message in time")));
+            await WaitUntilAsync(() => TranscriptSnapshot(claudeVm).Any(item => item.Text.StartsWith("DwemerDistro did not confirm this message in time")));
             Assert(claudeVm.State == AssistantState.Streaming && claudeVm.InputText.Length == 0 && claudeRunner.ActiveTurnId is null
                 && !claudeVm.Transcript.Any(item => item.Text.StartsWith("The message was not sent"))
                 && claudeVm.Transcript.Last(item => item.Role == "DwemerDistro").Text.Contains("nothing was retried"),
@@ -6931,7 +7027,7 @@ try
                 "A bound key that is gone, with no OpenRouter key left, is reported and its saved binding kept.");
             orVm.InputText = "hello";
             orVm.SendCommand.Execute(null);
-            await WaitUntilAsync(() => orVm.Transcript.Any(item => item.Text.StartsWith("The message was not sent:")) && orVm.State == AssistantState.Ready);
+            await WaitUntilAsync(() => TranscriptSnapshot(orVm).Any(item => item.Text.StartsWith("The message was not sent:")) && orVm.State == AssistantState.Ready);
             lock (orBridge.Requests) orRequests = orBridge.Requests.ToArray();
             Assert(!orRequests.Contains("ddistro/external/turn/start") && orVm.State == AssistantState.Ready
                 && orVm.Transcript.Any(item => item.Text.StartsWith("The message was not sent:")), "Without its bound key nothing is sent.");
@@ -6963,7 +7059,7 @@ try
             orVm.SelectedModel = orVm.Models.First(m => m.Id == "z-ai/glm-5.3");
             orVm.InputText = "look at this";
             orVm.SendCommand.Execute(null);
-            await WaitUntilAsync(() => orVm.Transcript.Any(item => item.Text.Contains("reads text only. Remove the image")) && orVm.State == AssistantState.Ready);
+            await WaitUntilAsync(() => TranscriptSnapshot(orVm).Any(item => item.Text.Contains("reads text only. Remove the image")) && orVm.State == AssistantState.Ready);
             lock (orBridge.Requests) orRequests = orBridge.Requests.ToArray();
             Assert(!orRequests.Contains("ddistro/external/turn/start:" + orThread) && orVm.Attachments.Count == 1,
                 "An image is never sent to a text-only model; the attachment stays in the composer.");
@@ -7048,7 +7144,7 @@ try
             reopenVm.SelectedProvider = reopenVm.Providers[2];
             await WaitUntilAsync(() => reopenVm.IsOpenRouter);
             await reopenVm.ConnectAsync();
-            await WaitUntilAsync(() => reopenVm.Transcript.Any(item => item.Text == "All good."));
+            await WaitUntilAsync(() => TranscriptSnapshot(reopenVm).Any(item => item.Text == "All good."));
             string listBody;
             lock (orBridge.Requests) listBody = orBridge.Bodies.Last(body => body.StartsWith("ddistro/external/thread/turns/list "));
             var texts = reopenVm.Transcript.Select(item => item.Role + ":" + item.Text).ToList();
@@ -7068,7 +7164,7 @@ try
             lostVm.SelectedProvider = lostVm.Providers[2];
             await WaitUntilAsync(() => lostVm.IsOpenRouter);
             await lostVm.ConnectAsync();
-            await WaitUntilAsync(() => lostVm.Transcript.Any(item => item.Text == "All good."));
+            await WaitUntilAsync(() => TranscriptSnapshot(lostVm).Any(item => item.Text == "All good."));
             Assert(lostVm.State == AssistantState.Ready && lostVm.OpenRouterKeys.Count == 1 && lostVm.SelectedOpenRouterKey?.KeyId == keyB
                 && orChats.Load(orThread) is { KeyId: var recovered } && recovered == keyB && openRouterStore.Load()?.ThreadId == orThread
                 && lostVm.Transcript.Any(item => item.Text.Contains("now uses your global OpenRouter key")) && lostVm.OpenRouterConnectionText == "Connected"
@@ -7198,6 +7294,19 @@ static string ModelsDocumentText(string data) => "{\"schema_version\":1,\"ok\":t
 /// <summary>The text of each input item of a recorded "turn/start {json}" body.</summary>
 static string[] TurnInput(string body) =>
     System.Text.Json.Nodes.JsonNode.Parse(body[(body.IndexOf(' ') + 1)..])!["input"]!.AsArray().Select(item => item!["text"]!.GetValue<string>()).ToArray();
+
+/// <summary>
+/// A copy of the transcript a test can read while a command's continuation may still be adding to it. With no UI thread in
+/// this run, view model continuations resume on the thread pool, so a direct enumeration can meet a concurrent Add.
+/// </summary>
+static AssistantTranscriptItem[] TranscriptSnapshot(AssistantViewModel vm)
+{
+    while (true)
+    {
+        try { return vm.Transcript.ToArray(); }
+        catch (ArgumentException) { } // grew between sizing the copy and copying it
+    }
+}
 
 static async Task WaitUntilAsync(Func<bool> condition)
 {

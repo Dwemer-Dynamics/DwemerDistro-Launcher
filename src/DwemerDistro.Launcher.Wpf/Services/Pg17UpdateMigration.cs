@@ -150,10 +150,18 @@ internal sealed class Pg17UpdateMigration(
         try
         {
             var probe = await runToolAsRoot(["test", "-x", ToolPath], _ => { }, waitToken).ConfigureAwait(false);
-            if (!probe.Succeeded)
+            // Only test's own "false" means the tool is absent. Any other failure (WSL could not run the
+            // command, the update lock is held) must not let the update record a release over PostgreSQL 15.
+            if (probe.ExitCode == 1)
             {
                 return new(Pg17MigrationOutcome.NotNeeded,
                     "This distro release does not include the PostgreSQL 17 maintenance tool; the database is unchanged.");
+            }
+
+            if (!probe.Succeeded)
+            {
+                return new(Pg17MigrationOutcome.Failed,
+                    $"the PostgreSQL 17 maintenance tool check failed (exit {probe.ExitCode}): {LastLine(probe)}");
             }
 
             while (true)

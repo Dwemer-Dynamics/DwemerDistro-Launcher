@@ -197,7 +197,9 @@ public sealed partial class MainWindowViewModel
                 .ConfigureAwait(true);
             if (!result.Succeeded)
             {
-                var error = GetCommandError(result);
+                var error = result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode
+                    ? "A distro update is still running. Nothing was changed; try again once it finishes."
+                    : GetCommandError(result);
                 AppendLog($"{actionName} failed: {error}{Environment.NewLine}", "red");
                 SetDatabaseMaintenanceStatus(
                     $"{actionName} failed (exit code {result.ExitCode}). Open the console for details.",
@@ -302,14 +304,14 @@ public sealed partial class MainWindowViewModel
         public bool Succeeded => Command.Succeeded && Database is { AllowsUpdateToFinish: true };
     }
 
-    private Pg17UpdateMigration CreateUpdateMigration()
+    private Pg17UpdateMigration CreateUpdateMigration(PausableDeadline? deadline)
     {
         var wsl = _wsl;
         var migration = new Pg17UpdateMigration(
             (arguments, output, token) => wsl.RunDatabaseMaintenanceAsync(arguments, output, token),
             Pg17UpdateMigration.FindRunningGames,
             token => PrepareDatabaseBackupAsync(wsl, Pg17UpdateMigration.DefaultBackupRoot, token),
-            Task.Delay,
+            PauseDeadlineDuringDelay(Task.Delay, deadline),
             Pg17UpdateMigration.DefaultRecheckInterval);
         var hintShown = false;
         migration.WaitingForGamesChanged += games =>
@@ -329,6 +331,28 @@ public sealed partial class MainWindowViewModel
             }
         };
         return migration;
+    }
+
+    /// <summary>
+    /// Stops <paramref name="deadline"/> for each idle recheck delay while the update waits for a game to close.
+    /// Only the delay is excused: the status checks, backup and provisioning around it still count against it.
+    /// </summary>
+    internal static Func<TimeSpan, CancellationToken, Task> PauseDeadlineDuringDelay(
+        Func<TimeSpan, CancellationToken, Task> delayAsync, PausableDeadline? deadline)
+    {
+        if (deadline is null) return delayAsync;
+        return async (interval, token) =>
+        {
+            deadline.Pause();
+            try
+            {
+                await delayAsync(interval, token).ConfigureAwait(false);
+            }
+            finally
+            {
+                deadline.Resume();
+            }
+        };
     }
 
     internal static string BuildDatabaseUpgradeWaitingStatus(IReadOnlyList<string> games) =>
