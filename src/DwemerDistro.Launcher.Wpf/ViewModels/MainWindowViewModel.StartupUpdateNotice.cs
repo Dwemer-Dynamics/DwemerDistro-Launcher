@@ -38,14 +38,16 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>
     /// Null when there is nothing to report: success, the launcher closing, another update already running (the
-    /// assistant waits for that one), or a run that never started because something else held the distro.
+    /// assistant waits for that one), a run that never started because something else held the distro, or a Debian
+    /// Trixie step that only deferred.
     /// </summary>
     internal static StartupDistroUpdateNotice? BuildStartupDistroUpdateNotice(
         SystemUpdateRunResult result,
         string? failedStage,
         string? failure,
         bool shuttingDown,
-        bool markerRecorded)
+        bool markerRecorded,
+        SystemUpgradeNoticeFacts? systemUpgrade = null)
     {
         if (shuttingDown)
         {
@@ -84,6 +86,8 @@ public sealed partial class MainWindowViewModel
                     BuildStartupNoticeDetails(failure),
                     "Close any open game, then use Update Distro in Settings. The launcher will also try again next time it opens.",
                     IsWarning: true);
+            case SystemUpdateRunResult.Failed when failedStage == UpdateStageOperatingSystem:
+                return BuildSystemUpgradeStartupNotice(title, failure, systemUpgrade);
             case SystemUpdateRunResult.Canceled:
             case SystemUpdateRunResult.TimedOut:
                 return new StartupDistroUpdateNotice(

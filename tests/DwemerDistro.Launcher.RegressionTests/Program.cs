@@ -719,6 +719,17 @@ try
     Assert(MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageCore, 75, "x").Contains("another distro update is already running", StringComparison.Ordinal)
            && MainWindowViewModel.DescribeSystemUpdateFailure("preparing", 1, "token=hf_abcdefghijklmnopqrstuvwxyz").Contains("[redacted]", StringComparison.Ordinal),
         "Update failure reasons must map explicit exit codes and redact secrets.");
+    // Core's update.sh, verbatim, while /etc/dwemer/trixie-upgrade.fence exists (exit 75).
+    var fenceEvidence = MainWindowViewModel.SelectUpdateFailureEvidence(null,
+        "\u001b[1;31m[ERROR] A Debian 13 upgrade is in progress, so this update did not start. Continue it from the DwemerDistro Launcher.\u001b[0m");
+    var fenceFailure = MainWindowViewModel.DescribeSystemUpdateFailure(MainWindowViewModel.UpdateStageCore, 75, fenceEvidence);
+    Assert(MainWindowViewModel.IsTrixieFenceRefusal(75, fenceEvidence) && !MainWindowViewModel.IsTrixieFenceRefusal(1, fenceEvidence)
+           && !MainWindowViewModel.IsTrixieFenceRefusal(75, MainWindowViewModel.SelectUpdateFailureEvidence(null, "Another distro update is already running."))
+           && fenceFailure.Contains("during the core update (exit 75): [ERROR] A Debian 13 upgrade is in progress", StringComparison.Ordinal)
+           && !fenceFailure.Contains("another distro update", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Failed, MainWindowViewModel.UpdateStageCore, fenceFailure, false, false)
+               is { Details: { } fenceDetails } && fenceDetails.Contains("A Debian 13 upgrade is in progress", StringComparison.Ordinal),
+        "Core's Debian 13 fence refusal (exit 75) is reported as itself, not as another update holding the lock.");
     var proxy = new TcpProxyService(1, "CHIM", _ => Task.FromResult<System.Net.IPEndPoint?>(null), _ => { });
     var proxyStart = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     Assert(proxy.FormatFailure("connection to DwemerDistro failed: refused", proxyStart) == "Warning: CHIM proxy connection to DwemerDistro failed: refused"
@@ -1839,6 +1850,20 @@ try
         using (var lxss = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(lxssTestKey))
         {
             using (var other = lxss.CreateSubKey("{11111111-1111-1111-1111-111111111111}")) other.SetValue("DistributionName", "Ubuntu");
+            using (var copy = lxss.CreateSubKey("{33333333-3333-3333-3333-333333333333}"))
+            {
+                copy.SetValue("DistributionName", TrixieUpdateMigration.RecoveryNamePrefix + "test");
+                copy.SetValue("BasePath", @"\\?\" + root);
+                copy.SetValue("VhdFileName", "custom.vhdx");
+                copy.SetValue("Version", 2, Microsoft.Win32.RegistryValueKind.DWord);
+            }
+            using (var wsl1 = lxss.CreateSubKey("{44444444-4444-4444-4444-444444444444}"))
+            {
+                wsl1.SetValue("DistributionName", "OldOne");
+                wsl1.SetValue("BasePath", root);
+                wsl1.SetValue("VhdFileName", "ext4.vhdx");
+                wsl1.SetValue("Version", 1, Microsoft.Win32.RegistryValueKind.DWord);
+            }
             using (var junk = lxss.CreateSubKey("not-a-guid")) junk.SetValue("DistributionName", "Broken");
             using (var mine = lxss.CreateSubKey("{2A3B4C5D-6E7F-4081-92A3-B4C5D6E7F809}"))
             {
@@ -1852,6 +1877,13 @@ try
                && new WslService(new ProcessRunner(), "Broken", lxssTestKey).GetDistroRegistrationId() is null
                && new WslService(new ProcessRunner(), "Missing", lxssTestKey).GetDistroRegistrationId() is null,
             "WslService must return the matching distro's actual WSL registration GUID, and nothing for a non-GUID key.");
+        var lxssCopyService = new WslService(new ProcessRunner(), LauncherConstants.DistroName, lxssTestKey);
+        Assert(lxssCopyService.ReadRegistration(TrixieUpdateMigration.RecoveryNamePrefix + "test") is ("{33333333-3333-3333-3333-333333333333}", _, "custom.vhdx")
+               && MainWindowViewModel.ReadSystemUpgradeRegistration(lxssCopyService, TrixieUpdateMigration.RecoveryNamePrefix + "test")
+                   is { BasePath: var lxssCopyBase, VhdFileName: "custom.vhdx", DiskFileId: null } && lxssCopyBase == Path.TrimEndingDirectorySeparator(root)
+               && lxssCopyService.ReadRegistration("OldOne") is null
+               && lxssCopyService.ReadRegistration(LauncherConstants.DistroName) is null,
+            "The Trixie step reads any named WSL 2 registration with its own VhdFileName, and refuses WSL 1 or one without a disk name.");
     }
     finally
     {
@@ -2305,6 +2337,887 @@ try
                is { IsWarning: true } pg17DatabaseNotice
            && pg17DatabaseNotice.Heading.Contains("database upgrade", StringComparison.Ordinal),
         "A held-back database step at startup must explain itself as a warning, not a generic failure.");
+
+    // --- Debian Bookworm to Trixie system upgrade (scripted Core; real temp disks, renames and DPAPI; no WSL) ---
+
+    Assert(TrixieUpdateMigration.ParseReply("checking\n{\"schema\":1,\"action\":\"status\",\"state\":\"needed\",\"release\":\"12\",\"codename\":\"bookworm\",\"instance_id\":null,\"fence\":false}\n")
+               is { State: "needed", Release: "12", Codename: "bookworm", InstanceId: "", Fence: false }
+           && TrixieUpdateMigration.ParseReply("{\"schema\":1,\"result\":\"deferred\",\"reasons\":[{\"code\":\"plan\",\"detail\":\"stale\"}],\"changed\":false}")
+               is { Result: "deferred", Reasons: "stale" }
+           && TrixieUpdateMigration.ParseReply("{\"schema\":1,\"result\":\"ready\",\"used_bytes\":\"9\"}") is { UsedBytes: null }
+           && TrixieUpdateMigration.ParseReply("{\"schema\":2,\"state\":\"needed\"}") is null
+           && TrixieUpdateMigration.ParseReply("needed") is null
+           && TrixieUpdateMigration.ParseReply("{broken") is null,
+        "Only Core's schema 1 JSON line counts, and a field of the wrong type is never proof.");
+    var trixieHex = new string('a', 64);
+    Assert(TrixieUpdateMigration.BuildUpgradeArguments(trixieHex, new string('b', 64), 4096).SequenceEqual(
+               ["/usr/local/bin/ddistro_trixie_maintenance", "upgrade", "--capture-token", trixieHex, "--recovery-sha256", new string('b', 64), "--recovery-bytes", "4096", "--json"])
+           && TrixieUpdateMigration.BuildPrepareArguments(new string('c', 32)).SequenceEqual(
+               ["/usr/local/bin/ddistro_trixie_maintenance", "upgrade", "--prepare", "--plan-id", new string('c', 32), "--json"])
+           && new[] { TrixieUpdateMigration.BuildStatusArguments(), TrixieUpdateMigration.BuildPreflightArguments(), TrixieUpdateMigration.BuildCancelArguments(),
+                      TrixieUpdateMigration.BuildVerifyArguments(), TrixieUpdateMigration.BuildReleaseArguments() }.All(arguments => arguments[^1] == "--json")
+           && TrixieThrows(() => TrixieUpdateMigration.BuildUpgradeArguments("abc; reboot", trixieHex, 1))
+           && TrixieThrows(() => TrixieUpdateMigration.BuildPrepareArguments("not-a-plan"))
+           && DistroUpdateRunner.BuildLockedRootArguments(TrixieUpdateMigration.BuildStatusArguments()).Take(5).SequenceEqual(["flock", "-n", "-E", "75", "--close"]),
+        "Every Core call asks for JSON under the update lock, with only validated tokens, digests and plan ids as arguments.");
+    Assert(TrixieUpdateMigration.ParseControlSeal("Database system identifier:           73\nLatest checkpoint location:           0/1A\nTime of latest checkpoint:            Wed Nov 11 10:00:00 2026\nDatabase cluster state:               shut down\n")
+               is ["73", "0/1A", "Wed Nov 11 10:00:00 2026", "shut down"]
+           && TrixieUpdateMigration.ParseControlSeal("Database system identifier: 73\n") is null
+           && TrixieUpdateMigration.ParseCoreState("{\"token\":\"t\",\"phase\":\"fenced\",\"plan_id\":\"p\",\"seal\":[\"1\",\"2\",\"3\",\"shut down\"]}") is { Phase: "fenced", Token: "t" }
+           && TrixieUpdateMigration.ParseCoreState("{\"token\":\"t\",\"phase\":\"fenced\",\"seal\":[1,2,3,4]}") is null,
+        "The PG17 seal and Core's journal are read exactly as Core writes them.");
+
+    const long trixieGiB = 1L << 30;
+    Assert(TrixieSpacePlan.FindShortfall(10 * trixieGiB, 2 * trixieGiB, ("C:\\", 20 * trixieGiB), ("D:\\", 5 * trixieGiB), ("E:\\", 20 * trixieGiB)) is null
+           && TrixieSpacePlan.FindShortfall(10 * trixieGiB, 2 * trixieGiB, ("D:\\", 25 * trixieGiB), ("D:\\", 25 * trixieGiB), ("D:\\", 25 * trixieGiB)) is { } trixieShared
+           && trixieShared.Contains("D:\\ needs", StringComparison.Ordinal),
+        "Backup, upgrade growth and the recovery copy are checked per volume, and add up where they share one.");
+
+    var trixieRoot = Path.Combine(root, "trixie");
+    async Task<(TrixieMaintenanceResult Result, TrixieFake Fake, TrixieJournalStore Journal)> RunTrixie(
+        TrixieFake fake, bool rollout = true, bool allowFreshStart = true, CancellationToken waitToken = default, PausableDeadline? deadline = null,
+        CancellationToken workToken = default)
+    {
+        var store = new TrixieJournalStore(Path.Combine(fake.Root, "journal.json"));
+        var migration = new TrixieUpdateMigration(fake.Host(), store, () => rollout, deadline, TimeSpan.FromSeconds(30));
+        var result = await migration.RunAsync(_ => { }, allowFreshStart, waitToken, workToken);
+        return (result, fake, store);
+    }
+    TrixieFake NewTrixie() => new(Path.Combine(trixieRoot, Guid.NewGuid().ToString("N")));
+
+    var trixieInactive = await RunTrixie(NewTrixie(), rollout: false);
+    Assert(trixieInactive.Result.Outcome == TrixieMaintenanceOutcome.NotActive && trixieInactive.Fake.Calls.Count == 0
+           && !File.Exists(trixieInactive.Journal.StatePath) && trixieInactive.Result.AllowsUpdateToFinish
+           && MainWindowViewModel.BuildSystemUpgradeConsoleLine(trixieInactive.Result) is null,
+        "With rollout off and no journal the step runs nothing, writes nothing and says nothing.");
+
+    using (var trixieDeadline = new PausableDeadline(TimeSpan.FromMinutes(30)))
+    {
+        var fresh = NewTrixie();
+        var original = fresh.Original;
+        fresh.Hook = (_, arguments) =>
+        {
+            // The boundary is on disk before Core is asked to release.
+            if (arguments.Contains("release"))
+                fresh.BoundaryBeforeRelease = new TrixieJournalStore(Path.Combine(fresh.Root, "journal.json")).Read().Journal
+                    is { Phase: TrixieJournalPhase.Releasing, GameplayWriteBoundary: true };
+            return null;
+        };
+        var run = await RunTrixie(fresh, deadline: trixieDeadline);
+        var journalText = File.ReadAllText(run.Journal.StatePath);
+        var token = fresh.Guest(LauncherConstants.DistroName)!.Token;
+        Assert(run.Result.Outcome == TrixieMaintenanceOutcome.Completed && !run.Result.LeavesWritesBlocked
+               && fresh.Calls.SequenceEqual([
+                   "sha256sum", "bash", "pg17", "status", "preflight", "cutover", "prepare", "status", "cat", "test", "env",
+                   "terminate", "export", "running?", "verify-archive", "import", "copy:status", "copy:cat", "copy:test", "copy:env",
+                   "terminate:copy", "running?", "upgrade", "terminate", "verify", "release"])
+               && fresh.UpgradeArguments.Single().SequenceEqual(TrixieUpdateMigration.BuildUpgradeArguments(token, TrixieFake.ArchiveSha, 4096))
+               && fresh.BoundaryBeforeRelease
+               && run.Journal.Read().Journal is { Phase: TrixieJournalPhase.Completed, GameplayWriteBoundary: true, CopyVerified: true, Recovery.Id.Length: > 0 }
+               && !journalText.Contains(token, StringComparison.Ordinal)
+               && fresh.Guest(LauncherConstants.DistroName) is { Phase: "current", Fence: false }
+               && fresh.Registrations[LauncherConstants.DistroName] == original
+               && fresh.Registrations.ContainsKey(fresh.CopyName!),
+            "A fresh upgrade fences in Core, proves the fence, exports offline, boots an isolated copy, upgrades with the token, verifies, records the boundary, then releases.");
+        Assert(!trixieDeadline.Token.IsCancellationRequested, "The deadline resumes after the cutover.");
+        var second = await RunTrixie(fresh);
+        Assert(second.Result.Outcome == TrixieMaintenanceOutcome.NotNeeded && fresh.Calls.Count == 26,
+            "A second launch after completion does no WSL work at all.");
+        Assert(TrixieThrows(() => second.Journal.Write(second.Journal.Read().Journal! with { GameplayWriteBoundary = false, Phase = TrixieJournalPhase.Restoring })),
+            "The gameplay-write boundary can't be cleared for the same registration.");
+    }
+
+    var trixieOtherInstance = NewTrixie();
+    using (var held = new TrixieJournalStore(Path.Combine(trixieOtherInstance.Root, "journal.json")).TryLock())
+    {
+        var run = await RunTrixie(trixieOtherInstance);
+        Assert(held is not null && run.Result.Outcome == TrixieMaintenanceOutcome.Deferred && trixieOtherInstance.Calls.Count == 0,
+            "A second launcher running the step at the same time changes nothing.");
+    }
+
+    var trixieNoPg17 = NewTrixie();
+    trixieNoPg17.Pg17Current = false;
+    var trixieNoPg17Run = await RunTrixie(trixieNoPg17);
+    Assert(trixieNoPg17Run.Result.Outcome == TrixieMaintenanceOutcome.NotStarted && !trixieNoPg17.Calls.Contains("status")
+           && !File.Exists(trixieNoPg17Run.Journal.StatePath),
+        "The OS upgrade never starts before PostgreSQL 17 is verified.");
+
+    var trixieNoTool = NewTrixie();
+    trixieNoTool.Hook = (_, arguments) => arguments[0] == "sha256sum" ? new CommandResult(1, "", "No such file") : null;
+    Assert((await RunTrixie(trixieNoTool)).Result.Outcome == TrixieMaintenanceOutcome.NotNeeded && trixieNoTool.Calls.SequenceEqual(["sha256sum"]),
+        "A Core release without the tool leaves the distro as it was.");
+
+    var trixieEdited = NewTrixie();
+    trixieEdited.Hook = (_, arguments) => arguments.SequenceEqual(TrixieUpdateMigration.BuildToolProvenanceArguments()) ? new CommandResult(1, "", "") : null;
+    var trixieEditedRun = await RunTrixie(trixieEdited);
+    Assert(trixieEditedRun.Result is { Outcome: TrixieMaintenanceOutcome.NotStarted, LeavesWritesBlocked: false }
+           && trixieEdited.Calls.SequenceEqual(["sha256sum", "bash"]) && !File.Exists(trixieEditedRun.Journal.StatePath),
+        "An installed Trixie tool that is no shipped version of bin/ddistro_trixie_maintenance is never run.");
+
+    // The real update pipeline, scripted: each core command is captured, PostgreSQL 17 is current, Core's OS step is the fake.
+    async Task<(MainWindowViewModel.SharedDistroUpdateResult Outcome, List<string> Commands)> RunUpdatePipeline(
+        TrixieFake fake, bool migrationEntry, bool rollout = true, int coreExit = 0)
+    {
+        var commands = new List<string>();
+        var pg17 = new Pg17UpdateMigration(
+            (arguments, _, _) => Task.FromResult(arguments[0] == "test" ? new CommandResult(0, "", "") : new CommandResult(0, "current\n", "")),
+            () => [], _ => Task.CompletedTask, (_, _) => Task.CompletedTask, TimeSpan.FromSeconds(30));
+        var system = new TrixieUpdateMigration(fake.Host(), new TrixieJournalStore(Path.Combine(fake.Root, "journal.json")), () => rollout, null,
+            TimeSpan.FromSeconds(30));
+        var outcome = await MainWindowViewModel.RunSharedDistroUpdatePipelineAsync((command, _, _) =>
+            {
+                commands.Add(command);
+                return Task.FromResult(new CommandResult(commands.Count == 1 ? coreExit : 0, "", ""));
+            }, pg17, _ => { }, _ => { }, TimeSpan.FromMinutes(5), CancellationToken.None, CancellationToken.None,
+            systemUpgrade: system, migrationEntry: migrationEntry);
+        return (outcome, commands);
+    }
+    var keptUpdate = MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true, passPreserveFlag: true);
+    var guardOnlyUpdate = MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true);
+    var ordinaryUpdate = MainWindowViewModel.BuildSystemUpdateCommand();
+    var releaseCommand = MainWindowViewModel.BuildSystemReleaseCommand();
+    TrixieJournalStore PipelineJournal(TrixieFake fake) => new(Path.Combine(fake.Root, "journal.json"));
+
+    var missingCore = NewTrixie();
+    missingCore.Hook = (_, arguments) => arguments[0] switch
+    {
+        "sh" => new CommandResult(0, "", ""),
+        "sha256sum" => new CommandResult(1, "", "No such file"),
+        _ => null
+    };
+    var missingCoreRun = await RunUpdatePipeline(missingCore, migrationEntry: true);
+    Assert(missingCoreRun.Commands.SequenceEqual([keptUpdate, releaseCommand]) && missingCoreRun.Outcome is { Succeeded: true, KeptLocalChanges: true }
+           && missingCore.Calls.SequenceEqual(["sh", "sha256sum"]) && !File.Exists(PipelineJournal(missingCore).StatePath),
+        "A missing or old Core (no Trixie tool yet) still gets the preserve flag: the update it runs installs the Core that reads it.");
+
+    var freshBookworm = NewTrixie();
+    var quickstartRun = await RunUpdatePipeline(freshBookworm, migrationEntry: false);
+    Assert(quickstartRun.Commands.SequenceEqual([guardOnlyUpdate, releaseCommand]) && quickstartRun.Outcome is { Succeeded: true, KeptLocalChanges: true }
+           && freshBookworm.Calls.SequenceEqual(["sh"]) && !File.Exists(PipelineJournal(freshBookworm).StatePath),
+        "Quickstart and the mod-update batch keep Core's plain update and never start the upgrade, though the checkout stays guarded.");
+    var manualRun = await RunUpdatePipeline(freshBookworm, migrationEntry: true);
+    Assert(manualRun.Commands.SequenceEqual([keptUpdate, releaseCommand])
+           && manualRun.Outcome is { Succeeded: true, KeptLocalChanges: true, System.Outcome: TrixieMaintenanceOutcome.Completed }
+           && freshBookworm.Calls.Take(3).SequenceEqual(["sh", "sh", "sha256sum"]) && freshBookworm.Calls.Contains("prepare")
+           && PipelineJournal(freshBookworm).Read().Journal is { Phase: TrixieJournalPhase.Completed },
+        "Update Distro and the reopen sync on a fresh Bookworm distro pass the flag to update.sh and update_gws, then upgrade.");
+    var callsAfterUpgrade = freshBookworm.Calls.Count;
+    var afterUpgradeRun = await RunUpdatePipeline(freshBookworm, migrationEntry: true);
+    Assert(afterUpgradeRun.Commands.SequenceEqual([ordinaryUpdate, releaseCommand])
+           && afterUpgradeRun.Outcome is { Succeeded: true, KeptLocalChanges: false, System.Outcome: TrixieMaintenanceOutcome.NotNeeded }
+           && freshBookworm.Calls.Count == callsAfterUpgrade,
+        "Once this registration completed the upgrade, the next reopen or Update Distro is Core's ordinary update, with no OS read.");
+
+    var ordinaryTrixie = NewTrixie();
+    ordinaryTrixie.Guest(LauncherConstants.DistroName)!.Release = "13";
+    var ordinaryTrixieRun = await RunUpdatePipeline(ordinaryTrixie, migrationEntry: true);
+    Assert(ordinaryTrixieRun.Commands.SequenceEqual([ordinaryUpdate, releaseCommand]) && ordinaryTrixieRun.Outcome is { Succeeded: true, KeptLocalChanges: false }
+           && ordinaryTrixie.Calls.SequenceEqual(["sh"]) && !File.Exists(PipelineJournal(ordinaryTrixie).StatePath),
+        "A distro that already reads Trixie without a launcher journal gets ordinary updates, so component installers keep updating.");
+
+    var restoredBookworm = NewTrixie();
+    PipelineJournal(restoredBookworm).Write(new TrixieJournal
+    {
+        Phase = TrixieJournalPhase.Restored, Registration = restoredBookworm.Original, ToolSha256 = new string('d', 64), UpdatedAt = DateTimeOffset.Now
+    });
+    foreach (var reopen in new[] { 1, 2 })
+    {
+        var restoredRun = await RunUpdatePipeline(restoredBookworm, migrationEntry: true);
+        Assert(restoredRun.Commands.SequenceEqual([keptUpdate, releaseCommand])
+               && restoredRun.Outcome is { Succeeded: true, KeptLocalChanges: true, System.Outcome: TrixieMaintenanceOutcome.NotNeeded }
+               && !restoredBookworm.Calls.Contains("prepare") && PipelineJournal(restoredBookworm).Read().Journal is { Phase: TrixieJournalPhase.Restored },
+            $"A distro restored to Bookworm is still pending: reopen {reopen} keeps local changes and does not retry the same tool.");
+    }
+
+    var deferredBookworm = NewTrixie();
+    deferredBookworm.Pg17Current = false;
+    var firstReopen = await RunUpdatePipeline(deferredBookworm, migrationEntry: true);
+    var secondReopen = await RunUpdatePipeline(deferredBookworm, migrationEntry: true);
+    Assert(firstReopen.Outcome.System?.Outcome == TrixieMaintenanceOutcome.NotStarted
+           && firstReopen.Commands.SequenceEqual([keptUpdate, releaseCommand]) && secondReopen.Commands.SequenceEqual([keptUpdate, releaseCommand]),
+        "While the upgrade waits, a second reopen or Update Distro passes the flag again, so it can't undo what the first kept.");
+
+    var unreadableOs = NewTrixie();
+    unreadableOs.Hook = (_, arguments) => arguments[0] == "sh" ? new CommandResult(1, "", "wsl: the distro stopped") : null;
+    Assert((await RunUpdatePipeline(unreadableOs, migrationEntry: true)).Commands[0] == keptUpdate,
+        "An OS read that fails is never a reason to reset local changes.");
+
+    var rolloutOff = NewTrixie();
+    var rolloutOffRun = await RunUpdatePipeline(rolloutOff, migrationEntry: true, rollout: false);
+    Assert(rolloutOffRun.Commands.SequenceEqual([ordinaryUpdate, releaseCommand]) && rolloutOffRun.Outcome is { Succeeded: true, KeptLocalChanges: false }
+           && rolloutOff.Calls.Count == 0 && !File.Exists(PipelineJournal(rolloutOff).StatePath),
+        "Rollout off runs exactly the update it ran before: no OS read, no flag, no guard.");
+
+    var guardStop = await RunUpdatePipeline(NewTrixie(), migrationEntry: true, coreExit: CoreLocalChangesGuard.DeferredExitCode);
+    var postTrixieStop = NewTrixie();
+    postTrixieStop.Guest(LauncherConstants.DistroName)!.Release = "13";
+    var postTrixieStopRun = await RunUpdatePipeline(postTrixieStop, migrationEntry: true, coreExit: CoreLocalChangesGuard.DeferredExitCode);
+    Assert(guardStop.Commands.Count == 1 && guardStop.Outcome is { Succeeded: false, KeptLocalChanges: true }
+           && MainWindowViewModel.IsLocalChangesDeferral(guardStop.Outcome.KeptLocalChanges, MainWindowViewModel.UpdateStageDownload, guardStop.Outcome.Command.ExitCode)
+           && !MainWindowViewModel.IsLocalChangesDeferral(postTrixieStopRun.Outcome.KeptLocalChanges, MainWindowViewModel.UpdateStageDownload,
+               postTrixieStopRun.Outcome.Command.ExitCode),
+        "Exit 65 is the guard's safe deferral only when this update ran the guard.");
+
+    // The rollout's checkout guard, run for real by Git Bash against local Git fixtures; WSL is never touched.
+    Assert(MainWindowViewModel.BuildSystemUpdateCommand().Contains("fetch origin && git reset --hard origin/main", StringComparison.Ordinal)
+           && !MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true).Contains("git reset --hard origin/main", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true).IndexOf("fetch origin +refs/heads/main", StringComparison.Ordinal)
+              < MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true).IndexOf("STAGE:core", StringComparison.Ordinal),
+        "Rollout off keeps the plain reset; rollout on guards the checkout before update.sh runs.");
+    const string preserveFlag = "DDISTRO_PRESERVE_LOCAL_CHANGES=1";
+    var plainShared = MainWindowViewModel.BuildSharedComponentsUpdateCommand();
+    var preservedShared = MainWindowViewModel.BuildSharedComponentsUpdateCommand(preserveLocalChanges: true);
+    var preservedUpdate = MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true, passPreserveFlag: true);
+    var guardedUpdate = MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true);
+    const string plainCoreRun = "echo 'dwemer' | sudo -S -p '' ./update.sh && ";
+    var preservedCoreRun = $"echo 'dwemer' | sudo -S -p '' env {preserveFlag} ./update.sh && ";
+    Assert(MainWindowViewModel.CorePreserveLocalChanges == preserveFlag
+           && !plainShared.Contains(preserveFlag, StringComparison.Ordinal)
+           && preservedShared == preserveFlag + " " + plainShared
+           && !MainWindowViewModel.BuildSystemUpdateCommand().Contains(preserveFlag, StringComparison.Ordinal)
+           && MainWindowViewModel.BuildSystemUpdateCommand().Contains(plainCoreRun, StringComparison.Ordinal)
+           && !guardedUpdate.Contains(preserveFlag, StringComparison.Ordinal) && guardedUpdate.Contains(plainCoreRun, StringComparison.Ordinal)
+           && preservedUpdate == guardedUpdate.Replace(plainCoreRun, preservedCoreRun, StringComparison.Ordinal)
+               .Replace("' && " + plainShared, "' && " + preservedShared, StringComparison.Ordinal)
+           && preservedUpdate.EndsWith("' && " + preservedShared, StringComparison.Ordinal),
+        "Only an opted-in update passes Core's preserve flag: through sudo with env to update.sh, and as a plain prefix to update_gws, which runs as dwemer.");
+    Assert(MainWindowViewModel.IsLocalChangesDeferral(true, MainWindowViewModel.UpdateStageDownload, CoreLocalChangesGuard.DeferredExitCode)
+           && !MainWindowViewModel.IsLocalChangesDeferral(false, MainWindowViewModel.UpdateStageDownload, CoreLocalChangesGuard.DeferredExitCode)
+           && !MainWindowViewModel.IsLocalChangesDeferral(true, MainWindowViewModel.UpdateStageShared, CoreLocalChangesGuard.DeferredExitCode)
+           && !MainWindowViewModel.IsLocalChangesDeferral(true, MainWindowViewModel.UpdateStageDownload, 128),
+        "Only the checkout guard's own refusal is a safe deferral that raises no startup dialog.");
+    if (GitBashPath() is { } flagBash)
+    {
+        // The flag survives update_gws re-running itself under flock through env, as the shipped script does.
+        var flagRoot = Path.Combine(root, "preserve-flag").Replace('\\', '/');
+        Directory.CreateDirectory(flagRoot);
+        File.WriteAllText(Path.Combine(flagRoot, "update_gws"), """
+            if [ "${DWEMER_COMPONENT_UPDATE_LOCKED:-0}" != 1 ]; then env DWEMER_COMPONENT_UPDATE_LOCKED=1 bash "$0" "$@"; exit $?; fi
+            echo "flag=${DDISTRO_PRESERVE_LOCAL_CHANGES:-unset} args=$#"
+            """.Replace("\r", ""));
+        File.WriteAllText(Path.Combine(flagRoot, "run.sh"),
+            (preservedShared + "\n" + plainShared + "\n").Replace("/usr/local/bin/update_gws", "bash " + flagRoot + "/update_gws"));
+        var flagRun = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(flagBash, $"\"{flagRoot}/run.sh\"")
+            { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true })!;
+        var flagOutput = (await flagRun.StandardOutput.ReadToEndAsync()).Replace("\r", "");
+        await flagRun.WaitForExitAsync();
+        Assert(flagOutput == "flag=1 args=5\nflag=unset args=5\n",
+            "update_gws must see the preserve flag after its flock re-exec, and only when it was passed: " + flagOutput);
+
+        // update.sh runs through sudo, which resets the environment (env_reset): a prefix before sudo never reaches it.
+        static string CoreRun(string command) =>
+            command[command.IndexOf("echo 'dwemer' | sudo", StringComparison.Ordinal)..(command.IndexOf("./update.sh && ", StringComparison.Ordinal) + "./update.sh".Length)];
+        File.WriteAllText(Path.Combine(flagRoot, "update.sh"), "#!/bin/bash\necho \"update.sh flag=${DDISTRO_PRESERVE_LOCAL_CHANGES:-unset}\"\n");
+        File.WriteAllText(Path.Combine(flagRoot, "core.sh"), $$"""
+            sudo() { [ "$1" = -S ] && [ "$2" = -p ] && [ -z "$3" ] || exit 9; shift 3; cat > /dev/null; env -i PATH="$PATH" SYSTEMROOT="$SYSTEMROOT" "$@"; }
+            cd "{{flagRoot}}" || exit 9
+            export DDISTRO_PRESERVE_LOCAL_CHANGES=1
+            {{CoreRun(MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true))}}
+            unset DDISTRO_PRESERVE_LOCAL_CHANGES
+            {{CoreRun(preservedUpdate)}}
+            {{CoreRun(guardedUpdate)}}
+            """.Replace("\r", ""));
+        var coreRun = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(flagBash, $"\"{flagRoot}/core.sh\"")
+            { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true })!;
+        var coreOutput = (await coreRun.StandardOutput.ReadToEndAsync()).Replace("\r", "");
+        await coreRun.WaitForExitAsync();
+        Assert(coreOutput == "update.sh flag=unset\nupdate.sh flag=1\nupdate.sh flag=unset\n",
+            "update.sh must see the preserve flag through sudo's reset environment, and only when it was passed: " + coreOutput);
+        Console.WriteLine("Core preserve-flag shell fixture: ran with " + flagBash);
+    }
+    else
+    {
+        Console.WriteLine("Skipped the Core preserve-flag shell fixture: Git Bash was not found.");
+    }
+
+    if (GitBashPath() is { } gitBash)
+    {
+        var guardRoot = Path.Combine(root, "core-guard").Replace('\\', '/');
+        Directory.CreateDirectory(guardRoot);
+        File.WriteAllText(Path.Combine(guardRoot, "sync.sh"), CoreLocalChangesGuard.BuildFetchAndSyncCommand(guardRoot + "/deploy").Replace("\r", ""));
+        File.WriteAllText(Path.Combine(guardRoot, "fixture.sh"), """
+            export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+            cd "$(dirname "$0")" && git init -q -b main src && cd src && mkdir bin etc || exit 9
+            echo v1 > bin/tool; echo env1 > etc/start_env; echo readme > README.md; echo notes1 > NOTES.md
+            git add -A && git commit -qm c1 && echo v2 > bin/tool && echo new > bin/newtool && echo notes2 > NOTES.md \
+                && git add -A && git commit -qm c2 && cd .. && git clone -q --bare src origin.git || exit 9
+            run() {
+                rm -rf "$1" deploy; mkdir -p deploy/usr/local/bin
+                if [ "$2" = installer ]; then mkdir "$1" && git -C src archive HEAD~1 | tar -x -C "$1" && git -C "$1" init -q && git -C "$1" remote add origin ../origin.git
+                else git clone -q origin.git "$1" && git -C "$1" reset -q --hard HEAD~1; fi
+                (cd "$1" && eval "$3") && before="$(cd "$1" && git ls-files -o -m | sort | xargs cat | git hash-object --stdin)"
+                (cd "$1" && bash ../sync.sh) >/dev/null; rc=$?
+                after="$(cd "$1" && git ls-files -o -m | sort | xargs cat | git hash-object --stdin)"
+                echo "$1 rc=$rc same=$([ "$before" = "$after" ] && echo 1 || echo 0) head=$(git -C "$1" log -1 --format=%s 2>/dev/null)" \
+                    "readme=$(cat "$1/README.md") kept=$(git -C "$1" for-each-ref --format='%(refname)' refs/dwemerdistro | wc -l)"
+            }
+            run untouched repo ':'
+            run modified repo 'echo mine > README.md && mkdir logs && echo x > logs/run.log'
+            run committed repo 'echo mine > README.md && git commit -qam local'
+            run overlap repo 'echo mine > NOTES.md'
+            run root-input repo 'echo mine > etc/start_env'
+            run obstructing repo 'echo mine > bin/newtool'
+            run deployed repo 'echo v1 > ../deploy/usr/local/bin/tool && mkdir ../deploy/etc'
+            run deployed-edit repo 'echo mine > ../deploy/usr/local/bin/tool'
+            run installer installer 'echo mine > README.md'
+            run installer-overlap installer 'echo mine > NOTES.md'
+            [ -f modified/logs/run.log ] && git -C committed log --format=%s "$(git -C committed for-each-ref --format='%(refname)' refs/dwemerdistro)" | grep -qx local
+            echo "extras=$?"
+            """.Replace("\r", ""));
+        var guardRun = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(gitBash, $"\"{guardRoot}/fixture.sh\"")
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true })!;
+        var guardErrors = guardRun.StandardError.ReadToEndAsync();
+        var guardOutput = (await guardRun.StandardOutput.ReadToEndAsync()).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        await guardRun.WaitForExitAsync();
+        string GuardLine(string name) => guardOutput.FirstOrDefault(line => line.StartsWith(name + " ", StringComparison.Ordinal)) ?? "";
+        const string unchanged = "rc=65 same=1 head=c1 readme=readme kept=0";
+        Assert(GuardLine("untouched").EndsWith("rc=0 same=1 head=c2 readme=readme kept=0", StringComparison.Ordinal)
+               && GuardLine("modified").EndsWith("rc=0 same=1 head=c2 readme=mine kept=1", StringComparison.Ordinal)
+               && GuardLine("committed").EndsWith("rc=0 same=0 head=c2 readme=mine kept=1", StringComparison.Ordinal)
+               && GuardLine("overlap").EndsWith(unchanged, StringComparison.Ordinal)
+               && GuardLine("root-input").EndsWith(unchanged, StringComparison.Ordinal)
+               && GuardLine("obstructing").EndsWith(unchanged, StringComparison.Ordinal)
+               && GuardLine("deployed").EndsWith("rc=0 same=1 head=c2 readme=readme kept=0", StringComparison.Ordinal)
+               && GuardLine("deployed-edit").EndsWith(unchanged, StringComparison.Ordinal)
+               && GuardLine("installer").EndsWith("rc=0 same=0 head=c2 readme=mine kept=1", StringComparison.Ordinal)
+               && GuardLine("installer-overlap").EndsWith("rc=65 same=1 head= readme=readme kept=0", StringComparison.Ordinal)
+               && guardOutput.Contains("extras=0"),
+            "The checkout guard keeps untracked files, local commits and unrelated edits, updates stock files, and stops before " +
+            "changing anything on an overlap, a root input, an obstruction or an edited installed file:\n" +
+            string.Join("\n", guardOutput) + await guardErrors);
+        // Git writes its objects read-only, which the final cleanup could not delete.
+        foreach (var file in Directory.EnumerateFiles(guardRoot, "*", SearchOption.AllDirectories)) File.SetAttributes(file, FileAttributes.Normal);
+        Console.WriteLine("Core checkout guard shell fixture: ran with " + gitBash);
+    }
+    else
+    {
+        Console.WriteLine("Skipped the Core checkout guard fixture: Git Bash was not found.");
+    }
+
+    var trixieUnknown = NewTrixie();
+    trixieUnknown.Guest(LauncherConstants.DistroName)!.Phase = "fenced";
+    var trixieUnknownRun = await RunTrixie(trixieUnknown);
+    Assert(trixieUnknownRun.Result.Outcome == TrixieMaintenanceOutcome.RecoveryRequired && trixieUnknownRun.Result.LeavesWritesBlocked
+           && !trixieUnknown.Calls.Contains("prepare") && !trixieUnknown.Calls.Contains("cancel"),
+        "A Core upgrade this launcher did not record is never cancelled, resumed or restored by guesswork.");
+
+    var trixieLowSpace = NewTrixie();
+    trixieLowSpace.Free = 4 * trixieGiB;
+    var trixieLowRun = await RunTrixie(trixieLowSpace);
+    var trixieOtherVolume = NewTrixie();
+    trixieOtherVolume.Volume = path => path.StartsWith(trixieOtherVolume.Original.BasePath, StringComparison.OrdinalIgnoreCase) ? "D:\\" : "E:\\";
+    var trixieOtherVolumeRun = await RunTrixie(trixieOtherVolume);
+    Assert(trixieLowRun.Result.Outcome == TrixieMaintenanceOutcome.NotStarted && trixieLowRun.Result.Message.Contains("Not enough free space", StringComparison.Ordinal)
+           && !trixieLowSpace.Calls.Contains("prepare")
+           && trixieOtherVolumeRun.Result.Outcome == TrixieMaintenanceOutcome.NotStarted && !trixieOtherVolume.Calls.Contains("prepare"),
+        "Too little room, or a recovery folder on another volume than the disk, refuses before Core fences anything.");
+
+    using (var trixieStop = new CancellationTokenSource())
+    {
+        trixieStop.Cancel();
+        var games = NewTrixie();
+        games.Games = () => ["Skyrim Special Edition"];
+        var run = await RunTrixie(games, waitToken: trixieStop.Token);
+        Assert(run.Result.Outcome == TrixieMaintenanceOutcome.Deferred && !games.Calls.Contains("preflight") && run.Result.AllowsUpdateToFinish,
+            "Stop waiting for an open game postpones the upgrade before anything changes.");
+    }
+
+    var trixieServer = NewTrixie();
+    trixieServer.ServerRunning = true;
+    Assert((await RunTrixie(trixieServer)).Result.Outcome == TrixieMaintenanceOutcome.Deferred && !trixieServer.Calls.Contains("prepare"),
+        "A running server postpones the upgrade instead of being stopped unprompted.");
+
+    var trixieBusy = NewTrixie();
+    trixieBusy.CutoverAvailable = false;
+    Assert((await RunTrixie(trixieBusy)).Result.Outcome == TrixieMaintenanceOutcome.Deferred && !trixieBusy.Calls.Contains("prepare"),
+        "Without the exclusive distro slot Core is never asked to fence.");
+
+    var trixieRaced = NewTrixie();
+    trixieRaced.RunningAfterExport = true;
+    var trixieRacedRun = await RunTrixie(trixieRaced);
+    Assert(trixieRacedRun.Result.Outcome == TrixieMaintenanceOutcome.NotStarted && !trixieRacedRun.Result.LeavesWritesBlocked
+           && trixieRaced.Calls.Contains("cancel") && !trixieRaced.Calls.Contains("upgrade") && !trixieRaced.Calls.Contains("import")
+           && trixieRaced.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", Fence: false }
+           && trixieRacedRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Cancelled, BackupPath: { } racedCopy } && !File.Exists(racedCopy),
+        "A distro started during the export discards that unverified copy and cancels Core's fence.");
+
+    var trixieBadCopy = NewTrixie();
+    trixieBadCopy.Hook = (distro, arguments) => distro != LauncherConstants.DistroName && arguments[0] == "cat"
+        ? new CommandResult(0, "{\"token\":\"" + new string('0', 64) + "\",\"phase\":\"fenced\",\"plan_id\":\"" + TrixieFake.PlanId + "\",\"seal\":" + TrixieFake.SealJson + "}", "")
+        : null;
+    var trixieBadCopyRun = await RunTrixie(trixieBadCopy);
+    Assert(trixieBadCopyRun.Result.Outcome == TrixieMaintenanceOutcome.NotStarted && !trixieBadCopy.Calls.Contains("upgrade")
+           && trixieBadCopy.Guest(LauncherConstants.DistroName) is { Phase: "cancelled" }
+           && trixieBadCopy.Registrations.ContainsKey(trixieBadCopy.CopyName!) && trixieBadCopyRun.Result.Message.Contains(trixieBadCopy.CopyName!, StringComparison.Ordinal),
+        "A copy that does not hold Core's token cancels the fence; the copy is named and left registered, nothing is unregistered.");
+
+    var trixieMovedDisk = NewTrixie();
+    trixieMovedDisk.AfterExport = () => trixieMovedDisk.Registrations[LauncherConstants.DistroName] =
+        trixieMovedDisk.Original with { VhdFileName = "other.vhdx" };
+    Assert((await RunTrixie(trixieMovedDisk)).Result.Outcome != TrixieMaintenanceOutcome.Completed
+           && !trixieMovedDisk.Calls.Contains("import") && !trixieMovedDisk.Calls.Contains("upgrade"),
+        "A registration whose VhdFileName changes under the export is never upgraded.");
+
+    var trixiePlanChanged = NewTrixie();
+    trixiePlanChanged.UpgradeMode = "plan-changed";
+    var trixiePlanChangedRun = await RunTrixie(trixiePlanChanged);
+    Assert(trixiePlanChangedRun.Result.Outcome == TrixieMaintenanceOutcome.NotStarted && !trixiePlanChangedRun.Result.LeavesWritesBlocked
+           && trixiePlanChanged.Calls.Contains("cancel") && trixiePlanChanged.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", Fence: false },
+        "A plan that changed before dpkg returns Core to its fence, which is cancelled; nothing is restored.");
+
+    var trixieFailed = NewTrixie();
+    trixieFailed.UpgradeMode = "fail-after-dpkg";
+    var trixieFailedOriginal = trixieFailed.Original;
+    var trixieFailedRun = await RunTrixie(trixieFailed);
+    var trixieFailedCopy = trixieFailed.Registrations[trixieFailed.CopyName!];
+    Assert(trixieFailedRun.Result.Outcome == TrixieMaintenanceOutcome.Restored && !trixieFailedRun.Result.LeavesWritesBlocked
+           && trixieFailed.UpgradeArguments.Count == TrixieUpdateMigration.MaxUpgradeAttempts
+           && trixieFailed.UpgradeArguments.All(arguments => arguments.SequenceEqual(trixieFailed.UpgradeArguments[0]))
+           && trixieFailed.Registrations[LauncherConstants.DistroName] == trixieFailedOriginal
+           && TrixieWindowsFiles.FileId(trixieFailedCopy.DiskPath) == trixieFailedOriginal.DiskFileId
+           && trixieFailed.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", Fence: false, Release: "12" }
+           && trixieFailed.Guest(trixieFailed.CopyName!) is { Phase: "upgrading" }
+           && trixieFailedRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Restored, SwapStep: 4, GameplayWriteBoundary: false }
+           && trixieFailedRun.Result.Message.Contains(trixieFailed.CopyName!, StringComparison.Ordinal)
+           && MainWindowViewModel.BuildSystemUpgradeConsoleLine(trixieFailedRun.Result)?.Color == "yellow",
+        "A transaction that fails past dpkg is resumed with the same token, then the proven copy replaces the failed disk, which the copy's registration keeps, and Core releases the copy.");
+    var trixieAfterRestore = await RunTrixie(trixieFailed);
+    Assert(trixieAfterRestore.Result.Outcome == TrixieMaintenanceOutcome.NotNeeded && !trixieAfterRestore.Result.LeavesWritesBlocked,
+        "A rolled-back upgrade is not retried with the same Core tool.");
+
+    var trixieVerifyFails = NewTrixie();
+    trixieVerifyFails.VerifyMode = "problems";
+    var trixieVerifyFailsRun = await RunTrixie(trixieVerifyFails);
+    Assert(trixieVerifyFailsRun.Result.Outcome == TrixieMaintenanceOutcome.Restored && !trixieVerifyFails.Calls.Contains("release")
+           && trixieVerifyFails.Guest(LauncherConstants.DistroName) is { Phase: "cancelled" },
+        "A failed verify before the boundary restores the proven copy without a click.");
+
+    var trixieRestart = NewTrixie();
+    trixieRestart.RestartRequired = 2;
+    var trixieRestartRun = await RunTrixie(trixieRestart);
+    Assert(trixieRestartRun.Result.Outcome == TrixieMaintenanceOutcome.Completed
+           && trixieRestart.Calls.Count(call => call == "verify") == 3 && trixieRestart.Calls.Count(call => call == "terminate") == 4,
+        "verify's restart-required answer terminates and reopens the distro before checking again.");
+
+    var trixieReleaseRefused = NewTrixie();
+    trixieReleaseRefused.Hook = (_, arguments) => arguments.Contains("release")
+        ? new CommandResult(1, "", "Debian 13 maintenance stopped: disk full") : null;
+    var trixieReleaseRefusedRun = await RunTrixie(trixieReleaseRefused);
+    Assert(trixieReleaseRefusedRun.Result.Outcome == TrixieMaintenanceOutcome.RecoveryRequired && trixieReleaseRefusedRun.Result.LeavesWritesBlocked
+           && trixieReleaseRefusedRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.RecoveryRequired, GameplayWriteBoundary: true }
+           && trixieReleaseRefused.Registrations[LauncherConstants.DistroName] == trixieReleaseRefused.Original
+           && trixieReleaseRefused.Guest(LauncherConstants.DistroName) is { Phase: "verified" },
+        "Past the gameplay-write boundary a failed release is never restored automatically.");
+
+    var trixieLost = NewTrixie();
+    trixieLost.UpgradeMode = "lost-once";
+    var trixieLostRun = await RunTrixie(trixieLost);
+    Assert(trixieLostRun.Result.Outcome == TrixieMaintenanceOutcome.Deferred && trixieLostRun.Result.LeavesWritesBlocked
+           && trixieLostRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Upgrading },
+        "An upgrade whose distro stops answering keeps writers blocked and is not guessed at.");
+    var trixieLostCalls = trixieLost.Calls.Count;
+    var trixieResumed = await RunTrixie(trixieLost, rollout: false, allowFreshStart: false);
+    Assert(trixieResumed.Result.Outcome == TrixieMaintenanceOutcome.Completed && trixieLost.UpgradeArguments.Count == 2
+           && trixieLost.UpgradeArguments[0].SequenceEqual(trixieLost.UpgradeArguments[1]) && !trixieLost.Calls.Skip(trixieLostCalls).Contains("export"),
+        "The next launch resumes the interrupted upgrade with the same token, digest and size, without a new export or the rollout switch.");
+
+    var trixieSwapFails = NewTrixie();
+    trixieSwapFails.UpgradeMode = "fail-after-dpkg";
+    var trixieMoves = 0;
+    trixieSwapFails.Move = (from, to) =>
+    {
+        if (++trixieMoves == 2) throw new IOException("sharing violation");
+        TrixieWindowsFiles.MoveSameVolume(from, to);
+    };
+    var trixieSwapFailsRun = await RunTrixie(trixieSwapFails);
+    Assert(trixieSwapFailsRun.Result.Outcome == TrixieMaintenanceOutcome.Deferred && trixieSwapFailsRun.Result.LeavesWritesBlocked
+           && TrixieWindowsFiles.FileId(trixieSwapFails.Original.DiskPath) == trixieSwapFails.Original.DiskFileId
+           && trixieSwapFailsRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Restoring, SwapStep: 0 },
+        "A rename that fails mid-restore is rolled back, both disks in place, and stays blocked.");
+    trixieSwapFails.Move = null;
+    var trixieSwapRetried = await RunTrixie(trixieSwapFails, rollout: false, allowFreshStart: false);
+    Assert(trixieSwapRetried.Result.Outcome == TrixieMaintenanceOutcome.Restored
+           && trixieSwapFails.Guest(LauncherConstants.DistroName) is { Phase: "cancelled" },
+        "The next launch finishes the restore.");
+
+    // wsl -t returns before WSL detaches the disk: the 11 November rehearsal deferred two seconds in on "ext4.vhdx is still open".
+    var trixieDetach = NewTrixie();
+    trixieDetach.UpgradeMode = "fail-after-dpkg";
+    FileStream? trixieDetachHandle = null;
+    trixieDetach.Hook = (_, arguments) =>
+    {
+        if (arguments.Contains("--cancel"))
+            trixieDetachHandle ??= new FileStream(trixieDetach.Original.DiskPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        return null;
+    };
+    trixieDetach.OnReleaseDelay = count =>
+    {
+        if (count == 3) trixieDetachHandle?.Dispose();
+    };
+    var trixieDetachRun = await RunTrixie(trixieDetach);
+    trixieDetachHandle?.Dispose();
+    Assert(trixieDetachHandle is not null && trixieDetachRun.Result.Outcome == TrixieMaintenanceOutcome.Restored && !trixieDetachRun.Result.LeavesWritesBlocked
+           && trixieDetach.ReleaseDelays == 3
+           && trixieDetach.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", Fence: false }
+           && trixieDetachRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Restored, RestoreAttempts: 1 },
+        "A terminated distro's disk that WSL releases a moment later is waited for, and the restore finishes in the same run.");
+
+    var trixieHeld = NewTrixie();
+    trixieHeld.UpgradeMode = "fail-after-dpkg";
+    var trixieHeldMoves = 0;
+    trixieHeld.Move = (from, to) =>
+    {
+        trixieHeldMoves++;
+        TrixieWindowsFiles.MoveSameVolume(from, to);
+    };
+    TrixieMaintenanceResult trixieHeldResult;
+    using (new FileStream(trixieHeld.Original.DiskPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        trixieHeldResult = (await RunTrixie(trixieHeld)).Result;
+    var trixieHeldCopy = trixieHeld.Registrations[trixieHeld.CopyName!];
+    Assert(trixieHeldResult.Outcome == TrixieMaintenanceOutcome.Deferred && trixieHeldResult.LeavesWritesBlocked && trixieHeldMoves == 0
+           && trixieHeld.ReleaseDelays == (int)(TrixieUpdateMigration.DiskReleaseTimeout / TrixieUpdateMigration.DiskReleasePoll)
+           && trixieHeldResult.Message.Contains(trixieHeld.Original.DiskPath + " was still open after waiting 90 seconds", StringComparison.Ordinal)
+           && trixieHeldResult.Message.Contains("no disk was moved; nothing was forced closed and no other WSL distro was stopped", StringComparison.Ordinal)
+           && trixieHeldResult.Message.Contains("distro writes stay blocked", StringComparison.Ordinal)
+           && TrixieWindowsFiles.FileId(trixieHeld.Original.DiskPath) == trixieHeld.Original.DiskFileId
+           && TrixieWindowsFiles.FileId(trixieHeldCopy.DiskPath) == trixieHeldCopy.DiskFileId
+           && new TrixieJournalStore(Path.Combine(trixieHeld.Root, "journal.json")).Read().Journal
+               is { Phase: TrixieJournalPhase.Restoring, SwapStep: 0, GameplayWriteBoundary: false, RestoreAttempts: 2 },
+        "A disk still held when the bounded wait ends moves nothing, closes nothing, and defers truthfully with writes blocked.");
+    var trixieHeldRetried = await RunTrixie(trixieHeld, rollout: false, allowFreshStart: false);
+    Assert(trixieHeldRetried.Result.Outcome == TrixieMaintenanceOutcome.Restored && trixieHeldMoves == 3
+           && trixieHeld.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", Fence: false },
+        "Once the disk is released, the next launch finishes the deferred restore.");
+
+    var trixieLateHold = NewTrixie();
+    trixieLateHold.UpgradeMode = "fail-after-dpkg";
+    FileStream? trixieLateHandle = null;
+    trixieLateHold.Move = (from, to) =>
+    {
+        TrixieWindowsFiles.MoveSameVolume(from, to);
+        // Something attaches the recovery disk after the failed disk was set aside.
+        trixieLateHandle ??= new FileStream(trixieLateHold.Registrations[trixieLateHold.CopyName!].DiskPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    };
+    TrixieMaintenanceResult trixieLateResult;
+    try
+    {
+        trixieLateResult = (await RunTrixie(trixieLateHold)).Result;
+    }
+    finally
+    {
+        trixieLateHandle?.Dispose();
+    }
+
+    Assert(trixieLateResult.Outcome == TrixieMaintenanceOutcome.Deferred && trixieLateResult.LeavesWritesBlocked
+           && trixieLateResult.Message.Contains("the disks were put back", StringComparison.Ordinal)
+           && TrixieWindowsFiles.FileId(trixieLateHold.Original.DiskPath) == trixieLateHold.Original.DiskFileId
+           && new TrixieJournalStore(Path.Combine(trixieLateHold.Root, "journal.json")).Read().Journal is { Phase: TrixieJournalPhase.Restoring, SwapStep: 0 },
+        "A disk held after the swap began times out and the partial swap is rolled back.");
+
+    var trixieStopWait = NewTrixie();
+    trixieStopWait.UpgradeMode = "fail-after-dpkg";
+    using var trixieStopWaitCts = new CancellationTokenSource();
+    trixieStopWait.OnReleaseDelay = count =>
+    {
+        if (count == 2) trixieStopWaitCts.Cancel();
+    };
+    TrixieMaintenanceResult trixieStopWaitResult;
+    using (new FileStream(trixieStopWait.Original.DiskPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        trixieStopWaitResult = (await RunTrixie(trixieStopWait, workToken: trixieStopWaitCts.Token)).Result;
+    Assert(trixieStopWaitResult.Outcome == TrixieMaintenanceOutcome.Deferred && trixieStopWaitResult.LeavesWritesBlocked
+           && trixieStopWait.ReleaseDelays == 2
+           && trixieStopWaitResult.Message.Contains("was stopped while it waited", StringComparison.Ordinal)
+           && TrixieWindowsFiles.FileId(trixieStopWait.Original.DiskPath) == trixieStopWait.Original.DiskFileId
+           && new TrixieJournalStore(Path.Combine(trixieStopWait.Root, "journal.json")).Read().Journal
+               is { Phase: TrixieJournalPhase.Restoring, SwapStep: 0, RestoreAttempts: 1 },
+        "Stopping the update during the disk wait moves nothing, keeps writes blocked, and does not count as a failed restore.");
+
+    var trixieMovedDuringWait = NewTrixie();
+    trixieMovedDuringWait.UpgradeMode = "fail-after-dpkg";
+    TrixieMaintenanceResult trixieMovedDuringWaitResult;
+    var trixieMovedHandle = new FileStream(trixieMovedDuringWait.Original.DiskPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    trixieMovedDuringWait.OnReleaseDelay = _ =>
+    {
+        // Someone swaps the recovery disk by hand while the restore waits for the failed disk.
+        var copyDisk = trixieMovedDuringWait.Registrations[trixieMovedDuringWait.CopyName!].DiskPath;
+        if (!File.Exists(copyDisk + ".hand")) File.Move(copyDisk, copyDisk + ".hand");
+        File.WriteAllBytes(copyDisk, [9]);
+        trixieMovedHandle.Dispose();
+    };
+    trixieMovedDuringWaitResult = (await RunTrixie(trixieMovedDuringWait)).Result;
+    trixieMovedHandle.Dispose();
+    Assert(trixieMovedDuringWaitResult.Outcome == TrixieMaintenanceOutcome.RecoveryRequired && trixieMovedDuringWaitResult.LeavesWritesBlocked
+           && trixieMovedDuringWaitResult.Message.Contains("moved while the restore waited", StringComparison.Ordinal)
+           && TrixieWindowsFiles.FileId(trixieMovedDuringWait.Original.DiskPath) == trixieMovedDuringWait.Original.DiskFileId,
+        "Disks that change identity during the wait are rechecked before any rename, and nothing is moved.");
+
+    var trixieCrash = NewTrixie();
+    trixieCrash.UpgradeMode = "fail-after-dpkg";
+    trixieCrash.Move = (from, to) =>
+    {
+        TrixieWindowsFiles.MoveSameVolume(from, to);
+        throw new TrixieCrash();
+    };
+    var trixieCrashed = false;
+    try { await RunTrixie(trixieCrash); } catch (TrixieCrash) { trixieCrashed = true; }
+    trixieCrash.Move = null;
+    var trixieCrashResumed = await RunTrixie(trixieCrash, rollout: false, allowFreshStart: false);
+    Assert(trixieCrashed && trixieCrashResumed.Result.Outcome == TrixieMaintenanceOutcome.Restored
+           && trixieCrash.Guest(LauncherConstants.DistroName) is { Phase: "cancelled" }
+           && trixieCrash.Guest(trixieCrash.CopyName!) is { Phase: "upgrading" },
+        "A launcher that dies between renames finishes the swap from where the files are on the next launch.");
+
+    var trixieTampered = NewTrixie();
+    trixieTampered.UpgradeMode = "fail-after-dpkg";
+    trixieTampered.Move = (_, _) => throw new TrixieCrash();
+    try { await RunTrixie(trixieTampered); } catch (TrixieCrash) { }
+    trixieTampered.Move = null;
+    var trixieTamperedDisk = trixieTampered.Registrations[trixieTampered.CopyName!].DiskPath;
+    File.Delete(trixieTamperedDisk);
+    File.WriteAllBytes(trixieTamperedDisk, new byte[16]);
+    var trixieTamperedRun = await RunTrixie(trixieTampered, rollout: false, allowFreshStart: false);
+    Assert(trixieTamperedRun.Result.Outcome == TrixieMaintenanceOutcome.RecoveryRequired && trixieTamperedRun.Result.LeavesWritesBlocked
+           && TrixieWindowsFiles.FileId(trixieTampered.Original.DiskPath) == trixieTampered.Original.DiskFileId,
+        "A disk that is not the one the journal recorded stops the restore without moving anything.");
+
+    var trixieGone = NewTrixie();
+    trixieGone.Hook = (_, arguments) => arguments.Contains("--capture-token") ? throw new TrixieCrash() : null;
+    try { await RunTrixie(trixieGone); } catch (TrixieCrash) { }
+    trixieGone.Hook = null;
+    trixieGone.Registrations.Remove(LauncherConstants.DistroName);
+    var trixieGoneCalls = trixieGone.Calls.Count;
+    var trixieGoneRun = await RunTrixie(trixieGone, rollout: false, allowFreshStart: false);
+    Assert(trixieGoneRun.Result.Outcome == TrixieMaintenanceOutcome.RecoveryRequired && trixieGone.Calls.Count == trixieGoneCalls
+           && trixieGoneRun.Result.Message.Contains("Nothing was imported or removed", StringComparison.Ordinal),
+        "A distro unregistered mid-upgrade fails closed; nothing is imported automatically.");
+
+    var trixieCorrupt = NewTrixie();
+    Directory.CreateDirectory(trixieCorrupt.Root);
+    File.WriteAllText(Path.Combine(trixieCorrupt.Root, "journal.json"), "{\"Schema\":1,\"Phase\":\"Upgrading\",\"RegistrationId\":\"x\"}");
+    var trixieCorruptRun = await RunTrixie(trixieCorrupt, rollout: false);
+    Assert(trixieCorruptRun.Result.Outcome == TrixieMaintenanceOutcome.RecoveryRequired && trixieCorruptRun.Result.LeavesWritesBlocked
+           && trixieCorrupt.Calls.Count == 0 && TrixieJournalStore.BlocksWrites(trixieCorruptRun.Journal.Read(), null)
+           && TrixieThrows(() => trixieCorruptRun.Journal.Write(new TrixieJournal { Registration = trixieCorrupt.Original })),
+        "An unreadable or older-schema journal fails closed even with rollout off, and is never overwritten.");
+
+    var trixieSuperseded = NewTrixie();
+    trixieSuperseded.UpgradeMode = "lost-once";
+    await RunTrixie(trixieSuperseded);
+    trixieSuperseded.Registrations[LauncherConstants.DistroName] = trixieSuperseded.Original with { Id = "{99999999-0000-0000-0000-000000000000}" };
+    var trixieSupersededRun = await RunTrixie(trixieSuperseded, rollout: false);
+    Assert(trixieSupersededRun.Result.Outcome == TrixieMaintenanceOutcome.NotNeeded
+           && trixieSupersededRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Superseded }
+           && !TrixieJournalStore.BlocksWrites(trixieSupersededRun.Journal.Read(), "{99999999-0000-0000-0000-000000000000}"),
+        "A restore or reinstall (a new WSL registration) supersedes the old journal instead of staying blocked.");
+
+    var trixieProtected = TrixieWindowsFiles.Protect(trixieHex, "purpose-a");
+    Assert(!trixieProtected.Contains(trixieHex, StringComparison.Ordinal) && TrixieWindowsFiles.Unprotect(trixieProtected, "purpose-a") == trixieHex
+           && TrixieWindowsFiles.Unprotect(trixieProtected, "purpose-b") is null && TrixieWindowsFiles.Unprotect("not base64", "purpose-a") is null,
+        "The capture token is protected for this Windows user and registration only.");
+
+    var trixieTar = Path.Combine(trixieRoot, "probe.tar");
+    var trixieTarBytes = new byte[512 * 4];
+    "ustar"u8.CopyTo(trixieTarBytes.AsSpan(257));
+    trixieTarBytes[600] = 1;
+    File.WriteAllBytes(trixieTar, trixieTarBytes);
+    var trixieTarOk = await TrixieUpdateMigration.VerifyTarArchiveAsync(trixieTar, 1024, CancellationToken.None);
+    trixieTarBytes[^1] = 7;
+    File.WriteAllBytes(trixieTar, trixieTarBytes);
+    var trixieTarTruncated = await TrixieUpdateMigration.VerifyTarArchiveAsync(trixieTar, 1024, CancellationToken.None);
+    Assert(trixieTarOk.Ok && trixieTarOk.Bytes == 2048 && trixieTarOk.Sha256?.Length == 64 && !trixieTarTruncated.Ok,
+        "The recovery copy must be a whole tar, hashed for the journal and Core.");
+
+    Assert(MainWindowViewModel.IsPlainVhdFileName("ext4.vhdx") && MainWindowViewModel.IsPlainVhdFileName("custom.VHDX")
+           && !MainWindowViewModel.IsPlainVhdFileName(@"..\ext4.vhdx") && !MainWindowViewModel.IsPlainVhdFileName("disk.img")
+           && !MainWindowViewModel.IsPlainVhdFileName(null),
+        "Only a plain VhdFileName from the registration names the disk.");
+    Assert(MainWindowViewModel.ResolveSystemUpdateAvailability("1.2.3", "1.2.3", "bookworm\n", rolloutEnabled: true) == SystemUpdateAvailability.UpdateAvailable
+           && MainWindowViewModel.ResolveSystemUpdateAvailability("1.2.3", "1.2.3", "bookworm", rolloutEnabled: false) == SystemUpdateAvailability.Current
+           && MainWindowViewModel.ResolveSystemUpdateAvailability("1.2.3", "1.2.3", "trixie", rolloutEnabled: true) == SystemUpdateAvailability.Current,
+        "Equal releases are not equal OS states, but only an opted-in Bookworm distro with the tool shows an update.");
+    Assert(new MainWindowViewModel.SharedDistroUpdateResult(new CommandResult(0, "", ""), new(Pg17MigrationOutcome.NotNeeded, ""),
+               new(TrixieMaintenanceOutcome.RecoveryRequired, "", LeavesWritesBlocked: true)) is { Succeeded: false }
+           && new MainWindowViewModel.SharedDistroUpdateResult(new CommandResult(0, "", ""), new(Pg17MigrationOutcome.NotNeeded, ""),
+               new(TrixieMaintenanceOutcome.Restored, "")) is { Succeeded: true },
+        "Only an upgrade that leaves writes blocked holds the release back.");
+    StartupDistroUpdateNotice? TrixieNotice(TrixieMaintenanceResult result, SystemUpgradeNoticeFacts? facts) =>
+        MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Failed, MainWindowViewModel.UpdateStageOperatingSystem,
+            MainWindowViewModel.DescribeSystemUpgradeFailure(result), false, false, facts);
+    bool SuggestsRestore(string text) => text.Contains("Import Distro Backup", StringComparison.Ordinal)
+                                         || text.Contains("before restoring", StringComparison.Ordinal);
+    var pastBoundaryNotice = TrixieNotice(trixieReleaseRefusedRun.Result,
+        SystemUpgradeNoticeFacts.From(trixieReleaseRefusedRun.Result, trixieReleaseRefusedRun.Journal.Read()))?.ToPlainText() ?? "";
+    Assert(pastBoundaryNotice.Contains("may already hold new game progress", StringComparison.Ordinal)
+           && pastBoundaryNotice.Contains("Don't restore the Bookworm recovery copy", StringComparison.Ordinal)
+           && !SuggestsRestore(pastBoundaryNotice) && !pastBoundaryNotice.Contains("did not import", StringComparison.Ordinal)
+           && pastBoundaryNotice.Contains("disk full", StringComparison.Ordinal),
+        "Past the journal's gameplay-write boundary the notice gives Core's reason and forbids restoring the older copy:\n" + pastBoundaryNotice);
+    var blockedResult = new TrixieMaintenanceResult(TrixieMaintenanceOutcome.RecoveryRequired, "the WSL registration changed", LeavesWritesBlocked: true);
+    var provenJournal = new TrixieJournal
+    {
+        Phase = TrixieJournalPhase.RecoveryRequired, Registration = new("DwemerAI4Skyrim3", "{id}", @"C:\d", "ext4.vhdx", "1"),
+        CopyVerified = true, BackupSha256 = new string('a', 64), BackupPath = @"C:\b\copy.tar"
+    };
+    var provenNotice = TrixieNotice(blockedResult, SystemUpgradeNoticeFacts.From(blockedResult, (provenJournal, false)))?.ToPlainText() ?? "";
+    var noCopyNotice = TrixieNotice(blockedResult, SystemUpgradeNoticeFacts.From(blockedResult,
+        (provenJournal with { CopyVerified = false }, false)))?.ToPlainText() ?? "";
+    var boundaryCopyNotice = TrixieNotice(blockedResult, SystemUpgradeNoticeFacts.From(blockedResult,
+        (provenJournal with { GameplayWriteBoundary = true }, false)))?.ToPlainText() ?? "";
+    var unreadableNotice = TrixieNotice(blockedResult, SystemUpgradeNoticeFacts.From(blockedResult, (null, true)))?.ToPlainText() ?? "";
+    var unknownNotice = TrixieNotice(blockedResult, null)?.ToPlainText() ?? "";
+    Assert(provenNotice.Contains(@"C:\b\copy.tar", StringComparison.Ordinal) && provenNotice.Contains("ask for help before restoring", StringComparison.Ordinal)
+           && noCopyNotice.Contains("no checked recovery copy", StringComparison.Ordinal) && !SuggestsRestore(noCopyNotice)
+           && !boundaryCopyNotice.Contains(@"C:\b\copy.tar", StringComparison.Ordinal) && !SuggestsRestore(boundaryCopyNotice)
+           && unreadableNotice.Contains("can't read its record", StringComparison.Ordinal) && !SuggestsRestore(unreadableNotice)
+           && !SuggestsRestore(unknownNotice) && unknownNotice.Contains("Don't import or restore", StringComparison.Ordinal)
+           && new[] { provenNotice, noCopyNotice, boundaryCopyNotice, unreadableNotice, unknownNotice }
+               .All(text => text.Contains("stay stopped", StringComparison.Ordinal) && !text.Contains("did not import, remove or overwrite", StringComparison.Ordinal)),
+        "Before the boundary only a checked copy is named, and only behind a request for help; without one, or when the boundary is unknown, no restore is suggested.");
+    var deferredResult = new TrixieMaintenanceResult(TrixieMaintenanceOutcome.Deferred, "another launcher is running the Debian Trixie step", LeavesWritesBlocked: true);
+    Assert(TrixieNotice(deferredResult, SystemUpgradeNoticeFacts.From(deferredResult, (provenJournal with { Phase = TrixieJournalPhase.Upgrading }, false))) is null
+           && TrixieNotice(deferredResult, SystemUpgradeNoticeFacts.From(deferredResult, (null, true))) is not null,
+        "A deferral the step retries on its own raises no startup dialog; an unreadable journal still does.");
+    Assert(MainWindowViewModel.DescribePg17GateRefusal(new CommandResult(1, "", "Traceback\nValueError: PostgreSQL 17 is not running\n"), null)
+               .Contains("exit 1): ValueError: PostgreSQL 17 is not running. PostgreSQL was not started", StringComparison.Ordinal)
+           && MainWindowViewModel.DescribePg17GateRefusal(new CommandResult(0, "cleanup-needed\n", ""), Pg17Status.CleanupNeeded)
+               .Contains("'CleanupNeeded', not current", StringComparison.Ordinal),
+        "The PostgreSQL 17 gate logs why a cold or unfinished database held the Debian Trixie step back.");
+
+    var trixiePreferences = new UpdatePreferencesService(Path.Combine(trixieRoot, "prefs"));
+    Assert(!trixiePreferences.GetTrixieMaintenanceLabOptIn() && trixiePreferences.TrySetForceGitUpdates(true, out _)
+           && !File.ReadAllText(trixiePreferences.StatePath).Contains("TrixieMaintenanceLab", StringComparison.Ordinal),
+        "The lab opt-in is off by default and never written by another preference.");
+
+    // Core's restore of what ran before the fence, from release and upgrade --cancel.
+    Assert(TrixieUpdateMigration.ParseReply("{\"schema\":1,\"result\":\"current\",\"restore\":{\"pending\":true,\"pg17\":true,\"services\":[\"apache2\"],\"running\":[]," +
+                                            "\"failed\":[\"postgresql@17-dwemer\"],\"problems\":[{\"code\":\"pg17\",\"detail\":\"socket taken\"}]}}")
+               is { Restore: { Pending: true, Pg17: true, Services: ["apache2"], Failed: ["postgresql@17-dwemer"], Problems: "socket taken" } }
+           && TrixieUpdateMigration.ParseReply("{\"schema\":1,\"result\":\"current\",\"restore\":{\"pending\":false}}") is { Restore.Pending: false }
+           && TrixieUpdateMigration.ParseReply("{\"schema\":1,\"result\":\"current\",\"restore\":{\"pending\":\"no\"}}") is { Restore.Pending: true }
+           && TrixieUpdateMigration.ParseReply("{\"schema\":1,\"result\":\"cancelled\",\"restore\":null}") is { Restore: null }
+           && TrixieUpdateMigration.ParseReply("{\"schema\":1,\"result\":\"cancelled\"}") is { Restore: null, RestorePending: false }
+           && TrixieUpdateMigration.ParseReply("{\"schema\":1,\"state\":\"needed\",\"restore_pending\":true}") is { RestorePending: true },
+        "Core's restore record is read as it writes it; a Core without one reads as before, and an unreadable pending reads as pending.");
+
+    TrixieFake ModernTrixie(int failures)
+    {
+        var fake = NewTrixie();
+        fake.ModernRestore = true;
+        fake.RestoreFailures = failures;
+        return fake;
+    }
+    static string[] TrixieDisks(TrixieFake fake) => fake.Registrations.Values.Select(registration => fake.Read(registration.Name)!.DiskFileId!).ToArray();
+    static bool NoFreshWork(IEnumerable<string> calls) =>
+        !calls.Any(call => call is "preflight" or "prepare" or "export" or "import" or "upgrade" or "verify" or "terminate:copy");
+
+    var releaseOk = await RunTrixie(ModernTrixie(0));
+    Assert(releaseOk.Result.Outcome == TrixieMaintenanceOutcome.Completed && releaseOk.Fake.Calls[^1] == "release"
+           && releaseOk.Fake.Guest(LauncherConstants.DistroName) is { Phase: "current", RestorePending: false },
+        "A release whose restore finished completes without asking Core's status.");
+
+    var releasePending = ModernTrixie(1);
+    var releasePendingRun = await RunTrixie(releasePending);
+    var releasePendingCalls = releasePending.Calls.Count;
+    Assert(releasePendingRun.Result is { Outcome: TrixieMaintenanceOutcome.Deferred, LeavesWritesBlocked: true }
+           && releasePendingRun.Result.Message.Contains("postgresql@17-dwemer, apache2 did not start", StringComparison.Ordinal)
+           && releasePendingRun.Result.Message.Contains("stays upgraded", StringComparison.Ordinal)
+           && releasePendingRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Releasing, GameplayWriteBoundary: true }
+           && MainWindowViewModel.BuildSystemUpgradeConsoleLine(releasePendingRun.Result)?.Color == "red",
+        "A release that left PG17 and the writers stopped is not reported complete; the journal keeps the release to retry.");
+    var releaseRetried = await RunTrixie(releasePending, rollout: false, allowFreshStart: false);
+    var releaseRetriedCalls = releasePending.Calls.Skip(releasePendingCalls).ToArray();
+    Assert(releaseRetried.Result.Outcome == TrixieMaintenanceOutcome.Completed && !releaseRetried.Result.LeavesWritesBlocked
+           && releaseRetriedCalls.Count(call => call == "release") == 1 && NoFreshWork(releaseRetriedCalls)
+           && releasePending.Guest(LauncherConstants.DistroName) is { Phase: "current", RestorePending: false }
+           && releasePending.Registrations[LauncherConstants.DistroName] == releasePending.Original,
+        "The next launch only runs release again, and completes once Core started what ran before.");
+    var releaseSettledCalls = releasePending.Calls.Count;
+    Assert((await RunTrixie(releasePending)).Result.Outcome == TrixieMaintenanceOutcome.NotNeeded && releasePending.Calls.Count == releaseSettledCalls,
+        "A completed upgrade asks Core nothing on later launches.");
+
+    var releaseCrash = ModernTrixie(0);
+    releaseCrash.CrashAfter = "release";
+    var releaseCrashed = false;
+    try { await RunTrixie(releaseCrash); } catch (TrixieCrash) { releaseCrashed = true; }
+    var releaseCrashCalls = releaseCrash.Calls.Count;
+    var releaseCrashResumed = await RunTrixie(releaseCrash, rollout: false, allowFreshStart: false);
+    Assert(releaseCrashed && releaseCrashResumed.Result.Outcome == TrixieMaintenanceOutcome.Completed
+           && releaseCrash.Calls.Skip(releaseCrashCalls).Count(call => call == "release") == 1 && NoFreshWork(releaseCrash.Calls.Skip(releaseCrashCalls)),
+        "A launcher that dies after Core lifted its fence finishes with release alone.");
+
+    var cancelPending = ModernTrixie(1);
+    cancelPending.RunningAfterExport = true;
+    var cancelPendingRun = await RunTrixie(cancelPending);
+    var cancelPendingCalls = cancelPending.Calls.Count;
+    Assert(cancelPendingRun.Result is { Outcome: TrixieMaintenanceOutcome.Deferred, LeavesWritesBlocked: true }
+           && cancelPendingRun.Result.Message.Contains("Another server answers on the application socket", StringComparison.Ordinal)
+           && cancelPendingRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Cancelling, FenceLifted: true }
+           && cancelPending.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", Fence: false, RestorePending: true },
+        "A pre-apt cancel that left services stopped stays unfinished instead of claiming nothing changed.");
+    var cancelRetried = await RunTrixie(cancelPending, rollout: false, allowFreshStart: false);
+    Assert(cancelRetried.Result is { Outcome: TrixieMaintenanceOutcome.NotStarted, LeavesWritesBlocked: false }
+           && cancelRetried.Journal.Read().Journal is { Phase: TrixieJournalPhase.Cancelled }
+           && cancelPending.Calls.Skip(cancelPendingCalls).Count(call => call == "cancel") == 1 && NoFreshWork(cancelPending.Calls.Skip(cancelPendingCalls))
+           && cancelPending.Guest(LauncherConstants.DistroName) is { RestorePending: false },
+        "The next launch cancels again and settles once Core started what ran before.");
+
+    var cancelCrash = ModernTrixie(0);
+    cancelCrash.RunningAfterExport = true;
+    cancelCrash.CrashAfter = "cancel";
+    var cancelCrashed = false;
+    try { await RunTrixie(cancelCrash); } catch (TrixieCrash) { cancelCrashed = true; }
+    var cancelCrashResumed = await RunTrixie(cancelCrash, rollout: false, allowFreshStart: false);
+    Assert(cancelCrashed && cancelCrashResumed.Result.Outcome == TrixieMaintenanceOutcome.NotStarted
+           && cancelCrashResumed.Journal.Read().Journal is { Phase: TrixieJournalPhase.Cancelled },
+        "A launcher that dies inside the cancel repeats it on the next launch, which Core accepts once cancelled.");
+
+    // Copy proven, Core back at its fence: the cancel lifts it but leaves services stopped, and then nothing may swap a disk.
+    var cancelNoSwap = ModernTrixie(1);
+    cancelNoSwap.UpgradeMode = "plan-changed";
+    await RunTrixie(cancelNoSwap);
+    var cancelNoSwapDisks = TrixieDisks(cancelNoSwap);
+    var cancelNoSwapCalls = cancelNoSwap.Calls.Count;
+    cancelNoSwap.Hook = (_, arguments) => arguments.Contains("--cancel") ? new CommandResult(1, "", "Debian 13 maintenance stopped: io error")
+        : arguments.Contains("status") ? new CommandResult(0, "{\"schema\":1,\"state\":\"fenced\",\"release\":\"12\",\"fence\":false}\n", "") : null;
+    var cancelNoSwapRun = await RunTrixie(cancelNoSwap, rollout: false, allowFreshStart: false);
+    Assert(cancelNoSwapRun.Result.Outcome == TrixieMaintenanceOutcome.RecoveryRequired
+           && cancelNoSwapRun.Result.Message.Contains("no disk is swapped", StringComparison.Ordinal)
+           && TrixieDisks(cancelNoSwap).SequenceEqual(cancelNoSwapDisks) && NoFreshWork(cancelNoSwap.Calls.Skip(cancelNoSwapCalls))
+           && SystemUpgradeNoticeFacts.From(cancelNoSwapRun.Result, cancelNoSwapRun.Journal.Read()) is { ProvenCopyPath: null },
+        "Once Core's cancel lifted the fence, writers may have run, so a later refusal never swaps the recovery copy in.");
+
+    var restoredPending = ModernTrixie(1);
+    restoredPending.UpgradeMode = "fail-after-dpkg";
+    var restoredPendingRun = await RunTrixie(restoredPending);
+    var restoredPendingDisks = TrixieDisks(restoredPending);
+    var restoredPendingCalls = restoredPending.Calls.Count;
+    Assert(restoredPendingRun.Result is { Outcome: TrixieMaintenanceOutcome.Deferred, LeavesWritesBlocked: true }
+           && restoredPendingRun.Result.Message.Contains("put back on its recovery copy", StringComparison.Ordinal)
+           && restoredPendingRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Restoring, SwapStep: 4, FenceLifted: true }
+           && restoredPending.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", Fence: false, RestorePending: true, Release: "12" },
+        "A restored Bookworm disk whose PG17 Core could not start again is not reported as serving.");
+    var restoredRetried = await RunTrixie(restoredPending, rollout: false, allowFreshStart: false);
+    var restoredRetriedCalls = restoredPending.Calls.Skip(restoredPendingCalls).ToArray();
+    Assert(restoredRetried.Result is { Outcome: TrixieMaintenanceOutcome.Restored, LeavesWritesBlocked: false }
+           && restoredRetried.Result.Message.Contains("started again what ran before", StringComparison.Ordinal)
+           && restoredRetriedCalls.Count(call => call == "cancel") == 1 && NoFreshWork(restoredRetriedCalls) && !restoredRetriedCalls.Contains("copy:status")
+           && TrixieDisks(restoredPending).SequenceEqual(restoredPendingDisks)
+           && restoredPending.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", RestorePending: false },
+        "The next launch only cancels again on the restored disk, moves no disk, and then reports it serving.");
+
+    var restoredCrash = ModernTrixie(0);
+    restoredCrash.UpgradeMode = "fail-after-dpkg";
+    restoredCrash.CrashAfter = "cancel";
+    var restoredCrashed = false;
+    try { await RunTrixie(restoredCrash); } catch (TrixieCrash) { restoredCrashed = true; }
+    var restoredCrashDisks = TrixieDisks(restoredCrash);
+    var restoredCrashCalls = restoredCrash.Calls.Count;
+    var restoredCrashResumed = await RunTrixie(restoredCrash, rollout: false, allowFreshStart: false);
+    Assert(restoredCrashed && restoredCrashResumed.Result.Outcome == TrixieMaintenanceOutcome.Restored
+           && TrixieDisks(restoredCrash).SequenceEqual(restoredCrashDisks) && NoFreshWork(restoredCrash.Calls.Skip(restoredCrashCalls))
+           && restoredCrashResumed.Journal.Read().Journal is { Phase: TrixieJournalPhase.Restored },
+        "A launcher that dies inside the restored disk's cancel accepts Core's own cancelled record on the next launch and moves nothing.");
+    Console.WriteLine("Debian Trixie upgrade: Core protocol, fence proof, isolated copy, token resume, pre-boundary restore, boundary, journal and gates: OK");
 
     Assert(MainWindowViewModel.ParseDistroUsedBytes("Used\n 12345\n") == 12345
            && MainWindowViewModel.ParseDistroUsedBytes("not-a-number") is null,
@@ -3831,12 +4744,12 @@ try
             var (vm, _, _, _) = await ConnectAssistantAsync(store, Ref("task-now", "thr-now"), install, null, catalog: catalog, script: Status);
             vm.OpenHistory();
             vm.SelectedHistory = vm.HistoryItems.Single(item => item.Entry.TaskId == "task-applied");
-            vm.ReopenCommand.Execute(null);
+            await ExecuteToCompletionAsync(vm.ReopenCommand);
             await WaitUntilAsync(() => vm.State == AssistantState.Ready && store.Load()?.TaskId == "task-applied");
             Assert(vm.OutcomeText.Contains("state: applied") && vm.OutcomeText.Contains("Roll back") && vm.RollbackCommand.CanExecute(null)
                    && store.Load()!.EarlierTasks!.Any(task => task.TaskId == "task-now"), "A reopened applied task shows its receipt and offers rollback first: " + vm.OutcomeText);
             vm.SelectedHistory = vm.HistoryItems.Single(item => item.Entry.TaskId == "task-unknown");
-            vm.ReopenCommand.Execute(null);
+            await ExecuteToCompletionAsync(vm.ReopenCommand);
             await WaitUntilAsync(() => vm.State == AssistantState.Ready && store.Load()?.TaskId == "task-unknown");
             Assert(vm.OutcomeText.Contains("unknown") && vm.CheckOutcomeCommand.CanExecute(null) && !vm.ReviewCommand.CanExecute(null) && !vm.RollbackCommand.CanExecute(null),
                 "A reopened task with an unknown outcome must be checked before anything is reviewed or rolled back: " + vm.OutcomeText);
@@ -4171,7 +5084,7 @@ try
         {
             var pages = Pages();
             var browsing = longResume.vm.IsBrowsingHistory;
-            command.Execute(null);
+            await ExecuteToCompletionAsync(command);
             await WaitUntilAsync(() => !longResume.vm.IsLoadingHistory && (Pages() > pages || longResume.vm.IsBrowsingHistory != browsing));
         }
         int[] Questions() => longResume.vm.Transcript.Where(item => item.Role == "You").Select(item => int.Parse(item.Text["question ".Length..])).ToArray();
@@ -7534,6 +8447,20 @@ static async Task WaitUntilAsync(Func<bool> condition)
     while (!condition() && DateTime.UtcNow < deadline) await Task.Delay(10);
 }
 
+/// <summary>
+/// Runs an async command and waits, up to the same 10 seconds, until its async void Execute has returned. With no UI thread
+/// its continuations run on the thread pool, so a state check alone can pass while the command is still changing the view.
+/// </summary>
+static async Task ExecuteToCompletionAsync(AsyncRelayCommand command)
+{
+    var previous = SynchronizationContext.Current;
+    var context = new CommandCompletionContext();
+    SynchronizationContext.SetSynchronizationContext(context);
+    try { command.Execute(null); }
+    finally { SynchronizationContext.SetSynchronizationContext(previous); }
+    await Task.WhenAny(context.Completion, Task.Delay(TimeSpan.FromSeconds(10)));
+}
+
 /// <summary>One raw HTTP/1.1 exchange with the loopback relay: status, head and body, read until the relay closes.</summary>
 static async Task<(int Status, string Head, string Body)> RawHttpAsync(int port, string request)
 {
@@ -7549,12 +8476,324 @@ static async Task<(int Status, string Head, string Body)> RawHttpAsync(int port,
     return (int.Parse(head.Split(' ')[1]), head, split < 0 ? string.Empty : text[(split + 4)..]);
 }
 
+/// <summary>
+/// Git for Windows' bash for the shell fixtures: DDISTRO_TEST_BASH if set, else a machine or per-user install. With
+/// DDISTRO_REQUIRE_SHELL_FIXTURES=1 a run that cannot find one fails instead of skipping them.
+/// </summary>
+static string? GitBashPath()
+{
+    if (Environment.GetEnvironmentVariable("DDISTRO_TEST_BASH") is { Length: > 0 } configured)
+        return File.Exists(configured) ? configured : throw new InvalidOperationException("DDISTRO_TEST_BASH does not exist: " + configured);
+    var found = new[] { Environment.GetEnvironmentVariable("ProgramW6432"), Environment.GetEnvironmentVariable("ProgramFiles"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs") }
+        .Where(folder => !string.IsNullOrEmpty(folder))
+        .Select(folder => Path.Combine(folder!, "Git", "bin", "bash.exe"))
+        .FirstOrDefault(File.Exists);
+    if (found is null && Environment.GetEnvironmentVariable("DDISTRO_REQUIRE_SHELL_FIXTURES") == "1")
+        throw new InvalidOperationException("DDISTRO_REQUIRE_SHELL_FIXTURES=1 but Git Bash was not found; set DDISTRO_TEST_BASH to its bash.exe.");
+    return found;
+}
+
+static bool TrixieThrows(Action action)
+{
+    try
+    {
+        action();
+        return false;
+    }
+    catch
+    {
+        return true;
+    }
+}
+
 static void Assert(bool condition, string message)
 {
     if (!condition)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+/// <summary>What one scripted DwemerDistro disk holds of Core's Trixie state.</summary>
+sealed class TrixieGuest
+{
+    public string? Phase { get; set; }
+    public string Token { get; set; } = "";
+    public bool Fence { get; set; }
+    public bool DpkgRan { get; set; }
+    public string Release { get; set; } = "12";
+    /// <summary>Core's journaled restore after its fence lifted; null while none is journaled.</summary>
+    public bool? RestorePending { get; set; }
+    public TrixieGuest Clone() => (TrixieGuest)MemberwiseClone();
+}
+
+/// <summary>Stands for the launcher process dying at that point.</summary>
+sealed class TrixieCrash : Exception;
+
+/// <summary>
+/// A scripted Core (TRIXIE.md verbs and JSON), WSL registrations and real temp disk files, so file identities,
+/// same-volume renames and DPAPI are the real ones. Each disk file id maps to the Core state booted from it.
+/// </summary>
+sealed class TrixieFake
+{
+    public const string PlanId = "0123456789abcdef0123456789abcdef";
+    public const string SealJson = "[\"7300000000000000001\",\"0/1A2B3C4\",\"Wed Nov 11 10:00:00 2026\",\"shut down\"]";
+    public static readonly string ArchiveSha = new('e', 64);
+    private TrixieGuest? _snapshot;
+    private bool _statusDown;
+
+    public TrixieFake(string root)
+    {
+        Root = root;
+        var basePath = Path.Combine(root, "wsl", "Dwemer");
+        Directory.CreateDirectory(basePath);
+        var disk = Path.Combine(basePath, "custom.vhdx");
+        File.WriteAllBytes(disk, [1, 2, 3]);
+        Original = new TrixieRegistration(LauncherConstants.DistroName, "{11111111-2222-3333-4444-555555555555}", basePath, "custom.vhdx",
+            TrixieWindowsFiles.FileId(disk));
+        Registrations[LauncherConstants.DistroName] = Original;
+        Guests[Original.DiskFileId!] = new TrixieGuest();
+    }
+
+    public string Root { get; }
+    public TrixieRegistration Original { get; }
+    public Dictionary<string, TrixieRegistration> Registrations { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, TrixieGuest> Guests { get; } = [];
+    public HashSet<string> Running { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public List<string> Calls { get; } = [];
+    public List<string[]> UpgradeArguments { get; } = [];
+    public Func<string, string[], CommandResult?>? Hook { get; set; }
+    public Action<string, string>? Move { get; set; }
+    public Action? AfterExport { get; set; }
+    public Func<string, string>? Volume { get; set; }
+    public string UpgradeMode { get; set; } = "ok";
+    public string VerifyMode { get; set; } = "verified";
+    public int RestartRequired { get; set; }
+    public bool Pg17Current { get; set; } = true;
+    public Func<IReadOnlyList<string>> Games { get; set; } = () => [];
+    public bool ServerRunning { get; set; }
+    public long Free { get; set; } = 1L << 42;
+    public bool RunningAfterExport { get; set; }
+    public bool CutoverAvailable { get; set; } = true;
+    public bool BoundaryBeforeRelease { get; set; }
+    public string? CopyName { get; private set; }
+    public int ReleaseDelays { get; private set; }
+    public Action<int>? OnReleaseDelay { get; set; }
+    /// <summary>A Core whose release and cancel report the restore of what ran before the fence, and may be repeated.</summary>
+    public bool ModernRestore { get; set; }
+    /// <summary>How many lifted fences leave that restore pending, as when PG17 did not start.</summary>
+    public int RestoreFailures { get; set; }
+    /// <summary>The launcher dies right after Core completed this verb once.</summary>
+    public string? CrashAfter { get; set; }
+
+    private string Restore(TrixieGuest guest)
+    {
+        if (!ModernRestore) return "";
+        guest.RestorePending = RestoreFailures-- > 0;
+        return guest.RestorePending == true
+            ? ",\"restore\":{\"pending\":true,\"pg17\":true,\"services\":[\"apache2\"],\"running\":[],\"failed\":[\"postgresql@17-dwemer\",\"apache2\"]," +
+              "\"problems\":[{\"code\":\"pg17\",\"detail\":\"Another server answers on the application socket.\"}]}"
+            : ",\"restore\":{\"pending\":false,\"pg17\":true,\"services\":[\"apache2\"],\"running\":[\"postgresql@17-dwemer\",\"apache2\"],\"failed\":[],\"problems\":[]}";
+    }
+
+    public TrixieRegistration? Read(string name) =>
+        Registrations.TryGetValue(name, out var registration) ? registration with { DiskFileId = TrixieWindowsFiles.FileId(registration.DiskPath) } : null;
+
+    public TrixieGuest? Guest(string name) => Read(name)?.DiskFileId is { } id && Guests.TryGetValue(id, out var guest) ? guest : null;
+
+    private static CommandResult Json(int exit, string body) => new(exit, "{\"schema\":1," + body + "}\n", "");
+
+    public CommandResult Run(string distro, string[] arguments)
+    {
+        var verb = arguments[0] != TrixieUpdateMigration.ToolPath ? Path.GetFileName(arguments[0])
+            : arguments[1] != "upgrade" ? arguments[1]
+            : arguments[2] switch { "--prepare" => "prepare", "--cancel" => "cancel", _ => "upgrade" };
+        var result = Run(distro, arguments, verb);
+        if (verb == CrashAfter && result.Succeeded)
+        {
+            CrashAfter = null;
+            throw new TrixieCrash();
+        }
+
+        return result;
+    }
+
+    private CommandResult Run(string distro, string[] arguments, string verb)
+    {
+        Calls.Add(distro == LauncherConstants.DistroName ? verb : "copy:" + verb);
+        Running.Add(distro);
+        if (Hook?.Invoke(distro, arguments) is { } hooked) return hooked;
+        if (Guest(distro) is not { } guest) return new(1, "", "no disk");
+        switch (verb)
+        {
+            case "sha256sum":
+                return new(0, new string('d', 64) + "  " + arguments[1] + "\n", "");
+            case "bash":
+                return new(0, "", "");
+            case "sh":
+                // The read-only codename read; the tool is installed here.
+                return new(0, (guest.Release == "13" ? TrixieUpdateMigration.TargetCodename : TrixieUpdateMigration.SourceCodename) + "\n", "");
+            case "status":
+                if (_statusDown)
+                {
+                    _statusDown = false;
+                    return new(1, "", "wsl: the distro stopped");
+                }
+
+                var state = guest.Phase switch
+                {
+                    null or "cancelled" => guest.Release == "13" ? "not-needed" : "needed",
+                    "upgrading" => "interrupted",
+                    var phase => phase
+                };
+                return Json(0, $"\"action\":\"status\",\"state\":\"{state}\",\"release\":\"{guest.Release}\",\"codename\":\"{(guest.Release == "13" ? "trixie" : "bookworm")}\"," +
+                               $"\"instance_id\":\"ddi1-0123456789abcdef0123456789abcdef01234567\",\"fence\":{(guest.Fence ? "true" : "false")}" +
+                               (guest.Phase is null ? "" : $",\"phase\":\"{guest.Phase}\",\"plan_id\":\"{PlanId}\"") +
+                               (guest.RestorePending == true ? ",\"restore_pending\":true" : ""));
+            case "preflight":
+                return Json(0, $"\"result\":\"ready\",\"plan_id\":\"{PlanId}\",\"used_bytes\":4096,\"upgrade_bytes\":4096");
+            case "prepare":
+                guest.Phase = "fenced";
+                guest.Fence = true;
+                guest.Token = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+                return Json(0, $"\"result\":\"fenced\",\"capture_token\":\"{guest.Token}\"");
+            case "cancel":
+                if (guest.Phase == "fenced" || guest.Phase == "upgrading" && !guest.DpkgRan)
+                {
+                    guest.Phase = "cancelled";
+                    guest.Fence = false;
+                    return Json(0, "\"result\":\"cancelled\"" + Restore(guest));
+                }
+
+                // A modern Core repeats a cancel, only to finish a restore it left pending.
+                if (guest.Phase == "cancelled" && ModernRestore) return Json(0, "\"result\":\"cancelled\"" + Restore(guest));
+
+                return Json(3, "\"result\":\"deferred\",\"reasons\":[{\"code\":\"journal\",\"detail\":\"Only a fenced upgrade that changed no package can be cancelled.\"}]");
+            case "upgrade":
+                UpgradeArguments.Add(arguments);
+                if (arguments[3] != guest.Token || !guest.Fence)
+                    return Json(3, "\"result\":\"deferred\",\"reasons\":[{\"code\":\"capture-token\",\"detail\":\"The capture token does not match this fence.\"}]");
+                switch (UpgradeMode)
+                {
+                    case "plan-changed":
+                        return Json(3, "\"result\":\"deferred\",\"reasons\":[{\"code\":\"plan-changed\",\"detail\":\"The refreshed Trixie solution differs.\"}]");
+                    case "fail-after-dpkg":
+                        guest.Phase = "upgrading";
+                        guest.DpkgRan = true;
+                        return new(1, "", "Debian 13 maintenance stopped: dpkg failed");
+                    case "lost-once":
+                        guest.Phase = "upgrading";
+                        guest.DpkgRan = true;
+                        UpgradeMode = "ok";
+                        _statusDown = true;
+                        return new(1, "", "wsl: the distro stopped");
+                }
+
+                guest.Phase = "upgraded";
+                guest.DpkgRan = true;
+                guest.Release = "13";
+                return Json(0, "\"result\":\"upgraded\"");
+            case "verify":
+                if (RestartRequired > 0)
+                {
+                    RestartRequired--;
+                    return Json(4, "\"result\":\"restart-required\"");
+                }
+
+                if (VerifyMode == "problems")
+                    return Json(3, "\"result\":\"deferred\",\"reasons\":[{\"code\":\"php-modules\",\"detail\":\"PHP 8.4 lacks modules.\"}]");
+                guest.Phase = "verified";
+                return Json(0, "\"result\":\"verified\"");
+            case "release":
+                if (guest.Phase == "current" && ModernRestore)
+                    return Json(0, "\"result\":\"current\"" + Restore(guest));
+                if (guest.Phase != "verified") return Json(3, "\"result\":\"deferred\"");
+                guest.Phase = "current";
+                guest.Fence = false;
+                return Json(0, "\"result\":\"current\"" + Restore(guest));
+            case "cat":
+                return new(0, $"{{\"token\":\"{guest.Token}\",\"phase\":\"{guest.Phase}\",\"plan_id\":\"{PlanId}\",\"seal\":{SealJson}}}", "");
+            case "test":
+                return new(guest.Fence ? 0 : 1, "", "");
+            case "env":
+                return new(0, "Database system identifier:           7300000000000000001\nLatest checkpoint location:           0/1A2B3C4\n" +
+                              "Time of latest checkpoint:            Wed Nov 11 10:00:00 2026\nDatabase cluster state:               shut down\n", "");
+        }
+
+        return new(2, "", "usage");
+    }
+
+    public TrixieMaintenanceHost Host() => new()
+    {
+        RunCoreAsync = (arguments, _, _) => Task.FromResult(Run(LauncherConstants.DistroName, arguments)),
+        RunAsRootAsync = (name, arguments, _) => Task.FromResult(Run(name, arguments)),
+        IsPg17CurrentAsync = _ =>
+        {
+            Calls.Add("pg17");
+            return Task.FromResult(Pg17Current);
+        },
+        FindRunningGames = () => Games(),
+        IsServerRunning = () => ServerRunning,
+        DelayAsync = (_, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        },
+        ReadRegistration = Read,
+        ReadVolumeFreeSpace = path => (Volume?.Invoke(path) ?? Path.GetPathRoot(path)!, Free),
+        EnterCutoverAsync = _ =>
+        {
+            Calls.Add("cutover");
+            return Task.FromResult<IDisposable?>(CutoverAvailable ? new MemoryStream() : null);
+        },
+        TerminateAsync = (name, _) =>
+        {
+            Calls.Add(name == LauncherConstants.DistroName ? "terminate" : "terminate:copy");
+            Running.Remove(name);
+            return Task.FromResult(true);
+        },
+        IsRunningAsync = (name, _) =>
+        {
+            Calls.Add("running?");
+            return Task.FromResult(Running.Contains(name));
+        },
+        ExportAsync = (path, _, _) =>
+        {
+            Calls.Add("export");
+            _snapshot = Guest(LauncherConstants.DistroName)!.Clone();
+            File.WriteAllBytes(path, new byte[4096]);
+            if (RunningAfterExport) Running.Add(LauncherConstants.DistroName);
+            AfterExport?.Invoke();
+            return Task.FromResult(new CommandResult(0, "", ""));
+        },
+        ImportAsync = (name, folder, _, _, _) =>
+        {
+            Calls.Add("import");
+            Directory.CreateDirectory(folder);
+            var disk = Path.Combine(folder, "ext4.vhdx");
+            File.WriteAllBytes(disk, [4, 5, 6]);
+            var registration = new TrixieRegistration(name, "{" + Guid.NewGuid() + "}", folder, "ext4.vhdx", TrixieWindowsFiles.FileId(disk));
+            Registrations[name] = registration;
+            Guests[registration.DiskFileId!] = _snapshot!.Clone();
+            CopyName = name;
+            return Task.FromResult(new CommandResult(0, "", ""));
+        },
+        VerifyArchiveAsync = (path, _, _) =>
+        {
+            Calls.Add("verify-archive");
+            return Task.FromResult((File.Exists(path), 4096L, (string?)ArchiveSha, ""));
+        },
+        MoveSameVolume = (from, to) => (Move ?? TrixieWindowsFiles.MoveSameVolume)(from, to),
+        DiskReleaseDelayAsync = (_, token) =>
+        {
+            ReleaseDelays++;
+            OnReleaseDelay?.Invoke(ReleaseDelays);
+            token.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        },
+        BackupDirectory = Path.Combine(Root, "backups")
+    };
 }
 
 static class ModelsFixture
@@ -7579,6 +8818,16 @@ static class ModelsFixture
         + "\"custom_mods\":{\"available\":true,\"reason\":\"\",\"truncated\":false,\"items\":[{\"id\":\"example-server\",\"name\":\"Example\",\"state\":\"ready\","
         + "\"branch\":\"main\",\"commit\":\"" + "cccccccccccccccccccccccccccccccccccccccc" + "\",\"repository\":\"https://user:SECRET-TOKEN@example.invalid/x\","
         + "\"health_url\":\"http://127.0.0.1:19000/SECRET\"}]},\"token\":\"SECRET-TOP\"}";
+}
+
+/// <summary>
+/// Learns when the async void method started under it returns; its continuations still go to the thread pool, as with no context.
+/// </summary>
+sealed class CommandCompletionContext : SynchronizationContext
+{
+    private readonly TaskCompletionSource _completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task Completion => _completed.Task;
+    public override void OperationCompleted() => _completed.TrySetResult();
 }
 
 sealed class FakeAssistantTransport : IAssistantTransport

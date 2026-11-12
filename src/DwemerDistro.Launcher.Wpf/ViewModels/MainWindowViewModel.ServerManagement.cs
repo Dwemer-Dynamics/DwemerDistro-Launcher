@@ -23,12 +23,17 @@ public sealed partial class MainWindowViewModel
     internal const string UpdateStageShared = "shared";
     internal const string UpdateStageDatabase = "database";
     internal const string UpdateStageRelease = "release";
+    internal const string UpdateStageOperatingSystem = "os";
     private const int UpdateFailureEvidenceLimit = 240;
 
     // Set by the last failed shared distro update: " <stage> (exit N): <evidence>. Full output: ..." or null.
     private string? _systemUpdateFailure;
     // The marked stage that failed alongside _systemUpdateFailure, or null.
     private string? _systemUpdateFailureStage;
+    // The last failed update stopped only because CoreLocalChangesGuard kept local changes: nothing was changed.
+    private bool _systemUpdateKeptLocalChanges;
+    // The Debian Trixie step that left the last failed update's writes blocked, read for the startup notice.
+    private TrixieMaintenanceResult? _systemUpgradeFailureResult;
 
     private ServerManagementService? _serverManagement;
 
@@ -845,6 +850,14 @@ public sealed partial class MainWindowViewModel
 
     private const string ErrorEvidencePrefix = "\u0001";
 
+    /// <summary>
+    /// Core's update.sh also exits 75 while the Debian 13 fence stands, a refusal no lock wait ends; its own [ERROR]
+    /// line tells it apart from another update holding the lock.
+    /// </summary>
+    internal static bool IsTrixieFenceRefusal(int exitCode, string? evidence) =>
+        exitCode == DistroUpdateRunner.OtherUpdateRunningExitCode && evidence is not null
+        && evidence.Contains("[ERROR] A Debian 13 upgrade is in progress", StringComparison.Ordinal);
+
     internal static string DescribeSystemUpdateFailure(string stage, int exitCode, string? evidence)
     {
         var stageText = stage switch
@@ -853,12 +866,13 @@ public sealed partial class MainWindowViewModel
             UpdateStageCore => "during the core update",
             UpdateStageShared => "during the shared components update",
             UpdateStageDatabase => "during the PostgreSQL 17 database upgrade",
+            UpdateStageOperatingSystem => "during the Debian Trixie system upgrade",
             UpdateStageRelease => "while recording the system release",
             _ => "while preparing the update"
         };
         string? reason = exitCode switch
         {
-            75 => "another distro update is already running",
+            75 when !IsTrixieFenceRefusal(exitCode, evidence) => "another distro update is already running",
             124 or 137 => "the update timed out",
             _ => evidence is null
                 ? null
@@ -874,13 +888,20 @@ public sealed partial class MainWindowViewModel
         return text + " Full output: Logs\\launcher-operations.log.";
     }
 
+    /// <summary>Core's opt-in, read by update.sh and update_gws, to keep local changes during the Trixie migration.</summary>
+    internal const string CorePreserveLocalChanges = "DDISTRO_PRESERVE_LOCAL_CHANGES=1";
+
     /// <summary>
     /// The shared distro/components update always skips all three application servers: the server
-    /// manager owns their repositories now, so update_gws only refreshes shared services.
+    /// manager owns their repositories now, so update_gws only refreshes shared services. With
+    /// <paramref name="preserveLocalChanges"/>, Core's <c>DDISTRO_PRESERVE_LOCAL_CHANGES=1</c> asks update_gws to keep
+    /// local edits in the component repositories instead of resetting them. The update runs as dwemer through
+    /// <c>runuser</c>, with no sudo between here and update_gws, so the assignment reaches it as a plain prefix.
     /// </summary>
-    internal static string BuildSharedComponentsUpdateCommand()
+    internal static string BuildSharedComponentsUpdateCommand(bool preserveLocalChanges = false)
     {
-        return "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic --skip-reign --skip-lorkhan";
+        return (preserveLocalChanges ? CorePreserveLocalChanges + " " : string.Empty) +
+               "/usr/local/bin/update_gws --skip-herika --skip-stobe --skip-dialectic --skip-reign --skip-lorkhan";
     }
 
     /// <summary>

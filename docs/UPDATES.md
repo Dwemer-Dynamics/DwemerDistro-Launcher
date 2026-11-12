@@ -18,6 +18,9 @@ The WPF app checks the latest GitHub release, downloads `DwemerDistro-win-x64.zi
 - the large distro payload
 - user data inside the WSL instance
 
+The distro update itself can also upgrade the OS from Debian Bookworm to Trixie;
+that step is off unless a lab opts in. See [Debian Trixie maintenance](TRIXIE_MAINTENANCE.md).
+
 ## User flow after distribution
 
 1. Install the launcher and updater together.

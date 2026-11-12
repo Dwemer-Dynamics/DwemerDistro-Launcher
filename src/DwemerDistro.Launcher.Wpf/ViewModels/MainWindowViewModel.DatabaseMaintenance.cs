@@ -69,10 +69,11 @@ public sealed partial class MainWindowViewModel
     {
         _pg15DeletedRegistrationId = _updatePreferences.GetPg15DeletedRegistrationId();
         UpgradeDatabaseCommand = new AsyncRelayCommand(
-            () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceUpgradeVerb), CanStartExclusiveDistroOperation);
+            () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceUpgradeVerb),
+            () => !_systemUpgradeBlocksWrites && CanStartExclusiveDistroOperation());
         RollbackDatabaseCommand = new AsyncRelayCommand(
             () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceRollbackVerb),
-            () => CanStartExclusiveDistroOperation()
+            () => !_systemUpgradeBlocksWrites && CanStartExclusiveDistroOperation()
                   && IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId()));
         StopDatabaseUpgradeWaitCommand = new RelayCommand(StopDatabaseUpgradeWait, () => IsDatabaseUpgradeWaiting);
     }
@@ -162,6 +163,12 @@ public sealed partial class MainWindowViewModel
         if (!CanStartExclusiveDistroOperation())
         {
             ReportExclusiveDistroOperationBusy(DatabaseMaintenanceSettingName);
+            return;
+        }
+
+        if (RefuseWhileSystemUpgradeUnfinished())
+        {
+            SetDatabaseMaintenanceStatus(SystemUpgradeBlockedMessage, CompactDistroWarningColor);
             return;
         }
 
@@ -395,8 +402,13 @@ public sealed partial class MainWindowViewModel
     /// a game to close is not charged to the release step. Takes a <see cref="WslService"/> rather than the
     /// view model's, so a test can run the same sequence against an isolated distro. <paramref name="databaseFinished"/>
     /// gets the database step's result as soon as it ends, before a cancellation can still stop the update.
+    /// With <paramref name="systemUpgrade"/>, an interrupted Debian Trixie upgrade is resolved before anything else
+    /// writes, never after the generic updater, and the upgrade itself follows the verified PostgreSQL 17 step.
+    /// While <see cref="TrixieUpdateMigration.KeepsLocalChangesAsync"/> says the update belongs to the migration, the checkout
+    /// is guarded instead of reset; a <paramref name="migrationEntry"/> (Update Distro and the reopen sync) also passes Core's
+    /// preserve flag to update.sh and update_gws, and only such a run may start the upgrade. Other callers only finish one.
     /// </summary>
-    internal static async Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
+    internal static Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
         WslService wsl,
         Pg17UpdateMigration migration,
         Action<string> output,
@@ -404,7 +416,27 @@ public sealed partial class MainWindowViewModel
         TimeSpan phaseTimeout,
         CancellationToken cancellationToken,
         CancellationToken waitToken,
-        Action<Pg17MigrationResult>? databaseFinished = null)
+        Action<Pg17MigrationResult>? databaseFinished = null,
+        TrixieUpdateMigration? systemUpgrade = null,
+        Action<TrixieMaintenanceResult>? systemUpgradeFinished = null,
+        bool migrationEntry = false) =>
+        RunSharedDistroUpdatePipelineAsync((command, lines, token) => DistroUpdateRunner.RunAsync(wsl, command, lines, token),
+            migration, output, migrationLog, phaseTimeout, cancellationToken, waitToken, databaseFinished, systemUpgrade,
+            systemUpgradeFinished, migrationEntry);
+
+    /// <summary>The same pipeline with the scripted phases run by <paramref name="runUpdate"/>, so a test sees each command.</summary>
+    internal static async Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
+        Func<string, Action<string>, CancellationToken, Task<CommandResult>> runUpdate,
+        Pg17UpdateMigration migration,
+        Action<string> output,
+        Action<string> migrationLog,
+        TimeSpan phaseTimeout,
+        CancellationToken cancellationToken,
+        CancellationToken waitToken,
+        Action<Pg17MigrationResult>? databaseFinished = null,
+        TrixieUpdateMigration? systemUpgrade = null,
+        Action<TrixieMaintenanceResult>? systemUpgradeFinished = null,
+        bool migrationEntry = false)
     {
         try
         {
@@ -414,16 +446,28 @@ public sealed partial class MainWindowViewModel
         {
             return new(new CommandResult(1, "", ""), new(Pg17MigrationOutcome.Deferred, "Update postponed before provisioning."));
         }
+
+        if (systemUpgrade is not null)
+        {
+            var recovered = await systemUpgrade.RunAsync(migrationLog, allowFreshStart: false, waitToken, cancellationToken).ConfigureAwait(false);
+            if (recovered.LeavesWritesBlocked)
+            {
+                systemUpgradeFinished?.Invoke(recovered);
+                return new(new CommandResult(1, "", ""), null, recovered);
+            }
+        }
         CommandResult core;
+        bool keepLocal;
         using (var phase = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
             phase.CancelAfter(phaseTimeout);
-            core = await DistroUpdateRunner.RunAsync(wsl, BuildSystemUpdateCommand(), output, phase.Token).ConfigureAwait(false);
+            keepLocal = systemUpgrade is not null && await systemUpgrade.KeepsLocalChangesAsync(phase.Token).ConfigureAwait(false);
+            core = await runUpdate(BuildSystemUpdateCommand(keepLocal, keepLocal && migrationEntry), output, phase.Token).ConfigureAwait(false);
         }
 
         if (!core.Succeeded)
         {
-            return new(core, null);
+            return new(core, null, KeptLocalChanges: keepLocal);
         }
 
         output(UpdateStageMarkerLine(UpdateStageDatabase));
@@ -432,20 +476,35 @@ public sealed partial class MainWindowViewModel
         cancellationToken.ThrowIfCancellationRequested();
         if (!database.AllowsUpdateToFinish)
         {
-            return new(core, database);
+            return new(core, database, KeptLocalChanges: keepLocal);
+        }
+
+        TrixieMaintenanceResult? system = null;
+        if (systemUpgrade is not null)
+        {
+            if (systemUpgrade.MayRun()) output(UpdateStageMarkerLine(UpdateStageOperatingSystem));
+            // The upgrade starts only after an update that kept local changes; any other run only finishes or checks one.
+            system = await systemUpgrade.RunAsync(migrationLog, allowFreshStart: keepLocal && migrationEntry, waitToken, cancellationToken).ConfigureAwait(false);
+            systemUpgradeFinished?.Invoke(system);
+            // An unfinished upgrade must not be written to, not even by the release marker.
+            if (system.LeavesWritesBlocked) return new(core, database, system, keepLocal);
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         using (var phase = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
             phase.CancelAfter(phaseTimeout);
-            var release = await DistroUpdateRunner.RunAsync(wsl, BuildSystemReleaseCommand(), output, phase.Token).ConfigureAwait(false);
-            return new(release, database);
+            var release = await runUpdate(BuildSystemReleaseCommand(), output, phase.Token).ConfigureAwait(false);
+            return new(release, database, system, keepLocal);
         }
     }
 
-    internal sealed record SharedDistroUpdateResult(CommandResult Command, Pg17MigrationResult? Database)
+    /// <param name="System">The Debian Trixie step; a deferred or refused one still lets the release be recorded.</param>
+    /// <param name="KeptLocalChanges">The core update ran with the checkout guard, as part of the migration.</param>
+    internal sealed record SharedDistroUpdateResult(
+        CommandResult Command, Pg17MigrationResult? Database, TrixieMaintenanceResult? System = null, bool KeptLocalChanges = false)
     {
-        public bool Succeeded => Command.Succeeded && Database is { AllowsUpdateToFinish: true };
+        public bool Succeeded => Command.Succeeded && Database is { AllowsUpdateToFinish: true } && System is null or { AllowsUpdateToFinish: true };
     }
 
     private Pg17UpdateMigration CreateUpdateMigration(PausableDeadline? deadline)
