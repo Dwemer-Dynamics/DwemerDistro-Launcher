@@ -16,8 +16,12 @@ internal enum SystemUpdateRunResult
     Error
 }
 
-/// <summary>What the startup update notice says. <see cref="IsWarning"/> marks an update that did finish.</summary>
-internal sealed record StartupDistroUpdateNotice(string Title, string Heading, string Summary, string? Details, string NextStep, bool IsWarning)
+/// <summary>
+/// What the startup update notice says. <see cref="IsWarning"/> marks an update that did finish. <see cref="PrimaryActionText"/>
+/// replaces Open Settings with a button that opens that action's own review instead.
+/// </summary>
+internal sealed record StartupDistroUpdateNotice(string Title, string Heading, string Summary, string? Details, string NextStep, bool IsWarning,
+    string? PrimaryActionText = null)
 {
     /// <summary>The whole notice as one string, for screen readers and the regression tests.</summary>
     public string ToPlainText() =>

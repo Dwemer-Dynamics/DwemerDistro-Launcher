@@ -406,7 +406,9 @@ public sealed partial class MainWindowViewModel
     /// writes, never after the generic updater, and the upgrade itself follows the verified PostgreSQL 17 step.
     /// While <see cref="TrixieUpdateMigration.KeepsLocalChangesAsync"/> says the update belongs to the migration, the checkout
     /// is guarded instead of reset; a <paramref name="migrationEntry"/> (Update Distro and the reopen sync) also passes Core's
-    /// preserve flag to update.sh and update_gws, and only such a run may start the upgrade. Other callers only finish one.
+    /// preserve flag to update.sh and update_gws. Only <paramref name="startSystemUpgrade"/>, set solely after the user chose
+    /// Upgrade DwemerDistro, may start a fresh upgrade, and not when a game was open at any point of this run: the user is
+    /// asked to confirm again instead. Every other run only finishes an upgrade already under way.
     /// </summary>
     internal static Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
         WslService wsl,
@@ -419,10 +421,11 @@ public sealed partial class MainWindowViewModel
         Action<Pg17MigrationResult>? databaseFinished = null,
         TrixieUpdateMigration? systemUpgrade = null,
         Action<TrixieMaintenanceResult>? systemUpgradeFinished = null,
-        bool migrationEntry = false) =>
+        bool migrationEntry = false,
+        bool startSystemUpgrade = false) =>
         RunSharedDistroUpdatePipelineAsync((command, lines, token) => DistroUpdateRunner.RunAsync(wsl, command, lines, token),
             migration, output, migrationLog, phaseTimeout, cancellationToken, waitToken, databaseFinished, systemUpgrade,
-            systemUpgradeFinished, migrationEntry);
+            systemUpgradeFinished, migrationEntry, startSystemUpgrade);
 
     /// <summary>The same pipeline with the scripted phases run by <paramref name="runUpdate"/>, so a test sees each command.</summary>
     internal static async Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
@@ -436,7 +439,39 @@ public sealed partial class MainWindowViewModel
         Action<Pg17MigrationResult>? databaseFinished = null,
         TrixieUpdateMigration? systemUpgrade = null,
         Action<TrixieMaintenanceResult>? systemUpgradeFinished = null,
-        bool migrationEntry = false)
+        bool migrationEntry = false,
+        bool startSystemUpgrade = false)
+    {
+        // The user's Start applies to the moment they confirmed with no game open; a game seen since voids it.
+        var gameSeen = false;
+        void OnGames(IReadOnlyList<string> games) => gameSeen |= games.Count > 0;
+        migration.WaitingForGamesChanged += OnGames;
+        try
+        {
+            return await RunSharedDistroUpdatePipelineCoreAsync(runUpdate, migration, output, migrationLog, phaseTimeout,
+                cancellationToken, waitToken, databaseFinished, systemUpgrade, systemUpgradeFinished, migrationEntry,
+                startSystemUpgrade, () => gameSeen).ConfigureAwait(false);
+        }
+        finally
+        {
+            migration.WaitingForGamesChanged -= OnGames;
+        }
+    }
+
+    private static async Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineCoreAsync(
+        Func<string, Action<string>, CancellationToken, Task<CommandResult>> runUpdate,
+        Pg17UpdateMigration migration,
+        Action<string> output,
+        Action<string> migrationLog,
+        TimeSpan phaseTimeout,
+        CancellationToken cancellationToken,
+        CancellationToken waitToken,
+        Action<Pg17MigrationResult>? databaseFinished,
+        TrixieUpdateMigration? systemUpgrade,
+        Action<TrixieMaintenanceResult>? systemUpgradeFinished,
+        bool migrationEntry,
+        bool startSystemUpgrade,
+        Func<bool> gameSeen)
     {
         try
         {
@@ -482,9 +517,14 @@ public sealed partial class MainWindowViewModel
         TrixieMaintenanceResult? system = null;
         if (systemUpgrade is not null)
         {
-            if (systemUpgrade.MayRun()) output(UpdateStageMarkerLine(UpdateStageOperatingSystem));
-            // The upgrade starts only after an update that kept local changes; any other run only finishes or checks one.
-            system = await systemUpgrade.RunAsync(migrationLog, allowFreshStart: keepLocal && migrationEntry, waitToken, cancellationToken).ConfigureAwait(false);
+            // A fresh upgrade starts only on the user's confirmed Start, after an update that kept local changes; any other
+            // run only finishes or checks one, so a reopen or a routine Update Distro never begins it.
+            var approved = startSystemUpgrade && keepLocal && migrationEntry && systemUpgrade.RolloutEnabled;
+            var voided = approved && gameSeen();
+            if (approved && !voided) output(UpdateStageMarkerLine(UpdateStageOperatingSystem));
+            system = await systemUpgrade.RunAsync(migrationLog, allowFreshStart: approved && !voided, waitToken, cancellationToken).ConfigureAwait(false);
+            if (voided && system.Outcome == TrixieMaintenanceOutcome.NotNeeded)
+                system = new(TrixieMaintenanceOutcome.Deferred, DebianUpgradeVoidedByGameMessage);
             systemUpgradeFinished?.Invoke(system);
             // An unfinished upgrade must not be written to, not even by the release marker.
             if (system.LeavesWritesBlocked) return new(core, database, system, keepLocal);
@@ -498,6 +538,10 @@ public sealed partial class MainWindowViewModel
             return new(release, database, system, keepLocal);
         }
     }
+
+    internal const string DebianUpgradeVoidedByGameMessage =
+        "a game was open during the distro update, so Upgrade DwemerDistro did not start the Debian 13 upgrade; nothing was changed. " +
+        "Close the game, then choose Upgrade DwemerDistro again";
 
     /// <param name="System">The Debian Trixie step; a deferred or refused one still lets the release be recorded.</param>
     /// <param name="KeptLocalChanges">The core update ran with the checkout guard, as part of the migration.</param>

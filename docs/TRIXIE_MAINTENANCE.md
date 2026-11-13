@@ -1,6 +1,7 @@
 # Debian Bookworm to Trixie maintenance
 
-The launcher runs the OS upgrade unattended as part of the normal distro update.
+The **Upgrade DwemerDistro** button beside **Start** opens the Debian 13 upgrade confirmation. Settings > Update Distro handles routine updates.
+A fresh OS upgrade requires explicit confirmation. After confirmation, the launcher manages the backup, upgrade and recovery.
 Core owns every change inside the distro through
 `/usr/local/bin/ddistro_trixie_maintenance` and its host protocol
 (Core's `TRIXIE.md`). The launcher owns the Windows side: the offline recovery
@@ -16,10 +17,9 @@ launcher (including an older one without this step) does.
 
 ## Launcher sequence
 
-Normal reopen (launcher version sync) and manual Update Distro run the same
-`TrixieUpdateMigration.RunAsync`.
+Launcher reopen and manual Update Distro both recover unfinished maintenance. A new OS upgrade requires confirmation from **Upgrade DwemerDistro**.
 
-1. Wait for supported games to close. Stop waiting postpones the update, as for PostgreSQL 17.
+1. Routine updates retain the existing wait for supported games. A fresh Debian upgrade requires a separate click with games and the server closed. Closing a game does not start a previously refused upgrade.
 2. **Recovery first.** An unfinished journal for this registration is resolved before anything
    else writes, including the generic updater (`git reset`, `update.sh`).
 3. Core provisioning, shared components and the PostgreSQL 17 step, as before, except that the checkout
@@ -29,8 +29,7 @@ Normal reopen (launcher version sync) and manual Update Distro run the same
    distro, and the step then waits (the reason is in the operations log). Core owns proving a stopped PG17.
 5. Release marker. It is skipped while the journal blocks writes.
 
-The step also runs when the launcher version is already recorded but the journal is
-not `Completed` for this registration. Once `Completed`, later launches make no WSL call.
+Interrupted maintenance resumes even when the launcher version is already recorded. Once `Completed`, later launches make no WSL call.
 
 Every Core call is `wsl -d DwemerAI4Skyrim3 -u root --exec flock -n -E 75 --close
 /home/dwemer/.dwemerdistro-launcher-update.lock ddistro_trixie_maintenance <verb> ... --json`.
@@ -166,7 +165,7 @@ A migration update guards the checkout (any caller). Manual Update Distro and th
 - to `update_gws` as a plain prefix: the update runs as dwemer through `runuser`, with no sudo before it, and its
   `flock ... env ... bash "$0"` re-exec keeps it. Components are then only fast-forwarded when nothing is lost.
 
-Only such a run may start the upgrade (`allowFreshStart`). Quickstart (a new install) and the mod-update batch keep
+Starting an OS upgrade also requires the user to confirm through **Upgrade DwemerDistro**. Routine updates do not grant that permission. Quickstart (a new install) and the mod-update batch keep
 Core's plain update.sh and update_gws and only resume or recover an upgrade already under way; the startup step that
 runs when this launcher's release is already recorded runs no update.sh or update_gws at all.
 
@@ -237,7 +236,7 @@ Run only on a lab machine or user profile with no live data. Record every result
 
 1. Import a disposable Bookworm copy as `DwemerAI4Skyrim3` with PostgreSQL 17 `current`, set
    the lab opt-in, and install a Core that contains the tool and `release`.
-2. **Happy path:** open the launcher; the journal goes `Preparing` … `CopyProven`, `Upgrading`,
+2. **Happy path:** open the launcher and verify that no OS upgrade starts. Choose **Upgrade DwemerDistro** beside **Start** and confirm. The journal goes `Preparing` … `CopyProven`, `Upgrading`,
    `Upgraded`, `Releasing`, `Completed`. `Get-FileHash` of the tar matches the journal and
    Core's `state.json` `recovery.sha256`. The copy distro exists and booted fenced. Reopen:
    no Trixie WSL calls.

@@ -2379,7 +2379,7 @@ try
         CancellationToken workToken = default)
     {
         var store = new TrixieJournalStore(Path.Combine(fake.Root, "journal.json"));
-        var migration = new TrixieUpdateMigration(fake.Host(), store, () => rollout, deadline, TimeSpan.FromSeconds(30));
+        var migration = new TrixieUpdateMigration(fake.Host(), store, () => rollout, deadline);
         var result = await migration.RunAsync(_ => { }, allowFreshStart, waitToken, workToken);
         return (result, fake, store);
     }
@@ -2390,6 +2390,22 @@ try
            && !File.Exists(trixieInactive.Journal.StatePath) && trixieInactive.Result.AllowsUpdateToFinish
            && MainWindowViewModel.BuildSystemUpgradeConsoleLine(trixieInactive.Result) is null,
         "With rollout off and no journal the step runs nothing, writes nothing and says nothing.");
+
+    var previewGuest = NewTrixie();
+    var previewJournal = new TrixieJournalStore(Path.Combine(previewGuest.Root, "journal.json"));
+    var previewStep = new TrixieUpdateMigration(previewGuest.Host(), previewJournal, () => true, null);
+    previewGuest.Hook = (_, arguments) => arguments.SequenceEqual(Pg17UpdateMigration.BuildStatusArguments())
+        ? new CommandResult(0, "current", "")
+        : arguments.Contains(TrixieUpdateMigration.UsedBytesReadScript) ? new CommandResult(0, "1000 100 4096", "") : null;
+    var preview = await previewStep.PreviewAsync(CancellationToken.None);
+    Assert(preview.Available && preview.HasRoom && preview.Volumes is { Count: 1 }
+           && preview.Volumes[0].FreeBytes == previewGuest.Free && preview.Volumes[0].RequiredBytes > 0
+           && !previewGuest.Calls.Contains("preflight") && !File.Exists(previewJournal.StatePath),
+        "Showing the Debian offer measures space without preparing an upgrade or writing its journal.");
+    previewGuest.Free = 0;
+    var shortPreview = await previewStep.PreviewAsync(CancellationToken.None);
+    Assert(shortPreview.Available && !shortPreview.HasRoom && !File.Exists(previewJournal.StatePath),
+        "A short volume disables Start while leaving the install available.");
 
     using (var trixieDeadline = new PausableDeadline(TimeSpan.FromMinutes(30)))
     {
@@ -2456,20 +2472,19 @@ try
 
     // The real update pipeline, scripted: each core command is captured, PostgreSQL 17 is current, Core's OS step is the fake.
     async Task<(MainWindowViewModel.SharedDistroUpdateResult Outcome, List<string> Commands)> RunUpdatePipeline(
-        TrixieFake fake, bool migrationEntry, bool rollout = true, int coreExit = 0)
+        TrixieFake fake, bool migrationEntry, bool rollout = true, int coreExit = 0, bool startSystemUpgrade = false)
     {
         var commands = new List<string>();
         var pg17 = new Pg17UpdateMigration(
             (arguments, _, _) => Task.FromResult(arguments[0] == "test" ? new CommandResult(0, "", "") : new CommandResult(0, "current\n", "")),
             () => [], _ => Task.CompletedTask, (_, _) => Task.CompletedTask, TimeSpan.FromSeconds(30));
-        var system = new TrixieUpdateMigration(fake.Host(), new TrixieJournalStore(Path.Combine(fake.Root, "journal.json")), () => rollout, null,
-            TimeSpan.FromSeconds(30));
+        var system = new TrixieUpdateMigration(fake.Host(), new TrixieJournalStore(Path.Combine(fake.Root, "journal.json")), () => rollout, null);
         var outcome = await MainWindowViewModel.RunSharedDistroUpdatePipelineAsync((command, _, _) =>
             {
                 commands.Add(command);
                 return Task.FromResult(new CommandResult(commands.Count == 1 ? coreExit : 0, "", ""));
             }, pg17, _ => { }, _ => { }, TimeSpan.FromMinutes(5), CancellationToken.None, CancellationToken.None,
-            systemUpgrade: system, migrationEntry: migrationEntry);
+            systemUpgrade: system, migrationEntry: migrationEntry, startSystemUpgrade: startSystemUpgrade);
         return (outcome, commands);
     }
     var keptUpdate = MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true, passPreserveFlag: true);
@@ -2485,7 +2500,7 @@ try
         "sha256sum" => new CommandResult(1, "", "No such file"),
         _ => null
     };
-    var missingCoreRun = await RunUpdatePipeline(missingCore, migrationEntry: true);
+    var missingCoreRun = await RunUpdatePipeline(missingCore, migrationEntry: true, startSystemUpgrade: true);
     Assert(missingCoreRun.Commands.SequenceEqual([keptUpdate, releaseCommand]) && missingCoreRun.Outcome is { Succeeded: true, KeptLocalChanges: true }
            && missingCore.Calls.SequenceEqual(["sh", "sha256sum"]) && !File.Exists(PipelineJournal(missingCore).StatePath),
         "A missing or old Core (no Trixie tool yet) still gets the preserve flag: the update it runs installs the Core that reads it.");
@@ -2495,12 +2510,18 @@ try
     Assert(quickstartRun.Commands.SequenceEqual([guardOnlyUpdate, releaseCommand]) && quickstartRun.Outcome is { Succeeded: true, KeptLocalChanges: true }
            && freshBookworm.Calls.SequenceEqual(["sh"]) && !File.Exists(PipelineJournal(freshBookworm).StatePath),
         "Quickstart and the mod-update batch keep Core's plain update and never start the upgrade, though the checkout stays guarded.");
-    var manualRun = await RunUpdatePipeline(freshBookworm, migrationEntry: true);
+    var routineBookworm = NewTrixie();
+    var routine = await RunUpdatePipeline(routineBookworm, migrationEntry: true);
+    Assert(routine.Commands.SequenceEqual([keptUpdate, releaseCommand]) && routine.Outcome.Succeeded
+           && !routineBookworm.Calls.Contains("preflight") && !routineBookworm.Calls.Contains("prepare")
+           && !File.Exists(PipelineJournal(routineBookworm).StatePath),
+        "An ordinary Bookworm update finishes without OS maintenance or a journal when the user has not approved.");
+    var manualRun = await RunUpdatePipeline(freshBookworm, migrationEntry: true, startSystemUpgrade: true);
     Assert(manualRun.Commands.SequenceEqual([keptUpdate, releaseCommand])
            && manualRun.Outcome is { Succeeded: true, KeptLocalChanges: true, System.Outcome: TrixieMaintenanceOutcome.Completed }
            && freshBookworm.Calls.Take(3).SequenceEqual(["sh", "sh", "sha256sum"]) && freshBookworm.Calls.Contains("prepare")
            && PipelineJournal(freshBookworm).Read().Journal is { Phase: TrixieJournalPhase.Completed },
-        "Update Distro and the reopen sync on a fresh Bookworm distro pass the flag to update.sh and update_gws, then upgrade.");
+        "An explicitly approved manual Debian upgrade preserves files, runs the upgrade, and completes.");
     var callsAfterUpgrade = freshBookworm.Calls.Count;
     var afterUpgradeRun = await RunUpdatePipeline(freshBookworm, migrationEntry: true);
     Assert(afterUpgradeRun.Commands.SequenceEqual([ordinaryUpdate, releaseCommand])
@@ -2533,7 +2554,7 @@ try
     deferredBookworm.Pg17Current = false;
     var firstReopen = await RunUpdatePipeline(deferredBookworm, migrationEntry: true);
     var secondReopen = await RunUpdatePipeline(deferredBookworm, migrationEntry: true);
-    Assert(firstReopen.Outcome.System?.Outcome == TrixieMaintenanceOutcome.NotStarted
+    Assert(firstReopen.Outcome.System?.Outcome == TrixieMaintenanceOutcome.NotNeeded
            && firstReopen.Commands.SequenceEqual([keptUpdate, releaseCommand]) && secondReopen.Commands.SequenceEqual([keptUpdate, releaseCommand]),
         "While the upgrade waits, a second reopen or Update Distro passes the flag again, so it can't undo what the first kept.");
 
@@ -2719,7 +2740,7 @@ try
         games.Games = () => ["Skyrim Special Edition"];
         var run = await RunTrixie(games, waitToken: trixieStop.Token);
         Assert(run.Result.Outcome == TrixieMaintenanceOutcome.Deferred && !games.Calls.Contains("preflight") && run.Result.AllowsUpdateToFinish,
-            "Stop waiting for an open game postpones the upgrade before anything changes.");
+            "An open game prevents a fresh Debian upgrade from starting.");
     }
 
     var trixieServer = NewTrixie();

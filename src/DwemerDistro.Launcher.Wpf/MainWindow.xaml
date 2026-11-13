@@ -481,6 +481,53 @@
                     </StackPanel>
                 </Grid>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <!-- Upgrade DwemerDistro: only while a fresh Debian 13 upgrade is offered (lab rollout), on every tab,
+                         immediately left of Start. A press rechecks and asks Upgrade DwemerDistro or Later first; a stale
+                         offer says so and nothing runs in its place. The label only changes while its own recheck or run
+                         is going. The copper ring around it pulses briefly when the offer appears; only its opacity moves,
+                         it is never hit-tested, and MainWindow skips it when Windows turns client-area animation off or
+                         uses high contrast. -->
+                    <Grid Margin="0,0,8,0" VerticalAlignment="Center"
+                          Visibility="{Binding IsDebianUpgradeBarVisible, Converter={StaticResource BoolToVisibility}}">
+                        <Button x:Name="UpgradeDwemerDistroButton" Command="{Binding UpgradeDwemerDistroCommand}"
+                                Padding="10,6" ToolTipService.ShowOnDisabled="True"
+                                AutomationProperties.Name="Upgrade DwemerDistro"
+                                AutomationProperties.ItemStatus="{Binding DebianUpgradeTopBarText}"
+                                AutomationProperties.HelpText="{Binding DebianUpgradeAvailableText}"
+                                ToolTip="{Binding DebianUpgradeAvailableText}">
+                            <Button.Style>
+                                <!-- Copper fill like the mod panels' primary action; hover, pressed and disabled are
+                                     re-stated because the base outline style would otherwise win. -->
+                                <Style TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.CopperOutlineButton}">
+                                    <Setter Property="Background" Value="{DynamicResource GameCenter.Copper}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.CopperHover}" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.CopperPressed}" />
+                                        </Trigger>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                                            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                            <!-- Decorative glyph: the accessible name already says what the button does. -->
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" FontWeight="Normal"
+                                           Width="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding DebianUpgradeTopBarText}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Border x:Name="UpgradeDwemerDistroPulse" Margin="-3" CornerRadius="11" BorderThickness="2"
+                                BorderBrush="{DynamicResource GameCenter.CopperStrong}"
+                                Opacity="0" IsHitTestVisible="False" Focusable="False"
+                                SnapsToDevicePixels="True" />
+                    </Grid>
                     <!-- One runtime button: green Start while stopped, red Stop while the
                          server is starting or running, each on its own unchanged command and guard, so
                          Stop stays reachable during startup. Startup progress shows as a small spinner

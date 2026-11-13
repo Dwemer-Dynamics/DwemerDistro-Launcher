@@ -234,6 +234,30 @@ internal static class TrixieSpacePlan
     internal static long GrowthBytes(long upgradeBytes) => checked(upgradeBytes + upgradeBytes / 4 + GiB);
     internal static long RestoreBytes(long usedBytes) => checked(usedBytes + usedBytes / 5 + 2 * GiB);
 
+    /// <summary>Core's <c>upgrade_bytes</c> always includes its 2 GiB margin, so a preview before preflight assumes at least that.</summary>
+    internal const long MinimumUpgradeBytes = 2 * GiB;
+
+    /// <summary>Bytes required and free on each distinct volume, in the order first named.</summary>
+    internal static IReadOnlyList<TrixieVolumeNeed> Needs(
+        long usedBytes,
+        long upgradeBytes,
+        (string Volume, long FreeBytes) backup,
+        (string Volume, long FreeBytes) disk,
+        (string Volume, long FreeBytes) restore)
+    {
+        var needs = new List<TrixieVolumeNeed>();
+        void Add((string Volume, long FreeBytes) target, long bytes)
+        {
+            var index = needs.FindIndex(need => string.Equals(need.Volume, target.Volume, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) needs.Add(new(target.Volume, bytes, target.FreeBytes));
+            else needs[index] = needs[index] with { RequiredBytes = checked(needs[index].RequiredBytes + bytes), FreeBytes = target.FreeBytes };
+        }
+        Add(backup, BackupBytes(usedBytes));
+        Add(disk, GrowthBytes(upgradeBytes));
+        Add(restore, RestoreBytes(usedBytes));
+        return needs;
+    }
+
     /// <returns>Null when every volume has room; otherwise one sentence naming the short volumes.</returns>
     internal static string? FindShortfall(
         long usedBytes,
@@ -242,21 +266,30 @@ internal static class TrixieSpacePlan
         (string Volume, long FreeBytes) disk,
         (string Volume, long FreeBytes) restore)
     {
-        var needs = new Dictionary<string, (long Need, long Free)>(StringComparer.OrdinalIgnoreCase);
-        void Add((string Volume, long FreeBytes) target, long bytes) =>
-            needs[target.Volume] = needs.TryGetValue(target.Volume, out var existing)
-                ? (checked(existing.Need + bytes), target.FreeBytes)
-                : (bytes, target.FreeBytes);
-        Add(backup, BackupBytes(usedBytes));
-        Add(disk, GrowthBytes(upgradeBytes));
-        Add(restore, RestoreBytes(usedBytes));
-        var shortVolumes = needs.Where(entry => entry.Value.Free < entry.Value.Need)
-            .Select(entry => $"{entry.Key} needs {FormatGiB(entry.Value.Need)} free and has {FormatGiB(entry.Value.Free)}")
+        var shortVolumes = Needs(usedBytes, upgradeBytes, backup, disk, restore).Where(need => !need.HasRoom)
+            .Select(need => $"{need.Volume} needs {FormatGiB(need.RequiredBytes)} free and has {FormatGiB(need.FreeBytes)}")
             .ToArray();
         return shortVolumes.Length == 0 ? null : "Not enough free space for the recovery copy and upgrade: " + string.Join("; ", shortVolumes) + ".";
     }
 
-    private static string FormatGiB(long bytes) => $"{bytes / (double)GiB:0.0} GB";
+    internal static string FormatGiB(long bytes) => $"{bytes / (double)GiB:0.0} GB";
+}
+
+/// <summary>What one Windows volume must hold for the upgrade, and what it has.</summary>
+internal sealed record TrixieVolumeNeed(string Volume, long RequiredBytes, long FreeBytes)
+{
+    public bool HasRoom => FreeBytes >= RequiredBytes;
+}
+
+/// <summary>
+/// A fresh Debian 13 upgrade the user may be offered, from <see cref="TrixieUpdateMigration.PreviewAsync"/>. Null
+/// <see cref="Volumes"/> means none is offered, for <see cref="Reason"/>.
+/// </summary>
+internal sealed record TrixieUpgradeOffer(IReadOnlyList<TrixieVolumeNeed>? Volumes, string? Reason)
+{
+    public bool Available => Volumes is not null;
+    public bool HasRoom => Volumes is { } volumes && volumes.All(volume => volume.HasRoom);
+    internal static TrixieUpgradeOffer None(string reason) => new(null, reason);
 }
 
 /// <summary>Everything the upgrade does outside its own logic, so the orchestration runs against fakes.</summary>
@@ -308,8 +341,7 @@ internal sealed class TrixieUpdateMigration(
     TrixieMaintenanceHost host,
     TrixieJournalStore journal,
     Func<bool> rolloutEnabled,
-    PausableDeadline? deadline,
-    TimeSpan recheckInterval)
+    PausableDeadline? deadline)
 {
     internal const string ToolPath = "/usr/local/bin/ddistro_trixie_maintenance";
     internal const string CoreStatePath = "/var/lib/dwemerdistro/trixie-maintenance/state.json";
@@ -335,8 +367,6 @@ internal sealed class TrixieUpdateMigration(
 
     // The run's workToken: it also stops a restore's wait for a disk to be released, which then rolls back and defers.
     private CancellationToken restoreToken;
-
-    public event Action<IReadOnlyList<string>>? WaitingForGamesChanged;
 
     /// <summary>False when rollout is off and no journal exists: the step is then a no-op and the update shows no stage for it.</summary>
     public bool MayRun() => rolloutEnabled() || journal.Read() is not { Journal: null, Unreadable: false };
@@ -365,6 +395,79 @@ internal sealed class TrixieUpdateMigration(
         var reply = await host.RunAsRootAsync(LauncherConstants.DistroName, BuildCodenameReadArguments(), token).ConfigureAwait(false);
         var codename = reply.Succeeded ? reply.StandardOutput.Trim() : string.Empty;
         return codename.Length == 0 || codename == SourceCodename;
+    }
+
+    /// <summary>The root filesystem's allocated bytes as <c>statvfs</c> reports them: total blocks, free blocks, block size.</summary>
+    internal const string UsedBytesReadScript = "stat -f -c '%b %f %S' /";
+
+    /// <summary>
+    /// Whether a fresh upgrade can be offered to the user, and the space it needs, without changing anything: no journal
+    /// write, no lock, no preflight. Every command runs as root with <c>--exec</c> (no <c>start_env</c>) and only reads:
+    /// the tool's digest and provenance, PostgreSQL 17 and Trixie <c>status</c>, and <c>statvfs</c>. The space is a lower
+    /// bound (Core's <c>used_bytes</c> is at least the allocated blocks, its <c>upgrade_bytes</c> at least its 2 GiB margin);
+    /// the start checks the exact figures again after preflight and changes nothing when they don't fit.
+    /// </summary>
+    public async Task<TrixieUpgradeOffer> PreviewAsync(CancellationToken token)
+    {
+        if (!rolloutEnabled()) return TrixieUpgradeOffer.None("rollout is off");
+        var read = journal.Read();
+        if (read.Unreadable) return TrixieUpgradeOffer.None("the system upgrade journal can't be read");
+        if (host.ReadRegistration(LauncherConstants.DistroName) is not { } current)
+            return TrixieUpgradeOffer.None("the distro's WSL registration could not be read");
+        var previous = read.Journal is { } last && SameId(last.Registration, current) ? last : null;
+        if (previous is not null && (TrixieJournalStore.IsBlocking(previous.Phase) || previous.Phase == TrixieJournalPhase.Completed))
+            return TrixieUpgradeOffer.None($"the journal is {previous.Phase}");
+
+        Task<CommandResult> Root(string[] arguments) => host.RunAsRootAsync(LauncherConstants.DistroName, arguments, token);
+        var probe = await Root(["sha256sum", ToolPath]).ConfigureAwait(false);
+        var toolSha = probe.Succeeded ? probe.StandardOutput.Trim().Split(' ', 2)[0] : string.Empty;
+        if (!IsHex(toolSha, 64)) return TrixieUpgradeOffer.None("no Trixie maintenance tool is installed");
+        if (previous is { Phase: TrixieJournalPhase.Restored } restored && restored.ToolSha256 == toolSha)
+            return TrixieUpgradeOffer.None("an earlier attempt with this tool was restored");
+        if (previous is { Phase: TrixieJournalPhase.Cancelled } cancelled && cancelled.ToolSha256 == toolSha
+            && host.Now() - cancelled.UpdatedAt < CancelledRetryDelay)
+            return TrixieUpgradeOffer.None("Core refused the upgrade recently");
+        if (!(await Root(BuildToolProvenanceArguments()).ConfigureAwait(false)).Succeeded)
+            return TrixieUpgradeOffer.None("the installed tool is not a version Core shipped");
+        var pg17 = await Root(Pg17UpdateMigration.BuildStatusArguments()).ConfigureAwait(false);
+        if (!pg17.Succeeded || Pg17UpdateMigration.ParseStatus(pg17.StandardOutput) != Pg17Status.Current)
+            return TrixieUpgradeOffer.None("PostgreSQL 17 is not verified current");
+        var statusResult = await Root(BuildStatusArguments()).ConfigureAwait(false);
+        if ((statusResult.Succeeded ? ParseReply(statusResult.StandardOutput) : null) is not
+            { State: "needed", Release: "12", Codename: "" or SourceCodename, Fence: not true })
+            return TrixieUpgradeOffer.None("Core does not report the upgrade as needed");
+
+        var usedBytes = ParseUsedBytes((await Root(["sh", "-c", UsedBytesReadScript]).ConfigureAwait(false)).StandardOutput);
+        if (usedBytes is not > 0) return TrixieUpgradeOffer.None("the distro's used space could not be read");
+        // Read-only: the backup folder is not created here, so its volume is read from the nearest folder that exists.
+        var backupProbe = host.BackupDirectory;
+        while (!Directory.Exists(backupProbe) && Path.GetDirectoryName(backupProbe) is { } parent) backupProbe = parent;
+        var recoveryParent = RecoveryParent(current);
+        if (host.ReadVolumeFreeSpace(backupProbe) is not { } backupVolume
+            || host.ReadVolumeFreeSpace(current.DiskPath) is not { } diskVolume
+            || host.ReadVolumeFreeSpace(recoveryParent) is not { } recoveryVolume)
+            return TrixieUpgradeOffer.None("the free space of the backup and distro volumes could not be read");
+        if (!string.Equals(diskVolume.Volume, recoveryVolume.Volume, StringComparison.OrdinalIgnoreCase))
+            return TrixieUpgradeOffer.None($"the folder beside the distro ({recoveryParent}) is not on the volume that holds its virtual disk");
+        return new TrixieUpgradeOffer(
+            TrixieSpacePlan.Needs(usedBytes.Value, TrixieSpacePlan.MinimumUpgradeBytes, backupVolume, diskVolume, recoveryVolume), null);
+    }
+
+    /// <summary><c>(blocks - free) * block size</c> from <see cref="UsedBytesReadScript"/>; null when it is not three numbers.</summary>
+    internal static long? ParseUsedBytes(string? output)
+    {
+        var fields = (output ?? string.Empty).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length != 3 || !long.TryParse(fields[0], out var blocks) || !long.TryParse(fields[1], out var free)
+            || !long.TryParse(fields[2], out var size) || blocks < free || size <= 0)
+            return null;
+        try
+        {
+            return checked((blocks - free) * size);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
     }
 
     // --- Core protocol -------------------------------------------------------------------------------------------
@@ -624,7 +727,7 @@ internal sealed class TrixieUpdateMigration(
                         "services fenced; distro writes stay blocked and nothing was imported or removed");
             }
 
-            if (await WaitForIdleAsync(log, waitToken).ConfigureAwait(false) is { } busy) return busy;
+            if (IdleProblem() is { } busy) return busy;
 
             var preflightResult = await host.RunCoreAsync(BuildPreflightArguments(), _ => { }, waitToken).ConfigureAwait(false);
             if (preflightResult.ExitCode == ExitBusy) return Busy("nothing was changed");
@@ -649,7 +752,7 @@ internal sealed class TrixieUpdateMigration(
                 return new(TrixieMaintenanceOutcome.NotStarted, space + "; nothing was changed");
 
             // Once more right before cutover: the preflight and space checks take time.
-            if (await WaitForIdleAsync(log, waitToken).ConfigureAwait(false) is { } stillBusy) return stillBusy;
+            if (IdleProblem() is { } stillBusy) return stillBusy;
         }
         catch (OperationCanceledException) when (waitToken.IsCancellationRequested)
         {
@@ -1341,31 +1444,17 @@ internal sealed class TrixieUpdateMigration(
         return result.Succeeded ? ParseReply(result.StandardOutput) : null;
     }
 
-    private async Task<TrixieMaintenanceResult?> WaitForIdleAsync(Action<string> log, CancellationToken token)
+    /// <summary>
+    /// A fresh upgrade is started only by the user's own confirmation, so it never waits for a game to close: an open
+    /// game or a running server postpones it, and the user is asked to close it and confirm again.
+    /// </summary>
+    private TrixieMaintenanceResult? IdleProblem()
     {
-        var announced = string.Empty;
-        try
-        {
-            for (var games = host.FindRunningGames(); games.Count > 0; games = host.FindRunningGames())
-            {
-                var names = string.Join(", ", games);
-                if (names != announced)
-                {
-                    announced = names;
-                    log($"The Debian Trixie upgrade is waiting for {names} to close. It continues on its own once the game is closed." + Environment.NewLine);
-                }
-
-                WaitingForGamesChanged?.Invoke(games);
-                await host.DelayAsync(recheckInterval, token).ConfigureAwait(false);
-            }
-
-            token.ThrowIfCancellationRequested();
-        }
-        finally
-        {
-            if (announced.Length > 0) WaitingForGamesChanged?.Invoke([]);
-        }
-
+        var games = host.FindRunningGames();
+        if (games.Count > 0)
+            return new(TrixieMaintenanceOutcome.Deferred,
+                $"{string.Join(", ", games)} is running, so Upgrade DwemerDistro did not start the Debian 13 upgrade; nothing was changed. " +
+                "Close the game, then choose Upgrade DwemerDistro again");
         return host.IsServerRunning()
             ? new(TrixieMaintenanceOutcome.Deferred, "the Debian Trixie upgrade waits until the server is stopped; nothing was changed")
             : null;

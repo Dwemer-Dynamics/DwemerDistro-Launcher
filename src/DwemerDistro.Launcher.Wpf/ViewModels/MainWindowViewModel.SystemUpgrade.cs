@@ -7,8 +7,10 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 /// <summary>
 /// The Debian Bookworm to Trixie step of the distro update, through <see cref="TrixieUpdateMigration"/>. Rollout is off
 /// unless <c>"TrixieMaintenanceLab": true</c> is in update preferences; with it off and no journal the launcher does
-/// exactly what it did before. A journal that says an upgrade is unfinished blocks every distro writer here, whatever
-/// the rollout, until the step resolves it.
+/// exactly what it did before. A fresh upgrade starts only after the user confirms Upgrade DwemerDistro in the top
+/// bar; a reopen, Quickstart or a mod update never begins one, and only resumes an upgrade already under way. A
+/// journal that says an upgrade is unfinished blocks every distro writer here, whatever the rollout, until the step
+/// resolves it.
 /// </summary>
 /// <summary>
 /// What the startup notice may say about a blocked Trixie step. <see cref="PastGameplayBoundary"/> is the journal's
@@ -52,6 +54,7 @@ public sealed partial class MainWindowViewModel
         _systemUpgradeBlocksWrites = blocked;
         LauncherLogService.Startup(blocked ? "Distro writers blocked: the system upgrade journal is unfinished." : "Distro writers allowed: the system upgrade journal is settled.");
         NotifyDistroOperationGateChanged();
+        RunOnUi(RaiseDebianUpgradeAvailabilityChanged);
     }
 
     /// <summary>Windows that change files or settings inside the distro: closed while a Trixie upgrade is unfinished.</summary>
@@ -105,16 +108,8 @@ public sealed partial class MainWindowViewModel
             VerifyArchiveAsync = TrixieUpdateMigration.VerifyTarArchiveAsync,
             BackupDirectory = SystemUpgradeBackupRoot
         };
-        var migration = new TrixieUpdateMigration(host, _systemUpgradeJournal, IsSystemUpgradeRolloutEnabled, deadline,
-            Pg17UpdateMigration.DefaultRecheckInterval);
-        // The same Stop waiting control as the database step: both are postponed before anything changes.
-        migration.WaitingForGamesChanged += games =>
-        {
-            RunOnUi(() => IsDatabaseUpgradeWaiting = games.Count > 0);
-            if (games.Count > 0)
-                SetDatabaseMaintenanceStatus(BuildSystemUpgradeWaitingStatus(games), CompactDistroWarningColor);
-        };
-        return migration;
+        // A fresh start never waits for a game: it is refused and the user confirms again once the game is closed.
+        return new TrixieUpdateMigration(host, _systemUpgradeJournal, IsSystemUpgradeRolloutEnabled, deadline);
     }
 
     /// <summary>
@@ -131,10 +126,6 @@ public sealed partial class MainWindowViewModel
                (string.IsNullOrEmpty(line) ? "no output" : DiagnosticEvidenceService.Sanitize(line)) +
                ". PostgreSQL was not started for it; the upgrade waits.";
     }
-
-    internal static string BuildSystemUpgradeWaitingStatus(IReadOnlyList<string> games) =>
-        $"Waiting for {string.Join(", ", games)} to close before upgrading the distro to Debian Trixie. " +
-        "The distro update finishes on its own once the game is closed. Nothing has been changed yet.";
 
     /// <summary>
     /// The named WSL 2 registration from HKCU, never WSL: GUID, BasePath and the VhdFileName WSL recorded, plus the
@@ -224,10 +215,10 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>
     /// The Trixie step alone, under the same update gate as Update Distro: crash recovery at startup, before any writer
-    /// and never after the generic updater, and the OS check on a launch whose release is already recorded.
+    /// and never after the generic updater. It only resumes or checks an upgrade already under way; it never starts one.
     /// Null when another operation held the gate and nothing ran.
     /// </summary>
-    private async Task<TrixieMaintenanceResult?> RunSystemUpgradeStepAsync(PausableDeadline deadline, bool allowFreshStart)
+    private async Task<TrixieMaintenanceResult?> RunSystemUpgradeStepAsync(PausableDeadline deadline)
     {
         if (!CanRunSystemUpdateOperation()) return null;
         IsDistroUpdateInProgress = true;
@@ -243,7 +234,7 @@ public sealed partial class MainWindowViewModel
             {
                 LauncherLogService.Operation(text);
                 AppendLog(text);
-            }, allowFreshStart, waitCts.Token, updateCts.Token));
+            }, allowFreshStart: false, waitCts.Token, updateCts.Token));
             _distroUpdateTask = task;
             result = await task.ConfigureAwait(true);
             ReportSystemUpgradeResult(result);
@@ -260,6 +251,7 @@ public sealed partial class MainWindowViewModel
 
     private void ReportSystemUpgradeResult(TrixieMaintenanceResult result)
     {
+        _lastSystemUpgradeResult = result;
         if (result.Outcome == TrixieMaintenanceOutcome.NotActive) return;
         LauncherLogService.Operation($"Debian Trixie step: {result.Outcome}; writes blocked={result.LeavesWritesBlocked}; {result.Message}");
         if (BuildSystemUpgradeConsoleLine(result) is { } line) AppendLog(line.Text + Environment.NewLine, line.Color);
@@ -329,12 +321,9 @@ public sealed partial class MainWindowViewModel
     internal static string DescribeSystemUpgradeFailure(TrixieMaintenanceResult result) =>
         $" during the Debian Trixie system upgrade: {result.Message.TrimEnd('.')}. Full output: Logs\\launcher-operations.log.";
 
-    /// <summary>The codename read for the update badge, only when the Trixie tool is installed; empty otherwise.</summary>
-    internal static string BuildSystemCodenameReadCommand() => TrixieUpdateMigration.CodenameReadScript;
-
     /// <summary>
-    /// A matching release says nothing about the OS: with rollout on, a Bookworm distro that has the Trixie tool still
-    /// has an update available, even when both release versions are equal.
+    /// A matching release says nothing about the OS: with rollout on, a Bookworm distro that can be offered the Debian 13
+    /// upgrade still has an update available, even when both release versions are equal.
     /// </summary>
     internal static SystemUpdateAvailability ResolveSystemUpdateAvailability(
         string? installedVersion, string? availableVersion, string? installedCodename, bool rolloutEnabled)
@@ -345,4 +334,204 @@ public sealed partial class MainWindowViewModel
             ? SystemUpdateAvailability.UpdateAvailable
             : release;
     }
+    // --- The Debian 13 offer ---------------------------------------------------------------------------------------
+
+    private TrixieUpgradeOffer? _debianUpgradeOffer;
+    private int _debianUpgradeNoticeRaised;
+    private TrixieMaintenanceResult? _lastSystemUpgradeResult;
+    // "Checking..." during the fresh recheck, "Upgrading..." during the approved run; null when idle.
+    private string? _debianUpgradeRunningText;
+
+    /// <summary>The modeless notice that a Debian 13 upgrade can be started; separate from the failure notice, which outranks it.</summary>
+    internal event EventHandler<StartupDistroUpdateNotice>? DebianUpgradeNoticeRaised;
+
+    /// <summary>A fresh Debian 13 upgrade can be offered: rollout on, nothing under way, and the read-only checks passed.</summary>
+    public bool IsDebianUpgradeAvailable => _debianUpgradeOffer is { Available: true } && !_systemUpgradeBlocksWrites;
+
+    /// <summary>The top-bar button stays up through its own recheck and run, even once the journal hides the offer.</summary>
+    public bool IsDebianUpgradeBarVisible => IsDebianUpgradeAvailable || _debianUpgradeRunningText is not null;
+
+    /// <summary>The top-bar button's label: Upgrade DwemerDistro, or what its own recheck or run is doing.</summary>
+    public string DebianUpgradeTopBarText => _debianUpgradeRunningText ?? DebianUpgradeButtonText;
+
+    /// <summary>The top-bar button's tooltip and help text.</summary>
+    public string DebianUpgradeAvailableText => _debianUpgradeOffer is { HasRoom: false }
+        ? $"Upgrade DwemerDistro to Debian 13. There isn't enough free disk space for it yet; {DebianUpgradeButtonText} shows what it needs."
+        : $"Upgrade DwemerDistro to Debian 13. {DebianUpgradeButtonText} rechecks and asks before anything changes.";
+
+    /// <summary>
+    /// Refreshes the offer with <see cref="TrixieUpdateMigration.PreviewAsync"/>, which changes nothing. With rollout off,
+    /// or a completed or unfinished journal, it makes no WSL call. The first offer of a launch raises one modeless notice.
+    /// </summary>
+    private async Task RefreshDebianUpgradeOfferAsync(CancellationToken cancellationToken)
+    {
+        TrixieUpgradeOffer offer;
+        try
+        {
+            offer = IsSystemUpgradePossiblyPending() && !_systemUpgradeBlocksWrites
+                ? await CreateSystemUpgradeMigration(null).PreviewAsync(cancellationToken).ConfigureAwait(false)
+                : TrixieUpgradeOffer.None("rollout off, or the journal is completed or unfinished");
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException or IOException)
+        {
+            // A slow or failed preview only means nothing is offered yet; the release check still reports.
+            offer = TrixieUpgradeOffer.None("the read-only check did not finish (" + ex.GetType().Name + ")");
+        }
+
+        if (!offer.Available && IsSystemUpgradeRolloutEnabled())
+            LauncherLogService.Startup($"Debian 13 upgrade not offered: {offer.Reason}.");
+        SetDebianUpgradeOffer(offer);
+        RunOnUi(() =>
+        {
+            if (!IsDebianUpgradeAvailable || IsDistroUpdateInProgress || _shutdownCts.IsCancellationRequested
+                || Interlocked.Exchange(ref _debianUpgradeNoticeRaised, 1) != 0)
+                return;
+            LauncherLogService.Startup("Debian 13 upgrade offered.");
+            DebianUpgradeNoticeRaised?.Invoke(this, BuildDebianUpgradeAvailableNotice(offer));
+        });
+    }
+
+    private void SetDebianUpgradeOffer(TrixieUpgradeOffer offer) => RunOnUi(() =>
+    {
+        _debianUpgradeOffer = offer;
+        OnPropertyChanged(nameof(DebianUpgradeAvailableText));
+        RaiseDebianUpgradeAvailabilityChanged();
+    });
+
+    /// <summary>The offer shows or hides the top-bar Upgrade DwemerDistro button and gates its command.</summary>
+    private void RaiseDebianUpgradeAvailabilityChanged()
+    {
+        OnPropertyChanged(nameof(IsDebianUpgradeAvailable));
+        OnPropertyChanged(nameof(IsDebianUpgradeBarVisible));
+        UpgradeDwemerDistroCommand?.RaiseCanExecuteChanged();
+    }
+
+    private void SetDebianUpgradeRunningText(string? text)
+    {
+        _debianUpgradeRunningText = text;
+        OnPropertyChanged(nameof(DebianUpgradeTopBarText));
+        OnPropertyChanged(nameof(IsDebianUpgradeBarVisible));
+        UpgradeDwemerDistroCommand?.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>Modeless and only navigates: its Upgrade DwemerDistro opens the same recheck and review as the top-bar button.</summary>
+    internal static StartupDistroUpdateNotice BuildDebianUpgradeAvailableNotice(TrixieUpgradeOffer offer) => new(
+        DebianUpgradeButtonText,
+        "Upgrade DwemerDistro is available",
+        "This upgrade moves DwemerDistro from Debian 12 to Debian 13. You can keep playing for now; it starts only when you choose it." +
+        (offer.HasRoom ? string.Empty : " There isn't enough free disk space for it yet."),
+        null,
+        $"When you have time, choose {DebianUpgradeButtonText} to review it; the same button sits left of Start at the top of the launcher. " +
+        "Our tests took 12 to 31 minutes, sometimes longer, and you can't play while it runs.",
+        IsWarning: true,
+        PrimaryActionText: DebianUpgradeButtonText);
+
+    /// <summary>
+    /// The top bar's Upgrade DwemerDistro: a fresh read-only recheck, then the confirmation, where Later closes it. A stale
+    /// offer says so and hides the button; it never falls back to a routine update.
+    /// </summary>
+    private async Task UpgradeDwemerDistroAsync()
+    {
+        if (await ConfirmDebianUpgradeAsync().ConfigureAwait(true))
+            await RunApprovedDebianUpgradeAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>True only for Upgrade DwemerDistro in the dialog, which accepts it only with no game or server running at the click.</summary>
+    private async Task<bool> ConfirmDebianUpgradeAsync()
+    {
+        if (_debianUpgradeRunningText is not null) return false;
+        if (!IsSystemUpgradePossiblyPending() || _systemUpgradeBlocksWrites)
+        {
+            SetDebianUpgradeOffer(TrixieUpgradeOffer.None("rollout off, or the journal is completed or unfinished"));
+            ShowDebianUpgradeUnavailable("it is no longer offered for this distro");
+            return false;
+        }
+
+        if (!TryBeginPassiveDistroActivity())
+        {
+            ShowDebianUpgradeUnavailable("another DwemerDistro operation is running. Try again when it finishes");
+            return false;
+        }
+
+        TrixieUpgradeOffer offer;
+        SetDebianUpgradeRunningText("Checking...");
+        try
+        {
+            // Fresh figures for the dialog; the cached offer may be hours old.
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token);
+            timeout.CancelAfter(StartupVersionCheckTimeout);
+            offer = await CreateSystemUpgradeMigration(null).PreviewAsync(timeout.Token).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException or IOException)
+        {
+            LauncherLogService.Startup("The Debian 13 upgrade check did not finish.", ex);
+            if (!_shutdownCts.IsCancellationRequested)
+                ShowDebianUpgradeUnavailable("the launcher could not finish checking it. Try again in a moment");
+            return false;
+        }
+        finally
+        {
+            SetDebianUpgradeRunningText(null);
+            EndPassiveDistroActivity();
+        }
+
+        SetDebianUpgradeOffer(offer);
+        if (!offer.Available)
+        {
+            LauncherLogService.Startup($"Debian 13 upgrade not offered: {offer.Reason}.");
+            ShowDebianUpgradeUnavailable("it is no longer offered for this distro");
+            return false;
+        }
+
+        var dialog = new Views.DebianUpgradeConfirmationWindow(offer, Pg17UpdateMigration.FindRunningGames,
+            () => IsServerRunning || IsServerStarting);
+        if (System.Windows.Application.Current?.MainWindow is { IsVisible: true } owner) dialog.Owner = owner;
+        else dialog.WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen;
+        var start = dialog.ShowDialog() == true;
+        AppendLog((start
+            ? "Upgrade DwemerDistro confirmed."
+            : "Upgrade DwemerDistro postponed. Debian 12 is kept and nothing in the system was changed.") + Environment.NewLine);
+        return start;
+    }
+
+    /// <summary>A stale or unreadable offer is said plainly; nothing runs in its place.</summary>
+    private static void ShowDebianUpgradeUnavailable(string reason) => System.Windows.MessageBox.Show(
+        $"{DebianUpgradeButtonText} can't start: {reason}. Nothing was changed.",
+        DebianUpgradeButtonText, System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+
+    /// <summary>The update run with the upgrade approved for this one run. The user asked for it, so the outcome is a dialog.</summary>
+    private async Task RunApprovedDebianUpgradeAsync()
+    {
+        _lastSystemUpgradeResult = null;
+        SystemUpdateRunResult run;
+        SetDebianUpgradeRunningText("Upgrading...");
+        try
+        {
+            run = await RunSystemUpdateCoreAsync(requireConfirmation: false, sourceLabel: "System", migrationEntry: true,
+                startSystemUpgrade: true).ConfigureAwait(true);
+        }
+        finally
+        {
+            SetDebianUpgradeRunningText(null);
+        }
+
+        if (run == SystemUpdateRunResult.NotRun || _shutdownCts.IsCancellationRequested) return;
+        var (text, image) = BuildApprovedDebianUpgradeReport(_lastSystemUpgradeResult);
+        System.Windows.MessageBox.Show(text, DebianUpgradeButtonText, System.Windows.MessageBoxButton.OK, image);
+    }
+
+    internal static (string Text, System.Windows.MessageBoxImage Image) BuildApprovedDebianUpgradeReport(TrixieMaintenanceResult? result) => result switch
+    {
+        null => ("The distro update did not finish, so Upgrade DwemerDistro did not start and Debian 12 is unchanged. " +
+                 "The console says why. You can choose Upgrade DwemerDistro again later.", System.Windows.MessageBoxImage.Warning),
+        { Outcome: TrixieMaintenanceOutcome.Completed } => ("Upgrade DwemerDistro finished: DwemerDistro now runs Debian 13. You can start the server and play again.",
+            System.Windows.MessageBoxImage.Information),
+        { LeavesWritesBlocked: true } => ((BuildSystemUpgradeConsoleLine(result)?.Text ?? result.Message) +
+            " Choose Update Distro in Settings to finish or check it.", System.Windows.MessageBoxImage.Error),
+        { Outcome: TrixieMaintenanceOutcome.Restored } => (BuildSystemUpgradeConsoleLine(result)?.Text ?? result.Message,
+            System.Windows.MessageBoxImage.Warning),
+        _ => (Capitalize(result.Message.TrimEnd('.')) + ".", System.Windows.MessageBoxImage.Warning)
+    };
+
+    private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 }
