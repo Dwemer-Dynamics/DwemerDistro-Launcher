@@ -554,7 +554,7 @@ public sealed partial class CustomModService(WslService wsl)
         if (text.Contains("No such file or directory", StringComparison.OrdinalIgnoreCase) ||
             text.Contains("command not found", StringComparison.OrdinalIgnoreCase))
         {
-            return "This distro does not support custom mods yet. Run Update Distro first.";
+            return "This distro does not support custom mods yet. Run Update Distro in Settings > First-Time Setup first.";
         }
 
         return $"The operation failed (exit code {result.ExitCode}).";

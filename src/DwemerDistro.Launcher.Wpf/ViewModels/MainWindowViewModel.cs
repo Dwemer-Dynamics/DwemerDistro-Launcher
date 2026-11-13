@@ -106,6 +106,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     internal const string SystemUpdateDefaultButtonText = "Update Distro";
     internal const string SystemUpdateAvailableButtonText = "Distro Update Available";
     internal const string DebianUpgradeButtonText = "Upgrade DwemerDistro";
+    // Where a routine update is retried by hand now that Settings has no Update Distro card of its own.
+    internal const string SystemUpdateRetryReference = "Update Distro in Settings > First-Time Setup";
 
     // Segoe MDL2 Assets, the icon font the rail and caption buttons already use. The badge is a
     // shape, so the top button's signal never rests on colour alone.
@@ -439,13 +441,13 @@ echo "CHIM-MCP installed and enabled."
         _systemUpdateRunningButtonText ?? SystemUpdateIdleActionLabel;
 
     /// <summary>
-    /// What the idle button is called. Upgrade DwemerDistro has its own button in the top bar, so Settings' Update Distro
+    /// What the idle routine update is called. Upgrade DwemerDistro has its own button in the top bar, so this label
     /// always names the routine update and recovery it runs.
     /// </summary>
     internal string SystemUpdateIdleActionLabel => BuildSystemUpdateIdleButtonText(SystemUpdateState);
 
-    /// <summary>The button's name as the status and help lines refer to it.</summary>
-    private static string SystemUpdateActionReference => SystemUpdateDefaultButtonText;
+    /// <summary>The manual retry as the status and help lines refer to it.</summary>
+    private static string SystemUpdateActionReference => SystemUpdateRetryReference;
 
     /// <summary>
     /// A running label owns the button for as long as the run lasts. Passing null hands the button
@@ -516,7 +518,7 @@ echo "CHIM-MCP installed and enabled."
         SystemUpdateAvailability state,
         string? installedVersion,
         string? availableVersion,
-        string actionLabel = SystemUpdateDefaultButtonText)
+        string actionLabel = SystemUpdateRetryReference)
     {
         var installed = NormalizeSystemVersion(installedVersion);
         var available = NormalizeSystemVersion(availableVersion);
@@ -601,7 +603,7 @@ echo "CHIM-MCP installed and enabled."
         SystemUpdateAvailability state,
         string? installedVersion,
         string? availableVersion,
-        string actionLabel = SystemUpdateDefaultButtonText)
+        string actionLabel = SystemUpdateRetryReference)
     {
         if (!canRunUpdateOperation)
         {
@@ -2217,8 +2219,9 @@ echo "CHIM-MCP installed and enabled."
     }
 
     /// <summary>
-    /// Settings' Update Distro: the routine update and the recovery action. It never starts a fresh Debian 13 upgrade;
-    /// that is the top bar's Upgrade DwemerDistro, which asks first.
+    /// The confirmed routine update and recovery action. No Settings card binds it any more; First-Time Setup's Update Distro
+    /// step and the reopen sync are the routine retries. It never starts a fresh Debian 13 upgrade; that is the top bar's
+    /// Upgrade DwemerDistro, which asks first.
     /// </summary>
     private async Task UpdateSystemAsync()
     {
@@ -2251,7 +2254,7 @@ echo "CHIM-MCP installed and enabled."
 
     /// <summary>
     /// The same run as <see cref="RunSystemUpdateAsync"/>, also saying why a run did not succeed.
-    /// <paramref name="migrationEntry"/> is set only by Update Distro in Settings and the reopen sync: while the Debian Trixie
+    /// <paramref name="migrationEntry"/> is set only by the confirmed routine update and the reopen sync: while the Debian Trixie
     /// migration is pending they pass Core's preserve flag to update.sh and update_gws. Only <paramref name="startSystemUpgrade"/>,
     /// set solely after the user confirmed Upgrade DwemerDistro, may begin the upgrade.
     /// Quickstart and the mod-update batch keep Core's plain update and only finish an upgrade already under way.
@@ -2403,7 +2406,7 @@ echo "CHIM-MCP installed and enabled."
         {
             LauncherLogService.Startup($"Launcher version sync skipped: {currentVersion} is already recorded.");
             // A reopen never begins a Debian 13 upgrade: an unfinished one was resumed above, and a new one is only
-            // offered (by the system update check) and started from Update Distro once the user confirms it.
+            // offered (by the system update check) and started from Upgrade DwemerDistro once the user confirms it.
             return;
         }
 
@@ -4575,7 +4578,7 @@ fi
                     CompactDistroErrorColor);
                 MessageBox.Show(
                     "The launcher could not safely locate the distro's disk file. Nothing was deleted or stopped.\n\n" +
-                    "Restart Windows and try again. If the problem continues, run Update Distro first.",
+                    "Restart Windows and try again. If the problem continues, run Update Distro in Settings > First-Time Setup first.",
                     CompactDistroSettingName,
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
@@ -4592,10 +4595,10 @@ fi
             var cleanupProbe = await _wsl.RunBashAsync(DistroStorageProbeCommand, user: "root").ConfigureAwait(true);
             if (!cleanupProbe.Succeeded)
             {
-                SetCompactDistroStatus("Update Distro first, then run Compact Distro again.", CompactDistroWarningColor);
+                SetCompactDistroStatus("Run Update Distro in Settings > First-Time Setup, then run Compact Distro again.", CompactDistroWarningColor);
                 MessageBox.Show(
                     "This installation does not have the safe storage cleanup tool yet.\n\n" +
-                    "Run Update Distro, then run Compact Distro again. Nothing was deleted or stopped.",
+                    "Run Update Distro in Settings > First-Time Setup, then run Compact Distro again. Nothing was deleted or stopped.",
                     CompactDistroSettingName,
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);

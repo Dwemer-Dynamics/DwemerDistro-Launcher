@@ -1237,7 +1237,7 @@ public sealed partial class AssistantViewModel : ObservableObject
             }
             if (!AssistantCliService.GetBool(Prop(capabilities.Data, "features"), "agent"))
             {
-                SetState(AssistantState.RuntimeAbsent, "This DwemerDistro Core does not provide the assistant yet. Run Update Distro.");
+                SetState(AssistantState.RuntimeAbsent, "This DwemerDistro Core does not provide the assistant yet. Run Update Distro in Settings > First-Time Setup.");
                 return;
             }
 
@@ -1245,7 +1245,7 @@ public sealed partial class AssistantViewModel : ObservableObject
             var apiVersion = Prop(api, "version");
             if (apiVersion.ValueKind != JsonValueKind.Number || !apiVersion.TryGetInt32(out var apiProtocolVersion) || apiProtocolVersion != 1)
             {
-                SetState(AssistantState.RuntimeAbsent, "Update Distro to connect this version of Assistant, then try again.");
+                SetState(AssistantState.RuntimeAbsent, "Run Update Distro in Settings > First-Time Setup to connect this version of Assistant, then try again.");
                 return;
             }
 
@@ -1753,7 +1753,7 @@ public sealed partial class AssistantViewModel : ObservableObject
             return status.ErrorCode switch
             {
                 "invalid_argument" or "unsupported" or AssistantCliResult.Protocol =>
-                    "This DwemerDistro Core cannot repair it from the launcher yet; Update Distro adds a guarded repair. Nothing was changed.",
+                    "This DwemerDistro Core cannot repair it from the launcher yet; Update Distro in Settings > First-Time Setup adds a guarded repair. Nothing was changed.",
                 "busy" => "An assistant session or isolation check is running, so the file could not be checked. Press Connect to try again.",
                 _ => $"The file could not be checked ({Shorten(status.ErrorCode, 40)}). Nothing was changed."
             };
@@ -3095,7 +3095,7 @@ public sealed partial class AssistantViewModel : ObservableObject
             if (ex.Code is -32602 or CodexAppServerClient.MethodNotFound)
             {
                 _historyUnavailable = true;
-                note = "This DwemerDistro Core cannot show this conversation's earlier messages yet. Run Update Distro to see them; they were not deleted.";
+                note = "This DwemerDistro Core cannot show this conversation's earlier messages yet. Run Update Distro in Settings > First-Time Setup to see them; they were not deleted.";
             }
             else
             {
@@ -3648,7 +3648,7 @@ public sealed partial class AssistantViewModel : ObservableObject
             AssistantCliResult.Timeout => "DwemerDistro did not answer the lookup in time.",
             AssistantCliResult.CliMissing or AssistantCliResult.DistroMissing => "the DwemerDistro command is not available.",
             AssistantCliResult.Protocol or "invalid_argument" or "unsupported" or "usage" or "not_found" =>
-                "this DwemerDistro Core does not provide the lookup (Update Distro adds it).",
+                "this DwemerDistro Core does not provide the lookup (Update Distro in Settings > First-Time Setup adds it).",
             _ => $"DwemerDistro reported {Shorten(result.ErrorCode, 40)}."
         };
 
@@ -5180,7 +5180,7 @@ public sealed partial class AssistantViewModel : ObservableObject
             _ => AssistantState.Error
         };
         var detail = state == AssistantState.RuntimeAbsent
-            ? "This DwemerDistro Core does not support the assistant yet. Run Update Distro."
+            ? "This DwemerDistro Core does not support the assistant yet. Run Update Distro in Settings > First-Time Setup."
             : Shorten(result.ErrorMessage.Length > 0 ? result.ErrorMessage : result.ErrorCode, 240);
         SetState(state, detail);
     }

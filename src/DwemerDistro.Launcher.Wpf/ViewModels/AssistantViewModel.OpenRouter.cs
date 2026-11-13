@@ -28,7 +28,7 @@ public sealed partial class AssistantViewModel
     internal const string OpenRouterRole = "OpenRouter";
     internal const string OpenRouterKeyProvider = "openrouter";
     internal const string OpenRouterKeyOrigin = "https://openrouter.ai:443";
-    internal const string OpenRouterCoreTooOldText = "Update DwemerDistro Core to use OpenRouter. Run Update Distro, then Connect again.";
+    internal const string OpenRouterCoreTooOldText = "Update DwemerDistro Core to use OpenRouter. Run Update Distro in Settings > First-Time Setup, then Connect again.";
     internal const string OpenRouterDefaultModel = "z-ai/glm-5.3";
     internal const string OpenRouterIdleText = "Press Connect to use your global OpenRouter key from API Keys.";
     private const string OpenRouterKeyInUseText = "Uses your global OpenRouter key from API Keys. DwemerDistro reads it on each message.";
@@ -359,7 +359,7 @@ public sealed partial class AssistantViewModel
             ? models.EnumerateArray().Select(model => AssistantCliService.GetString(model, "id")).ToHashSet(StringComparer.Ordinal)
             : [];
         var usable = OpenRouterModels.Where(model => offered.Contains(model.Id)).ToList();
-        if (usable.Count == 0) throw new AppServerException(0, "DwemerDistro offered none of the OpenRouter models this launcher supports. Run Update Distro.");
+        if (usable.Count == 0) throw new AppServerException(0, "DwemerDistro offered none of the OpenRouter models this launcher supports. Run Update Distro in Settings > First-Time Setup.");
         Models.Clear();
         foreach (var model in usable) Models.Add(model);
 

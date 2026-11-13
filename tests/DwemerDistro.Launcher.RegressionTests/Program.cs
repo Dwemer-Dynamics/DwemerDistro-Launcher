@@ -2092,7 +2092,7 @@ try
                && pg17Stopped.SpaceChecks == 0 && !pg17Stopped.Calls.Any(call => call.Contains("auto"))
                && pg17Stopped.WaitEvents.SequenceEqual([1, 0]),
             "Stopping the wait must postpone the upgrade, change nothing, and keep the update unfinished.");
-        Assert(MainWindowViewModel.DescribeDatabaseUpdateFailure(pg17Stopped.Result).Contains("run Update Distro again", StringComparison.Ordinal)
+        Assert(MainWindowViewModel.DescribeDatabaseUpdateFailure(pg17Stopped.Result).Contains("run Update Distro in Settings > First-Time Setup again", StringComparison.Ordinal)
                && MainWindowViewModel.BuildUpdateDatabaseStatus(pg17Stopped.Result, waited: true) is { } pg17Postponed
                && pg17Postponed.Text.Contains("Nothing was changed", StringComparison.Ordinal),
             "A postponed upgrade must say nothing changed and how it finishes.");
@@ -2772,6 +2772,41 @@ try
            && trixieBadCopy.Registrations.ContainsKey(trixieBadCopy.CopyName!) && trixieBadCopyRun.Result.Message.Contains(trixieBadCopy.CopyName!, StringComparison.Ordinal),
         "A copy that does not hold Core's token cancels the fence; the copy is named and left registered, nothing is unregistered.");
 
+    // Stopped once the copy is imported: during its check, and inside the import itself after it registered the copy.
+    using (var trixieCopyStop = new CancellationTokenSource())
+    {
+        var stopDuringCheck = NewTrixie();
+        stopDuringCheck.Hook = (distro, _) =>
+        {
+            if (distro != LauncherConstants.DistroName) trixieCopyStop.Cancel();
+            return null;
+        };
+        var checkRun = await RunTrixie(stopDuringCheck, workToken: trixieCopyStop.Token);
+        var checkCopy = stopDuringCheck.Registrations[stopDuringCheck.CopyName!];
+        Assert(checkRun.Result.Outcome == TrixieMaintenanceOutcome.NotStarted && !stopDuringCheck.Calls.Contains("upgrade")
+               && stopDuringCheck.Guest(LauncherConstants.DistroName) is { Phase: "cancelled", Fence: false }
+               && checkRun.Journal.Read().Journal is { Phase: TrixieJournalPhase.Cancelled, CopyVerified: true, Recovery: { } kept } && kept == checkCopy
+               && checkRun.Result.Message.Contains(checkCopy.Name, StringComparison.Ordinal),
+            "A stop after the recovery copy is imported keeps it in the journal and names it; the cancel never overwrites that record.");
+
+        var stopInImport = NewTrixie();
+        var importHost = stopInImport.Host();
+        var importStore = new TrixieJournalStore(Path.Combine(stopInImport.Root, "journal.json"));
+        var importRun = await new TrixieUpdateMigration(importHost with
+        {
+            ImportAsync = async (name, folder, archive, log, token) =>
+            {
+                await importHost.ImportAsync(name, folder, archive, log, token);
+                throw new OperationCanceledException();
+            }
+        }, importStore, () => true, null).RunAsync(_ => { }, true, default, default);
+        var importCopy = stopInImport.Registrations[stopInImport.CopyName!];
+        Assert(importRun.Outcome == TrixieMaintenanceOutcome.NotStarted && !stopInImport.Calls.Contains("upgrade")
+               && importStore.Read().Journal is { Phase: TrixieJournalPhase.Cancelled, CopyVerified: false, Recovery: { } tracked } && tracked == importCopy
+               && importRun.Message.Contains(importCopy.Name, StringComparison.Ordinal),
+            "An import stopped after it registered the copy records that exact registration before cancelling, so it is not stranded.");
+    }
+
     var trixieMovedDisk = NewTrixie();
     trixieMovedDisk.AfterExport = () => trixieMovedDisk.Registrations[LauncherConstants.DistroName] =
         trixieMovedDisk.Original with { VhdFileName = "other.vhdx" };
@@ -3397,8 +3432,8 @@ try
             .Contains("repairs a distro that cannot report it", StringComparison.Ordinal),
         "The unknown state must point at Update Distro as the recovery action.");
     Assert(MainWindowViewModel.BuildSystemStatusText(SystemUpdateAvailability.Failed, null, null)
-            .Contains("Run Update Distro to retry", StringComparison.Ordinal),
-        "A failed update must offer the retry instead of going quiet.");
+            .Contains("Run Update Distro in Settings > First-Time Setup to retry", StringComparison.Ordinal),
+        "A failed update must offer a retry that still exists instead of going quiet.");
 
     // The badge is a glyph, so the top button's signal survives a display that drops its colour.
     Assert(MainWindowViewModel.BuildSystemUpdateBadgeGlyph(SystemUpdateAvailability.UpdateAvailable)
@@ -3544,9 +3579,10 @@ try
            && coreNotice.Details!.StartsWith("Stopped during the core update (exit 1):", StringComparison.Ordinal)
            && coreNotice.Details.Contains("[redacted]", StringComparison.Ordinal)
            && !coreNotice.Details.Contains("hf_abcdefghijklmnopqrstuvwxyz", StringComparison.Ordinal)
-           && coreNotice.NextStep.Contains("Open Settings", StringComparison.Ordinal)
-           && coreNotice.NextStep.Contains("show the console", StringComparison.Ordinal),
-        "A failed startup sync must reuse the redacted stage/exit summary and point to Settings without retrying.");
+           && coreNotice.NextStep.Contains("Reopen the launcher to retry", StringComparison.Ordinal)
+           && coreNotice.NextStep.Contains("Settings > First-Time Setup", StringComparison.Ordinal)
+           && coreNotice.NextStep.Contains("Show the console", StringComparison.Ordinal),
+        "A failed startup sync must reuse the redacted stage/exit summary and point to a retry that still exists, without retrying.");
     var timeoutNotice = MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.TimedOut, null, null, false, false);
     var errorNotice = MainWindowViewModel.BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Error, null, "boom token=hf_abcdefghijklmnopqrstuvwxyz " + new string('x', 400), false, false);
     Assert(timeoutNotice is { IsWarning: false, Details: null } && timeoutNotice.Heading.Contains("timed out", StringComparison.Ordinal)

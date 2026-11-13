@@ -395,7 +395,7 @@ public sealed class CommunityModService : IDisposable
         if (!result.Succeeded) throw new IOException(CustomModService.DescribeFailure(result));
         var status = JsonNode.Parse(result.StandardOutput)?.AsObject();
         if (status?["schema_version"]?.GetValue<int>() != 1 || status["mods"] is not JsonArray mods)
-            throw new InvalidDataException("Could not read installed servers. Update Distro and try again.");
+            throw new InvalidDataException("Could not read installed servers. Run Update Distro in Settings > First-Time Setup and try again.");
         var entry = mods.FirstOrDefault(n => n?["id"]?.GetValue<string>() == release.Id)?.AsObject();
         if (entry is not null && (Text(entry, "repository") != release.Repository || Text(entry, "install_mode") != "release"))
             throw new IOException("This mod id belongs to another repository or a legacy server. Nothing was changed.");

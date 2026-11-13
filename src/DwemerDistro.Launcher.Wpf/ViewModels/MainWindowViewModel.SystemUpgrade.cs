@@ -38,7 +38,7 @@ public sealed partial class MainWindowViewModel
 
     internal const string SystemUpgradeBlockedMessage =
         "DwemerDistro's Debian Trixie system upgrade is unfinished, so the server, mods and components stay stopped to protect " +
-        "the recovery copy. Run Update Distro in Settings to finish or check it.";
+        "the recovery copy. Reopen the launcher to finish or check it.";
 
     /// <summary>Where the offline recovery copies are written; Import Distro Backup opens here when it exists.</summary>
     internal static string SystemUpgradeBackupRoot => Path.Combine(
@@ -268,7 +268,7 @@ public sealed partial class MainWindowViewModel
         TrixieMaintenanceOutcome.Completed => (result.Message, "green"),
         TrixieMaintenanceOutcome.Restored => (result.Message.TrimEnd('.') + ".", "yellow"),
         TrixieMaintenanceOutcome.RecoveryRequired => ($"Debian Trixie upgrade needs recovery: {result.Message.TrimEnd('.')}. " +
-            "The server, mods and components stay stopped until Update Distro finishes or verifies it.", "red"),
+            "The server, mods and components stay stopped until the launcher finishes or verifies it; reopen the launcher to retry.", "red"),
         _ when result.LeavesWritesBlocked => ($"Debian Trixie upgrade unfinished: {result.Message.TrimEnd('.')}.", "red"),
         _ => ($"Debian Trixie upgrade not done this time: {result.Message.TrimEnd('.')}. It is tried again on a later launch.", "yellow")
     };
@@ -296,14 +296,14 @@ public sealed partial class MainWindowViewModel
                     ? "The launcher could not confirm that the Debian Trixie upgrade finished."
                     : "The launcher can't read its record of the Debian Trixie upgrade, so it can't tell how far an upgrade got. It changed nothing.") + stopped,
                 details,
-                $"Don't import or restore a backup over this distro: it may hold progress newer than any backup. Use Update Distro in Settings to check it again; if it still isn't finished, {help}.",
+                $"Don't import or restore a backup over this distro: it may hold progress newer than any backup. Reopen the launcher to check it again; if it still isn't finished, {help}.",
                 IsWarning: false);
         if (facts.PastGameplayBoundary)
             return new(title, "DwemerDistro's Debian Trixie upgrade needs a final check",
                 "The upgraded distro passed its check and the launcher began releasing its services, so it may already hold new game progress. " +
                 "Its release could not be confirmed." + stopped,
                 details,
-                $"Use Update Distro in Settings to finish it. Don't restore the Bookworm recovery copy: it is older than this distro and would discard progress made since the upgrade. If it still can't finish, {help}.",
+                $"Reopen the launcher to finish it. Don't restore the Bookworm recovery copy: it is older than this distro and would discard progress made since the upgrade. If it still can't finish, {help}.",
                 IsWarning: false);
         var copy = facts.ProvenCopyPath is { } path
             ? $" A checked recovery copy from before the upgrade is at {path}; Core's fence kept game progress from being saved after it was made."
@@ -313,8 +313,8 @@ public sealed partial class MainWindowViewModel
             copy + stopped,
             details,
             facts.ProvenCopyPath is null
-                ? $"Use Update Distro in Settings to check it again. Don't import an older backup over this distro; {help}."
-                : $"Use Update Distro in Settings to check it again. If it still needs recovery, {help} before restoring that copy.",
+                ? $"Reopen the launcher to check it again. Don't import an older backup over this distro; {help}."
+                : $"Reopen the launcher to check it again. If it still needs recovery, {help} before restoring that copy.",
             IsWarning: false);
     }
 
@@ -417,12 +417,11 @@ public sealed partial class MainWindowViewModel
     /// <summary>Modeless and only navigates: its Upgrade DwemerDistro opens the same recheck and review as the top-bar button.</summary>
     internal static StartupDistroUpdateNotice BuildDebianUpgradeAvailableNotice(TrixieUpgradeOffer offer) => new(
         DebianUpgradeButtonText,
-        "Upgrade DwemerDistro is available",
-        "This upgrade moves DwemerDistro from Debian 12 to Debian 13. You can keep playing for now; it starts only when you choose it." +
-        (offer.HasRoom ? string.Empty : " There isn't enough free disk space for it yet."),
+        "Upgrade available",
+        "Roughly 10-20 minutes. You can review the upgrade before starting." +
+        (offer.HasRoom ? string.Empty : " Free up disk space before starting."),
         null,
-        $"When you have time, choose {DebianUpgradeButtonText} to review it; the same button sits left of Start at the top of the launcher. " +
-        "Our tests took 12 to 31 minutes, sometimes longer, and you can't play while it runs.",
+        "Close this window to keep playing.",
         IsWarning: true,
         PrimaryActionText: DebianUpgradeButtonText);
 
@@ -527,7 +526,7 @@ public sealed partial class MainWindowViewModel
         { Outcome: TrixieMaintenanceOutcome.Completed } => ("Upgrade DwemerDistro finished: DwemerDistro now runs Debian 13. You can start the server and play again.",
             System.Windows.MessageBoxImage.Information),
         { LeavesWritesBlocked: true } => ((BuildSystemUpgradeConsoleLine(result)?.Text ?? result.Message) +
-            " Choose Update Distro in Settings to finish or check it.", System.Windows.MessageBoxImage.Error),
+            " Reopen the launcher to finish or check it.", System.Windows.MessageBoxImage.Error),
         { Outcome: TrixieMaintenanceOutcome.Restored } => (BuildSystemUpgradeConsoleLine(result)?.Text ?? result.Message,
             System.Windows.MessageBoxImage.Warning),
         _ => (Capitalize(result.Message.TrimEnd('.')) + ".", System.Windows.MessageBoxImage.Warning)

@@ -120,7 +120,7 @@ internal static class CoreLocalChangesGuard
         done
         if [ -s "$work/conflicts" ]; then
             while IFS= read -r line; do printf '>> Not overwritten: %s\n' "$line"; done < "$work/conflicts"
-            printf '[ERROR] Local changes would be overwritten by the update (%s). No local file was changed; move or undo them, then run Update Distro.\n' \
+            printf '[ERROR] Local changes would be overwritten by the update (%s). No local file was changed; move or undo them, then run Update Distro in Settings > First-Time Setup.\n' \
                 "$(awk -F ': ' 'NR <= 3 { printf "%s%s", (NR > 1 ? ", " : ""), $1 } END { if (NR > 3) printf ", and %d more", NR - 3 }' "$work/conflicts")"
             exit @DEFERRED_EXIT@
         fi

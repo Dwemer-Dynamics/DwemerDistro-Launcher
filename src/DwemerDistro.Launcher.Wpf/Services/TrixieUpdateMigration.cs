@@ -864,12 +864,14 @@ internal sealed class TrixieUpdateMigration(
                 return await CancelAsync(entry, "the recovery copy did not verify: " + check.Reason, log).ConfigureAwait(false);
             entry = Save(entry with { BackupBytes = check.Bytes, BackupSha256 = check.Sha256 }, TrixieJournalPhase.Exported);
             log($"Recovery copy written ({check.Bytes:N0} bytes, SHA-256 {check.Sha256}).{Environment.NewLine}");
-            return await ProveCopyAsync(entry, token, log, workToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             return await CancelAsync(entry, "the recovery copy was stopped before it finished", log).ConfigureAwait(false);
         }
+
+        // Outside the catch: the check journals the import, so its own stops cancel from what it last saved.
+        return await ProveCopyAsync(entry, token, log, workToken).ConfigureAwait(false);
     }
 
     /// <summary>Imports the export as its own registration beside the distro and boots it to prove it holds the fence.</summary>
@@ -883,16 +885,25 @@ internal sealed class TrixieUpdateMigration(
         entry = Save(entry with { Recovery = new TrixieRegistration(name, "", folder, "", null) }, TrixieJournalPhase.ProvingCopy);
 
         log($"Checking the recovery copy by starting it on its own as {name}." + Environment.NewLine);
-        var import = await host.ImportAsync(name, folder, entry.BackupPath!, log, workToken).ConfigureAwait(false);
+        CommandResult import;
+        try
+        {
+            import = await host.ImportAsync(name, folder, entry.BackupPath!, log, workToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // The import may have registered the copy before it stopped: one that is ours is recorded, so it is named, never lost.
+            if (ImportedCopy(entry, name, folder) is { } partial) entry = Save(entry with { Recovery = partial }, TrixieJournalPhase.ProvingCopy);
+            return await CancelAsync(entry, "the recovery copy's check was stopped while it was imported", log).ConfigureAwait(false);
+        }
+
+        if (ImportedCopy(entry, name, folder) is { } imported) entry = Save(entry with { Recovery = imported }, TrixieJournalPhase.ProvingCopy);
         if (!import.Succeeded) return await CancelAsync(entry, $"the recovery copy could not be imported for its check (exit {import.ExitCode})", log).ConfigureAwait(false);
-        var copy = host.ReadRegistration(name);
-        if (copy is null || SameId(copy, entry.Registration) || copy.DiskFileId is null
-            || !SamePath(copy.BasePath, folder) || copy.DiskFileId == entry.Registration.DiskFileId)
+        if (entry.Recovery is not { Id.Length: > 0 } copy)
             return await CancelAsync(entry, "the recovery copy's WSL registration is not the one that was imported", log).ConfigureAwait(false);
         if (host.ReadVolumeFreeSpace(copy.DiskPath)?.Volume is not { } copyVolume
             || !string.Equals(copyVolume, host.ReadVolumeFreeSpace(entry.Registration.DiskPath)?.Volume, StringComparison.OrdinalIgnoreCase))
             return await CancelAsync(entry, "the recovery copy's disk is not on the distro's volume", log).ConfigureAwait(false);
-        entry = Save(entry with { Recovery = copy }, TrixieJournalPhase.ProvingCopy);
 
         var proof = await ProveGuestAsync(name, entry, token, viaCore: false).ConfigureAwait(false);
         var stopped = await host.TerminateAsync(name, CancellationToken.None).ConfigureAwait(false);
@@ -904,9 +915,18 @@ internal sealed class TrixieUpdateMigration(
 
         entry = Save(entry with { CopyVerified = true }, TrixieJournalPhase.CopyProven);
         log("The recovery copy started on its own and holds the same fence, token and database seal." + Environment.NewLine);
-        workToken.ThrowIfCancellationRequested();
+        // Last stop before packages change; the proven journal stays, so a refused cancel can still restore.
+        if (workToken.IsCancellationRequested)
+            return await CancelAsync(entry, "the upgrade was stopped after its recovery copy was checked", log).ConfigureAwait(false);
         return await UpgradeAsync(entry, log).ConfigureAwait(false);
     }
+
+    /// <summary>The registration under the copy's fresh name, only while it is the import: its own GUID, folder and disk.</summary>
+    private TrixieRegistration? ImportedCopy(TrixieJournal entry, string name, string folder) =>
+        host.ReadRegistration(name) is { } copy && !SameId(copy, entry.Registration) && copy.Id.Length > 0 && copy.DiskFileId is not null
+        && SamePath(copy.BasePath, folder) && copy.DiskFileId != entry.Registration.DiskFileId
+            ? copy
+            : null;
 
     private readonly record struct GuestProof(string[]? Seal, string? Problem);
 
@@ -1404,6 +1424,9 @@ internal sealed class TrixieUpdateMigration(
             {
                 case TrixieJournalPhase.Preparing or TrixieJournalPhase.Fenced or TrixieJournalPhase.Exporting or TrixieJournalPhase.Exported
                     or TrixieJournalPhase.ProvingCopy or TrixieJournalPhase.Cancelling:
+                    // An import an earlier launch stopped in may have registered the copy without the journal knowing.
+                    if (entry.Recovery is { Id.Length: 0 } pending && ImportedCopy(entry, pending.Name, pending.BasePath) is { } found)
+                        entry = Save(entry with { Recovery = found }, entry.Phase);
                     return await CancelAsync(entry, entry.Note ?? "an earlier launch stopped before the recovery copy was proven", log).ConfigureAwait(false);
                 case TrixieJournalPhase.Upgraded:
                     return await VerifyAsync(entry, log).ConfigureAwait(false);
@@ -1534,7 +1557,7 @@ internal sealed class TrixieUpdateMigration(
         (entry.BackupPath is { } path && entry.BackupSha256 is not null
             ? $". The offline recovery copy made inside Core's fence is {path} (SHA-256 {entry.BackupSha256})"
             : string.Empty)
-        + (entry.Recovery is { Id.Length: > 0 } copy ? $"; its checked import is the WSL distro {copy.Name}" : string.Empty);
+        + (entry.Recovery is { Id.Length: > 0 } copy ? $"; its {(entry.CopyVerified ? "checked" : "unchecked")} import is the WSL distro {copy.Name}" : string.Empty);
 
     private static string LeftoverCopyClause(TrixieJournal entry) =>
         entry.Recovery is { Id.Length: > 0 } copy

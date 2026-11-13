@@ -283,7 +283,9 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Opens Settings at the distro section and focuses Update Distro; pressing it still asks first.</summary>
+    /// <summary>
+    /// Opens Settings at First-Time Setup, whose Update Distro step is the manual retry. Opening it changes nothing on its own.
+    /// </summary>
     private void ShowSystemUpdateSettings()
     {
         SettingsNavButton.IsChecked = true;
@@ -294,9 +296,9 @@ public partial class MainWindow : Window
                 return;
             }
 
-            DistroUpdateSection.BringIntoView();
-            // Disabled while another operation runs; the section is still in view and its status says why.
-            UpdateDistroButton.Focus();
+            FirstTimeSetupButton.BringIntoView();
+            // Disabled while another operation runs or an unfinished Debian upgrade blocks writes; the row stays in view.
+            FirstTimeSetupButton.Focus();
         });
     }
 

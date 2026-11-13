@@ -240,7 +240,7 @@ public sealed class LmStudioService(WslService wsl)
     {
         var result = await wsl.RunDistroAsUserAsync("dwemer", [Helper, command], cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!result.Succeeded)
-            throw new InvalidOperationException("Update Distro first, then retry LLM Studio. " + result.StandardOutput.Trim());
+            throw new InvalidOperationException("Run Update Distro in Settings > First-Time Setup first, then retry LLM Studio. " + result.StandardOutput.Trim());
         using var document = JsonDocument.Parse(result.StandardOutput);
         return document.RootElement.Clone();
     }
@@ -395,7 +395,7 @@ public sealed class LmStudioService(WslService wsl)
         }
         catch (JsonException)
         {
-            throw new InvalidOperationException("Update Distro first, then retry LLM Studio. " + result.StandardOutput.Trim());
+            throw new InvalidOperationException("Run Update Distro in Settings > First-Time Setup first, then retry LLM Studio. " + result.StandardOutput.Trim());
         }
         if (!result.Succeeded)
             throw new InvalidOperationException(Text(submitted, "error") ?? "LLM Studio could not start the operation.");
@@ -531,7 +531,7 @@ public sealed class LmStudioService(WslService wsl)
         {
         }
         if (!result.Succeeded || reply.ValueKind != JsonValueKind.Object)
-            throw new InvalidOperationException(Text(reply, "error") ?? "LLM Studio did not answer. Update Distro if this keeps failing.");
+            throw new InvalidOperationException(Text(reply, "error") ?? "LLM Studio did not answer. Run Update Distro in Settings > First-Time Setup if this keeps failing.");
         return reply;
     }
 

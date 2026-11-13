@@ -91,7 +91,7 @@ public sealed class LmStudioLibraryItem : ObservableObject
     /// </summary>
     public static string? DeleteProblem(LmStudioLibraryItem item, LmStudioOverview? overview, bool busy, bool distroAvailable) =>
         overview is not { Installed: true } ? "LLM Studio's status is not known yet."
-        : !overview.CanDeleteModels ? "Update Distro to delete models from here."
+        : !overview.CanDeleteModels ? "Run Update Distro in Settings > First-Time Setup to delete models from here."
         : item.IsLoaded ? $"Unload {item.Name} before deleting it. Deleting never unloads a model."
         : item.HasStartupRole ? $"{item.Name} is a saved startup model. Choose another startup model or None, save, then delete it."
         : !distroAvailable ? "Unavailable while distro maintenance runs."
@@ -863,7 +863,7 @@ public sealed partial class MainWindowViewModel
         {
             // Helper output is left out; Update Distro covers an old or missing helper.
             if (token.IsCancellationRequested) return;
-            ShowLmStudioUnavailable("Could not read LLM Studio's status. Select Refresh to try again, or Update Distro if it keeps failing.");
+            ShowLmStudioUnavailable("Could not read LLM Studio's status. Select Refresh to try again, or run Update Distro in Settings > First-Time Setup if it keeps failing.");
         }
     }
 
@@ -1098,7 +1098,7 @@ public sealed partial class MainWindowViewModel
             : string.Empty;
         // An older helper has no delete job.
         if (overview.Installed && overview.Downloaded.Count > 0 && !overview.CanDeleteModels)
-            note = (note + " Update Distro to delete models from here.").TrimStart();
+            note = (note + " Run Update Distro in Settings > First-Time Setup to delete models from here.").TrimStart();
         LmStudioLibraryNote = note;
     }
 
@@ -1313,7 +1313,7 @@ public sealed partial class MainWindowViewModel
             LmStudioCatalogDialogue = catalog.Dialogue.Select(LmStudioCatalogEntry).ToList();
             LmStudioCatalogDecision = catalog.Decision.Select(LmStudioCatalogEntry).ToList();
             LmStudioCatalogNote = catalog.Dialogue.Count + catalog.Decision.Count == 0
-                ? "This distro's catalog lists no recommended models. Update Distro, or use the full studio."
+                ? "This distro's catalog lists no recommended models. Run Update Distro in Settings > First-Time Setup, or use the full studio."
                 : string.Empty;
         }
         catch (Exception error)
@@ -1321,7 +1321,7 @@ public sealed partial class MainWindowViewModel
             if (!_shutdownCts.IsCancellationRequested && generation == _lmStudioCatalogGeneration)
                 LmStudioCatalogNote = error is OperationCanceledException
                     ? "LLM Studio did not answer in time. Try again."
-                    : "Could not read the recommended models. Try again, or Update Distro if it keeps failing.";
+                    : "Could not read the recommended models. Try again, or run Update Distro in Settings > First-Time Setup if it keeps failing.";
         }
         finally
         {

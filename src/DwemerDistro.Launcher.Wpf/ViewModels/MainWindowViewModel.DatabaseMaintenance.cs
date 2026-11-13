@@ -142,11 +142,11 @@ public sealed partial class MainWindowViewModel
 
         AppendLog($"{actionName} unavailable: {DatabaseMaintenanceToolPath} was not found.{Environment.NewLine}", "red");
         SetDatabaseMaintenanceStatus(
-            "Failed. This distro does not have the database maintenance tool. Run Update Distro first. Nothing was changed.",
+            "Failed. This distro does not have the database maintenance tool. Run Update Distro in Settings > First-Time Setup first. Nothing was changed.",
             CompactDistroErrorColor);
         MessageBox.Show(
             "This installation does not have the database maintenance tool yet.\n\n" +
-            "Run Update Distro, then try again. Nothing was changed.",
+            "Run Update Distro in Settings > First-Time Setup, then try again. Nothing was changed.",
             DatabaseMaintenanceSettingName,
             MessageBoxButton.OK,
             MessageBoxImage.Error);
@@ -619,7 +619,7 @@ public sealed partial class MainWindowViewModel
             "was not finished. Open the console for details.",
             CompactDistroErrorColor),
         Pg17MigrationOutcome.Deferred => (
-            "Upgrade postponed. Nothing was changed. Update Distro finishes the upgrade the next time it runs with no game open.",
+            "Upgrade postponed. Nothing was changed. To finish it, close any open game and run Update Distro in Settings > First-Time Setup.",
             CompactDistroNeutralColor),
         Pg17MigrationOutcome.Failed => (
             "The distro update could not upgrade the database, so the update was not finished. Open the console for details.",
@@ -635,14 +635,14 @@ public sealed partial class MainWindowViewModel
         result is not null
             ? BuildUpdateDatabaseStatus(result, waited)
             : waited
-                ? ("Upgrade postponed. Nothing was changed. Update Distro finishes the upgrade the next time it runs with no game open.",
+                ? ("Upgrade postponed. Nothing was changed. To finish it, close any open game and run Update Distro in Settings > First-Time Setup.",
                     CompactDistroNeutralColor)
                 : null;
 
     internal static string DescribeDatabaseUpdateFailure(Pg17MigrationResult result) =>
         $" during the PostgreSQL 17 database upgrade: {result.Message.TrimEnd('.')}." +
         (result.Outcome == Pg17MigrationOutcome.Deferred
-            ? " Close the game and run Update Distro again."
+            ? " Close the game, then run Update Distro in Settings > First-Time Setup again."
             : " Full output: Logs\\launcher-operations.log.");
 
     private CancellationTokenSource BeginDatabaseUpgradeWait(CancellationToken updateToken)

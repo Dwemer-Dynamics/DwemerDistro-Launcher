@@ -502,7 +502,7 @@ public sealed partial class AssistantCliService : IAssistantCli
         if (result.ExitCode is 126 or 127 ||
             combined.Contains("No such file or directory", StringComparison.OrdinalIgnoreCase) ||
             combined.Contains("execvpe", StringComparison.OrdinalIgnoreCase))
-            return AssistantCliResult.Failure(AssistantCliResult.CliMissing, "This DwemerDistro has no ddistro command. Run Update Distro.");
+            return AssistantCliResult.Failure(AssistantCliResult.CliMissing, "This DwemerDistro has no ddistro command. Run Update Distro in Settings > First-Time Setup.");
         return AssistantCliResult.Failure(AssistantCliResult.Protocol, $"DwemerDistro returned no assistant response (exit code {result.ExitCode}).");
     }
 
