@@ -23,8 +23,8 @@
         </Style>
     </Window.Resources>
 
-    <!-- Modeless and only reports: the caller owns the run and closes this before its result dialog. Hide closes it
-         without stopping anything, so Enter or Esc never cancels an upgrade. -->
+    <!-- Modeless and only reports: the caller owns the run and closes this before its result dialog. Hide, Esc and the
+         title-bar close all just close it without stopping anything; the top bar's Show upgrade progress opens it again. -->
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -58,7 +58,14 @@
                          AutomationProperties.Name="Upgrade in progress"
                          AutomationProperties.LabeledBy="{Binding ElementName=PhaseTextBlock}" />
 
-            <!-- The latest real output from the step: a log line, a recovery copy's size, or a game it waits for. -->
+            <!-- Ticks every second while open, so a step that prints nothing for minutes still visibly moves. Not a
+                 live region: a screen reader hears each new phase, not the clock. -->
+            <TextBlock x:Name="ElapsedTextBlock"
+                       Style="{StaticResource DialogCaptionText}"
+                       Margin="0,6,0,0"
+                       AutomationProperties.Name="Time elapsed" />
+
+            <!-- The latest real output from the step: a log line, the data backup's bytes written, or a game it waits for. -->
             <TextBlock x:Name="DetailTextBlock"
                        Style="{StaticResource DialogCaptionText}"
                        Margin="0,8,0,0"
@@ -70,7 +77,7 @@
             <TextBlock x:Name="NoteTextBlock"
                        Style="{StaticResource DialogCaptionText}"
                        Margin="0,14,0,0"
-                       Text="Keep the launcher open until it finishes. Hiding this window doesn't stop it; the console shows the full output." />
+                       Text="Some steps are quiet for several minutes. Keep the launcher open until it finishes; hiding this window doesn't stop it, and Show upgrade progress in the top bar opens it again." />
         </StackPanel>
 
         <Border Grid.Row="1"
@@ -87,7 +94,7 @@
                         MinHeight="36"
                         Style="{StaticResource GameCenter.Button}"
                         AutomationProperties.Name="Hide"
-                        AutomationProperties.HelpText="Hides this window. The upgrade keeps running and the launcher reports when it finishes."
+                        AutomationProperties.HelpText="Hides this window. The upgrade keeps running; choose Show upgrade progress in the top bar to see it again."
                         Click="HideButton_Click" />
             </WrapPanel>
         </Border>

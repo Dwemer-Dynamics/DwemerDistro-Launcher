@@ -486,12 +486,12 @@
                          offer says so and nothing runs in its place. The label only changes while its own recheck or run
                          is going. The copper ring around it pulses briefly when the offer appears; only its opacity moves,
                          it is never hit-tested, and MainWindow skips it when Windows turns client-area animation off or
-                         uses high contrast. -->
+                         uses high contrast. While an upgrade shows progress, the same button reads Show upgrade progress and
+                         only reopens that window; it never starts, stops or changes the run. -->
                     <Grid Margin="0,0,8,0" VerticalAlignment="Center"
                           Visibility="{Binding IsDebianUpgradeBarVisible, Converter={StaticResource BoolToVisibility}}">
-                        <Button x:Name="UpgradeDwemerDistroButton" Command="{Binding UpgradeDwemerDistroCommand}"
+                        <Button x:Name="UpgradeDwemerDistroButton"
                                 Padding="10,6" ToolTipService.ShowOnDisabled="True"
-                                AutomationProperties.Name="Upgrade DwemerDistro"
                                 AutomationProperties.ItemStatus="{Binding DebianUpgradeTopBarText}"
                                 AutomationProperties.HelpText="{Binding DebianUpgradeAvailableText}"
                                 ToolTip="{Binding DebianUpgradeAvailableText}">
@@ -499,9 +499,15 @@
                                 <!-- Copper fill like the mod panels' primary action; hover, pressed and disabled are
                                      re-stated because the base outline style would otherwise win. -->
                                 <Style TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.CopperOutlineButton}">
+                                    <Setter Property="Command" Value="{Binding UpgradeDwemerDistroCommand}" />
+                                    <Setter Property="AutomationProperties.Name" Value="Upgrade DwemerDistro" />
                                     <Setter Property="Background" Value="{DynamicResource GameCenter.Copper}" />
                                     <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
                                     <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsUpgradeProgressShown}" Value="True">
+                                            <Setter Property="Command" Value="{Binding ShowUpgradeProgressCommand}" />
+                                            <Setter Property="AutomationProperties.Name" Value="Show upgrade progress" />
+                                        </DataTrigger>
                                         <Trigger Property="IsMouseOver" Value="True">
                                             <Setter Property="Background" Value="{DynamicResource GameCenter.CopperHover}" />
                                         </Trigger>

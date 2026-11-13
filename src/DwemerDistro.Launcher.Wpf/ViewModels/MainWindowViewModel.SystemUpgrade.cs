@@ -101,7 +101,7 @@ public sealed partial class MainWindowViewModel
             },
             IsRunningAsync = (name, token) => For(name).DistroRunningAsync(token),
             ExportAsync = (path, _, token) => RunArchiveOperationWithProgressAsync(
-                callback => wsl.ExportDistroAsync(path, callback, token), path, "Recovery copy progress"),
+                callback => wsl.ExportDistroAsync(path, callback, token), path, "Recovery copy progress", isUpgradeBackup: true),
             // WSL 2 explicitly: the copy's disk must be a VHDX that a restore can swap in.
             ImportAsync = (name, folder, archive, output, token) =>
                 wsl.RunWslAsync(["--import", name, folder, archive, "--version", "2"], output, token),
@@ -227,6 +227,10 @@ public sealed partial class MainWindowViewModel
         using var updateCts = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _shutdownCts.Token);
         using var waitCts = BeginDatabaseUpgradeWait(updateCts.Token);
         TrixieMaintenanceResult? result = null;
+        // Only an upgrade already under way is shown, without taking focus; a settled journal is ordinary startup.
+        var showsProgress = _systemUpgradeBlocksWrites && !IsUpgradeProgressShown;
+        if (showsProgress)
+            BeginUpgradeProgress(DebianUpgradeButtonText, "Finishing the DwemerDistro upgrade", "Checking how far the upgrade got.", activate: false);
         try
         {
             var migration = CreateSystemUpgradeMigration(deadline);
@@ -234,6 +238,7 @@ public sealed partial class MainWindowViewModel
             {
                 LauncherLogService.Operation(text);
                 AppendLog(text);
+                ReportUpgradeProgress(detail: text);
             }, allowFreshStart: false, waitCts.Token, updateCts.Token));
             _distroUpdateTask = task;
             result = await task.ConfigureAwait(true);
@@ -242,6 +247,7 @@ public sealed partial class MainWindowViewModel
         }
         finally
         {
+            if (showsProgress) EndUpgradeProgress();
             EndDatabaseUpgradeWait(waitCts);
             RefreshSystemUpgradeGuard();
             ReportSystemUpdateOutcome(result is { AllowsUpdateToFinish: true });
@@ -349,13 +355,15 @@ public sealed partial class MainWindowViewModel
     public bool IsDebianUpgradeAvailable => _debianUpgradeOffer is { Available: true } && !_systemUpgradeBlocksWrites;
 
     /// <summary>The top-bar button stays up through its own recheck and run, even once the journal hides the offer.</summary>
-    public bool IsDebianUpgradeBarVisible => IsDebianUpgradeAvailable || _debianUpgradeRunningText is not null;
+    public bool IsDebianUpgradeBarVisible => IsDebianUpgradeAvailable || _debianUpgradeRunningText is not null || IsUpgradeProgressShown;
 
-    /// <summary>The top-bar button's label: Upgrade DwemerDistro, or what its own recheck or run is doing.</summary>
-    public string DebianUpgradeTopBarText => _debianUpgradeRunningText ?? DebianUpgradeButtonText;
+    /// <summary>The top-bar button's label: Upgrade DwemerDistro, what its own recheck is doing, or Show upgrade progress.</summary>
+    public string DebianUpgradeTopBarText => IsUpgradeProgressShown ? ShowUpgradeProgressText : _debianUpgradeRunningText ?? DebianUpgradeButtonText;
 
     /// <summary>The top-bar button's tooltip and help text.</summary>
-    public string DebianUpgradeAvailableText => _debianUpgradeOffer is { HasRoom: false }
+    public string DebianUpgradeAvailableText => IsUpgradeProgressShown
+        ? "Shows how the upgrade is going. Hiding that window doesn't stop or change the upgrade."
+        : _debianUpgradeOffer is { HasRoom: false }
         ? $"Upgrade DwemerDistro to Debian 13. There isn't enough free disk space for it yet; {DebianUpgradeButtonText} shows what it needs."
         : $"Upgrade DwemerDistro to Debian 13. {DebianUpgradeButtonText} rechecks and asks before anything changes.";
 

@@ -5459,14 +5459,16 @@ fi
         Func<Action<string>, Task<CommandResult>> operation,
         string archivePath,
         string progressLabel,
-        TimeSpan? pollInterval = null)
+        TimeSpan? pollInterval = null,
+        bool isUpgradeBackup = false)
     {
         return await RunPathOperationWithProgressAsync(
                 operation,
                 archivePath,
                 progressLabel,
                 "waiting for archive file...",
-                pollInterval)
+                pollInterval,
+                isUpgradeBackup)
             .ConfigureAwait(false);
     }
 
@@ -5475,11 +5477,12 @@ fi
         string progressPath,
         string progressLabel,
         string waitingMessage,
-        TimeSpan? pollInterval = null)
+        TimeSpan? pollInterval = null,
+        bool isUpgradeBackup = false)
     {
         var interval = pollInterval ?? TimeSpan.FromSeconds(5);
         using var monitorCts = new CancellationTokenSource();
-        var monitorTask = MonitorPathProgressAsync(progressPath, progressLabel, waitingMessage, interval, monitorCts.Token);
+        var monitorTask = MonitorPathProgressAsync(progressPath, progressLabel, waitingMessage, interval, isUpgradeBackup, monitorCts.Token);
 
         try
         {
@@ -5504,18 +5507,21 @@ fi
         string progressLabel,
         string waitingMessage,
         TimeSpan interval,
+        bool isUpgradeBackup,
         CancellationToken cancellationToken)
     {
         long? previousLength = null;
         DateTime? previousWriteUtc = null;
-        // The console line, and the same size in an open upgrade progress window: real bytes written, never a percentage.
-        void Report(string text)
+        // The console keeps the full line. Only an upgrade's own backup reaches the progress window, as the plain bytes
+        // written so far and never a percentage; an import or restore is never labelled a backup there.
+        void Report(string text, long? written)
         {
             AppendLog(text + Environment.NewLine);
-            ReportUpgradeProgress(detail: text);
+            if (isUpgradeBackup)
+                ReportUpgradeProgress(detail: written is { } bytes ? DescribeBackupWritten(bytes) : BackupStartingText);
         }
 
-        Report($"{progressLabel}: {waitingMessage}");
+        Report($"{progressLabel}: {waitingMessage}", null);
 
         while (true)
         {
@@ -5524,7 +5530,7 @@ fi
             var snapshot = TryGetPathProgressSnapshot(progressPath);
             if (snapshot is null)
             {
-                Report($"{progressLabel}: {waitingMessage}");
+                Report($"{progressLabel}: {waitingMessage}", null);
                 continue;
             }
 
@@ -5535,11 +5541,11 @@ fi
                 var deltaText = previousLength is null
                     ? string.Empty
                     : $" ({FormatSignedByteDelta(snapshot.Value.Length - previousLength.Value)})";
-                Report($"{progressLabel}: {FormatByteSize(snapshot.Value.Length)}{deltaText}");
+                Report($"{progressLabel}: {FormatByteSize(snapshot.Value.Length)}{deltaText}", snapshot.Value.Length);
             }
             else
             {
-                Report($"{progressLabel}: still running at {FormatByteSize(snapshot.Value.Length)}");
+                Report($"{progressLabel}: still running at {FormatByteSize(snapshot.Value.Length)}", snapshot.Value.Length);
             }
 
             previousLength = snapshot.Value.Length;

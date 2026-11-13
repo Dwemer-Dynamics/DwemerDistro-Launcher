@@ -1,51 +1,71 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
+using System.Windows.Threading;
+using DwemerDistro.Launcher.Wpf.ViewModels;
 
 namespace DwemerDistro.Launcher.Wpf.Views;
 
 /// <summary>
-/// The modeless progress window for a user-started upgrade: the active phase over an indeterminate bar, and the step's
-/// latest real output. It never cancels anything; hiding it only closes the window. Touch it on the UI thread only.
+/// The modeless progress window for a user-started or resumed upgrade: the active phase over an indeterminate bar, the
+/// time on this step and in total, and the step's latest real output. It only shows <see cref="UpgradeProgressState"/>,
+/// which outlives it, so a reopened window picks up where the hidden one was. It never cancels anything; hiding it only
+/// closes the window. Touch it on the UI thread only.
 /// </summary>
 public partial class UpgradeProgressWindow : Window
 {
     private const int MaxDetailLength = 240;
+    private readonly UpgradeProgressState _state;
+    private readonly DispatcherTimer _clock;
     private bool _closed;
 
-    internal UpgradeProgressWindow(string title, string heading, string phase)
+    internal UpgradeProgressWindow(UpgradeProgressState state)
     {
         InitializeComponent();
-        Title = title;
-        HeadingTextBlock.Text = heading;
-        AutomationProperties.SetName(this, title + " progress");
-        SetPhase(phase);
+        _state = state;
+        Title = state.Title;
+        HeadingTextBlock.Text = state.Heading;
+        AutomationProperties.SetName(this, state.Title + " progress");
+        ShowPhase();
+        ShowDetail();
         MaxHeight = SystemParameters.WorkArea.Height - 24;
-        Closed += (_, _) => _closed = true;
-        Loaded += (_, _) => HideButton.Focus();
+        // The clock runs only while this window is open; the run's start times stay in the state.
+        _clock = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => ShowElapsed(), Dispatcher);
+        ShowElapsed();
+        Closed += (_, _) =>
+        {
+            _closed = true;
+            _clock.Stop();
+        };
+        Loaded += (_, _) =>
+        {
+            if (ShowActivated) HideButton.Focus();
+        };
     }
 
     public bool IsClosed => _closed;
 
     /// <summary>Shows it over the main window when that is visible, centred on screen otherwise.</summary>
-    internal static UpgradeProgressWindow Open(string title, string heading, string phase)
+    internal static UpgradeProgressWindow Open(UpgradeProgressState state, bool activate)
     {
-        var window = new UpgradeProgressWindow(title, heading, phase);
+        var window = new UpgradeProgressWindow(state) { ShowActivated = activate };
         if (System.Windows.Application.Current?.MainWindow is { IsVisible: true } owner) window.Owner = owner;
         else window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
         window.Show();
+        window._clock.Start();
         return window;
     }
 
-    internal void SetPhase(string phase)
+    /// <summary>The state's phase; announced when it changes, and its last phase's detail is already gone.</summary>
+    internal void ShowPhase()
     {
-        if (_closed || string.IsNullOrWhiteSpace(phase) || PhaseTextBlock.Text == phase) return;
-        PhaseTextBlock.Text = phase;
-        AutomationProperties.SetHelpText(ActivityProgressBar, phase);
-        // The last phase's output would read as this one's.
-        DetailTextBlock.Visibility = Visibility.Collapsed;
-        DetailTextBlock.Text = string.Empty;
-        if (AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+        if (_closed || PhaseTextBlock.Text == _state.Phase) return;
+        var announce = PhaseTextBlock.Text.Length > 0;
+        PhaseTextBlock.Text = _state.Phase;
+        AutomationProperties.SetHelpText(ActivityProgressBar, _state.Phase);
+        ShowDetail();
+        ShowElapsed();
+        if (announce && AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
         {
             var peer = UIElementAutomationPeer.FromElement(PhaseTextBlock) ?? UIElementAutomationPeer.CreatePeerForElement(PhaseTextBlock);
             peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
@@ -53,15 +73,19 @@ public partial class UpgradeProgressWindow : Window
     }
 
     /// <summary>One line of the step's own output; not a live region, since a package upgrade prints thousands.</summary>
-    internal void SetDetail(string? detail)
+    internal void ShowDetail()
     {
         if (_closed) return;
-        var line = OneLine(detail);
-        if (line.Length == 0) return;
+        var line = _state.Detail ?? string.Empty;
         DetailTextBlock.Text = line;
-        DetailTextBlock.ToolTip = line;
+        DetailTextBlock.ToolTip = line.Length > 0 ? line : null;
         AutomationProperties.SetHelpText(DetailTextBlock, line);
-        DetailTextBlock.Visibility = Visibility.Visible;
+        DetailTextBlock.Visibility = line.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ShowElapsed()
+    {
+        if (!_closed) ElapsedTextBlock.Text = _state.ElapsedText(DateTime.UtcNow);
     }
 
     /// <summary>Safe to call more than once, and after the user hid it.</summary>
@@ -69,6 +93,7 @@ public partial class UpgradeProgressWindow : Window
     {
         if (_closed) return;
         _closed = true;
+        _clock.Stop();
         Close();
     }
 
