@@ -211,12 +211,28 @@ public sealed class WslService(
     public string? GetDistroRegistrationId() =>
         ReadDistroRegistration((subKeyName, _) => Guid.TryParse(subKeyName, out var _) ? subKeyName : null);
 
-    private string? ReadDistroRegistration(Func<string, RegistryKey, string?> read)
+    /// <summary>
+    /// The WSL 2 registration named <paramref name="distributionName"/>: its GUID, BasePath and VhdFileName exactly as
+    /// WSL records them, so the disk is never assumed to be <c>ext4.vhdx</c>. Null when absent, not WSL 2, or incomplete.
+    /// </summary>
+    internal (string Id, string BasePath, string VhdFileName)? ReadRegistration(string distributionName) =>
+        ReadDistroRegistration<(string, string, string)?>(distributionName, (subKeyName, distroKey) =>
+            Guid.TryParse(subKeyName, out var _) && distroKey.GetValue("Version") is int and 2
+            && distroKey.GetValue("BasePath") is string { Length: > 0 } basePath
+            && distroKey.GetValue("VhdFileName") is string { Length: > 0 } vhdFileName
+                ? (subKeyName, basePath, vhdFileName)
+                : ((string, string, string)?)null);
+
+    private string? ReadDistroRegistration(Func<string, RegistryKey, string?> read) =>
+        ReadDistroRegistration<string?>(DistroName, read);
+
+    /// <returns><c>default</c> when no registration has that distribution name.</returns>
+    private T ReadDistroRegistration<T>(string distributionNameToFind, Func<string, RegistryKey, T> read)
     {
         using var lxssKey = Registry.CurrentUser.OpenSubKey(lxssKeyPath);
         if (lxssKey is null)
         {
-            return null;
+            return default!;
         }
 
         foreach (var subKeyName in lxssKey.GetSubKeyNames())
@@ -228,7 +244,7 @@ public sealed class WslService(
             }
 
             var distributionName = distroKey.GetValue("DistributionName") as string;
-            if (!string.Equals(distributionName, DistroName, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(distributionName, distributionNameToFind, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -236,7 +252,7 @@ public sealed class WslService(
             return read(subKeyName, distroKey);
         }
 
-        return null;
+        return default!;
     }
 
     public string? GetDistroVhdxPath()

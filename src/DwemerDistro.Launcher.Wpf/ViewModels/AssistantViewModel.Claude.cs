@@ -31,7 +31,7 @@ public sealed partial class AssistantViewModel
     internal const string CodexCatalogProvider = "codex";
     internal const string ClaudeEngine = "claude";
     internal const string ClaudeRole = "Claude";
-    internal const string ClaudeCoreTooOldText = "Update DwemerDistro Core to use Claude. Run Update Distro, then Connect again.";
+    internal const string ClaudeCoreTooOldText = "Update DwemerDistro Core to use Claude. Run Update Distro in Settings > First-Time Setup, then Connect again.";
     internal const string ClaudeDefaultModel = "claude-sonnet-5-5";
 
     internal static readonly AssistantModelOption[] ClaudeModels =

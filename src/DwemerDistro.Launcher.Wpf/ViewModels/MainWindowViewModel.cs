@@ -105,6 +105,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     // The top button says what it does; only a confirmed available update says so instead.
     internal const string SystemUpdateDefaultButtonText = "Update Distro";
     internal const string SystemUpdateAvailableButtonText = "Distro Update Available";
+    internal const string DebianUpgradeButtonText = "Upgrade DwemerDistro";
+    // Where a routine update is retried by hand now that Settings has no Update Distro card of its own.
+    internal const string SystemUpdateRetryReference = "Update Distro in Settings > First-Time Setup";
 
     // Segoe MDL2 Assets, the icon font the rail and caption buttons already use. The badge is a
     // shape, so the top button's signal never rests on colour alone.
@@ -244,6 +247,8 @@ echo "CHIM-MCP installed and enabled."
         _launcherReleaseNoticeService = new LauncherReleaseNoticeService();
         _updatePreferences = new UpdatePreferencesService();
         LoadForceGitUpdates();
+        // Read before any command exists, so no writer is ever offered over an unfinished system upgrade.
+        _systemUpgradeBlocksWrites = TrixieJournalStore.BlocksWrites(_systemUpgradeJournal.Read(), _wsl.GetDistroRegistrationId());
         _startAnimationTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(500)
@@ -261,14 +266,16 @@ echo "CHIM-MCP installed and enabled."
         GameProfiles = new ObservableCollection<GameProfile>(GameProfile.CreateCatalog());
         _selectedGame = GameProfiles[0];
 
-        StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsCriticalMaintenanceInProgress && !IsServerRunning && !IsServerStarting);
+        StartServerCommand = new AsyncRelayCommand(StartServerAsync, () => !IsCriticalMaintenanceInProgress && !_systemUpgradeBlocksWrites && !IsServerRunning && !IsServerStarting);
         StopServerCommand = new AsyncRelayCommand(StopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress && (IsServerRunning || IsServerStarting));
         ForceStopServerCommand = new AsyncRelayCommand(ForceStopServerAsync, () => !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
         // Update Distro is also the recovery action, so it stays available whether the distro
         // reports itself as current, out of date, or not at all.
-        UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunUpdateOperation);
+        UpdateSystemCommand = new AsyncRelayCommand(UpdateSystemAsync, CanRunSystemUpdateOperation);
+        UpgradeDwemerDistroCommand = new AsyncRelayCommand(UpgradeDwemerDistroAsync,
+            () => IsDebianUpgradeAvailable && _debianUpgradeRunningText is null && CanRunSystemUpdateOperation());
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder, CanAccessDistro);
-        OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow, CanAccessDistro);
+        OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow, CanWriteDistro);
         InitializeLmStudioCommands();
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady && CanAccessDistro());
         ConfirmForceGitUpdatesCommand = new RelayCommand(ConfirmForceGitUpdates);
@@ -316,14 +323,14 @@ echo "CHIM-MCP installed and enabled."
         ViewLocalWhisperLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/remote-faster-whisper/log.txt"), CanAccessDistro);
         ViewParakeetLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /home/dwemer/parakeet-api-server/log.txt"), CanAccessDistro);
         ViewApacheLogsCommand = new RelayCommand(() => RunCommandInNewWindow("wsl -d DwemerAI4Skyrim3 -u dwemer -- tail -n 100 -f /var/log/apache2/error.log"), CanAccessDistro);
-        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, CanStartExclusiveDistroOperation);
-        DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanAccessDistro);
-        CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, CanStartExclusiveDistroOperation);
+        FixWslDnsCommand = new AsyncRelayCommand(FixWslDnsAsync, () => !_systemUpgradeBlocksWrites && CanStartExclusiveDistroOperation());
+        DistroDoctorCommand = new RelayCommand(OpenDistroDoctorWindow, CanWriteDistro);
+        CompactDistroCommand = new AsyncRelayCommand(CompactDistroAsync, () => !_systemUpgradeBlocksWrites && CanStartExclusiveDistroOperation());
         InitializeDatabaseMaintenanceCommands();
-        OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanAccessDistro);
-        OpenApiKeysCommand = new RelayCommand(OpenApiKeysWindow, CanAccessDistro);
+        OpenCudaConfigCommand = new RelayCommand(() => _ = OpenCudaConfigWindowAsync(), CanWriteDistro);
+        OpenApiKeysCommand = new RelayCommand(OpenApiKeysWindow, CanWriteDistro);
         UpdateLauncherCommand = new AsyncRelayCommand(UpdateLauncherAsync, () => CanUpdateLauncher && !IsCriticalMaintenanceInProgress && !IsLiveFileMutationInProgress);
-        CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanAccessDistro);
+        CleanLogsCommand = new AsyncRelayCommand(CleanLogsAsync, CanWriteDistro);
         GenerateDiagnosticsCommand = new AsyncRelayCommand(GenerateDiagnosticsAsync, CanAccessDistro);
         RefreshConnectionDetailsCommand = new AsyncRelayCommand(RefreshConnectionDetailsAsync);
         CopyConnectionDetailsCommand = new RelayCommand(CopyConnectionDetails, () => _connectionDetailsCts is null);
@@ -431,7 +438,16 @@ echo "CHIM-MCP installed and enabled."
     }
 
     public string SystemUpdateButtonText =>
-        _systemUpdateRunningButtonText ?? BuildSystemUpdateIdleButtonText(SystemUpdateState);
+        _systemUpdateRunningButtonText ?? SystemUpdateIdleActionLabel;
+
+    /// <summary>
+    /// What the idle routine update is called. Upgrade DwemerDistro has its own button in the top bar, so this label
+    /// always names the routine update and recovery it runs.
+    /// </summary>
+    internal string SystemUpdateIdleActionLabel => BuildSystemUpdateIdleButtonText(SystemUpdateState);
+
+    /// <summary>The manual retry as the status and help lines refer to it.</summary>
+    private static string SystemUpdateActionReference => SystemUpdateRetryReference;
 
     /// <summary>
     /// A running label owns the button for as long as the run lasts. Passing null hands the button
@@ -468,13 +484,13 @@ echo "CHIM-MCP installed and enabled."
 
     /// <summary>The compact line under the Components caption. Words first; colour only echoes them.</summary>
     public string SystemStatusText =>
-        BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion);
+        BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion, SystemUpdateActionReference);
 
     public string SystemStatusColor => BuildSystemStatusColor(SystemUpdateState);
 
     public string SystemStatusHelpText =>
-        BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion) +
-        " Update Distro updates DwemerDistro and shared components. Installed mods are not changed.";
+        BuildSystemStatusText(SystemUpdateState, _installedSystemVersion, _availableSystemVersion, SystemUpdateActionReference) +
+        $" {SystemUpdateActionReference} updates DwemerDistro and shared components. Installed mods are not changed.";
 
     public string SystemUpdateBadgeGlyph => BuildSystemUpdateBadgeGlyph(SystemUpdateState);
 
@@ -492,7 +508,7 @@ echo "CHIM-MCP installed and enabled."
         BuildSystemUpdateAccessibleName(SystemUpdateButtonText, SystemUpdateState);
 
     public string UpdateSystemHelpText => BuildUpdateSystemHelpText(
-        CanRunUpdateOperation(), SystemUpdateState, _installedSystemVersion, _availableSystemVersion);
+        CanRunSystemUpdateOperation(), SystemUpdateState, _installedSystemVersion, _availableSystemVersion, SystemUpdateActionReference);
 
     /// <summary>
     /// Every state is spelled out, so someone who cannot see the status line or the badge colour
@@ -501,7 +517,8 @@ echo "CHIM-MCP installed and enabled."
     internal static string BuildSystemStatusText(
         SystemUpdateAvailability state,
         string? installedVersion,
-        string? availableVersion)
+        string? availableVersion,
+        string actionLabel = SystemUpdateRetryReference)
     {
         var installed = NormalizeSystemVersion(installedVersion);
         var available = NormalizeSystemVersion(availableVersion);
@@ -519,10 +536,10 @@ echo "CHIM-MCP installed and enabled."
                 (null, not null) => $"System: update available (latest {available}).",
                 _ => "System: update available."
             },
-            SystemUpdateAvailability.Failed => "System: last update failed. Run Update Distro to retry.",
+            SystemUpdateAvailability.Failed => $"System: last update failed. Run {actionLabel} to retry.",
             // Unknown is also the recovery state: a distro that cannot report its version is exactly
             // the one Update Distro exists to repair.
-            _ => "System: version unknown. Update Distro also repairs a distro that cannot report it."
+            _ => $"System: version unknown. {actionLabel} also repairs a distro that cannot report it."
         };
     }
 
@@ -585,7 +602,8 @@ echo "CHIM-MCP installed and enabled."
         bool canRunUpdateOperation,
         SystemUpdateAvailability state,
         string? installedVersion,
-        string? availableVersion)
+        string? availableVersion,
+        string actionLabel = SystemUpdateRetryReference)
     {
         if (!canRunUpdateOperation)
         {
@@ -593,7 +611,7 @@ echo "CHIM-MCP installed and enabled."
         }
 
         return "Update DwemerDistro and shared components. Installed mods are not changed. " +
-               BuildSystemStatusText(state, installedVersion, availableVersion);
+               BuildSystemStatusText(state, installedVersion, availableVersion, actionLabel);
     }
 
     internal static string? NormalizeSystemVersion(string? version)
@@ -669,6 +687,7 @@ echo "CHIM-MCP installed and enabled."
     }
 
     public bool IsComponentInteractionEnabled =>
+        !_systemUpgradeBlocksWrites &&
         !IsDistroUpdateInProgress &&
         !_isComponentsOperationInProgress &&
         !IsCriticalMaintenanceInProgress &&
@@ -818,6 +837,7 @@ echo "CHIM-MCP installed and enabled."
     public AsyncRelayCommand StopServerCommand { get; }
     public AsyncRelayCommand ForceStopServerCommand { get; }
     public AsyncRelayCommand UpdateSystemCommand { get; }
+    public AsyncRelayCommand UpgradeDwemerDistroCommand { get; }
     public RelayCommand OpenServerFolderCommand { get; }
     public RelayCommand OpenFirstRunSetupCommand { get; }
     public AsyncRelayCommand SaveDashboardAutoOpenCommand { get; }
@@ -1404,6 +1424,12 @@ echo "CHIM-MCP installed and enabled."
             return;
         }
 
+        if (RefuseWhileSystemUpgradeUnfinished())
+        {
+            MessageBox.Show(SystemUpgradeBlockedMessage, "Server Status", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         _wslIp = null;
         ResetStartupPocketTtsState();
         IsServerStarting = true;
@@ -1641,8 +1667,13 @@ echo "CHIM-MCP installed and enabled."
                 ? ParseSystemReleaseVersion(installedResult.StandardOutput)
                 : null;
 
+            // Only with rollout on and no completed or unfinished journal; otherwise the check runs exactly as before.
+            // The preview changes nothing, and Upgrade DwemerDistro still asks before an upgrade starts. The offer has its
+            // own top-bar button, so it no longer marks the routine Update Distro as having an update.
+            await RefreshDebianUpgradeOfferAsync(cancellationToken).ConfigureAwait(false);
+
             ApplySystemUpdateCheckResult(
-                ResolveSystemUpdateAvailability(installedVersion, availableVersion),
+                ResolveSystemUpdateAvailability(installedVersion, availableVersion, null, IsSystemUpgradeRolloutEnabled()),
                 installedVersion,
                 availableVersion);
         }
@@ -2126,6 +2157,7 @@ echo "CHIM-MCP installed and enabled."
     private void RaiseUpdateCommandStates()
     {
         UpdateSystemCommand?.RaiseCanExecuteChanged();
+        UpgradeDwemerDistroCommand?.RaiseCanExecuteChanged();
         CompactDistroCommand?.RaiseCanExecuteChanged();
         RaiseDatabaseMaintenanceCommandStates();
         ExportDistroCommand?.RaiseCanExecuteChanged();
@@ -2186,9 +2218,14 @@ echo "CHIM-MCP installed and enabled."
         SetSystemUpdateState(SystemUpdateAvailability.Failed);
     }
 
+    /// <summary>
+    /// The confirmed routine update and recovery action. No Settings card binds it any more; First-Time Setup's Update Distro
+    /// step and the reopen sync are the routine retries. It never starts a fresh Debian 13 upgrade; that is the top bar's
+    /// Upgrade DwemerDistro, which asks first.
+    /// </summary>
     private async Task UpdateSystemAsync()
     {
-        await RunSystemUpdateAsync(requireConfirmation: true, sourceLabel: "System").ConfigureAwait(true);
+        await RunSystemUpdateAsync(requireConfirmation: true, sourceLabel: "System", migrationEntry: true).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -2207,20 +2244,30 @@ echo "CHIM-MCP installed and enabled."
     private async Task<bool> RunSystemUpdateAsync(
         bool requireConfirmation,
         string sourceLabel,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool migrationEntry = false)
     {
-        return await RunSystemUpdateCoreAsync(requireConfirmation, sourceLabel, cancellationToken).ConfigureAwait(true)
+        return await RunSystemUpdateCoreAsync(requireConfirmation, sourceLabel, cancellationToken,
+                migrationEntry: migrationEntry).ConfigureAwait(true)
             == SystemUpdateRunResult.Succeeded;
     }
 
-    /// <summary>The same run as <see cref="RunSystemUpdateAsync"/>, also saying why a run did not succeed.</summary>
+    /// <summary>
+    /// The same run as <see cref="RunSystemUpdateAsync"/>, also saying why a run did not succeed.
+    /// <paramref name="migrationEntry"/> is set only by the confirmed routine update and the reopen sync: while the Debian Trixie
+    /// migration is pending they pass Core's preserve flag to update.sh and update_gws. Only <paramref name="startSystemUpgrade"/>,
+    /// set solely after the user confirmed Upgrade DwemerDistro, may begin the upgrade.
+    /// Quickstart and the mod-update batch keep Core's plain update and only finish an upgrade already under way.
+    /// </summary>
     private async Task<SystemUpdateRunResult> RunSystemUpdateCoreAsync(
         bool requireConfirmation,
         string sourceLabel,
         CancellationToken cancellationToken = default,
-        PausableDeadline? deadline = null)
+        PausableDeadline? deadline = null,
+        bool migrationEntry = false,
+        bool startSystemUpgrade = false)
     {
-        if (!CanRunUpdateOperation())
+        if (!CanRunSystemUpdateOperation())
         {
             AppendLog("Another server, component, or system operation is already running." + Environment.NewLine, "yellow");
             return SystemUpdateRunResult.NotRun;
@@ -2248,7 +2295,7 @@ echo "CHIM-MCP installed and enabled."
             AppendLog("Updating DwemerDistro core and shared components..." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken, deadline).ConfigureAwait(true);
+            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken, deadline, migrationEntry, startSystemUpgrade).ConfigureAwait(true);
             AppendLog(
                 succeeded
                     ? "System update complete." + Environment.NewLine
@@ -2295,7 +2342,37 @@ echo "CHIM-MCP installed and enabled."
     /// </summary>
     private async Task SyncLauncherVersionAsync(PausableDeadline deadline)
     {
+        // This sync runs inside its own passive distro lease; the system upgrade's cutover excuses it.
+        Volatile.Write(ref _systemUpdateOwnPassiveLeases, 1);
+        try
+        {
+            await SyncLauncherVersionCoreAsync(deadline).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref _systemUpdateOwnPassiveLeases, 0);
+        }
+    }
+
+    private async Task SyncLauncherVersionCoreAsync(PausableDeadline deadline)
+    {
         var cancellationToken = deadline.Token;
+        // Before any writer and before the generic updater: an interrupted system upgrade is resolved on its own.
+        if (_systemUpgradeBlocksWrites)
+        {
+            LauncherLogService.Startup("Launcher version sync: resolving an unfinished system upgrade first.");
+            var recovery = await RunSystemUpgradeStepOnUiAsync(deadline).ConfigureAwait(false);
+            if (recovery is not { LeavesWritesBlocked: false })
+            {
+                AppendLog("Launcher sync stopped: the unfinished Debian Trixie upgrade must be resolved first." + Environment.NewLine, "yellow");
+                if (recovery is not null)
+                    RaiseStartupDistroUpdateNotice(BuildStartupDistroUpdateNotice(SystemUpdateRunResult.Failed, UpdateStageOperatingSystem,
+                        DescribeSystemUpgradeFailure(recovery), _shutdownCts.IsCancellationRequested, markerRecorded: false,
+                        ReadSystemUpgradeNoticeFacts(recovery)));
+                return;
+            }
+        }
+
         var currentVersion = SanitizeLauncherSyncVersion(LauncherConstants.LauncherVersion);
         if (currentVersion is null)
         {
@@ -2328,6 +2405,8 @@ echo "CHIM-MCP installed and enabled."
         if (!ShouldSyncLauncherVersion(marker.StandardOutput, currentVersion))
         {
             LauncherLogService.Startup($"Launcher version sync skipped: {currentVersion} is already recorded.");
+            // A reopen never begins a Debian 13 upgrade: an unfinished one was resumed above, and a new one is only
+            // offered (by the system update check) and started from Upgrade DwemerDistro once the user confirms it.
             return;
         }
 
@@ -2345,7 +2424,8 @@ echo "CHIM-MCP installed and enabled."
                     requireConfirmation: false,
                     sourceLabel: "Launcher sync",
                     cancellationToken,
-                    deadline))
+                    deadline,
+                    migrationEntry: true))
                 .Task
                 .Unwrap()
                 .ConfigureAwait(false);
@@ -2361,9 +2441,17 @@ echo "CHIM-MCP installed and enabled."
         {
             // RunSystemUpdateAsync already printed the failure; only the retry schedule is new here.
             AppendLog("Launcher sync will retry on the next launch." + Environment.NewLine);
+            // Kept local changes are a safe deferral: the console names them, and no dialog interrupts the launch.
+            if (result == SystemUpdateRunResult.Failed && _systemUpdateKeptLocalChanges)
+            {
+                AppendLog("Nothing was changed: the update waits until the local changes listed above are moved or undone." + Environment.NewLine, "yellow");
+                return;
+            }
+
             RaiseStartupDistroUpdateNotice(BuildStartupDistroUpdateNotice(
                 result, _systemUpdateFailureStage, _systemUpdateFailure,
-                _shutdownCts.IsCancellationRequested, markerRecorded: false));
+                _shutdownCts.IsCancellationRequested, markerRecorded: false,
+                ReadSystemUpgradeNoticeFacts(_systemUpgradeFailureResult)));
             return;
         }
 
@@ -2398,6 +2486,19 @@ echo "CHIM-MCP installed and enabled."
             "yellow");
         RaiseStartupDistroUpdateNotice(BuildStartupDistroUpdateNotice(
             SystemUpdateRunResult.Succeeded, null, null, _shutdownCts.IsCancellationRequested, markerRecorded: false));
+    }
+
+    /// <summary>Marshalled like the full update: the step drives the update gate and button state on the UI thread.</summary>
+    private Task<TrixieMaintenanceResult?> RunSystemUpgradeStepOnUiAsync(PausableDeadline deadline) =>
+        _dispatcher.InvokeAsync(() => RunSystemUpgradeStepAsync(deadline)).Task.Unwrap();
+
+    /// <summary>Rollout on and no completed journal for this registration. Reads a file and HKCU only, never WSL.</summary>
+    private bool IsSystemUpgradePossiblyPending()
+    {
+        if (!IsSystemUpgradeRolloutEnabled()) return false;
+        var (journal, unreadable) = _systemUpgradeJournal.Read();
+        return unreadable || journal is not { Phase: TrixieJournalPhase.Completed } completed
+               || !string.Equals(completed.Registration.Id, _wsl.GetDistroRegistrationId(), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -2436,8 +2537,13 @@ echo "CHIM-MCP installed and enabled."
         return $"mkdir -p /home/dwemer && printf '%s' '{safeVersion}' > {LauncherSyncMarkerPath}";
     }
 
-    /// <summary>Prevents mod, component, and system operations from competing for the same WSL files.</summary>
-    private bool CanRunUpdateOperation()
+    /// <summary>
+    /// Prevents mod, component, and system operations from competing for the same WSL files. Every writer but the
+    /// system update also stays off while a Debian Trixie upgrade is unfinished; the system update is what finishes it.
+    /// </summary>
+    private bool CanRunUpdateOperation() => !_systemUpgradeBlocksWrites && CanRunSystemUpdateOperation();
+
+    private bool CanRunSystemUpdateOperation()
     {
         return CanRunUpdateOperation(
             IsDistroUpdateInProgress,
@@ -2703,7 +2809,9 @@ echo "CHIM-MCP installed and enabled."
     /// <paramref name="deadline"/>, when given, is the caller's own timeout behind <paramref name="cancellationToken"/>;
     /// it stands still during each idle recheck while the update waits for a game to close.
     /// </summary>
-    private async Task<bool> RunSharedDistroUpdateAsync(CancellationToken cancellationToken = default, PausableDeadline? deadline = null)
+    private async Task<bool> RunSharedDistroUpdateAsync(
+        CancellationToken cancellationToken = default, PausableDeadline? deadline = null, bool migrationEntry = false,
+        bool startSystemUpgrade = false)
     {
         using var updateCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
         using var waitCts = BeginDatabaseUpgradeWait(updateCts.Token);
@@ -2713,12 +2821,16 @@ echo "CHIM-MCP installed and enabled."
         string? evidence = null;
         var waitedForGames = false;
         Pg17MigrationResult? databaseResult = null;
+        TrixieMaintenanceResult? systemResult = null;
         _systemUpdateFailure = null;
         _systemUpdateFailureStage = null;
+        _systemUpdateKeptLocalChanges = false;
+        _systemUpgradeFailureResult = null;
         _otherDistroUpdateRunning = false;
         LauncherLogService.Operation("START distro and shared components update");
         var migration = CreateUpdateMigration(deadline);
         migration.WaitingForGamesChanged += games => waitedForGames |= games.Count > 0;
+        var systemUpgrade = CreateSystemUpgradeMigration(deadline);
         try
         {
             // Raw output always goes to the operations log; the console shows only core and shared
@@ -2747,7 +2859,8 @@ echo "CHIM-MCP installed and enabled."
             {
                 LauncherLogService.Operation(text);
                 AppendLog(text);
-            }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token, database => databaseResult = database);
+            }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token, database => databaseResult = database,
+                systemUpgrade, system => systemResult = system, migrationEntry, startSystemUpgrade);
             _distroUpdateTask = updateTask;
             var outcome = await updateTask.ConfigureAwait(false);
             var result = outcome.Command;
@@ -2762,14 +2875,20 @@ echo "CHIM-MCP installed and enabled."
                 }
             }
 
-            _otherDistroUpdateRunning = result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode;
+            if (outcome.System is { } system) ReportSystemUpgradeResult(system);
+
+            _otherDistroUpdateRunning = result.ExitCode == DistroUpdateRunner.OtherUpdateRunningExitCode && !IsTrixieFenceRefusal(result.ExitCode, evidence);
             var succeeded = outcome.Succeeded && sharedComponentsStarted;
             if (!succeeded)
             {
-                _systemUpdateFailure = outcome.Database is { AllowsUpdateToFinish: false } blocked
-                    ? DescribeDatabaseUpdateFailure(blocked)
-                    : DescribeSystemUpdateFailure(stage, result.ExitCode, evidence);
-                _systemUpdateFailureStage = stage;
+                _systemUpdateFailure = outcome.System is { AllowsUpdateToFinish: false } unfinished
+                    ? DescribeSystemUpgradeFailure(unfinished)
+                    : outcome.Database is { AllowsUpdateToFinish: false } blocked
+                        ? DescribeDatabaseUpdateFailure(blocked)
+                        : DescribeSystemUpdateFailure(stage, result.ExitCode, evidence);
+                _systemUpdateFailureStage = outcome.System is { AllowsUpdateToFinish: false } ? UpdateStageOperatingSystem : stage;
+                _systemUpgradeFailureResult = outcome.System is { AllowsUpdateToFinish: false } ? outcome.System : null;
+                _systemUpdateKeptLocalChanges = IsLocalChangesDeferral(outcome.KeptLocalChanges, stage, result.ExitCode);
             }
 
             return succeeded;
@@ -2779,6 +2898,7 @@ echo "CHIM-MCP installed and enabled."
             LauncherLogService.Operation($"END distro and shared components update; no exit code: {ex.GetType().Name}; stage {stage}");
             // A timeout or shutdown can still stop the update after auto ended; the database step's own result stands.
             if (databaseResult is not null) LauncherLogService.Operation("PostgreSQL 17 update step: " + databaseResult.Message);
+            if (systemResult is not null) ReportSystemUpgradeResult(systemResult);
             if (BuildInterruptedUpdateDatabaseStatus(databaseResult, waitedForGames) is { } status)
             {
                 SetDatabaseMaintenanceStatus(status.Text, status.Color);
@@ -2789,15 +2909,19 @@ echo "CHIM-MCP installed and enabled."
         finally
         {
             EndDatabaseUpgradeWait(waitCts);
+            RefreshSystemUpgradeGuard();
         }
     }
 
     /// <summary>
     /// Bootstraps the distro checkout when an empty-base installer ships source files without Git metadata,
     /// then provisions the core and shared components. It does not record the release; see
-    /// <see cref="BuildSystemReleaseCommand"/>.
+    /// <see cref="BuildSystemReleaseCommand"/>. With <paramref name="preserveLocalChanges"/> (the Debian Trixie migration),
+    /// <see cref="CoreLocalChangesGuard"/> replaces the plain reset, so local edits are kept or the update stops first.
+    /// <paramref name="passPreserveFlag"/> passes Core's <see cref="CorePreserveLocalChanges"/> to update.sh, through sudo
+    /// with <c>env</c> because sudo resets the environment, and to update_gws; see <see cref="BuildSharedComponentsUpdateCommand"/>.
     /// </summary>
-    internal static string BuildSystemUpdateCommand()
+    internal static string BuildSystemUpdateCommand(bool preserveLocalChanges = false, bool passPreserveFlag = false)
     {
         return
             "export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null " +
@@ -2812,11 +2936,21 @@ echo "CHIM-MCP installed and enabled."
             "git config --file /home/dwemer/.gitconfig --unset-all credential.helper '^manager$'; fi && " +
             $"if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin {DistroRepositoryUrl}; " +
             $"else git remote add origin {DistroRepositoryUrl}; fi && " +
-            "git -c credential.helper= fetch origin && git reset --hard origin/main && " +
+            (preserveLocalChanges
+                ? CoreLocalChangesGuard.BuildFetchAndSyncCommand()
+                : "git -c credential.helper= fetch origin && git reset --hard origin/main") + " && " +
             BuildUpdateStageMarker(UpdateStageCore) +
-            "chmod +x update.sh && echo 'dwemer' | sudo -S -p '' ./update.sh && " +
-            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand();
+            "chmod +x update.sh && echo 'dwemer' | sudo -S -p '' " +
+            (passPreserveFlag ? $"env {CorePreserveLocalChanges} " : string.Empty) + "./update.sh && " +
+            $"echo '{SharedComponentsMarker}' && " + BuildSharedComponentsUpdateCommand(passPreserveFlag);
     }
+
+    /// <summary>
+    /// The guard's own refusal: when the update ran it, it stops the checkout sync with
+    /// <see cref="CoreLocalChangesGuard.DeferredExitCode"/> before any local file changed. A normal, safe deferral.
+    /// </summary>
+    internal static bool IsLocalChangesDeferral(bool guarded, string stage, int exitCode) =>
+        guarded && stage == UpdateStageDownload && exitCode == CoreLocalChangesGuard.DeferredExitCode;
 
     /// <summary>Records the installed system release. Runs only after the core, shared and database steps succeeded.</summary>
     internal static string BuildSystemReleaseCommand()
@@ -3216,6 +3350,7 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task FixWslDnsAsync()
     {
+        if (RefuseWhileSystemUpgradeUnfinished()) return;
         if (MessageBox.Show(
                 "This will update WSL DNS settings, restart WSL, and test github.com resolution.\n\nContinue?",
                 "Fix WSL DNS",
@@ -3278,6 +3413,7 @@ echo "CHIM-MCP installed and enabled."
 
     private void OpenDistroDoctorWindow()
     {
+        if (RefuseWhileSystemUpgradeUnfinished()) return;
         var window = new DistroDoctorWindow(new DistroDoctorViewModel(_wsl))
         {
             Owner = Application.Current.MainWindow
@@ -3287,6 +3423,7 @@ echo "CHIM-MCP installed and enabled."
 
     private async Task CleanLogsAsync()
     {
+        if (RefuseWhileSystemUpgradeUnfinished()) return;
         var command =
             "for file in " +
             "/var/log/apache2/error.log " +
@@ -4441,7 +4578,7 @@ fi
                     CompactDistroErrorColor);
                 MessageBox.Show(
                     "The launcher could not safely locate the distro's disk file. Nothing was deleted or stopped.\n\n" +
-                    "Restart Windows and try again. If the problem continues, run Update Distro first.",
+                    "Restart Windows and try again. If the problem continues, run Update Distro in Settings > First-Time Setup first.",
                     CompactDistroSettingName,
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
@@ -4458,10 +4595,10 @@ fi
             var cleanupProbe = await _wsl.RunBashAsync(DistroStorageProbeCommand, user: "root").ConfigureAwait(true);
             if (!cleanupProbe.Succeeded)
             {
-                SetCompactDistroStatus("Update Distro first, then run Compact Distro again.", CompactDistroWarningColor);
+                SetCompactDistroStatus("Run Update Distro in Settings > First-Time Setup, then run Compact Distro again.", CompactDistroWarningColor);
                 MessageBox.Show(
                     "This installation does not have the safe storage cleanup tool yet.\n\n" +
-                    "Run Update Distro, then run Compact Distro again. Nothing was deleted or stopped.",
+                    "Run Update Distro in Settings > First-Time Setup, then run Compact Distro again. Nothing was deleted or stopped.",
                     CompactDistroSettingName,
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -5044,6 +5181,8 @@ fi
         finally
         {
             SetExclusiveDistroOperationInProgress(false);
+            // A restored recovery copy is a new WSL registration, which an unfinished upgrade's journal no longer blocks.
+            RefreshSystemUpgradeGuard();
             QueueServerStatusRefresh(immediate: true);
             // An import can replace the distro the assistant's task lived in, so it waits for Connect.
             ResumeAssistantAfterMaintenance(reconnect: false);
@@ -5446,11 +5585,14 @@ fi
         return dialog.ShowDialog() == true ? Path.GetFullPath(dialog.FileName) : null;
     }
 
-    // Opens the folder earlier launcher builds kept backups in when it exists, without creating it; Desktop otherwise.
+    // Opens the system upgrade's recovery copies, else the folder earlier launcher builds kept backups in, without
+    // creating either; Desktop otherwise.
     private static string GetImportArchiveInitialDirectory() =>
-        Directory.Exists(DatabaseBackupRoot)
-            ? DatabaseBackupRoot
-            : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        Directory.Exists(SystemUpgradeBackupRoot)
+            ? SystemUpgradeBackupRoot
+            : Directory.Exists(DatabaseBackupRoot)
+                ? DatabaseBackupRoot
+                : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
 
     private string? GetImportInstallPath(string archivePath)
     {
@@ -5800,6 +5942,8 @@ fi
 
     public void OpenFirstRunSetupWindow()
     {
+        // Also reached from the startup check, which no command gate covers.
+        if (RefuseWhileSystemUpgradeUnfinished()) return;
         RunOnUi(() =>
         {
             if (_firstRunSetupWindow is not null)
@@ -5894,6 +6038,7 @@ fi
 
     private void OpenApiKeysWindow()
     {
+        if (RefuseWhileSystemUpgradeUnfinished()) return;
         if (!TryBeginPassiveDistroActivity()) return;
         try
         {
@@ -5905,6 +6050,7 @@ fi
 
     private async Task OpenCudaConfigWindowAsync()
     {
+        if (RefuseWhileSystemUpgradeUnfinished()) return;
         try
         {
             var currentGpu = await GetCurrentGpuSettingAsync().ConfigureAwait(false);

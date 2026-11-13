@@ -69,10 +69,11 @@ public sealed partial class MainWindowViewModel
     {
         _pg15DeletedRegistrationId = _updatePreferences.GetPg15DeletedRegistrationId();
         UpgradeDatabaseCommand = new AsyncRelayCommand(
-            () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceUpgradeVerb), CanStartExclusiveDistroOperation);
+            () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceUpgradeVerb),
+            () => !_systemUpgradeBlocksWrites && CanStartExclusiveDistroOperation());
         RollbackDatabaseCommand = new AsyncRelayCommand(
             () => RunDatabaseMaintenanceAsync(DatabaseMaintenanceRollbackVerb),
-            () => CanStartExclusiveDistroOperation()
+            () => !_systemUpgradeBlocksWrites && CanStartExclusiveDistroOperation()
                   && IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId()));
         StopDatabaseUpgradeWaitCommand = new RelayCommand(StopDatabaseUpgradeWait, () => IsDatabaseUpgradeWaiting);
     }
@@ -141,11 +142,11 @@ public sealed partial class MainWindowViewModel
 
         AppendLog($"{actionName} unavailable: {DatabaseMaintenanceToolPath} was not found.{Environment.NewLine}", "red");
         SetDatabaseMaintenanceStatus(
-            "Failed. This distro does not have the database maintenance tool. Run Update Distro first. Nothing was changed.",
+            "Failed. This distro does not have the database maintenance tool. Run Update Distro in Settings > First-Time Setup first. Nothing was changed.",
             CompactDistroErrorColor);
         MessageBox.Show(
             "This installation does not have the database maintenance tool yet.\n\n" +
-            "Run Update Distro, then try again. Nothing was changed.",
+            "Run Update Distro in Settings > First-Time Setup, then try again. Nothing was changed.",
             DatabaseMaintenanceSettingName,
             MessageBoxButton.OK,
             MessageBoxImage.Error);
@@ -162,6 +163,12 @@ public sealed partial class MainWindowViewModel
         if (!CanStartExclusiveDistroOperation())
         {
             ReportExclusiveDistroOperationBusy(DatabaseMaintenanceSettingName);
+            return;
+        }
+
+        if (RefuseWhileSystemUpgradeUnfinished())
+        {
+            SetDatabaseMaintenanceStatus(SystemUpgradeBlockedMessage, CompactDistroWarningColor);
             return;
         }
 
@@ -395,8 +402,15 @@ public sealed partial class MainWindowViewModel
     /// a game to close is not charged to the release step. Takes a <see cref="WslService"/> rather than the
     /// view model's, so a test can run the same sequence against an isolated distro. <paramref name="databaseFinished"/>
     /// gets the database step's result as soon as it ends, before a cancellation can still stop the update.
+    /// With <paramref name="systemUpgrade"/>, an interrupted Debian Trixie upgrade is resolved before anything else
+    /// writes, never after the generic updater, and the upgrade itself follows the verified PostgreSQL 17 step.
+    /// While <see cref="TrixieUpdateMigration.KeepsLocalChangesAsync"/> says the update belongs to the migration, the checkout
+    /// is guarded instead of reset; a <paramref name="migrationEntry"/> (Update Distro and the reopen sync) also passes Core's
+    /// preserve flag to update.sh and update_gws. Only <paramref name="startSystemUpgrade"/>, set solely after the user chose
+    /// Upgrade DwemerDistro, may start a fresh upgrade, and not when a game was open at any point of this run: the user is
+    /// asked to confirm again instead. Every other run only finishes an upgrade already under way.
     /// </summary>
-    internal static async Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
+    internal static Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
         WslService wsl,
         Pg17UpdateMigration migration,
         Action<string> output,
@@ -404,7 +418,60 @@ public sealed partial class MainWindowViewModel
         TimeSpan phaseTimeout,
         CancellationToken cancellationToken,
         CancellationToken waitToken,
-        Action<Pg17MigrationResult>? databaseFinished = null)
+        Action<Pg17MigrationResult>? databaseFinished = null,
+        TrixieUpdateMigration? systemUpgrade = null,
+        Action<TrixieMaintenanceResult>? systemUpgradeFinished = null,
+        bool migrationEntry = false,
+        bool startSystemUpgrade = false) =>
+        RunSharedDistroUpdatePipelineAsync((command, lines, token) => DistroUpdateRunner.RunAsync(wsl, command, lines, token),
+            migration, output, migrationLog, phaseTimeout, cancellationToken, waitToken, databaseFinished, systemUpgrade,
+            systemUpgradeFinished, migrationEntry, startSystemUpgrade);
+
+    /// <summary>The same pipeline with the scripted phases run by <paramref name="runUpdate"/>, so a test sees each command.</summary>
+    internal static async Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineAsync(
+        Func<string, Action<string>, CancellationToken, Task<CommandResult>> runUpdate,
+        Pg17UpdateMigration migration,
+        Action<string> output,
+        Action<string> migrationLog,
+        TimeSpan phaseTimeout,
+        CancellationToken cancellationToken,
+        CancellationToken waitToken,
+        Action<Pg17MigrationResult>? databaseFinished = null,
+        TrixieUpdateMigration? systemUpgrade = null,
+        Action<TrixieMaintenanceResult>? systemUpgradeFinished = null,
+        bool migrationEntry = false,
+        bool startSystemUpgrade = false)
+    {
+        // The user's Start applies to the moment they confirmed with no game open; a game seen since voids it.
+        var gameSeen = false;
+        void OnGames(IReadOnlyList<string> games) => gameSeen |= games.Count > 0;
+        migration.WaitingForGamesChanged += OnGames;
+        try
+        {
+            return await RunSharedDistroUpdatePipelineCoreAsync(runUpdate, migration, output, migrationLog, phaseTimeout,
+                cancellationToken, waitToken, databaseFinished, systemUpgrade, systemUpgradeFinished, migrationEntry,
+                startSystemUpgrade, () => gameSeen).ConfigureAwait(false);
+        }
+        finally
+        {
+            migration.WaitingForGamesChanged -= OnGames;
+        }
+    }
+
+    private static async Task<SharedDistroUpdateResult> RunSharedDistroUpdatePipelineCoreAsync(
+        Func<string, Action<string>, CancellationToken, Task<CommandResult>> runUpdate,
+        Pg17UpdateMigration migration,
+        Action<string> output,
+        Action<string> migrationLog,
+        TimeSpan phaseTimeout,
+        CancellationToken cancellationToken,
+        CancellationToken waitToken,
+        Action<Pg17MigrationResult>? databaseFinished,
+        TrixieUpdateMigration? systemUpgrade,
+        Action<TrixieMaintenanceResult>? systemUpgradeFinished,
+        bool migrationEntry,
+        bool startSystemUpgrade,
+        Func<bool> gameSeen)
     {
         try
         {
@@ -414,16 +481,28 @@ public sealed partial class MainWindowViewModel
         {
             return new(new CommandResult(1, "", ""), new(Pg17MigrationOutcome.Deferred, "Update postponed before provisioning."));
         }
+
+        if (systemUpgrade is not null)
+        {
+            var recovered = await systemUpgrade.RunAsync(migrationLog, allowFreshStart: false, waitToken, cancellationToken).ConfigureAwait(false);
+            if (recovered.LeavesWritesBlocked)
+            {
+                systemUpgradeFinished?.Invoke(recovered);
+                return new(new CommandResult(1, "", ""), null, recovered);
+            }
+        }
         CommandResult core;
+        bool keepLocal;
         using (var phase = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
             phase.CancelAfter(phaseTimeout);
-            core = await DistroUpdateRunner.RunAsync(wsl, BuildSystemUpdateCommand(), output, phase.Token).ConfigureAwait(false);
+            keepLocal = systemUpgrade is not null && await systemUpgrade.KeepsLocalChangesAsync(phase.Token).ConfigureAwait(false);
+            core = await runUpdate(BuildSystemUpdateCommand(keepLocal, keepLocal && migrationEntry), output, phase.Token).ConfigureAwait(false);
         }
 
         if (!core.Succeeded)
         {
-            return new(core, null);
+            return new(core, null, KeptLocalChanges: keepLocal);
         }
 
         output(UpdateStageMarkerLine(UpdateStageDatabase));
@@ -432,20 +511,44 @@ public sealed partial class MainWindowViewModel
         cancellationToken.ThrowIfCancellationRequested();
         if (!database.AllowsUpdateToFinish)
         {
-            return new(core, database);
+            return new(core, database, KeptLocalChanges: keepLocal);
+        }
+
+        TrixieMaintenanceResult? system = null;
+        if (systemUpgrade is not null)
+        {
+            // A fresh upgrade starts only on the user's confirmed Start, after an update that kept local changes; any other
+            // run only finishes or checks one, so a reopen or a routine Update Distro never begins it.
+            var approved = startSystemUpgrade && keepLocal && migrationEntry && systemUpgrade.RolloutEnabled;
+            var voided = approved && gameSeen();
+            if (approved && !voided) output(UpdateStageMarkerLine(UpdateStageOperatingSystem));
+            system = await systemUpgrade.RunAsync(migrationLog, allowFreshStart: approved && !voided, waitToken, cancellationToken).ConfigureAwait(false);
+            if (voided && system.Outcome == TrixieMaintenanceOutcome.NotNeeded)
+                system = new(TrixieMaintenanceOutcome.Deferred, DebianUpgradeVoidedByGameMessage);
+            systemUpgradeFinished?.Invoke(system);
+            // An unfinished upgrade must not be written to, not even by the release marker.
+            if (system.LeavesWritesBlocked) return new(core, database, system, keepLocal);
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         using (var phase = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
             phase.CancelAfter(phaseTimeout);
-            var release = await DistroUpdateRunner.RunAsync(wsl, BuildSystemReleaseCommand(), output, phase.Token).ConfigureAwait(false);
-            return new(release, database);
+            var release = await runUpdate(BuildSystemReleaseCommand(), output, phase.Token).ConfigureAwait(false);
+            return new(release, database, system, keepLocal);
         }
     }
 
-    internal sealed record SharedDistroUpdateResult(CommandResult Command, Pg17MigrationResult? Database)
+    internal const string DebianUpgradeVoidedByGameMessage =
+        "a game was open during the distro update, so Upgrade DwemerDistro did not start the Debian 13 upgrade; nothing was changed. " +
+        "Close the game, then choose Upgrade DwemerDistro again";
+
+    /// <param name="System">The Debian Trixie step; a deferred or refused one still lets the release be recorded.</param>
+    /// <param name="KeptLocalChanges">The core update ran with the checkout guard, as part of the migration.</param>
+    internal sealed record SharedDistroUpdateResult(
+        CommandResult Command, Pg17MigrationResult? Database, TrixieMaintenanceResult? System = null, bool KeptLocalChanges = false)
     {
-        public bool Succeeded => Command.Succeeded && Database is { AllowsUpdateToFinish: true };
+        public bool Succeeded => Command.Succeeded && Database is { AllowsUpdateToFinish: true } && System is null or { AllowsUpdateToFinish: true };
     }
 
     private Pg17UpdateMigration CreateUpdateMigration(PausableDeadline? deadline)
@@ -516,7 +619,7 @@ public sealed partial class MainWindowViewModel
             "was not finished. Open the console for details.",
             CompactDistroErrorColor),
         Pg17MigrationOutcome.Deferred => (
-            "Upgrade postponed. Nothing was changed. Update Distro finishes the upgrade the next time it runs with no game open.",
+            "Upgrade postponed. Nothing was changed. To finish it, close any open game and run Update Distro in Settings > First-Time Setup.",
             CompactDistroNeutralColor),
         Pg17MigrationOutcome.Failed => (
             "The distro update could not upgrade the database, so the update was not finished. Open the console for details.",
@@ -532,14 +635,14 @@ public sealed partial class MainWindowViewModel
         result is not null
             ? BuildUpdateDatabaseStatus(result, waited)
             : waited
-                ? ("Upgrade postponed. Nothing was changed. Update Distro finishes the upgrade the next time it runs with no game open.",
+                ? ("Upgrade postponed. Nothing was changed. To finish it, close any open game and run Update Distro in Settings > First-Time Setup.",
                     CompactDistroNeutralColor)
                 : null;
 
     internal static string DescribeDatabaseUpdateFailure(Pg17MigrationResult result) =>
         $" during the PostgreSQL 17 database upgrade: {result.Message.TrimEnd('.')}." +
         (result.Outcome == Pg17MigrationOutcome.Deferred
-            ? " Close the game and run Update Distro again."
+            ? " Close the game, then run Update Distro in Settings > First-Time Setup again."
             : " Full output: Logs\\launcher-operations.log.");
 
     private CancellationTokenSource BeginDatabaseUpgradeWait(CancellationToken updateToken)

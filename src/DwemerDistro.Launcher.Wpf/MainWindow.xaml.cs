@@ -10,6 +10,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Shell;
 using DwemerDistro.Launcher.Wpf.Services;
 using DwemerDistro.Launcher.Wpf.ViewModels;
@@ -60,6 +61,8 @@ public partial class MainWindow : Window
     private bool _shutdownStarted;
     private bool _shutdownCompleted;
     private StartupUpdateNoticeWindow? _startupUpdateNotice;
+    // The open notice only says a Debian 13 upgrade can be started, so a failure notice may take its place.
+    private bool _startupUpdateNoticeIsOffer;
 
     public MainWindow()
     {
@@ -69,6 +72,7 @@ public partial class MainWindow : Window
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         _viewModel.ApiKeysPageRequested += (_, _) => ApiKeysNavButton.IsChecked = true;
         _viewModel.StartupDistroUpdateNoticeRaised += ViewModel_StartupDistroUpdateNoticeRaised;
+        _viewModel.DebianUpgradeNoticeRaised += ViewModel_DebianUpgradeNoticeRaised;
         _viewModel.LmStudioTestRequested += ViewModel_LmStudioTestRequested;
         _viewModel.LmStudioLibraryFocusRequested += ViewModel_LmStudioLibraryFocusRequested;
         SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
@@ -198,14 +202,39 @@ public partial class MainWindow : Window
     /// </summary>
     private void ViewModel_StartupDistroUpdateNoticeRaised(object? sender, StartupDistroUpdateNotice notice)
     {
+        // A failure outranks the Upgrade DwemerDistro offer: the top-bar button stays available at any time.
+        if (_startupUpdateNoticeIsOffer)
+        {
+            _startupUpdateNotice?.Close();
+        }
+
+        ShowStartupUpdateNotice(notice, isOffer: false);
+    }
+
+    /// <summary>
+    /// The Upgrade DwemerDistro offer, in the same modeless notice: it never takes focus from a game or blocks the launcher,
+    /// and its Upgrade DwemerDistro button opens the same recheck and review as the top bar. Never over a failure notice.
+    /// </summary>
+    private void ViewModel_DebianUpgradeNoticeRaised(object? sender, StartupDistroUpdateNotice notice) =>
+        ShowStartupUpdateNotice(notice, isOffer: true);
+
+    private void ShowStartupUpdateNotice(StartupDistroUpdateNotice notice, bool isOffer)
+    {
         if (_shutdownStarted || _startupUpdateNotice is not null || !IsLoaded)
         {
             return;
         }
 
         var window = new StartupUpdateNoticeWindow(notice) { Owner = this };
+        if (isOffer)
+        {
+            // Shown without activation so it never pulls focus from whatever the user is doing.
+            window.ShowActivated = false;
+        }
+
         window.Closed += StartupUpdateNotice_Closed;
         _startupUpdateNotice = window;
+        _startupUpdateNoticeIsOffer = isOffer;
         window.Show();
     }
 
@@ -220,6 +249,7 @@ public partial class MainWindow : Window
         if (ReferenceEquals(_startupUpdateNotice, window))
         {
             _startupUpdateNotice = null;
+            _startupUpdateNoticeIsOffer = false;
         }
 
         if (_shutdownStarted)
@@ -231,6 +261,13 @@ public partial class MainWindow : Window
         {
             case StartupUpdateNoticeChoice.OpenSettings:
                 ShowSystemUpdateSettings();
+                break;
+            case StartupUpdateNoticeChoice.PrimaryAction:
+                // The same command as the top-bar button, so it rechecks and asks; disabled while another operation runs.
+                if (_viewModel.UpgradeDwemerDistroCommand.CanExecute(null))
+                    _viewModel.UpgradeDwemerDistroCommand.Execute(null);
+                else
+                    UpgradeDwemerDistroButton.Focus();
                 break;
             case StartupUpdateNoticeChoice.ShowConsole:
                 if (!_isConsoleExpanded)
@@ -246,7 +283,9 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Opens Settings at the distro section and focuses Update Distro; pressing it still asks first.</summary>
+    /// <summary>
+    /// Opens Settings at First-Time Setup, whose Update Distro step is the manual retry. Opening it changes nothing on its own.
+    /// </summary>
     private void ShowSystemUpdateSettings()
     {
         SettingsNavButton.IsChecked = true;
@@ -257,9 +296,9 @@ public partial class MainWindow : Window
                 return;
             }
 
-            DistroUpdateSection.BringIntoView();
-            // Disabled while another operation runs; the section is still in view and its status says why.
-            UpdateDistroButton.Focus();
+            FirstTimeSetupButton.BringIntoView();
+            // Disabled while another operation runs or an unfinished Debian upgrade blocks writes; the row stays in view.
+            FirstTimeSetupButton.Focus();
         });
     }
 
@@ -273,6 +312,18 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainWindowViewModel.IsLmStudioView))
         {
             UpdateLmStudioRefresh();
+        }
+
+        if (e.PropertyName == nameof(MainWindowViewModel.IsDebianUpgradeAvailable))
+        {
+            _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+            {
+                var available = _viewModel.IsDebianUpgradeAvailable;
+                // Only the moment it becomes available, not every re-raise of the same answer.
+                if (available && !_debianUpgradePulseShownForOffer) PulseDebianUpgradeButton();
+                _debianUpgradePulseShownForOffer = available;
+                if (!available) StopDebianUpgradePulse();
+            });
         }
 
         if (e.PropertyName == nameof(MainWindowViewModel.CompactDistroStatusText))
@@ -869,7 +920,38 @@ public partial class MainWindow : Window
         {
             _ = Dispatcher.BeginInvoke(ApplyHighContrastState);
         }
+
+        if (e.PropertyName is nameof(SystemParameters.HighContrast) or nameof(SystemParameters.ClientAreaAnimation)
+            && (SystemParameters.HighContrast || !SystemParameters.ClientAreaAnimation))
+        {
+            _ = Dispatcher.BeginInvoke(StopDebianUpgradePulse);
+        }
     }
+
+    private bool _debianUpgradePulseShownForOffer;
+
+    /// <summary>
+    /// Two soft copper ring pulses around the top-bar Upgrade DwemerDistro button when the offer appears. Only the ring's
+    /// opacity moves, so the label never changes. Off when Windows turns client-area animation off or in high contrast,
+    /// where the button's own fill and label already carry the state.
+    /// </summary>
+    private void PulseDebianUpgradeButton()
+    {
+        // The label check also skips the button's own recheck or run, which owns its text.
+        if (_viewModel.DebianUpgradeTopBarText != MainWindowViewModel.DebianUpgradeButtonText || !UpgradeDwemerDistroButton.IsVisible
+            || !SystemParameters.ClientAreaAnimation || SystemParameters.HighContrast)
+            return;
+        var pulse = new DoubleAnimation(0, 0.85, TimeSpan.FromMilliseconds(450))
+        {
+            AutoReverse = true,
+            RepeatBehavior = new RepeatBehavior(2),
+            EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            FillBehavior = FillBehavior.Stop
+        };
+        UpgradeDwemerDistroPulse.BeginAnimation(OpacityProperty, pulse);
+    }
+
+    private void StopDebianUpgradePulse() => UpgradeDwemerDistroPulse.BeginAnimation(OpacityProperty, null);
 
     private void ApplyHighContrastState()
     {

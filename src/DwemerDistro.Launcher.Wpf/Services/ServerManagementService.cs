@@ -495,7 +495,7 @@ public sealed class ServerManagementService(WslService wsl)
         if (text.Contains("command not found", StringComparison.OrdinalIgnoreCase) ||
             text.Contains("No such file or directory", StringComparison.OrdinalIgnoreCase))
         {
-            return "The distro does not provide ddistro_server yet. Run Update Distro to install the server manager.";
+            return "The distro does not provide ddistro_server yet. Run Update Distro in Settings > First-Time Setup to install the server manager.";
         }
 
         return string.IsNullOrWhiteSpace(text) ? $"Exit code {result.ExitCode}." : text;

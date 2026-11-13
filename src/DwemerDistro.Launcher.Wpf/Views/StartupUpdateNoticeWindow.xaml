@@ -36,7 +36,7 @@
     </Window.Resources>
 
     <!-- A non-modal notice owned by the main window, styled like the mod update dialog. Every button only
-         navigates or closes: retrying stays the Settings Update Distro button, with its own confirmation. -->
+         navigates or closes: retrying is a reopen, or the Update Distro step in Settings > First-Time Setup. -->
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="36" />
@@ -133,7 +133,7 @@
                         Margin="0,0,10,0"
                         IsDefault="True"
                         Style="{StaticResource GameCenter.GoButton}"
-                        AutomationProperties.HelpText="Close this notice and open Settings, where Update Distro can be run again."
+                        AutomationProperties.HelpText="Close this notice and open Settings at First-Time Setup, where its Update Distro step can be run again."
                         Click="OpenSettingsButton_Click" />
                 <Button x:Name="DismissButton"
                         Content="Close"

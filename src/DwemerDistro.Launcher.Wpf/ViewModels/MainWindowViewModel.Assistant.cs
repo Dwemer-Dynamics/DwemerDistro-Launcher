@@ -83,6 +83,7 @@ public sealed partial class MainWindowViewModel : IAssistantHost
         UpdateStageCore => "Updating DwemerDistro core.",
         UpdateStageShared => "Updating DwemerDistro's shared components.",
         UpdateStageDatabase => "Upgrading the DwemerDistro database to PostgreSQL 17.",
+        UpdateStageOperatingSystem => "Upgrading DwemerDistro to Debian Trixie.",
         UpdateStageRelease => "Finishing the DwemerDistro update.",
         _ => "Preparing the DwemerDistro update."
     });
@@ -146,6 +147,13 @@ public sealed partial class MainWindowViewModel : IAssistantHost
     {
         _ = _dispatcher.BeginInvoke(() =>
         {
+            if (_systemUpgradeBlocksWrites)
+            {
+                LauncherLogService.Startup("Assistant startup connection skipped: the system upgrade is unfinished.");
+                EndAssistantStartupHold(SystemUpgradeBlockedMessage);
+                return;
+            }
+
             if (_shutdownCts.IsCancellationRequested || IsCriticalMaintenanceInProgress || !CanRunUpdateOperation())
             {
                 LauncherLogService.Startup("Assistant startup connection skipped: the launcher is closing or busy.");

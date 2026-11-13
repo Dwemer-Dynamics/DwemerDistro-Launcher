@@ -16,8 +16,12 @@ internal enum SystemUpdateRunResult
     Error
 }
 
-/// <summary>What the startup update notice says. <see cref="IsWarning"/> marks an update that did finish.</summary>
-internal sealed record StartupDistroUpdateNotice(string Title, string Heading, string Summary, string? Details, string NextStep, bool IsWarning)
+/// <summary>
+/// What the startup update notice says. <see cref="IsWarning"/> marks an update that did finish. <see cref="PrimaryActionText"/>
+/// replaces Open Settings with a button that opens that action's own review instead.
+/// </summary>
+internal sealed record StartupDistroUpdateNotice(string Title, string Heading, string Summary, string? Details, string NextStep, bool IsWarning,
+    string? PrimaryActionText = null)
 {
     /// <summary>The whole notice as one string, for screen readers and the regression tests.</summary>
     public string ToPlainText() =>
@@ -25,8 +29,8 @@ internal sealed record StartupDistroUpdateNotice(string Title, string Heading, s
 }
 
 /// <summary>
-/// The one notice the automatic launcher-version sync may raise. It only explains; it never retries. Update Distro
-/// in Settings stays the retry, behind the same confirmation and operation gate as always.
+/// The one notice the automatic launcher-version sync may raise. It only explains; it never retries. Reopening the launcher
+/// retries the sync, and Update Distro in Settings > First-Time Setup is the manual retry behind the same operation gate.
 /// </summary>
 public sealed partial class MainWindowViewModel
 {
@@ -38,14 +42,16 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>
     /// Null when there is nothing to report: success, the launcher closing, another update already running (the
-    /// assistant waits for that one), or a run that never started because something else held the distro.
+    /// assistant waits for that one), a run that never started because something else held the distro, or a Debian
+    /// Trixie step that only deferred.
     /// </summary>
     internal static StartupDistroUpdateNotice? BuildStartupDistroUpdateNotice(
         SystemUpdateRunResult result,
         string? failedStage,
         string? failure,
         bool shuttingDown,
-        bool markerRecorded)
+        bool markerRecorded,
+        SystemUpgradeNoticeFacts? systemUpgrade = null)
     {
         if (shuttingDown)
         {
@@ -53,7 +59,7 @@ public sealed partial class MainWindowViewModel
         }
 
         const string title = "Distro update";
-        const string retry = "Open Settings to retry, or show the console for details. The launcher will try again next time it opens.";
+        const string retry = "Reopen the launcher to retry, or run " + SystemUpdateRetryReference + ". Show the console for details.";
         switch (result)
         {
             case SystemUpdateRunResult.Succeeded when markerRecorded:
@@ -82,8 +88,10 @@ public sealed partial class MainWindowViewModel
                     "DwemerDistro's database upgrade didn't finish",
                     "Core and shared components updated, but the PostgreSQL 17 database upgrade did not finish, so the update is not recorded yet. A game that was still open postpones it; nothing in the database was changed then. Installed mods were not changed.",
                     BuildStartupNoticeDetails(failure),
-                    "Close any open game, then use Update Distro in Settings. The launcher will also try again next time it opens.",
+                    "Close any open game, then reopen the launcher, or run " + SystemUpdateRetryReference + ".",
                     IsWarning: true);
+            case SystemUpdateRunResult.Failed when failedStage == UpdateStageOperatingSystem:
+                return BuildSystemUpgradeStartupNotice(title, failure, systemUpgrade);
             case SystemUpdateRunResult.Canceled:
             case SystemUpdateRunResult.TimedOut:
                 return new StartupDistroUpdateNotice(

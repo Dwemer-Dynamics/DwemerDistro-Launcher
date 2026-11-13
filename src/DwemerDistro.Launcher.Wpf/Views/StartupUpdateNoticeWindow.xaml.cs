@@ -13,6 +13,8 @@ internal enum StartupUpdateNoticeChoice
 {
     Close,
     OpenSettings,
+    /// <summary>Opens the notice's own review (Upgrade DwemerDistro), which rechecks and asks before anything changes.</summary>
+    PrimaryAction,
     ShowConsole
 }
 
@@ -23,10 +25,12 @@ internal enum StartupUpdateNoticeChoice
 public partial class StartupUpdateNoticeWindow : Window
 {
     private const double WorkAreaMargin = 12;
+    private readonly bool _hasPrimaryAction;
 
     internal StartupUpdateNoticeWindow(StartupDistroUpdateNotice notice)
     {
         InitializeComponent();
+        _hasPrimaryAction = notice.PrimaryActionText is not null;
 
         Title = notice.Title;
         TitleTextBlock.Text = notice.Title;
@@ -40,6 +44,12 @@ public partial class StartupUpdateNoticeWindow : Window
         DetailsTextBox.Text = notice.Details ?? string.Empty;
         DetailsBorder.Visibility = string.IsNullOrWhiteSpace(notice.Details) ? Visibility.Collapsed : Visibility.Visible;
         NextStepTextBlock.Text = notice.NextStep;
+        if (notice.PrimaryActionText is { } primary)
+        {
+            OpenSettingsButton.Content = primary;
+            AutomationProperties.SetName(OpenSettingsButton, primary);
+            AutomationProperties.SetHelpText(OpenSettingsButton, $"Close this notice and open the {primary} review. Nothing changes until you confirm it there.");
+        }
 
         AutomationProperties.SetName(this, notice.Heading);
         AutomationProperties.SetHelpText(this, notice.ToPlainText());
@@ -64,7 +74,8 @@ public partial class StartupUpdateNoticeWindow : Window
         FitToWorkArea();
     }
 
-    private void OpenSettingsButton_Click(object sender, RoutedEventArgs e) => CloseWith(StartupUpdateNoticeChoice.OpenSettings);
+    private void OpenSettingsButton_Click(object sender, RoutedEventArgs e) => CloseWith(
+        _hasPrimaryAction ? StartupUpdateNoticeChoice.PrimaryAction : StartupUpdateNoticeChoice.OpenSettings);
 
     private void ShowConsoleButton_Click(object sender, RoutedEventArgs e) => CloseWith(StartupUpdateNoticeChoice.ShowConsole);
 

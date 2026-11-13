@@ -431,7 +431,7 @@ public sealed class AssistantMemoryViewModel : ObservableObject
             "refused" => Shorten(result.ErrorMessage, 240),
             "disabled" or "limit_reached" or "not_found" => Shorten(result.ErrorMessage, 240),
             AssistantCliResult.CliMissing or AssistantCliResult.DistroMissing => "the DwemerDistro command is not available.",
-            "invalid_argument" or "usage" or "unsupported" or AssistantCliResult.Protocol => "this DwemerDistro Core has no assistant memory yet. Run Update Distro.",
+            "invalid_argument" or "usage" or "unsupported" or AssistantCliResult.Protocol => "this DwemerDistro Core has no assistant memory yet. Run Update Distro in Settings > First-Time Setup.",
             _ => Shorten(result.ErrorMessage.Length > 0 ? result.ErrorMessage : result.ErrorCode, 240)
         };
     }

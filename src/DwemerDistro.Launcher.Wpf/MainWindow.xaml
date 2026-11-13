@@ -269,7 +269,7 @@
         </Border>
 
         <!-- One header row across the whole window, above the rail: the six destinations on the left
-             and the server controls on the right. Update Distro lives in Settings, not here. Spanning the rail column is what lets
+             and the server controls on the right. Spanning the rail column is what lets
              both fit on a single line down to the 980px minimum without shrinking any text, and it
              sits before the rail in the tree so Tab and F6 read the window top to bottom. -->
         <Border x:Name="HeaderBar" Grid.Row="1" Grid.ColumnSpan="2" Background="{DynamicResource GameCenter.Panel}"
@@ -481,6 +481,53 @@
                     </StackPanel>
                 </Grid>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                    <!-- Upgrade DwemerDistro: only while a fresh Debian 13 upgrade is offered (lab rollout), on every tab,
+                         immediately left of Start. A press rechecks and asks Upgrade DwemerDistro or Later first; a stale
+                         offer says so and nothing runs in its place. The label only changes while its own recheck or run
+                         is going. The copper ring around it pulses briefly when the offer appears; only its opacity moves,
+                         it is never hit-tested, and MainWindow skips it when Windows turns client-area animation off or
+                         uses high contrast. -->
+                    <Grid Margin="0,0,8,0" VerticalAlignment="Center"
+                          Visibility="{Binding IsDebianUpgradeBarVisible, Converter={StaticResource BoolToVisibility}}">
+                        <Button x:Name="UpgradeDwemerDistroButton" Command="{Binding UpgradeDwemerDistroCommand}"
+                                Padding="10,6" ToolTipService.ShowOnDisabled="True"
+                                AutomationProperties.Name="Upgrade DwemerDistro"
+                                AutomationProperties.ItemStatus="{Binding DebianUpgradeTopBarText}"
+                                AutomationProperties.HelpText="{Binding DebianUpgradeAvailableText}"
+                                ToolTip="{Binding DebianUpgradeAvailableText}">
+                            <Button.Style>
+                                <!-- Copper fill like the mod panels' primary action; hover, pressed and disabled are
+                                     re-stated because the base outline style would otherwise win. -->
+                                <Style TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.CopperOutlineButton}">
+                                    <Setter Property="Background" Value="{DynamicResource GameCenter.Copper}" />
+                                    <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.CopperHover}" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.CopperPressed}" />
+                                        </Trigger>
+                                        <Trigger Property="IsEnabled" Value="False">
+                                            <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
+                                            <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                            <!-- Decorative glyph: the accessible name already says what the button does. -->
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" FontWeight="Normal"
+                                           Width="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding DebianUpgradeTopBarText}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                        <Border x:Name="UpgradeDwemerDistroPulse" Margin="-3" CornerRadius="11" BorderThickness="2"
+                                BorderBrush="{DynamicResource GameCenter.CopperStrong}"
+                                Opacity="0" IsHitTestVisible="False" Focusable="False"
+                                SnapsToDevicePixels="True" />
+                    </Grid>
                     <!-- One runtime button: green Start while stopped, red Stop while the
                          server is starting or running, each on its own unchanged command and guard, so
                          Stop stays reachable during startup. Startup progress shows as a small spinner
@@ -2607,8 +2654,7 @@
                                        Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,0" />
                             <!-- One compact system line. It never wraps and its row height is fixed, so no
                                  state can push the components card down; the full sentence stays in the
-                                 tooltip and in the accessible help text. Update Distro itself is in
-                                 Settings - this page does not carry a second copy of it. -->
+                                 tooltip and in the accessible help text. -->
                             <TextBlock Text="{Binding SystemStatusText}" Foreground="{Binding SystemStatusColor}"
                                        Style="{StaticResource GameCenter.Caption}"
                                        TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
@@ -2642,118 +2688,12 @@
                          Section headings break the list up but never split it into columns. -->
                     <StackPanel>
                         <TextBlock Text="SETTINGS" Style="{StaticResource GameCenter.Heading}" />
-                        <TextBlock Text="Distro updates, launcher preferences, setup, diagnostics, and backups."
+                        <TextBlock Text="Launcher preferences, setup, diagnostics, and backups."
                                    Style="{StaticResource GameCenter.Caption}" Margin="0,4,0,16" />
 
-                        <!-- The one manual Update Distro action, and the recovery action: it stays enabled
-                             whenever no other operation is running, whatever the status says. It keeps the
-                             same command, confirmation and gate it had in the header. -->
-                        <TextBlock Text="DISTRO AND SHARED COMPONENTS" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,10" />
-                        <Border x:Name="DistroUpdateSection" Style="{StaticResource GameCenter.SettingRow}">
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel Margin="0,0,16,0">
-                                    <TextBlock Text="Update Distro" Style="{StaticResource GameCenter.SettingRowTitle}" />
-                                    <TextBlock Text="Update DwemerDistro core and shared components. Installed mods are never changed. Use this to retry after a failed or interrupted update."
-                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
-                                    <TextBlock Text="{Binding SystemStatusText}" Foreground="{Binding SystemStatusColor}"
-                                               FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"
-                                               AutomationProperties.Name="System update status"
-                                               AutomationProperties.HelpText="{Binding SystemStatusHelpText}"
-                                               AutomationProperties.LiveSetting="Polite" />
-                                </StackPanel>
-                                <!-- The widest state is reserved by this outer slot rather than by the coloured
-                                     frame, so the description never reflows while the visible button sizes itself
-                                     to whatever it is currently saying; the resting "Update Distro" frame therefore
-                                     hugs its label instead of carrying the available-update text's width all day.
-                                     The badge is an overlay in the button's own right gutter instead of a column, so
-                                     it never pulls the label off the frame's centre. The leading update glyph is the same one Check Update uses, so the
-                                     frame reads as an action before its label is read. -->
-                                <Grid Grid.Column="1" VerticalAlignment="Center">
-                                    <!-- Hidden reservation for the two longest labels - the available-update text and
-                                         the longest running text - each padded by the widest frame any state can ask
-                                         for: 8px padding + 1px border + the 20px badge gutter, per side, plus the
-                                         18px leading glyph on the left. The size and
-                                         weight repeat what the button lends its label, so the reservation measures the
-                                         same text the same way; the face is left to inherit, exactly as the label's
-                                         does. Nothing here is drawn or announced; it only pins the slot width. -->
-                                    <TextBlock Text="Distro Update Available" Visibility="Hidden" Margin="47,0,29,0"
-                                               FontSize="12" FontWeight="SemiBold" />
-                                    <TextBlock Text="Quickstart Updating..." Visibility="Hidden" Margin="47,0,29,0"
-                                               FontSize="12" FontWeight="SemiBold" />
-                                    <Button x:Name="UpdateDistroButton" Command="{Binding UpdateSystemCommand}"
-                                            ToolTipService.ShowOnDisabled="True"
-                                            HorizontalAlignment="Right"
-                                            AutomationProperties.Name="{Binding SystemUpdateAccessibleName}"
-                                            AutomationProperties.HelpText="{Binding UpdateSystemHelpText}"
-                                            ToolTip="{Binding SystemStatusHelpText}">
-                                        <Button.Style>
-                                            <!-- Padding stays symmetric in both states, so the content is centred in the
-                                                 frame either way. It only widens while the badge is up, to open the
-                                                 right gutter the glyph sits in. The copper outline the mod Update
-                                                 buttons rest in marks it as an action; a confirmed update fills it
-                                                 with the copper the mod panels use for their primary action, and a
-                                                 failed update takes a danger outline. Unknown keeps its badge. Colour
-                                                 only echoes the label, badge and status text, which still say which
-                                                 state it is. The fill re-states hover, pressed and disabled because a
-                                                 data trigger would otherwise outrank the inherited ones. -->
-                                            <Style TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.CopperOutlineButton}">
-                                                <Setter Property="Padding" Value="8,6" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsSystemUpdateBadgeVisible}" Value="True">
-                                                        <Setter Property="Padding" Value="28,6" />
-                                                    </DataTrigger>
-                                                    <DataTrigger Binding="{Binding SystemUpdateState}" Value="UpdateAvailable">
-                                                        <Setter Property="Background" Value="{DynamicResource GameCenter.Copper}" />
-                                                        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
-                                                    </DataTrigger>
-                                                    <MultiDataTrigger>
-                                                        <MultiDataTrigger.Conditions>
-                                                            <Condition Binding="{Binding SystemUpdateState}" Value="UpdateAvailable" />
-                                                            <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
-                                                        </MultiDataTrigger.Conditions>
-                                                        <Setter Property="Background" Value="{DynamicResource GameCenter.CopperHover}" />
-                                                    </MultiDataTrigger>
-                                                    <MultiDataTrigger>
-                                                        <MultiDataTrigger.Conditions>
-                                                            <Condition Binding="{Binding SystemUpdateState}" Value="UpdateAvailable" />
-                                                            <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
-                                                        </MultiDataTrigger.Conditions>
-                                                        <Setter Property="Background" Value="{DynamicResource GameCenter.CopperPressed}" />
-                                                    </MultiDataTrigger>
-                                                    <DataTrigger Binding="{Binding SystemUpdateState}" Value="Failed">
-                                                        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Danger}" />
-                                                    </DataTrigger>
-                                                    <Trigger Property="IsEnabled" Value="False">
-                                                        <Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}" />
-                                                        <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}" />
-                                                        <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
-                                                    </Trigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Button.Style>
-                                        <Grid>
-                                            <!-- Decorative: the accessible name already says what the button does. -->
-                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                                <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" FontWeight="Normal"
-                                                           Width="12" Margin="0,0,6,0" VerticalAlignment="Center" />
-                                                <TextBlock Text="{Binding SystemUpdateButtonText}" VerticalAlignment="Center" />
-                                            </StackPanel>
-                                            <!-- The negative margin moves the glyph out of the label's box and into the
-                                                 padding gutter, so it neither widens the content nor lands on a glyph. -->
-                                            <TextBlock Text="{Binding SystemUpdateBadgeGlyph}"
-                                                       Foreground="{Binding SystemUpdateBadgeColor}"
-                                                       FontFamily="Segoe MDL2 Assets" FontSize="12" FontWeight="Normal"
-                                                       HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                       Margin="0,0,-20,0"
-                                                       Visibility="{Binding IsSystemUpdateBadgeVisible, Converter={StaticResource BoolToVisibility}}"
-                                                       AutomationProperties.Name="{Binding SystemStatusText}" />
-                                        </Grid>
-                                    </Button>
-                                </Grid>
-                            </Grid>
-                        </Border>
-
+                        <!-- First-Time Setup is also where a routine distro update is retried by hand: its Update Distro step.
+                             The launcher otherwise updates on its own when it opens, and the Debian 13 upgrade
+                             is the top bar's Upgrade DwemerDistro. -->
                         <TextBlock Text="SETUP" Style="{StaticResource GameCenter.SectionHeading}" Margin="0,0,0,10" />
                         <Border Style="{StaticResource GameCenter.SettingRow}">
                             <Grid>
@@ -2763,7 +2703,7 @@
                                     <TextBlock Text="Open the guided setup flow for fresh installs or when you want to rerun the quickstart checks."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
                                 </StackPanel>
-                                <Button Grid.Column="1" Content="Open" Command="{Binding OpenFirstRunSetupCommand}"
+                                <Button x:Name="FirstTimeSetupButton" Grid.Column="1" Content="Open" Command="{Binding OpenFirstRunSetupCommand}"
                                         Style="{StaticResource GameCenter.SettingRowButton}"
                                         AutomationProperties.Name="Open first-time setup"
                                         AutomationProperties.HelpText="Open the guided setup flow for fresh installs or when you want to rerun the quickstart checks." />
@@ -2911,7 +2851,7 @@
                                     <TextBlock Text="Database Maintenance" Style="{StaticResource GameCenter.SettingRowTitle}" />
                                     <TextBlock Text="Upgrade the database to PostgreSQL 17, or roll back to PostgreSQL 15."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
-                                    <TextBlock Text="Update Distro also does this on its own, with no questions. It waits while a supported game is open and finishes once you close it."
+                                    <TextBlock Text="The automatic distro update also does this on its own, with no questions. It waits while a supported game is open and finishes once you close it."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
                                     <TextBlock Text="Rollback checks for changed data before restoring PostgreSQL 15."
                                                Foreground="{DynamicResource GameCenter.DangerText}"
@@ -2931,13 +2871,13 @@
                                             Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
                                             AutomationProperties.Name="Roll back PostgreSQL 17 database upgrade"
                                             AutomationProperties.HelpText="Rolls back a PostgreSQL 17 upgrade. Only use this before anything is written to the upgraded database; data written since the upgrade is not carried back. You are asked to confirm first, and the confirmation defaults to No." />
-                                    <!-- Shown only while Update Distro holds its database upgrade for an open game, so
+                                    <!-- Shown only while a distro update holds its database upgrade for an open game, so
                                          the wait can always be ended from where its status is shown. -->
                                     <Button Content="Stop waiting" Command="{Binding StopDatabaseUpgradeWaitCommand}"
                                             Visibility="{Binding IsDatabaseUpgradeWaiting, Converter={StaticResource BoolToVisibility}}"
                                             Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
                                             AutomationProperties.Name="Stop waiting to upgrade the database"
-                                            AutomationProperties.HelpText="Update Distro is waiting for an open game to close before upgrading the database to PostgreSQL 17. Stopping postpones the upgrade, changes nothing, and leaves the distro update unfinished so it runs again later." />
+                                            AutomationProperties.HelpText="The distro update is waiting for an open game to close before upgrading the database to PostgreSQL 17. Stopping postpones the upgrade, changes nothing, and leaves the distro update unfinished so it runs again later." />
                                 </StackPanel>
                             </Grid>
                         </Border>

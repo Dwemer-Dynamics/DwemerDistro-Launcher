@@ -94,7 +94,7 @@ internal sealed class Pg17UpdateMigration(
 
     internal const string BackupFolderRequiredMessage =
         "This distro's database maintenance tool is from an older release that needs a backup folder, so the upgrade " +
-        "did not start and the database is still on PostgreSQL 15. Run Update Distro to install the current tool, then try again.";
+        "did not start and the database is still on PostgreSQL 15. Run Update Distro in Settings > First-Time Setup to install the current tool, then try again.";
 
     /// <summary>The last non-empty output line must be exactly one of the five documented words.</summary>
     internal static Pg17Status? ParseStatus(string? output)
