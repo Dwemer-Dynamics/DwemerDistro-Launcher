@@ -25,21 +25,31 @@ internal static class DistroUpdateRunner
         ["flock", "-n", "-E", OtherUpdateRunningExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "--close", LockPath, .. arguments];
 
+    /// <summary>
+    /// The root supervisor script fed to <c>bash -s</c>. Commands built from raw string literals carry the source file's
+    /// CRLF line endings on a Windows checkout, and bash reads a CR as part of a word, so every CRLF and lone CR becomes
+    /// LF before quoting.
+    /// </summary>
+    internal static string BuildScript(string command, string pidFile)
+    {
+        var normalized = command.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        var quotedCommand = "'" + normalized.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
+        // Only the process supervisor runs as root. Git, pip and checkout ownership stay with dwemer.
+        return $"umask 077\nprintf '%s\\n' \"$$\" > {pidFile} || exit 1\n" +
+            "exec timeout --kill-after=10s 30m runuser -u dwemer -- " +
+            $"flock -n -E {OtherUpdateRunningExitCode} --close {LockPath} " +
+            $"bash -c {quotedCommand} </dev/null\n";
+    }
+
     internal static async Task<Models.CommandResult> RunAsync(
         WslService wsl, string command, Action<string> output, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var pidFile = "/run/dwemerdistro-update-" + Guid.NewGuid().ToString("N") + ".pid";
-        var quotedCommand = "'" + command.Replace("'", "'\"'\"'", StringComparison.Ordinal) + "'";
-        // Only the process supervisor runs as root. Git, pip and checkout ownership stay with dwemer.
-        var script = $"umask 077\nprintf '%s\\n' \"$$\" > {pidFile} || exit 1\n" +
-            "exec timeout --kill-after=10s 30m runuser -u dwemer -- " +
-            $"flock -n -E {OtherUpdateRunningExitCode} --close {LockPath} " +
-            $"bash -c {quotedCommand} </dev/null\n";
         try
         {
             var result = await wsl.RunDistroAsUserWithInputAsync("root", ["setsid", "--wait", "bash", "-s"],
-                script, output, cancellationToken).ConfigureAwait(false);
+                BuildScript(command, pidFile), output, cancellationToken).ConfigureAwait(false);
             if (result.ExitCode == OtherUpdateRunningExitCode) output("Another distro update is already running.\n");
             return result;
         }

@@ -3670,6 +3670,36 @@ try
            && !otherUpdateWait.Contains(" -x ", StringComparison.Ordinal),
         "Startup's assistant connection must wait, bounded and with only a shared lock, for another launcher's update to release the update lock.");
 
+    // v3.4.6: the guard's raw string literal carries the source file's CRLF, and the startup sync's bash read each CR.
+    const string updatePid = "/run/dwemerdistro-update-test.pid";
+    var guardedUpdateScript = DistroUpdateRunner.BuildScript(
+        MainWindowViewModel.BuildSystemUpdateCommand(preserveLocalChanges: true, passPreserveFlag: true), updatePid);
+    Assert(DistroUpdateRunner.BuildScript("echo 'a'\nb", updatePid) ==
+               $"umask 077\nprintf '%s\\n' \"$$\" > {updatePid} || exit 1\nexec timeout --kill-after=10s 30m runuser -u dwemer -- " +
+               $"flock -n -E 75 --close {DistroUpdateRunner.LockPath} bash -c 'echo '\"'\"'a'\"'\"'\nb' </dev/null\n"
+           && DistroUpdateRunner.BuildScript("a\r\nb\rc\r\n\r", updatePid) == DistroUpdateRunner.BuildScript("a\nb\nc\n\n", updatePid)
+           && !guardedUpdateScript.Contains('\r'),
+        "The update script keeps an LF command exactly and turns every CRLF and lone CR into LF before quoting it.");
+    var syntaxDistro = await RunningSyntaxCheckDistroAsync();
+    if (syntaxDistro is not null)
+    {
+        // Syntax only: bash -n reads the exact wrapper, then the inner command bash itself unquotes from its exec line.
+        var syntax = await new WslService(new ProcessRunner(), syntaxDistro).RunDistroAsUserWithInputAsync("root", ["bash", "-s"],
+            "IFS= read -r -d '' wrapper <<'__DDISTRO_WRAPPER__'\n" + guardedUpdateScript + "__DDISTRO_WRAPPER__\n" +
+            "bash -n <<< \"$wrapper\" || exit 10\n" +
+            "nl=$'\\n'; cr=$'\\r'; case \"$wrapper\" in *\"${nl}exec \"*) ;; *) exit 11;; esac\n" +
+            "eval \"set -- ${wrapper#*\"${nl}exec \"}\"; for inner; do :; done\n" +
+            "case \"$inner\" in *\"$cr\"*|'') exit 12;; esac\n" +
+            "bash -n -c \"$inner\" || exit 13\necho syntax-ok\n");
+        Assert(syntax.Succeeded && syntax.StandardOutput.Contains("syntax-ok", StringComparison.Ordinal),
+            $"The guarded update wrapper and its inner command must pass bash -n in {syntaxDistro}: exit {syntax.ExitCode} {syntax.StandardError}");
+        Console.WriteLine("Update script syntax check: ran bash -n in " + syntaxDistro);
+    }
+    else
+    {
+        Console.WriteLine("Skipped the update script syntax check: no running WSL distro other than " + LauncherConstants.DistroName + ".");
+    }
+
     var syncMarkerRead = MainWindowViewModel.BuildLauncherSyncMarkerReadCommand();
     Assert(syncMarkerRead.Contains("cat /home/dwemer/.launcher_synced_version", StringComparison.Ordinal)
            && syncMarkerRead.Contains("|| true", StringComparison.Ordinal),
@@ -8537,6 +8567,29 @@ static async Task<(int Status, string Head, string Body)> RawHttpAsync(int port,
     var split = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
     var head = split < 0 ? text : text[..split];
     return (int.Parse(head.Split(' ')[1]), head, split < 0 ? string.Empty : text[(split + 4)..]);
+}
+
+/// <summary>
+/// An already running WSL distro other than the live one, for checks that only parse scripts with <c>bash -n</c>;
+/// null when there is none, so no distro is started for them.
+/// </summary>
+static async Task<string?> RunningSyntaxCheckDistroAsync()
+{
+    try
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("wsl.exe", "--list --running --quiet")
+            { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.Unicode };
+        start.Environment.Remove("WSL_UTF8");
+        using var list = System.Diagnostics.Process.Start(start)!;
+        var names = await list.StandardOutput.ReadToEndAsync();
+        await list.WaitForExitAsync();
+        return list.ExitCode != 0 ? null : names.Replace("\0", "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault(name => !string.Equals(name, LauncherConstants.DistroName, StringComparison.OrdinalIgnoreCase));
+    }
+    catch (System.ComponentModel.Win32Exception)
+    {
+        return null;
+    }
 }
 
 /// <summary>
