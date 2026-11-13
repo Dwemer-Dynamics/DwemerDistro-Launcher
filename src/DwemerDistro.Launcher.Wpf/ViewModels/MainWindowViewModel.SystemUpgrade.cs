@@ -5,10 +5,9 @@ using DwemerDistro.Launcher.Wpf.Services;
 namespace DwemerDistro.Launcher.Wpf.ViewModels;
 
 /// <summary>
-/// The Debian Bookworm to Trixie step of the distro update, through <see cref="TrixieUpdateMigration"/>. Rollout is off
-/// unless <c>"TrixieMaintenanceLab": true</c> is in update preferences; with it off and no journal the launcher does
-/// exactly what it did before. A fresh upgrade starts only after the user confirms Upgrade DwemerDistro in the top
-/// bar; a reopen, Quickstart or a mod update never begins one, and only resumes an upgrade already under way. A
+/// The Debian Bookworm to Trixie step of the distro update, through <see cref="TrixieUpdateMigration"/>. Rollout is on
+/// for every installation; whether a distro is offered the upgrade is decided only by the step's own checks. A fresh
+/// upgrade starts only after the user confirms Upgrade DwemerDistro in the top bar; a reopen, Quickstart or a mod update never begins one, and only resumes an upgrade already under way. A
 /// journal that says an upgrade is unfinished blocks every distro writer here, whatever the rollout, until the step
 /// resolves it.
 /// </summary>
@@ -44,7 +43,8 @@ public sealed partial class MainWindowViewModel
     internal static string SystemUpgradeBackupRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DwemerDistro", "SystemUpgradeBackups");
 
-    private bool IsSystemUpgradeRolloutEnabled() => _updatePreferences.GetTrixieMaintenanceLabOptIn();
+    /// <summary>The public rollout: on for everyone, with no preference. The step's checks still decide eligibility.</summary>
+    internal static bool IsSystemUpgradeRolloutEnabled() => true;
 
     /// <summary>Re-reads the journal (a file and HKCU, never WSL) and refreshes every gate that depends on it.</summary>
     private void RefreshSystemUpgradeGuard()

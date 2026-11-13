@@ -3090,7 +3090,7 @@ try
     Assert(MainWindowViewModel.ResolveSystemUpdateAvailability("1.2.3", "1.2.3", "bookworm\n", rolloutEnabled: true) == SystemUpdateAvailability.UpdateAvailable
            && MainWindowViewModel.ResolveSystemUpdateAvailability("1.2.3", "1.2.3", "bookworm", rolloutEnabled: false) == SystemUpdateAvailability.Current
            && MainWindowViewModel.ResolveSystemUpdateAvailability("1.2.3", "1.2.3", "trixie", rolloutEnabled: true) == SystemUpdateAvailability.Current,
-        "Equal releases are not equal OS states, but only an opted-in Bookworm distro with the tool shows an update.");
+        "Equal releases are not equal OS states, but only a Bookworm distro with the tool and the rollout on shows an update.");
     Assert(new MainWindowViewModel.SharedDistroUpdateResult(new CommandResult(0, "", ""), new(Pg17MigrationOutcome.NotNeeded, ""),
                new(TrixieMaintenanceOutcome.RecoveryRequired, "", LeavesWritesBlocked: true)) is { Succeeded: false }
            && new MainWindowViewModel.SharedDistroUpdateResult(new CommandResult(0, "", ""), new(Pg17MigrationOutcome.NotNeeded, ""),
@@ -3140,9 +3140,15 @@ try
         "The PostgreSQL 17 gate logs why a cold or unfinished database held the Debian Trixie step back.");
 
     var trixiePreferences = new UpdatePreferencesService(Path.Combine(trixieRoot, "prefs"));
-    Assert(!trixiePreferences.GetTrixieMaintenanceLabOptIn() && trixiePreferences.TrySetForceGitUpdates(true, out _)
+    Assert(trixiePreferences.TrySetForceGitUpdates(true, out _)
            && !File.ReadAllText(trixiePreferences.StatePath).Contains("TrixieMaintenanceLab", StringComparison.Ordinal),
-        "The lab opt-in is off by default and never written by another preference.");
+        "The public rollout needs no preference: no opt-in is written by another preference.");
+    File.WriteAllText(trixiePreferences.StatePath, "{\"ForceGitUpdates\":false,\"TrixieMaintenanceLab\":false}");
+    Assert(trixiePreferences.TrySetForceGitUpdates(true, out _)
+           && File.ReadAllText(trixiePreferences.StatePath).Contains("\"TrixieMaintenanceLab\": false", StringComparison.Ordinal),
+        "A retired lab opt-in is kept as an unknown preference across a save and is no longer read.");
+    Assert(MainWindowViewModel.IsSystemUpgradeRolloutEnabled(),
+        "The Debian 13 upgrade offer is enabled for every installation without a hand edit.");
 
     // Core's restore of what ran before the fence, from release and upgrade --cancel.
     Assert(TrixieUpdateMigration.ParseReply("{\"schema\":1,\"result\":\"current\",\"restore\":{\"pending\":true,\"pg17\":true,\"services\":[\"apache2\"],\"running\":[]," +

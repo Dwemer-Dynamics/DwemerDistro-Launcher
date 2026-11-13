@@ -18,7 +18,7 @@ The WPF app checks the latest GitHub release, downloads `DwemerDistro-win-x64.zi
 - the large distro payload
 - user data inside the WSL instance
 
-In an enabled lab, **Upgrade DwemerDistro** beside **Start** opens the Debian 13 upgrade confirmation. Reopening the launcher continues routine updates and resumes interrupted maintenance. A new Debian upgrade requires the user to start it. See [Debian Trixie maintenance](TRIXIE_MAINTENANCE.md).
+For an eligible Debian 12 distro, **Upgrade DwemerDistro** beside **Start** opens the Debian 13 upgrade confirmation. Reopening the launcher continues routine updates and resumes interrupted maintenance. A new Debian upgrade requires the user to start it. See [Debian Trixie maintenance](TRIXIE_MAINTENANCE.md).
 
 ## User flow after distribution
 

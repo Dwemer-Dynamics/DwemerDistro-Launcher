@@ -7,9 +7,9 @@ Core owns every change inside the distro through
 (Core's `TRIXIE.md`). The launcher owns the Windows side: the offline recovery
 copy, its isolated proof boot, disk-space and identity checks, the automatic
 restore before the gameplay-write boundary, and a durable journal. Rollout is
-**off**. A lab enables it only by hand-editing
-`%LOCALAPPDATA%\DwemerDistro\update-preferences.json` to contain
-`"TrixieMaintenanceLab": true`. There is no UI for it.
+**on** for every installation, with no preference or hand edit; the checks below decide whether a distro is
+offered the upgrade. The former lab opt-in `"TrixieMaintenanceLab"` in `update-preferences.json` is no longer
+read (an existing entry is kept as an unknown preference and has no effect).
 
 Core fences itself: while `/etc/dwemer/trixie-upgrade.fence` exists, `start_env`
 starts no service and `update.sh` and PG17 maintenance exit 75, whatever any
@@ -138,7 +138,7 @@ A stop happens before the first write to any local file: the only changes by the
 existing `.gitconfig` and `origin` repairs. The console names up to three paths; the operations log lists each with its
 reason. Without a `.git` (first real installer), every installer file is compared the same way; an edited passive file is
 kept only when main has only ever had one version of it, otherwise it stops. The release marker and the Trixie step don't
-run after a stop, so the update is retried on the next launch. Rollout off, and an ordinary update, keep the plain reset. A stop is a safe
+run after a stop, so the update is retried on the next launch. An ordinary update keeps the plain reset. A stop is a safe
 deferral: the startup sync prints it in the console and raises no dialog.
 
 ### Migration window
@@ -148,7 +148,7 @@ The guard and Core's preserve flag apply only while the update belongs to the mi
 
 | Rollout | Journal for this registration | OS read (`[ -x tool ] && VERSION_CODENAME`, root `--exec`, read-only) | Update |
 |---|---|---|---|
-| off | any | not read | ordinary, exactly as before |
+| off (regression tests only; release builds are always on) | any | not read | ordinary, exactly as before |
 | on | `Completed` | not read | ordinary (just-upgraded distro, and every later reopen or Update Distro) |
 | on | none, `Cancelled`, `Restored`, `Superseded`, another registration | `bookworm` | migration |
 | on | as above | empty (missing or old Core without the tool; this update installs the Core that reads the flag) | migration |
@@ -235,7 +235,7 @@ The restore itself only renames.
 Run only on a lab machine or user profile with no live data. Record every result.
 
 1. Import a disposable Bookworm copy as `DwemerAI4Skyrim3` with PostgreSQL 17 `current`, set
-   the lab opt-in, and install a Core that contains the tool and `release`.
+   and install a Core that contains the tool and `release`. No preference is needed.
 2. **Happy path:** open the launcher and verify that no OS upgrade starts. Choose **Upgrade DwemerDistro** beside **Start** and confirm. The journal goes `Preparing` … `CopyProven`, `Upgrading`,
    `Upgraded`, `Releasing`, `Completed`. `Get-FileHash` of the tar matches the journal and
    Core's `state.json` `recovery.sha256`. The copy distro exists and booted fenced. Reopen:
@@ -257,8 +257,9 @@ Run only on a lab machine or user profile with no live data. Record every result
    writes blocked, `failed`/`problems` shown, Core `restore.pending` in `state.json`, no disk moved;
    free the socket and reopen: only `release` or `upgrade --cancel` runs, PG17 and the writers
    that ran before are up, then `Completed`, `Restored` or `Cancelled`.
-10. **Rollout off:** delete the opt-in. A fresh Bookworm distro behaves exactly as before:
-   no stage, no WSL call, no journal.
+10. **Not eligible:** on a distro already on Debian 13 (Core `status` not `needed`), no offer appears, no
+   upgrade stage runs and no journal is written. Choosing **Later** on the offer starts nothing; a reopen offers it
+   again and still starts nothing without confirmation.
 
 ## Open gaps
 

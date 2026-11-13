@@ -49,15 +49,6 @@ public sealed class UpdatePreferencesService
         return Read().Pg15DeletedRegistrationId;
     }
 
-    /// <summary>
-    /// Opts this launcher into the automatic Debian Trixie system upgrade, for an isolated lab until the rollout is
-    /// qualified. Only a hand-edited <c>"TrixieMaintenanceLab": true</c> enables it; there is no setter or UI.
-    /// </summary>
-    public bool GetTrixieMaintenanceLabOptIn()
-    {
-        return Read().TrixieMaintenanceLab;
-    }
-
     public bool TrySetForceGitUpdates(bool enabled, out string? error) =>
         TryUpdate(preferences => preferences.ForceGitUpdates = enabled, out error);
 
@@ -132,10 +123,6 @@ public sealed class UpdatePreferences
     /// <summary>Keeps Roll back off across restarts for the registration whose PostgreSQL 15 data was deleted.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Pg15DeletedRegistrationId { get; set; }
-
-    /// <summary>Lab opt-in for the automatic Debian Trixie upgrade. Never written unless it was already true.</summary>
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public bool TrixieMaintenanceLab { get; set; }
 
     /// <summary>Preferences this build does not know about, preserved across a save.</summary>
     [JsonExtensionData]
