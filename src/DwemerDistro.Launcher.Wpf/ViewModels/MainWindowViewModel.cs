@@ -2845,6 +2845,7 @@ echo "CHIM-MCP installed and enabled."
                     stage = marker;
                     evidence = null;
                     SetAssistantStartupUpdateStage(marker);
+                    ReportUpgradeProgress(phase: DescribeUpdateStage(marker));
                     // update_gws prints its own one-line title, so the marker itself stays silent.
                     sharedComponentsStarted |= marker == UpdateStageShared;
                     return;
@@ -2854,11 +2855,13 @@ echo "CHIM-MCP installed and enabled."
                 if (ShowUpdateStageOutput(stage) && !ConsoleOutputFilter.IsRoutineLine(line))
                 {
                     AppendLog(line);
+                    ReportUpgradeProgress(detail: line);
                 }
             }, text =>
             {
                 LauncherLogService.Operation(text);
                 AppendLog(text);
+                ReportUpgradeProgress(detail: text);
             }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token, database => databaseResult = database,
                 systemUpgrade, system => systemResult = system, migrationEntry, startSystemUpgrade);
             _distroUpdateTask = updateTask;
@@ -5505,7 +5508,14 @@ fi
     {
         long? previousLength = null;
         DateTime? previousWriteUtc = null;
-        AppendLog($"{progressLabel}: {waitingMessage}{Environment.NewLine}");
+        // The console line, and the same size in an open upgrade progress window: real bytes written, never a percentage.
+        void Report(string text)
+        {
+            AppendLog(text + Environment.NewLine);
+            ReportUpgradeProgress(detail: text);
+        }
+
+        Report($"{progressLabel}: {waitingMessage}");
 
         while (true)
         {
@@ -5514,7 +5524,7 @@ fi
             var snapshot = TryGetPathProgressSnapshot(progressPath);
             if (snapshot is null)
             {
-                AppendLog($"{progressLabel}: {waitingMessage}{Environment.NewLine}");
+                Report($"{progressLabel}: {waitingMessage}");
                 continue;
             }
 
@@ -5525,11 +5535,11 @@ fi
                 var deltaText = previousLength is null
                     ? string.Empty
                     : $" ({FormatSignedByteDelta(snapshot.Value.Length - previousLength.Value)})";
-                AppendLog($"{progressLabel}: {FormatByteSize(snapshot.Value.Length)}{deltaText}{Environment.NewLine}");
+                Report($"{progressLabel}: {FormatByteSize(snapshot.Value.Length)}{deltaText}");
             }
             else
             {
-                AppendLog($"{progressLabel}: still running at {FormatByteSize(snapshot.Value.Length)}{Environment.NewLine}");
+                Report($"{progressLabel}: still running at {FormatByteSize(snapshot.Value.Length)}");
             }
 
             previousLength = snapshot.Value.Length;

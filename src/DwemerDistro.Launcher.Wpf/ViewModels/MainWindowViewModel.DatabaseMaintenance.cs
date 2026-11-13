@@ -279,13 +279,28 @@ public sealed partial class MainWindowViewModel
                 return;
             }
 
-            SetDatabaseMaintenanceStatus(
-                cleanupOnly ? "Removing the upgrade's staging copies..."
-                    : isUpgrade ? "Upgrading the database..." : "Rolling the database back...",
-                CompactDistroBusyColor);
+            var running = cleanupOnly ? "Removing the upgrade's staging copies..."
+                : isUpgrade ? "Upgrading the database..." : "Rolling the database back...";
+            SetDatabaseMaintenanceStatus(running, CompactDistroBusyColor);
             AppendLog($"Starting {actionName.ToLowerInvariant()}...{Environment.NewLine}");
-            var result = await _wsl.RunDatabaseMaintenanceAsync(arguments, text => AppendLog(text))
-                .ConfigureAwait(true);
+            CommandResult result;
+            // Closed before any result dialog below, and on an exception before the catch shows its own.
+            BeginUpgradeProgress(DatabaseMaintenanceSettingName,
+                cleanupOnly ? "Cleaning up the database upgrade"
+                    : isUpgrade ? "Upgrading the database to PostgreSQL 17" : "Rolling the database back",
+                running);
+            try
+            {
+                result = await _wsl.RunDatabaseMaintenanceAsync(arguments, text =>
+                {
+                    AppendLog(text);
+                    ReportUpgradeProgress(detail: text);
+                }).ConfigureAwait(true);
+            }
+            finally
+            {
+                EndUpgradeProgress();
+            }
             if (!result.Succeeded)
             {
                 var error = DescribeDatabaseToolFailure(result);
@@ -570,6 +585,7 @@ public sealed partial class MainWindowViewModel
             }
 
             SetDatabaseMaintenanceStatus(BuildDatabaseUpgradeWaitingStatus(games), CompactDistroWarningColor);
+            ReportUpgradeProgress(detail: $"Waiting for {string.Join(", ", games)} to close.");
             if (!hintShown)
             {
                 hintShown = true;

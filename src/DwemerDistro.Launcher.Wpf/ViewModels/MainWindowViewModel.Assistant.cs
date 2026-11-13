@@ -77,7 +77,10 @@ public sealed partial class MainWindowViewModel : IAssistantHost
     }
 
     /// <summary>The waiting card's phase for an update stage marker; a later update, after the hold ended, changes nothing.</summary>
-    private void SetAssistantStartupUpdateStage(string stage) => SetAssistantStartupPhase(stage switch
+    private void SetAssistantStartupUpdateStage(string stage) => SetAssistantStartupPhase(DescribeUpdateStage(stage));
+
+    /// <summary>An update stage marker as a phase: the assistant's waiting card and the upgrade progress window both show it.</summary>
+    internal static string DescribeUpdateStage(string stage) => stage switch
     {
         UpdateStageDownload => "Updating DwemerDistro: downloading the latest distro files.",
         UpdateStageCore => "Updating DwemerDistro core.",
@@ -86,7 +89,7 @@ public sealed partial class MainWindowViewModel : IAssistantHost
         UpdateStageOperatingSystem => "Upgrading DwemerDistro to Debian Trixie.",
         UpdateStageRelease => "Finishing the DwemerDistro update.",
         _ => "Preparing the DwemerDistro update."
-    });
+    };
 
     private void Assistant_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {

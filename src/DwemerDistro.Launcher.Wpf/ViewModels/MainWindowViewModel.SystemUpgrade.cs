@@ -504,6 +504,8 @@ public sealed partial class MainWindowViewModel
         _lastSystemUpgradeResult = null;
         SystemUpdateRunResult run;
         SetDebianUpgradeRunningText("Upgrading...");
+        // Closed before the result dialog; the stage markers and the step's own output drive it.
+        BeginUpgradeProgress(DebianUpgradeButtonText, "Upgrading DwemerDistro to Debian 13", DescribeUpdateStage(UpdateStagePreparing));
         try
         {
             run = await RunSystemUpdateCoreAsync(requireConfirmation: false, sourceLabel: "System", migrationEntry: true,
@@ -511,6 +513,7 @@ public sealed partial class MainWindowViewModel
         }
         finally
         {
+            EndUpgradeProgress();
             SetDebianUpgradeRunningText(null);
         }
 
