@@ -1945,6 +1945,57 @@ try
     }
     Assert(!MainWindowViewModel.BuildDatabaseUpgradeConfirmation().Contains("backup", StringComparison.OrdinalIgnoreCase),
         "The manual upgrade confirmation must not promise or ask for a Windows backup.");
+
+    // Clear CHIM request logs: Core decides what qualifies; the launcher only previews, asks and passes the token back.
+    var requestLogToken = new string('a', 64);
+    Assert(ChimRequestLogMaintenance.BuildPreviewArguments().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "request-logs-preview"])
+           && ChimRequestLogMaintenance.BuildClearArguments(requestLogToken).SequenceEqual(
+               ["/usr/local/bin/ddistro_pg17_maintenance", "request-logs-clear", "--confirm-preview", requestLogToken]),
+        "Clearing request logs must run only Core's preview, then its clear with the preview token.");
+    foreach (var badToken in new[] { "", new string('A', 64), new string('a', 63), new string('a', 64) + " ; reboot", new string('g', 64) })
+    {
+        var badTokenRejected = false;
+        try { ChimRequestLogMaintenance.BuildClearArguments(badToken); } catch (ArgumentException) { badTokenRejected = true; }
+        Assert(badTokenRejected, $"A malformed request log token must never reach the clear command: '{badToken}'.");
+    }
+    var requestLogPreview = ChimRequestLogMaintenance.ParsePreview(
+        "noise\n{\"database\": \"dwemer\", \"token\": \"" + requestLogToken + "\", \"total_bytes\": 3221225472, " +
+        "\"tables\": [{\"schema\": \"public\", \"kind\": \"live\", \"saves\": [], \"bytes\": 1073741824, \"rows_estimate\": 5}, " +
+        "{\"schema\": \"chim_profile_hero\", \"kind\": \"save\", \"saves\": [\"Hero\", \"Hero copy\"], \"bytes\": 2147483648, \"rows_estimate\": null}], " +
+        "\"skipped\": [{\"schema\": \"chim_profile_stray\", \"reason\": \"not registered in Playthrough Saves\", \"bytes\": 10}]}\n");
+    Assert(requestLogPreview is { TotalBytes: 3221225472, Tables.Count: 2, Skipped.Count: 1 } && requestLogPreview.Token == requestLogToken
+           && requestLogPreview.Tables[1].Saves.SequenceEqual(["Hero", "Hero copy"]),
+        "The request log preview must be read from Core's JSON reply.");
+    foreach (var badPreview in new[] { "", "{}", "{\"token\": \"x\", \"total_bytes\": 1, \"tables\": [], \"skipped\": []}",
+                 "{\"token\": \"" + requestLogToken + "\", \"total_bytes\": \"1\", \"tables\": [], \"skipped\": []}", "not json {" })
+    {
+        Assert(ChimRequestLogMaintenance.ParsePreview(badPreview) is null, $"An incomplete request log preview must be refused: {badPreview}");
+    }
+    var requestLogConfirmation = MainWindowViewModel.BuildChimRequestLogConfirmation(requestLogPreview!);
+    Assert(requestLogConfirmation.Contains("3.0 GB", StringComparison.Ordinal)
+           && requestLogConfirmation.Contains("Current playthrough: 1.0 GB", StringComparison.Ordinal)
+           && requestLogConfirmation.Contains("Playthrough Saves: 1 (2.0 GB)", StringComparison.Ordinal)
+           && requestLogConfirmation.Contains("Hero, Hero copy: 2.0 GB", StringComparison.Ordinal)
+           && requestLogConfirmation.Contains("1 other request log table is not a verified CHIM save", StringComparison.Ordinal)
+           && requestLogConfirmation.Contains("cannot be undone", StringComparison.Ordinal)
+           && requestLogConfirmation.Contains("saves themselves are kept", StringComparison.Ordinal),
+        "The request log confirmation must show the preview's sizes, what is skipped, and what is kept.");
+    Assert(ChimRequestLogMaintenance.ParseClear("{\"cleared_tables\": 2, \"before_bytes\": 9, \"after_bytes\": 1, \"reclaimed_bytes\": 8, \"filesystem_freed_bytes\": 0}")
+               is { ClearedTables: 2, ReclaimedBytes: 8, FilesystemFreedBytes: 0 } clearedLogs
+           && MainWindowViewModel.BuildChimRequestLogClearedMessage(clearedLogs) is { } clearedText
+           && clearedText.Contains("in 2 tables, releasing 8 B in the database.", StringComparison.Ordinal)
+           && clearedText.Contains("Compact Distro", StringComparison.Ordinal)
+           && ChimRequestLogMaintenance.ParseClear("{\"cleared_tables\": 2}") is null,
+        "The clear result must report the bytes Core says were actually released.");
+    Assert(MainWindowViewModel.DescribeChimRequestLogFailure(new CommandResult(2, "",
+               "ddistro_pg17_maintenance: error: argument action: invalid choice: 'request-logs-preview'")) == ChimRequestLogMaintenance.ToolTooOldMessage
+           && MainWindowViewModel.DescribeChimRequestLogFailure(new CommandResult(1, "",
+               "Maintenance stopped: The request logs changed since the preview; nothing was cleared. Preview again."))
+               .Contains("changed since the preview", StringComparison.Ordinal),
+        "Request log failures must show Core's reason, and an older tool must point to Update Distro.");
+    Assert(MainWindowViewModel.BuildDatabaseMaintenanceGameOpenMessage(MainWindowViewModel.ClearChimRequestLogsActionName, ["Skyrim Special Edition"])
+           == "Clearing CHIM request logs not started because Skyrim Special Edition is open. Close the game, then try again. Nothing was changed.",
+        "Clearing request logs must refuse while a game is open.");
     Assert(MainWindowViewModel.IsDatabaseRollbackAvailable(null, "{a}")
            && !MainWindowViewModel.IsDatabaseRollbackAvailable("{A}", "{a}")
            && MainWindowViewModel.IsDatabaseRollbackAvailable("{a}", "{b}")
