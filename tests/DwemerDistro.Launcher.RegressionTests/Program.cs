@@ -1972,18 +1972,20 @@ try
         Assert(ChimRequestLogMaintenance.ParsePreview(badPreview) is null, $"An incomplete request log preview must be refused: {badPreview}");
     }
     var requestLogConfirmation = MainWindowViewModel.BuildChimRequestLogConfirmation(requestLogPreview!);
-    Assert(requestLogConfirmation.Contains("3.0 GB", StringComparison.Ordinal)
+    Assert(requestLogConfirmation.Contains("The log tables occupy 3.0 GB, so clearing frees up to 3.0 GB in the database.", StringComparison.Ordinal)
+           && requestLogConfirmation.Contains("Each emptied table keeps a small allocation; the actual amount is reported afterwards.", StringComparison.Ordinal)
+           && !requestLogConfirmation.Contains("frees about", StringComparison.Ordinal)
            && requestLogConfirmation.Contains("Current playthrough: 1.0 GB", StringComparison.Ordinal)
            && requestLogConfirmation.Contains("Playthrough Saves: 1 (2.0 GB)", StringComparison.Ordinal)
            && requestLogConfirmation.Contains("Hero, Hero copy: 2.0 GB", StringComparison.Ordinal)
            && requestLogConfirmation.Contains("1 other request log table is not a verified CHIM save", StringComparison.Ordinal)
            && requestLogConfirmation.Contains("cannot be undone", StringComparison.Ordinal)
            && requestLogConfirmation.Contains("saves themselves are kept", StringComparison.Ordinal),
-        "The request log confirmation must show the preview's sizes, what is skipped, and what is kept.");
+        "The request log confirmation must label the preview as occupied size and an upper bound, and show what is skipped and kept.");
     Assert(ChimRequestLogMaintenance.ParseClear("{\"cleared_tables\": 2, \"before_bytes\": 9, \"after_bytes\": 1, \"reclaimed_bytes\": 8, \"filesystem_freed_bytes\": 0}")
                is { ClearedTables: 2, ReclaimedBytes: 8, FilesystemFreedBytes: 0 } clearedLogs
            && MainWindowViewModel.BuildChimRequestLogClearedMessage(clearedLogs) is { } clearedText
-           && clearedText.Contains("in 2 tables, releasing 8 B in the database.", StringComparison.Ordinal)
+           && clearedText.Contains("in 2 tables, actually releasing 8 B in the database.", StringComparison.Ordinal)
            && clearedText.Contains("Compact Distro", StringComparison.Ordinal)
            && ChimRequestLogMaintenance.ParseClear("{\"cleared_tables\": 2}") is null,
         "The clear result must report the bytes Core says were actually released.");

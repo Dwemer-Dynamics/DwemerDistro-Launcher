@@ -30,7 +30,9 @@ public sealed partial class MainWindowViewModel
         var saves = preview.Tables.Where(table => table.Kind == "save").ToList();
         var live = preview.Tables.FirstOrDefault(table => table.Kind == "live");
         var text = new StringBuilder();
-        text.Append($"Clear CHIM's request logs? This frees about {FormatByteSize(preview.TotalBytes)} in the database.\n\n");
+        text.Append($"Clear CHIM's request logs? The log tables occupy {FormatByteSize(preview.TotalBytes)}, so clearing frees " +
+                    $"up to {FormatByteSize(preview.TotalBytes)} in the database. Each emptied table keeps a small allocation; " +
+                    "the actual amount is reported afterwards.\n\n");
         if (live is not null) text.Append($"Current playthrough: {FormatByteSize(live.Bytes)}\n");
         text.Append($"Playthrough Saves: {saves.Count} ({FormatByteSize(saves.Sum(table => table.Bytes))})\n");
         foreach (var save in saves.OrderByDescending(table => table.Bytes).Take(5))
@@ -53,7 +55,7 @@ public sealed partial class MainWindowViewModel
     }
 
     internal static string BuildChimRequestLogClearedMessage(ChimRequestLogClearResult result) =>
-        $"Cleared CHIM request logs in {result.ClearedTables} table{(result.ClearedTables == 1 ? "" : "s")}, releasing " +
+        $"Cleared CHIM request logs in {result.ClearedTables} table{(result.ClearedTables == 1 ? "" : "s")}, actually releasing " +
         $"{FormatByteSize(result.ReclaimedBytes)} in the database" +
         (result.FilesystemFreedBytes > 0 ? $" and {FormatByteSize(result.FilesystemFreedBytes)} on the distro's disk." : ".") +
         " The WSL virtual disk keeps its size on Windows until you run Compact Distro.";
@@ -136,7 +138,7 @@ public sealed partial class MainWindowViewModel
                 return;
             }
 
-            SetDatabaseMaintenanceStatus($"CHIM request logs use {FormatByteSize(preview.TotalBytes)}. Waiting for confirmation...",
+            SetDatabaseMaintenanceStatus($"CHIM request log tables occupy {FormatByteSize(preview.TotalBytes)}. Waiting for confirmation...",
                 CompactDistroNeutralColor);
             var confirmed = MessageBox.Show(
                 BuildChimRequestLogConfirmation(preview),

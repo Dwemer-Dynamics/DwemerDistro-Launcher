@@ -2862,7 +2862,7 @@
                                     <TextBlock Text="Rollback checks for changed data before restoring PostgreSQL 15."
                                                Foreground="{DynamicResource GameCenter.DangerText}"
                                                FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
-                                    <TextBlock Text="Clear request logs empties CHIM's troubleshooting request logs in the current playthrough and every Playthrough Save, after showing how much space it frees. Gameplay, memories and saves are kept. Close the game first."
+                                    <TextBlock Text="Clear request logs empties CHIM's troubleshooting request logs in the current playthrough and every verified Playthrough Save, after showing how much space the log tables occupy (the most it can free), then reports what was actually freed. Gameplay, memories and saves are kept. Close the game first."
                                                Style="{StaticResource GameCenter.SettingRowDescription}" />
                                     <TextBlock Text="{Binding DatabaseMaintenanceStatusText}"
                                                Foreground="{Binding DatabaseMaintenanceStatusColor}"
