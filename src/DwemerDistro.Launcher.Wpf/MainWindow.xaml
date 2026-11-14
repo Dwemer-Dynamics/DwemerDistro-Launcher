@@ -2862,6 +2862,8 @@
                                     <TextBlock Text="Rollback checks for changed data before restoring PostgreSQL 15."
                                                Foreground="{DynamicResource GameCenter.DangerText}"
                                                FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
+                                    <TextBlock Text="Clear request logs empties CHIM's troubleshooting request logs in the current playthrough and every verified Playthrough Save, after showing how much space the log tables occupy (the most it can free), then reports what was actually freed. Gameplay, memories and saves are kept. Close the game first."
+                                               Style="{StaticResource GameCenter.SettingRowDescription}" />
                                     <TextBlock Text="{Binding DatabaseMaintenanceStatusText}"
                                                Foreground="{Binding DatabaseMaintenanceStatusColor}"
                                                Visibility="{Binding HasDatabaseMaintenanceStatus, Converter={StaticResource BoolToVisibility}}"
@@ -2877,6 +2879,10 @@
                                             Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
                                             AutomationProperties.Name="Roll back PostgreSQL 17 database upgrade"
                                             AutomationProperties.HelpText="Rolls back a PostgreSQL 17 upgrade. Only use this before anything is written to the upgraded database; data written since the upgrade is not carried back. You are asked to confirm first, and the confirmation defaults to No." />
+                                    <Button Content="Clear request logs" Command="{Binding ClearChimRequestLogsCommand}"
+                                            Style="{StaticResource GameCenter.SettingRowButton}" Margin="0,8,0,0"
+                                            AutomationProperties.Name="Clear CHIM request logs in all playthroughs"
+                                            AutomationProperties.HelpText="Measures CHIM's troubleshooting request logs in the current playthrough and every verified Playthrough Save, then asks before emptying them. Gameplay, memories and saves are kept. Refused while a game is open. The confirmation defaults to No." />
                                     <!-- Shown only while a distro update holds its database upgrade for an open game, so
                                          the wait can always be ended from where its status is shown. -->
                                     <Button Content="Stop waiting" Command="{Binding StopDatabaseUpgradeWaitCommand}"

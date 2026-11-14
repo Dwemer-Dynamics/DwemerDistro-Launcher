@@ -76,12 +76,14 @@ public sealed partial class MainWindowViewModel
             () => !_systemUpgradeBlocksWrites && CanStartExclusiveDistroOperation()
                   && IsDatabaseRollbackAvailable(_pg15DeletedRegistrationId, _wsl.GetDistroRegistrationId()));
         StopDatabaseUpgradeWaitCommand = new RelayCommand(StopDatabaseUpgradeWait, () => IsDatabaseUpgradeWaiting);
+        InitializeChimRequestLogCommands();
     }
 
     private void RaiseDatabaseMaintenanceCommandStates()
     {
         UpgradeDatabaseCommand?.RaiseCanExecuteChanged();
         RollbackDatabaseCommand?.RaiseCanExecuteChanged();
+        ClearChimRequestLogsCommand?.RaiseCanExecuteChanged();
     }
 
     /// <summary>Rollback stays offered unless the PostgreSQL 15 data of this same registration was deleted.</summary>
@@ -757,7 +759,8 @@ public sealed partial class MainWindowViewModel
         if (!HasRoomForDatabaseUpgrade(bytes, backing.FreeBytes))
             throw new InvalidOperationException(
                 $"Not enough free space on {backing.Volume}, which holds the distro's virtual disk: the upgrade needs " +
-                $"{FormatByteSize(checked(bytes * 4))} free and {FormatByteSize(backing.FreeBytes)} is available.");
+                $"{FormatByteSize(checked(bytes * 4))} free and {FormatByteSize(backing.FreeBytes)} is available, " +
+                $"{FormatByteSize(checked(bytes * 4) - backing.FreeBytes)} short. Clear request logs under Database Maintenance can free space used by CHIM's request logs.");
     }
 
     /// <summary>
