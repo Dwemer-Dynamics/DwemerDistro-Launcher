@@ -70,6 +70,9 @@ internal sealed class Pg17UpdateMigration(
     /// <summary>Raised with the open games each time a recheck still finds one, and with an empty list once the wait ends.</summary>
     public event Action<IReadOnlyList<string>>? WaitingForGamesChanged;
 
+    /// <summary>Raised once, right before <c>auto</c> runs; never for a current, held or cleanup-only database.</summary>
+    public event Action? UpgradeStarting;
+
     internal static string[] BuildStatusArguments() => [ToolPath, "status"];
 
     internal static string[] BuildAutoArguments() => [ToolPath, "auto"];
@@ -251,6 +254,7 @@ internal sealed class Pg17UpdateMigration(
                     CleanupOnly: true);
         }
 
+        UpgradeStarting?.Invoke();
         var result = await runToolAsRoot(BuildAutoArguments(), log, CancellationToken.None).ConfigureAwait(false);
         return result.Succeeded
             ? new(Pg17MigrationOutcome.Upgraded, "The database was upgraded to PostgreSQL 17.")

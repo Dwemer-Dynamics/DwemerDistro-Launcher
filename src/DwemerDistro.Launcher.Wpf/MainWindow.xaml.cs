@@ -270,15 +270,7 @@ public partial class MainWindow : Window
                     UpgradeDwemerDistroButton.Focus();
                 break;
             case StartupUpdateNoticeChoice.ShowConsole:
-                if (!_isConsoleExpanded)
-                {
-                    ToggleConsole();
-                }
-
-                _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
-                {
-                    if (_outputRichTextBox is { } output) output.Focus();
-                });
+                ShowConsole();
                 break;
         }
     }
@@ -696,6 +688,31 @@ public partial class MainWindow : Window
     private void ToggleConsoleButton_Click(object sender, RoutedEventArgs e)
     {
         ToggleConsole();
+    }
+
+    /// <summary>Opens the console if it is closed and moves focus to it, bringing the launcher forward first.</summary>
+    internal void ShowConsole()
+    {
+        if (_shutdownStarted)
+        {
+            return;
+        }
+
+        if (WindowState == WindowState.Minimized)
+        {
+            SystemCommands.RestoreWindow(this);
+        }
+
+        Activate();
+        if (!_isConsoleExpanded)
+        {
+            ToggleConsole();
+        }
+
+        _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Loaded, () =>
+        {
+            if (_outputRichTextBox is { } output) output.Focus();
+        });
     }
 
     private void ToggleConsole()

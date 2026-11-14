@@ -284,11 +284,19 @@ public sealed partial class MainWindowViewModel
             SetDatabaseMaintenanceStatus(running, CompactDistroBusyColor);
             AppendLog($"Starting {actionName.ToLowerInvariant()}...{Environment.NewLine}");
             CommandResult result;
-            // Closed before any result dialog below, and on an exception before the catch shows its own.
-            BeginUpgradeProgress(DatabaseMaintenanceSettingName,
-                cleanupOnly ? "Cleaning up the database upgrade"
-                    : isUpgrade ? "Upgrading the database to PostgreSQL 17" : "Rolling the database back",
-                running);
+            // Closed before any result dialog below, and on an exception before the catch shows its own. The real upgrade
+            // gets the short database window, opened without taking focus; cleanup and rollback keep the full one.
+            if (isUpgrade && !cleanupOnly)
+            {
+                EndUpgradeProgress();
+                BeginDatabaseUpdateProgress();
+            }
+            else
+            {
+                BeginUpgradeProgress(DatabaseMaintenanceSettingName,
+                    cleanupOnly ? "Cleaning up the database upgrade" : "Rolling the database back",
+                    running);
+            }
             try
             {
                 result = await _wsl.RunDatabaseMaintenanceAsync(arguments, text =>

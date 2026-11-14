@@ -2863,6 +2863,8 @@ echo "CHIM-MCP installed and enabled."
         LauncherLogService.Operation("START distro and shared components update");
         var migration = CreateUpdateMigration(deadline);
         migration.WaitingForGamesChanged += games => waitedForGames |= games.Count > 0;
+        // Posted, never sent, like every progress report; the database step's outcome or the finally below closes it.
+        migration.UpgradeStarting += () => _ = _dispatcher.BeginInvoke(BeginDatabaseUpdateProgress);
         var systemUpgrade = CreateSystemUpgradeMigration(deadline);
         try
         {
@@ -2895,7 +2897,11 @@ echo "CHIM-MCP installed and enabled."
                 LauncherLogService.Operation(text);
                 AppendLog(text);
                 ReportUpgradeProgress(detail: text);
-            }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token, database => databaseResult = database,
+            }, LauncherVersionSyncTimeout, updateCts.Token, waitCts.Token, database =>
+            {
+                databaseResult = database;
+                _ = _dispatcher.BeginInvoke(EndDatabaseUpdateProgress);
+            },
                 systemUpgrade, system => systemResult = system, migrationEntry, startSystemUpgrade);
             _distroUpdateTask = updateTask;
             var outcome = await updateTask.ConfigureAwait(false);
@@ -2944,6 +2950,7 @@ echo "CHIM-MCP installed and enabled."
         }
         finally
         {
+            _ = _dispatcher.BeginInvoke(EndDatabaseUpdateProgress);
             EndDatabaseUpgradeWait(waitCts);
             RefreshSystemUpgradeGuard();
         }

@@ -10,7 +10,8 @@ namespace DwemerDistro.Launcher.Wpf.Views;
 /// The modeless progress window for a user-started or resumed upgrade: the active phase over an indeterminate bar, the
 /// time on this step and in total, and the step's latest real output. It only shows <see cref="UpgradeProgressState"/>,
 /// which outlives it, so a reopened window picks up where the hidden one was. It never cancels anything; hiding it only
-/// closes the window. Touch it on the UI thread only.
+/// closes the window. A database update shows a shorter form: the heading, one line asking to keep the launcher open,
+/// the bar, the total time, and Show console beside Hide. Touch it on the UI thread only.
 /// </summary>
 public partial class UpgradeProgressWindow : Window
 {
@@ -26,6 +27,17 @@ public partial class UpgradeProgressWindow : Window
         Title = state.Title;
         HeadingTextBlock.Text = state.Heading;
         AutomationProperties.SetName(this, state.Title + " progress");
+        if (state.Body is { } body)
+        {
+            Width = 400;
+            BodyTextBlock.Text = body;
+            BodyTextBlock.Visibility = Visibility.Visible;
+            PhaseTextBlock.Visibility = Visibility.Collapsed;
+            NoteTextBlock.Visibility = Visibility.Collapsed;
+            ShowConsoleButton.Visibility = Visibility.Visible;
+            AutomationProperties.SetLabeledBy(ActivityProgressBar, BodyTextBlock);
+        }
+
         ShowPhase();
         ShowDetail();
         MaxHeight = SystemParameters.WorkArea.Height - 24;
@@ -59,7 +71,7 @@ public partial class UpgradeProgressWindow : Window
     /// <summary>The state's phase; announced when it changes, and its last phase's detail is already gone.</summary>
     internal void ShowPhase()
     {
-        if (_closed || PhaseTextBlock.Text == _state.Phase) return;
+        if (_closed || _state.Body is not null || PhaseTextBlock.Text == _state.Phase) return;
         var announce = PhaseTextBlock.Text.Length > 0;
         PhaseTextBlock.Text = _state.Phase;
         AutomationProperties.SetHelpText(ActivityProgressBar, _state.Phase);
@@ -75,7 +87,7 @@ public partial class UpgradeProgressWindow : Window
     /// <summary>One line of the step's own output; not a live region, since a package upgrade prints thousands.</summary>
     internal void ShowDetail()
     {
-        if (_closed) return;
+        if (_closed || _state.Body is not null) return;
         var line = _state.Detail ?? string.Empty;
         DetailTextBlock.Text = line;
         DetailTextBlock.ToolTip = line.Length > 0 ? line : null;
@@ -106,4 +118,10 @@ public partial class UpgradeProgressWindow : Window
     }
 
     private void HideButton_Click(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>Opens the main window's console and leaves this window and the run as they are.</summary>
+    private void ShowConsoleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (System.Windows.Application.Current?.MainWindow is MainWindow main) main.ShowConsole();
+    }
 }

@@ -1972,7 +1972,7 @@ try
            && !Pg17UpdateMigration.IsBackupFolderRequiredRefusal(new CommandResult(1, "", "Maintenance stopped: pg_upgrade failed")),
         "Only a failed run with the older tool's missing-backup refusal counts as that refusal.");
 
-    async Task<(Pg17MigrationResult Result, List<string[]> Calls, int SpaceChecks, int Delays, List<int> WaitEvents)> RunFakeMigration(
+    async Task<(Pg17MigrationResult Result, List<string[]> Calls, int SpaceChecks, int Delays, List<int> WaitEvents, List<int> Starts)> RunFakeMigration(
         Func<int, CommandResult> status,
         Func<int, IReadOnlyList<string>> games,
         CommandResult? auto = null,
@@ -2013,8 +2013,11 @@ try
             },
             TimeSpan.FromSeconds(30));
         migration.WaitingForGamesChanged += list => waitEvents.Add(list.Count);
+        // Each start records how many tool calls came before it, so the next call must be auto.
+        var starts = new List<int>();
+        migration.UpgradeStarting += () => starts.Add(calls.Count);
         var result = await migration.RunAsync(_ => { }, waitToken);
-        return (result, calls, spaceChecks, delays, waitEvents);
+        return (result, calls, spaceChecks, delays, waitEvents, starts);
     }
 
     var pg17Ok = (string text) => new CommandResult(0, text + "\n", "");
@@ -2057,6 +2060,26 @@ try
     Assert(pg17Upgraded.Result.Outcome == Pg17MigrationOutcome.Upgraded && pg17Upgraded.SpaceChecks == 1 && pg17Upgraded.Delays == 0
            && pg17Upgraded.Calls.Last().SequenceEqual(["/usr/local/bin/ddistro_pg17_maintenance", "auto"]),
         "PG17 'needed' with no game open must check free space, then run auto without a backup path.");
+    Assert(pg17Upgraded.Starts.Count == 1 && pg17Upgraded.Calls[pg17Upgraded.Starts[0]].SequenceEqual(Pg17UpdateMigration.BuildAutoArguments()),
+        "The database update window opens once, right before auto runs.");
+    foreach (var pg17QuietWord in new[] { "current", "held", "unsupported", "cleanup-needed" })
+    {
+        Assert((await RunFakeMigration(_ => pg17Ok(pg17QuietWord), pg17NoGames)).Starts.Count == 0,
+            $"PG17 status '{pg17QuietWord}' must not open the database update window.");
+    }
+    Assert((await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, spaceFailure: new InvalidOperationException("full"))).Starts.Count == 0,
+        "A PG17 upgrade refused before auto must not open the database update window.");
+
+    var dbProgressStart = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    var dbProgress = new UpgradeProgressState(MainWindowViewModel.DatabaseUpdateHeading, MainWindowViewModel.DatabaseUpdateHeading,
+        "phase", dbProgressStart, MainWindowViewModel.DatabaseUpdateBody);
+    dbProgress.SetPhase("Later phase", dbProgressStart.AddMinutes(4));
+    Assert(MainWindowViewModel.DatabaseUpdateHeading == "Updating your database"
+           && MainWindowViewModel.DatabaseUpdateBody == "Keep the launcher open until the update finishes."
+           && dbProgress.ElapsedText(dbProgressStart.AddSeconds(272)) == "Time elapsed 04:32"
+           && dbProgress.ElapsedText(dbProgressStart.AddSeconds(3872)) == "Time elapsed 1:04:32"
+           && new UpgradeProgressState("t", "h", "p", dbProgressStart).ElapsedText(dbProgressStart.AddSeconds(272)) == "This step 4:32 · Total 4:32",
+        "The database update window shows only its own copy and the total time as mm:ss; other runs keep step and total.");
 
     var pg17UpgradeFailed = await RunFakeMigration(_ => pg17Ok("needed"), pg17NoGames, auto: new CommandResult(9, "", "pg_upgrade failed"));
     Assert(pg17UpgradeFailed.Result.Outcome == Pg17MigrationOutcome.Failed && !pg17UpgradeFailed.Result.AllowsUpdateToFinish

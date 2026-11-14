@@ -24,7 +24,8 @@
     </Window.Resources>
 
     <!-- Modeless and only reports: the caller owns the run and closes this before its result dialog. Hide, Esc and the
-         title-bar close all just close it without stopping anything; the top bar's Show upgrade progress opens it again. -->
+         title-bar close all just close it without stopping anything; the top bar's Show upgrade progress opens it again.
+         A database update shows the short form: heading, BodyTextBlock, bar, total time, Show console and Hide. -->
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -38,6 +39,12 @@
                        FontWeight="Bold"
                        TextWrapping="Wrap"
                        Foreground="{DynamicResource GameCenter.CopperStrong}" />
+
+            <!-- The database update's only line of body copy; collapsed otherwise. -->
+            <TextBlock x:Name="BodyTextBlock"
+                       Style="{StaticResource DialogBodyText}"
+                       Margin="0,10,0,12"
+                       Visibility="Collapsed" />
 
             <!-- The active phase, announced when it changes. -->
             <TextBlock x:Name="PhaseTextBlock"
@@ -86,6 +93,16 @@
                 BorderThickness="0,1,0,0"
                 Padding="20,12">
             <WrapPanel HorizontalAlignment="Right">
+                <Button x:Name="ShowConsoleButton"
+                        Content="Show console"
+                        MinWidth="82"
+                        MinHeight="36"
+                        Margin="0,0,8,0"
+                        Style="{StaticResource GameCenter.Button}"
+                        Visibility="Collapsed"
+                        AutomationProperties.Name="Show console"
+                        AutomationProperties.HelpText="Opens the launcher console. The update keeps running."
+                        Click="ShowConsoleButton_Click" />
                 <Button x:Name="HideButton"
                         Content="Hide"
                         IsCancel="True"

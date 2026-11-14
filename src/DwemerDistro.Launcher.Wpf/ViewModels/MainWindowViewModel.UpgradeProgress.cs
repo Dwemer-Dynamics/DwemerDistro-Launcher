@@ -14,10 +14,14 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 public sealed partial class MainWindowViewModel
 {
     internal const string ShowUpgradeProgressText = "Show upgrade progress";
+    internal const string DatabaseUpdateHeading = "Updating your database";
+    internal const string DatabaseUpdateBody = "Keep the launcher open until the update finishes.";
 
     // UI thread only, except the null check in ReportUpgradeProgress.
     private volatile UpgradeProgressState? _upgradeProgress;
     private UpgradeProgressWindow? _upgradeProgressWindow;
+    // The database update's own run, so ending it never closes a Debian upgrade's progress that replaced or preceded it.
+    private UpgradeProgressState? _databaseUpdateProgress;
     private string? _pendingUpgradePhase;
     private string? _pendingUpgradeDetail;
     private int _upgradeProgressPostQueued;
@@ -35,12 +39,31 @@ public sealed partial class MainWindowViewModel
     /// UI thread only. Replaces any run left showing, so a second run never reports into the first. Opened without
     /// activation when the user didn't just ask for it, so a resumed upgrade never pulls focus from a game.
     /// </summary>
-    private void BeginUpgradeProgress(string title, string heading, string phase, bool activate = true)
+    private void BeginUpgradeProgress(string title, string heading, string phase, bool activate = true, string? body = null)
     {
         EndUpgradeProgress();
-        _upgradeProgress = new UpgradeProgressState(title, heading, phase, DateTime.UtcNow);
+        _upgradeProgress = new UpgradeProgressState(title, heading, phase, DateTime.UtcNow, body);
         RaiseUpgradeProgressShownChanged();
         ShowUpgradeProgressWindow(activate);
+    }
+
+    /// <summary>
+    /// UI thread only. The short database window, opened once and without activation as the real PostgreSQL 17 upgrade
+    /// starts. A run that already shows progress, such as the Debian upgrade, keeps its own window instead.
+    /// </summary>
+    private void BeginDatabaseUpdateProgress()
+    {
+        if (_upgradeProgress is not null || _shutdownCts.IsCancellationRequested) return;
+        BeginUpgradeProgress(DatabaseUpdateHeading, DatabaseUpdateHeading, DatabaseUpdateHeading, activate: false, body: DatabaseUpdateBody);
+        _databaseUpdateProgress = _upgradeProgress;
+    }
+
+    /// <summary>UI thread only. Closes the database window at the update's outcome; leaves any other run's progress alone.</summary>
+    private void EndDatabaseUpdateProgress()
+    {
+        var state = _databaseUpdateProgress;
+        _databaseUpdateProgress = null;
+        if (state is not null && ReferenceEquals(state, _upgradeProgress)) EndUpgradeProgress();
     }
 
     /// <summary>UI thread only; safe when the user already hid the window or none was opened.</summary>
@@ -134,10 +157,12 @@ public sealed partial class MainWindowViewModel
 /// and the phase began, so the window shows time on this step and in total even when the step prints nothing.
 /// UI thread only.
 /// </summary>
-internal sealed class UpgradeProgressState(string title, string heading, string phase, DateTime startedUtc)
+internal sealed class UpgradeProgressState(string title, string heading, string phase, DateTime startedUtc, string? body = null)
 {
     public string Title { get; } = title;
     public string Heading { get; } = heading;
+    /// <summary>Set only for the short database window, which shows this line in place of the phase, detail and note.</summary>
+    public string? Body { get; } = body;
     public string Phase { get; private set; } = phase;
     public string? Detail { get; private set; }
     public DateTime StartedUtc { get; } = startedUtc;
@@ -160,9 +185,19 @@ internal sealed class UpgradeProgressState(string title, string heading, string 
         if (line.Length > 0) Detail = line;
     }
 
-    /// <summary>e.g. "This step 3:12 · Total 14:05".</summary>
-    public string ElapsedText(DateTime nowUtc) =>
-        $"This step {FormatElapsed(nowUtc - PhaseStartedUtc)} · Total {FormatElapsed(nowUtc - StartedUtc)}";
+    /// <summary>e.g. "This step 3:12 · Total 14:05", or "Time elapsed 04:32" in the short database window.</summary>
+    public string ElapsedText(DateTime nowUtc) => Body is not null
+        ? "Time elapsed " + FormatTotalElapsed(nowUtc - StartedUtc)
+        : $"This step {FormatElapsed(nowUtc - PhaseStartedUtc)} · Total {FormatElapsed(nowUtc - StartedUtc)}";
+
+    /// <summary>Two-digit minutes, e.g. "04:32", and "1:04:32" past an hour.</summary>
+    internal static string FormatTotalElapsed(TimeSpan elapsed)
+    {
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        return elapsed.TotalHours >= 1
+            ? $"{(int)elapsed.TotalHours}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
+            : $"{elapsed.Minutes:00}:{elapsed.Seconds:00}";
+    }
 
     internal static string FormatElapsed(TimeSpan elapsed)
     {
