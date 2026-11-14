@@ -1416,8 +1416,30 @@ echo "CHIM-MCP installed and enabled."
         }
     }
 
+    private Task<bool>? _systemUpdateCompletion;
+    private bool _startWaitingForUpdate;
+
     private async Task StartServerAsync()
     {
+        if (_startWaitingForUpdate) return;
+        _startWaitingForUpdate = true;
+        try
+        {
+            while (_systemUpdateCompletion is { } update)
+            {
+                AppendLog("Start is waiting for the distro update to finish." + Environment.NewLine);
+                if (!await update || _shutdownCts.IsCancellationRequested)
+                {
+                    AppendLog("Server stayed stopped. Check the update result before retrying." + Environment.NewLine, "yellow");
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            _startWaitingForUpdate = false;
+        }
+
         if (IsServerRunning || IsServerStarting)
         {
             MessageBox.Show("The server is already running or starting.", "Server Status");
@@ -1442,7 +1464,7 @@ echo "CHIM-MCP installed and enabled."
             AppendLog("Starting DwemerDistro..." + Environment.NewLine);
             _serverProcess = _processRunner.StartHiddenProcess(
                 "wsl.exe",
-                new[] { "-d", LauncherConstants.DistroName, "--", "/etc/start_env" },
+                new[] { "-d", _wsl.DistroName, "--", "/etc/start_env" },
                 line =>
                 {
                     if (TryCaptureStartupPocketTtsLine(line))
@@ -1949,7 +1971,7 @@ echo "CHIM-MCP installed and enabled."
         IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate,
         bool forceGitUpdates)
     {
-        if (!CanRunUpdateOperation())
+        if (IsServerStarting || !CanRunUpdateOperation())
         {
             return;
         }
@@ -1960,6 +1982,9 @@ echo "CHIM-MCP installed and enabled."
             .Where(update => ShouldUpdateProduct(update.Product.State))
             .ToArray();
 
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _systemUpdateCompletion = completion.Task;
+        var batchSucceeded = false;
         IsDistroUpdateInProgress = true;
         SetSystemUpdateRunningButtonText("Updating Distro...");
         SetSystemUpdateState(SystemUpdateAvailability.Updating);
@@ -2028,6 +2053,7 @@ echo "CHIM-MCP installed and enabled."
                     "System and shared components updated successfully. The selected mod was no longer eligible, so no mod was changed.";
             }
 
+            batchSucceeded = systemSucceeded && !modsFailed && (succeeded || skippedMods.Count > 0);
             var completionColor = succeeded ? "green" : "red";
             if (systemSucceeded && !modsFailed && skippedMods.Count > 0)
             {
@@ -2045,6 +2071,8 @@ echo "CHIM-MCP installed and enabled."
         }
         finally
         {
+            _systemUpdateCompletion = null;
+            completion.TrySetResult(batchSucceeded);
             CompleteUpdateOperation();
         }
     }
@@ -2284,6 +2312,9 @@ echo "CHIM-MCP installed and enabled."
             return SystemUpdateRunResult.NotRun;
         }
 
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _systemUpdateCompletion = completion.Task;
+        var succeeded = false;
         IsDistroUpdateInProgress = true;
         SetSystemUpdateRunningButtonText(sourceLabel.Equals("Quickstart", StringComparison.OrdinalIgnoreCase)
             ? "Quickstart Updating..."
@@ -2295,7 +2326,7 @@ echo "CHIM-MCP installed and enabled."
             AppendLog("Updating DwemerDistro core and shared components..." + Environment.NewLine);
             await FlushUpdateUiAsync().ConfigureAwait(true);
 
-            var succeeded = await RunSharedDistroUpdateAsync(cancellationToken, deadline, migrationEntry, startSystemUpgrade).ConfigureAwait(true);
+            succeeded = await RunSharedDistroUpdateAsync(cancellationToken, deadline, migrationEntry, startSystemUpgrade).ConfigureAwait(true);
             AppendLog(
                 succeeded
                     ? "System update complete." + Environment.NewLine
@@ -2327,6 +2358,8 @@ echo "CHIM-MCP installed and enabled."
         }
         finally
         {
+            _systemUpdateCompletion = null;
+            completion.TrySetResult(succeeded);
             CompleteUpdateOperation();
         }
     }
@@ -2545,7 +2578,7 @@ echo "CHIM-MCP installed and enabled."
 
     private bool CanRunSystemUpdateOperation()
     {
-        return CanRunUpdateOperation(
+        return !IsServerStarting && CanRunUpdateOperation(
             IsDistroUpdateInProgress,
             _isComponentsOperationInProgress,
             _isExclusiveDistroOperationInProgress,
