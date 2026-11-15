@@ -1,4 +1,4 @@
-<Window x:Class="DwemerDistro.Launcher.Wpf.MainWindow"
+﻿<Window x:Class="DwemerDistro.Launcher.Wpf.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -808,37 +808,62 @@
                             </Button>
                         </StackPanel>
                         <StackPanel x:Name="UtilityLandmark" Margin="0,14,0,0" KeyboardNavigation.TabNavigation="Local">
-                            <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
-                                <StackPanel Orientation="Horizontal">
-                                    <Image Source="{StaticResource GameCenter.UtilityFolder}" Style="{StaticResource GameCenter.UtilityIcon}" />
-                                    <AccessText VerticalAlignment="Center" Text="Server _Folder" />
-                                </StackPanel>
-                            </Button>
-                            <Button Command="{Binding OpenTerminalCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Terminal"
-                                    AutomationProperties.HelpText="Open a shell inside the DwemerAI4Skyrim3 distro as the dwemer user."
-                                    ToolTip="Open a shell inside the DwemerAI4Skyrim3 distro as the dwemer user.">
-                                <StackPanel Orientation="Horizontal">
-                                    <Image Source="{StaticResource GameCenter.UtilityTerminal}" Style="{StaticResource GameCenter.UtilityIcon}" />
-                                    <AccessText VerticalAlignment="Center" Text="_Terminal" />
-                                </StackPanel>
-                            </Button>
-                            <Button Command="{Binding OpenWikiCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Wiki">
-                                <StackPanel Orientation="Horizontal">
-                                    <Image Source="{StaticResource GameCenter.UtilityWiki}" Style="{StaticResource GameCenter.UtilityIcon}" />
-                                    <AccessText VerticalAlignment="Center" Text="_Wiki" />
-                                </StackPanel>
-                            </Button>
-                            <Button Command="{Binding OpenDiscordCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Discord">
-                                <StackPanel Orientation="Horizontal">
-                                    <Image Source="{StaticResource GameCenter.UtilityDiscord}" Style="{StaticResource GameCenter.UtilityIcon}" />
-                                    <AccessText VerticalAlignment="Center" Text="_Discord" />
-                                </StackPanel>
-                            </Button>
-                            <Button Command="{Binding OpenPatreonCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Patreon">
-                                <StackPanel Orientation="Horizontal">
-                                    <Image Source="{StaticResource GameCenter.UtilityPatreon}" Style="{StaticResource GameCenter.UtilityIcon}" />
-                                    <AccessText VerticalAlignment="Center" Text="_Patreon" />
-                                </StackPanel>
+                            <Button x:Name="ToolsLinksButton" Click="ToolsLinksButton_Click"
+                                    Style="{StaticResource GameCenter.UtilityButton}" HorizontalContentAlignment="Stretch"
+                                    AutomationProperties.Name="More"
+                                    AutomationProperties.HelpText="Open server tools, the wiki, and community links.">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Right" Text="&#x25BE;" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                    <AccessText Text="_More" VerticalAlignment="Center" />
+                                </DockPanel>
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="ToolsLinksMenu" Style="{StaticResource GameCenter.Menu}"
+                                                 DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <MenuItem Command="{Binding OpenServerFolderCommand}" AutomationProperties.Name="Server Folder">
+                                            <MenuItem.Header>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Image Source="{StaticResource GameCenter.UtilityFolder}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                                    <AccessText VerticalAlignment="Center" Text="Server _Folder" />
+                                                </StackPanel>
+                                            </MenuItem.Header>
+                                        </MenuItem>
+                                        <MenuItem Command="{Binding OpenTerminalCommand}" AutomationProperties.Name="Terminal"
+                                                AutomationProperties.HelpText="Open a shell inside the DwemerAI4Skyrim3 distro as the dwemer user."
+                                                ToolTip="Open a shell inside the DwemerAI4Skyrim3 distro as the dwemer user.">
+                                            <MenuItem.Header>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Image Source="{StaticResource GameCenter.UtilityTerminal}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                                    <AccessText VerticalAlignment="Center" Text="_Terminal" />
+                                                </StackPanel>
+                                            </MenuItem.Header>
+                                        </MenuItem>
+                                        <Separator Style="{StaticResource GameCenter.MenuSeparator}" />
+                                        <MenuItem Command="{Binding OpenWikiCommand}" AutomationProperties.Name="Wiki">
+                                            <MenuItem.Header>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Image Source="{StaticResource GameCenter.UtilityWiki}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                                    <AccessText VerticalAlignment="Center" Text="_Wiki" />
+                                                </StackPanel>
+                                            </MenuItem.Header>
+                                        </MenuItem>
+                                        <MenuItem Command="{Binding OpenDiscordCommand}" AutomationProperties.Name="Discord">
+                                            <MenuItem.Header>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Image Source="{StaticResource GameCenter.UtilityDiscord}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                                    <AccessText VerticalAlignment="Center" Text="_Discord" />
+                                                </StackPanel>
+                                            </MenuItem.Header>
+                                        </MenuItem>
+                                        <MenuItem Command="{Binding OpenPatreonCommand}" AutomationProperties.Name="Patreon">
+                                            <MenuItem.Header>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Image Source="{StaticResource GameCenter.UtilityPatreon}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                                    <AccessText VerticalAlignment="Center" Text="_Patreon" />
+                                                </StackPanel>
+                                            </MenuItem.Header>
+                                        </MenuItem>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
                             </Button>
                         </StackPanel>
                     </StackPanel>

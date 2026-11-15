@@ -600,6 +600,13 @@ public partial class MainWindow : Window
         Grid.SetColumnSpan(LmStudioSideColumn, wide ? 1 : 3);
     }
 
+    // Open the shared utility menu without invoking any of its actions.
+    private void ToolsLinksButton_Click(object sender, RoutedEventArgs e)
+    {
+        ToolsLinksMenu.PlacementTarget = ToolsLinksButton;
+        ToolsLinksMenu.IsOpen = true;
+    }
+
     private void LmStudioMoreButton_Click(object sender, RoutedEventArgs e)
     {
         LmStudioMoreMenu.DataContext = DataContext;
