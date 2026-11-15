@@ -8,7 +8,18 @@ public sealed record SharedKey([property: JsonPropertyName("key_id")] string Id,
 {
     public string Display => $"{Label} · {Provider} · {Id[..Math.Min(8, Id.Length)]}";
 }
-public sealed record KeyUsage([property: JsonPropertyName("connection_id")] long Id, string Label, string Status);
+/// <summary>Legacy usage rows carry integer connection ids; SOULKILLER rows carry UUID strings.</summary>
+public sealed record KeyUsage([property: JsonPropertyName("connection_id"), JsonConverter(typeof(UsageIdConverter))] string Id, string Label, string Status);
+internal sealed class UsageIdConverter : JsonConverter<string>
+{
+    public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => reader.TokenType switch
+    {
+        JsonTokenType.Number when reader.TryGetInt64(out var id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        JsonTokenType.String => reader.GetString()!,
+        _ => throw new JsonException("connection_id must be an integer or string.")
+    };
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) => writer.WriteStringValue(value);
+}
 public sealed record KeyConnection([property: JsonPropertyName("connection_id")] long Id, string Label, string Kind,
     long Revision, [property: JsonPropertyName("api_key_id")] string? KeyId,
     [property: JsonPropertyName("credential_source")] string CredentialSource, string? Preview = null)
