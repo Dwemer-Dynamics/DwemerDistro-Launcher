@@ -280,29 +280,18 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <!-- Each destination leads with a decorative 12px MDL2 glyph; the accessible name stays the
-                     plain label. The glyphs cost 18px a tab, so these tabs pad 6px a side instead of 12px to
-                     leave the component belt room for its compact count at the 980px minimum. -->
+                <!-- Packaged vector icons keep the existing compact 18px navigation slots. -->
                 <StackPanel x:Name="NavigationLandmark" Orientation="Horizontal">
                     <StackPanel.Resources>
                         <Style x:Key="HeaderNavButton" TargetType="RadioButton" BasedOn="{StaticResource GameCenter.NavButton}">
                             <Setter Property="Padding" Value="6,12" />
-                        </Style>
-                        <Style x:Key="HeaderNavGlyph" TargetType="TextBlock">
-                            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
-                            <Setter Property="FontSize" Value="12" />
-                            <Setter Property="FontWeight" Value="Normal" />
-                            <Setter Property="Width" Value="12" />
-                            <Setter Property="Margin" Value="0,0,6,0" />
-                            <Setter Property="TextAlignment" Value="Center" />
-                            <Setter Property="VerticalAlignment" Value="Center" />
                         </Style>
                     </StackPanel.Resources>
                     <RadioButton x:Name="LibraryNavButton" GroupName="Destination" IsChecked="True"
                                  Style="{StaticResource HeaderNavButton}" Tag="0" Checked="DestinationNav_Checked"
                                  AutomationProperties.Name="Mods">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xEA86;" Style="{StaticResource HeaderNavGlyph}" />
+                            <Image Source="{StaticResource GameCenter.NavMods}" Style="{StaticResource GameCenter.HeaderIcon}" />
                             <AccessText Text="_Mods" VerticalAlignment="Center" />
                         </StackPanel>
                     </RadioButton>
@@ -310,7 +299,7 @@
                                  Style="{StaticResource HeaderNavButton}" Tag="1" Checked="DestinationNav_Checked"
                                  AutomationProperties.Name="Components">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE950;" Style="{StaticResource HeaderNavGlyph}" />
+                            <Image Source="{StaticResource GameCenter.NavComponents}" Style="{StaticResource GameCenter.HeaderIcon}" />
                             <AccessText Text="_Components" VerticalAlignment="Center" />
                         </StackPanel>
                     </RadioButton>
@@ -318,7 +307,7 @@
                                  Style="{StaticResource HeaderNavButton}" Tag="2" Checked="DestinationNav_Checked"
                                  AutomationProperties.Name="Settings">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE713;" Style="{StaticResource HeaderNavGlyph}" />
+                            <Image Source="{StaticResource GameCenter.NavSettings}" Style="{StaticResource GameCenter.HeaderIcon}" />
                             <AccessText Text="_Settings" VerticalAlignment="Center" />
                         </StackPanel>
                     </RadioButton>
@@ -326,7 +315,7 @@
                                  Style="{StaticResource HeaderNavButton}" Tag="5" Checked="DestinationNav_Checked"
                                  AutomationProperties.Name="API Keys">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8D7;" Style="{StaticResource HeaderNavGlyph}" />
+                            <Image Source="{StaticResource GameCenter.NavApiKeys}" Style="{StaticResource GameCenter.HeaderIcon}" />
                             <AccessText Text="API _Keys" VerticalAlignment="Center" />
                         </StackPanel>
                     </RadioButton>
@@ -334,7 +323,7 @@
                                  Style="{StaticResource HeaderNavButton}" Tag="4" Checked="DestinationNav_Checked"
                                  AutomationProperties.Name="Assistant">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8F2;" Style="{StaticResource HeaderNavGlyph}" />
+                            <Image Source="{StaticResource GameCenter.NavAssistant}" Style="{StaticResource GameCenter.HeaderIcon}" />
                             <AccessText Text="_Assistant" VerticalAlignment="Center" />
                         </StackPanel>
                     </RadioButton>
@@ -342,7 +331,7 @@
                                  Style="{StaticResource HeaderNavButton}" Tag="3" Checked="DestinationNav_Checked"
                                  AutomationProperties.Name="Logs">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE9F9;" Style="{StaticResource HeaderNavGlyph}" />
+                            <Image Source="{StaticResource GameCenter.NavLogs}" Style="{StaticResource GameCenter.HeaderIcon}" />
                             <AccessText Text="Lo_gs" VerticalAlignment="Center" />
                         </StackPanel>
                     </RadioButton>
@@ -821,34 +810,34 @@
                         <StackPanel x:Name="UtilityLandmark" Margin="0,14,0,0" KeyboardNavigation.TabNavigation="Local">
                             <Button Command="{Binding OpenServerFolderCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Server Folder">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                                    <AccessText Text="Server _Folder" />
+                                    <Image Source="{StaticResource GameCenter.UtilityFolder}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                    <AccessText VerticalAlignment="Center" Text="Server _Folder" />
                                 </StackPanel>
                             </Button>
                             <Button Command="{Binding OpenTerminalCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Terminal"
                                     AutomationProperties.HelpText="Open a shell inside the DwemerAI4Skyrim3 distro as the dwemer user."
                                     ToolTip="Open a shell inside the DwemerAI4Skyrim3 distro as the dwemer user.">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                                    <AccessText Text="_Terminal" />
+                                    <Image Source="{StaticResource GameCenter.UtilityTerminal}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                    <AccessText VerticalAlignment="Center" Text="_Terminal" />
                                 </StackPanel>
                             </Button>
                             <Button Command="{Binding OpenWikiCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Wiki">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE82D;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                                    <AccessText Text="_Wiki" />
+                                    <Image Source="{StaticResource GameCenter.UtilityWiki}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                    <AccessText VerticalAlignment="Center" Text="_Wiki" />
                                 </StackPanel>
                             </Button>
                             <Button Command="{Binding OpenDiscordCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Discord">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE8BD;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                                    <AccessText Text="_Discord" />
+                                    <Image Source="{StaticResource GameCenter.UtilityDiscord}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                    <AccessText VerticalAlignment="Center" Text="_Discord" />
                                 </StackPanel>
                             </Button>
                             <Button Command="{Binding OpenPatreonCommand}" Style="{StaticResource GameCenter.UtilityButton}" AutomationProperties.Name="Patreon">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE006;" FontFamily="Segoe MDL2 Assets" Width="22" />
-                                    <AccessText Text="_Patreon" />
+                                    <Image Source="{StaticResource GameCenter.UtilityPatreon}" Style="{StaticResource GameCenter.UtilityIcon}" />
+                                    <AccessText VerticalAlignment="Center" Text="_Patreon" />
                                 </StackPanel>
                             </Button>
                         </StackPanel>
