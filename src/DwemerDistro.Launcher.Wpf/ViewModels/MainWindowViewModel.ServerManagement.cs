@@ -122,7 +122,8 @@ public sealed partial class MainWindowViewModel
             InstallServerAsync,
             UpdateServerAsync,
             RepairServerAsync,
-            UninstallServerAsync);
+            UninstallServerAsync,
+            SwitchReleaseAsync);
     }
 
     public ServerManagerItemViewModel? FindServerManager(string? gameKey)
@@ -148,14 +149,15 @@ public sealed partial class MainWindowViewModel
 
     /// <summary>
     /// Re-reads <c>status all --json</c> and pushes it into the three items. A failed probe marks each
-    /// item as unavailable, rather than claiming everything is missing.
+    /// item as unavailable, rather than claiming everything is missing. Returns true only when a
+    /// fresh status document was applied.
     /// </summary>
-    private async Task RefreshServerManagementAsync(CancellationToken cancellationToken = default)
+    private async Task<bool> RefreshServerManagementAsync(CancellationToken cancellationToken = default)
     {
         var service = _serverManagement;
         if (service is null)
         {
-            return;
+            return false;
         }
 
         ServerStatusResult result;
@@ -189,6 +191,7 @@ public sealed partial class MainWindowViewModel
             QueueBackgroundTask("Reign version check", CheckReignServerUpdatesAsync, StartupVersionCheckTimeout);
         if (result.IsSuccess && LorkhanManager.IsInstalled)
             QueueBackgroundTask("Lorkhan version details", RefreshLorkhanVersionDetailsAsync, StartupVersionCheckTimeout);
+        return result.IsSuccess;
     }
 
     private void MarkServerStatusUnavailable()
@@ -302,17 +305,19 @@ public sealed partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Updates the shared system first, then this product on its selected branch. Other products
-    /// are left alone.
+    /// Updates the shared system first, then this product on its installed release. Other products
+    /// are left alone. A custom or unreported branch is never moved to Main here; that takes an
+    /// explicit release switch.
     /// </summary>
     private async Task UpdateServerAsync(ServerManagerItemViewModel item)
     {
-        if (!item.CanUpdate)
+        if (!item.CanUpdateInstalledRelease || item.UpdateTargetChannel is not { } installedBranch)
         {
             return;
         }
 
-        var updates = SnapshotModUpdates([item]);
+        IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> updates =
+            ShouldUpdateProduct(item.State) ? [(item, installedBranch)] : [];
         // Capture the destructive setting with the branch selection shown in this confirmation.
         // A user may change Settings while the system stage runs, but that must affect only the
         // next update rather than changing what this already-confirmed operation will do.
@@ -328,6 +333,188 @@ public sealed partial class MainWindowViewModel
         }
 
         await RunModUpdatesAsync(updates, forceGitUpdates).ConfigureAwait(true);
+    }
+
+    // --- Release switch --------------------------------------------------------------------
+
+    /// <summary>
+    /// Switches an installed product to Main or Beta after one confirmation. It reuses the
+    /// system-first mod update, so progress, the tracked-edits prompt and Force Updates behave as in
+    /// Update, and then reads status again: only the branch the manager reports counts as switched.
+    /// </summary>
+    private async Task SwitchReleaseAsync(ServerManagerItemViewModel item, ServerBranchChannel target)
+    {
+        if (!item.CanUpdate || item.InstalledChannel == target)
+        {
+            return;
+        }
+
+        var title = BuildReleaseSwitchTitle(item.RailProductName, target);
+        if (IsServerStarting || !CanRunUpdateOperation())
+        {
+            var reason = _systemUpgradeBlocksWrites
+                ? SystemUpgradeBlockedMessage
+                : (IsServerStarting ? "The server is starting." : ExclusiveDistroOperationBusyMessage) +
+                  " Wait for it to finish, then try again.";
+            AppendLog($"{item.RailProductName} was not switched. {reason}{Environment.NewLine}", "yellow");
+            MessageBox.Show(reason, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // Captured with the target shown in the warning; a Settings change during the run applies next time.
+        var forceGitUpdates = ForceGitUpdatesEnabled;
+        var result = await SwitchInstalledReleaseAsync(
+                item,
+                target,
+                forceGitUpdates,
+                ShowOwnedServerDialog,
+                RunModUpdatesAsync,
+                RefreshServerStatusForReleaseCheckAsync)
+            .ConfigureAwait(true);
+        ReportReleaseSwitchResult(item, target, title, result);
+    }
+
+    /// <summary>
+    /// The release switch sequence without any UI of its own, so it can be tested: confirm, run the
+    /// system-first update for exactly this product and target, then verify against fresh status.
+    /// </summary>
+    internal static async Task<ReleaseSwitchResult> SwitchInstalledReleaseAsync(
+        ServerManagerItemViewModel item,
+        ServerBranchChannel target,
+        bool forceGitUpdates,
+        Func<ServerUpdateDialogContent, bool> confirm,
+        Func<IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)>, bool, Task<bool?>> runUpdates,
+        Func<Task<bool>> refreshStatus)
+    {
+        if (!confirm(BuildReleaseSwitchContent(item.RailProductName, target, forceGitUpdates)))
+        {
+            return ReleaseSwitchResult.Canceled;
+        }
+
+        // The warning pumps the dispatcher, so status or another operation may have changed meanwhile.
+        if (!item.CanUpdate)
+        {
+            return ReleaseSwitchResult.NotStarted;
+        }
+
+        var ran = await runUpdates([(item, target)], forceGitUpdates).ConfigureAwait(true);
+        if (ran is null)
+        {
+            return ReleaseSwitchResult.NotStarted;
+        }
+
+        var statusKnown = await refreshStatus().ConfigureAwait(true) && item.IsStatusKnown;
+        return EvaluateReleaseSwitch(ran.Value, statusKnown, item.InstalledChannel, target);
+    }
+
+    /// <summary>A switch is verified only by the installed branch, never by an exit code alone.</summary>
+    internal static ReleaseSwitchResult EvaluateReleaseSwitch(
+        bool updateSucceeded,
+        bool statusKnown,
+        ServerBranchChannel? installedAfter,
+        ServerBranchChannel target)
+    {
+        if (!statusKnown)
+        {
+            return ReleaseSwitchResult.Unconfirmed;
+        }
+
+        if (installedAfter != target)
+        {
+            return ReleaseSwitchResult.NotApplied;
+        }
+
+        return updateSucceeded ? ReleaseSwitchResult.Verified : ReleaseSwitchResult.SwitchedWithErrors;
+    }
+
+    internal static string BuildReleaseSwitchTitle(string productName, ServerBranchChannel target) =>
+        $"Switch {productName} to {ServerManagerItemViewModel.ToReleaseName(target)}?";
+
+    /// <summary>The single release switch warning: Cancel is the default and every close path.</summary>
+    internal static ServerUpdateDialogContent BuildReleaseSwitchContent(
+        string productName,
+        ServerBranchChannel target,
+        bool forceGitUpdates)
+    {
+        var release = ServerManagerItemViewModel.ToReleaseName(target);
+        var title = BuildReleaseSwitchTitle(productName, target);
+        return new ServerUpdateDialogContent(
+            Title: title,
+            Heading: title,
+            // The title already names the product and release, so the body only says what runs and what to do.
+            Intro: $"This updates {productName} and shared components. Keep the launcher open until it finishes." +
+                   (forceGitUpdates ? "\n\n" + ForceGitUpdatesUpdateWarning : string.Empty),
+            DetailsLabel: string.Empty,
+            Details: string.Empty,
+            YesChoice: null,
+            NoChoice: null,
+            Footnote: string.Empty,
+            // Force Updates discards tracked edits, so only then does the warning read as destructive:
+            // red heading and confirm button, as in the discard-local-edits confirmation. A plain
+            // switch gets a neutral heading and a green confirm button (see ServerUpdateDialog).
+            IsWarning: !forceGitUpdates,
+            ConfirmButtonText: $"Switch to {release}",
+            IsDestructiveAction: forceGitUpdates);
+    }
+
+    private async Task<bool> RefreshServerStatusForReleaseCheckAsync()
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(StartupVersionCheckTimeout);
+            return await RefreshServerManagementAsync(timeout.Token).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"Server status check after the release switch failed: {ex.Message}{Environment.NewLine}", "yellow");
+            return false;
+        }
+    }
+
+    private void ReportReleaseSwitchResult(
+        ServerManagerItemViewModel item,
+        ServerBranchChannel target,
+        string title,
+        ReleaseSwitchResult result)
+    {
+        var product = item.RailProductName;
+        var release = ServerManagerItemViewModel.ToReleaseName(target);
+        switch (result)
+        {
+            case ReleaseSwitchResult.Canceled:
+                AppendLog("Release switch canceled." + Environment.NewLine);
+                break;
+            case ReleaseSwitchResult.NotStarted:
+                var notStarted = $"{product} was not switched to {release}. Another operation started or its status changed, so nothing was changed.";
+                AppendLog(notStarted + Environment.NewLine, "yellow");
+                MessageBox.Show(notStarted, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+                break;
+            case ReleaseSwitchResult.Verified:
+                AppendLog($"{product} is now on {release}.{Environment.NewLine}", "green");
+                break;
+            case ReleaseSwitchResult.SwitchedWithErrors:
+                item.ApplyStatusError($"On {release}, but the update reported errors");
+                AppendLog($"{product} is now on {release}, but the update reported errors. Check the log above.{Environment.NewLine}", "yellow");
+                break;
+            case ReleaseSwitchResult.NotApplied:
+                item.ApplyStatusError($"Not switched to {release}. Installed: {item.InstalledReleaseText}");
+                AppendLog($"{product} was not switched to {release}. It is on {item.InstalledReleaseText}.{Environment.NewLine}", "red");
+                break;
+            default:
+                item.ApplyStatusError("Couldn't confirm the release. Check status.");
+                AppendLog($"Couldn't confirm which {product} release is installed after the switch to {release}. Check status.{Environment.NewLine}", "yellow");
+                break;
+        }
+    }
+
+    internal enum ReleaseSwitchResult
+    {
+        Canceled,
+        NotStarted,
+        Verified,
+        SwitchedWithErrors,
+        NotApplied,
+        Unconfirmed
     }
 
     private async Task RepairServerAsync(ServerManagerItemViewModel item)
@@ -363,10 +550,13 @@ public sealed partial class MainWindowViewModel
 
         var (progressVerb, pastVerb, failureVerb) = DescribeOperation(operation);
         var branchChoice = ServerManagementService.ToBranchChoice(branch);
+        // Main/Beta products name the release as their switch does ("Beta", not "Dev"); Dev-only
+        // Reign and Lorkhan keep the branch name.
+        var branchLabel = item.HasReleaseSwitch ? ServerManagerItemViewModel.ToReleaseName(branch) : branchChoice;
 
-        RunOnUi(() => item.BeginOperation($"{progressVerb} ({branchChoice})..."));
+        RunOnUi(() => item.BeginOperation($"{progressVerb} ({branchLabel})..."));
         AppendLog(
-            $"{Environment.NewLine}{progressVerb} {item.DisplayName} on the {branchChoice} branch...{Environment.NewLine}",
+            $"{Environment.NewLine}{progressVerb} {item.DisplayName} on the {branchLabel} {(item.HasReleaseSwitch ? "release" : "branch")}...{Environment.NewLine}",
             "green");
 
         var outcome = ServerOperationOutcome.Failed;

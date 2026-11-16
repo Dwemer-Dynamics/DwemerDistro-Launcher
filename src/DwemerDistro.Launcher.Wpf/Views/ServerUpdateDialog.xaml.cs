@@ -9,7 +9,9 @@ namespace DwemerDistro.Launcher.Wpf.Views;
 
 /// <summary>
 /// What one blocked or failed mod update dialog says. A non-null <see cref="YesChoice"/> makes it the
-/// Yes/No discard confirmation; otherwise it is an OK-only warning or error.
+/// Yes/No discard confirmation; a non-null <see cref="ConfirmButtonText"/> makes it a plain
+/// Cancel/confirm warning with that button label, styled as a destructive action only when
+/// <see cref="IsDestructiveAction"/> is set; otherwise it is an OK-only warning or error.
 /// </summary>
 internal sealed record ServerUpdateDialogContent(
     string Title,
@@ -20,9 +22,13 @@ internal sealed record ServerUpdateDialogContent(
     string? YesChoice,
     string? NoChoice,
     string Footnote,
-    bool IsWarning)
+    bool IsWarning,
+    string? ConfirmButtonText = null,
+    bool IsDestructiveAction = false)
 {
     public bool IsConfirmation => YesChoice is not null;
+
+    public bool IsActionConfirmation => !IsConfirmation && ConfirmButtonText is not null;
 
     /// <summary>The whole message as one string, for screen readers and the regression tests.</summary>
     public string ToPlainText()
@@ -33,14 +39,22 @@ internal sealed record ServerUpdateDialogContent(
             parts.Add(Intro);
         }
 
-        parts.Add($"{DetailsLabel}:\n{Details}");
+        if (!string.IsNullOrWhiteSpace(Details))
+        {
+            parts.Add($"{DetailsLabel}:\n{Details}");
+        }
+
         if (IsConfirmation)
         {
             parts.Add($"Yes: {YesChoice}");
             parts.Add($"No: {NoChoice}");
         }
 
-        parts.Add(Footnote);
+        if (!string.IsNullOrWhiteSpace(Footnote))
+        {
+            parts.Add(Footnote);
+        }
+
         return string.Join("\n\n", parts);
     }
 }
@@ -85,10 +99,36 @@ public partial class ServerUpdateDialog : Window
             AutomationProperties.SetName(DismissButton, "No, keep local edits");
             AutomationProperties.SetHelpText(DismissButton, "No: " + content.NoChoice);
         }
+        else if (content.IsActionConfirmation)
+        {
+            // A named action. Cancel stays default, cancel and first focus. Only a destructive action
+            // (Force Updates on) keeps the red heading and confirm button from the XAML; a plain one
+            // reads as a normal choice: neutral heading text and the green success button.
+            YesButton.Content = content.ConfirmButtonText;
+            YesButton.Visibility = Visibility.Visible;
+            if (!content.IsDestructiveAction)
+            {
+                HeadingTextBlock.SetResourceReference(TextBlock.ForegroundProperty, "GameCenter.Text");
+                YesButton.SetResourceReference(StyleProperty, "GameCenter.SuccessButton");
+            }
+
+            DismissButton.Content = "Cancel";
+            DismissButton.SetResourceReference(StyleProperty, "GameCenter.Button");
+            AutomationProperties.SetName(YesButton, content.ConfirmButtonText);
+            AutomationProperties.SetName(DismissButton, "Cancel");
+        }
+
+        if (string.IsNullOrWhiteSpace(content.Details))
+        {
+            DetailsLabelTextBlock.Visibility = Visibility.Collapsed;
+            DetailsBorder.Visibility = Visibility.Collapsed;
+        }
+
+        FootnoteTextBlock.Visibility = string.IsNullOrWhiteSpace(content.Footnote) ? Visibility.Collapsed : Visibility.Visible;
 
         AutomationProperties.SetName(this, content.Title);
         AutomationProperties.SetHelpText(this, content.ToPlainText());
-        var isError = !content.IsConfirmation && !content.IsWarning;
+        var isError = !content.IsConfirmation && !content.IsActionConfirmation && !content.IsWarning;
         Loaded += (_, _) =>
         {
             // Error output explains itself at the end, so a long tail opens on its last line.

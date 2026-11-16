@@ -26,6 +26,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     private readonly Func<ServerManagerItemViewModel, Task> _update;
     private readonly Func<ServerManagerItemViewModel, Task> _repair;
     private readonly Func<ServerManagerItemViewModel, Task> _uninstall;
+    private readonly Func<ServerManagerItemViewModel, ServerBranchChannel, Task>? _switchRelease;
 
     private ServerInstallState _state = ServerInstallState.Unknown;
     private ServerRepositoryState _repositoryState = ServerRepositoryState.Unknown;
@@ -33,6 +34,8 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     private string? _root;
     private string? _database;
     private string? _branch;
+    private string? _productionBranch;
+    private string? _developmentBranch;
     private string? _version;
     private int? _port;
     private string _versionStatusText = "Checking...";
@@ -51,7 +54,8 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         Func<ServerManagerItemViewModel, Task> install,
         Func<ServerManagerItemViewModel, Task> update,
         Func<ServerManagerItemViewModel, Task> repair,
-        Func<ServerManagerItemViewModel, Task> uninstall)
+        Func<ServerManagerItemViewModel, Task> uninstall,
+        Func<ServerManagerItemViewModel, ServerBranchChannel, Task>? switchRelease = null)
     {
         Product = product;
         GameKey = gameKey;
@@ -70,11 +74,17 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         _update = update;
         _repair = repair;
         _uninstall = uninstall;
+        _switchRelease = switchRelease;
 
         InstallCommand = new AsyncRelayCommand(() => _install(this), () => CanInstall);
-        UpdateCommand = new AsyncRelayCommand(() => _update(this), () => CanUpdate);
+        UpdateCommand = new AsyncRelayCommand(() => _update(this), () => CanUpdateInstalledRelease);
         RepairCommand = new AsyncRelayCommand(() => _repair(this), () => CanRepair);
         UninstallCommand = new AsyncRelayCommand(() => _uninstall(this), () => CanUninstall);
+
+        // Only Main/Beta products get release switch buttons; Dev-only Reign and Lorkhan get none.
+        ReleaseOptions = HasReleaseSwitch
+            ? [new ReleaseOptionViewModel(this, ServerBranchChannel.Main), new ReleaseOptionViewModel(this, ServerBranchChannel.Dev)]
+            : [];
     }
 
     public ServerProduct Product { get; }
@@ -100,6 +110,63 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     public string UpdateActionName { get; }
 
     public ObservableCollection<string> Branches { get; }
+
+    /// <summary>True for products with a Main and a Beta release (CHIM, STOBE, DIALECTIC).</summary>
+    public bool HasReleaseSwitch => Branches.Count > 1;
+
+    /// <summary>
+    /// The installed Update row's release buttons. Each one only asks to switch; nothing changes
+    /// until the user confirms, and a status refresh never activates one.
+    /// </summary>
+    public IReadOnlyList<ReleaseOptionViewModel> ReleaseOptions { get; }
+
+    /// <summary>
+    /// The release the manager reports as checked out, or null for a custom or unreported branch or
+    /// a product that is not installed. Only status sets this, never a user choice.
+    /// </summary>
+    public ServerBranchChannel? InstalledChannel =>
+        HasReleaseSwitch && _state == ServerInstallState.Installed
+            ? MapInstalledBranchToChannel(_branch, _productionBranch, _developmentBranch) switch
+            {
+                ServerBranchChannel.Main => ServerBranchChannel.Main,
+                ServerBranchChannel.Dev => ServerBranchChannel.Dev,
+                _ => null
+            }
+            : null;
+
+    /// <summary>"Main", "Beta", "custom branch 'x'" or "an unknown release", for copy and logs.</summary>
+    public string InstalledReleaseText
+    {
+        get
+        {
+            if (InstalledChannel is { } channel)
+            {
+                return ToReleaseName(channel);
+            }
+
+            return _state == ServerInstallState.Installed && !string.IsNullOrWhiteSpace(_branch)
+                ? $"custom branch '{_branch!.Trim()}'"
+                : "an unknown release";
+        }
+    }
+
+    /// <summary>Release row label. It names a custom or unknown branch, because then no button is current.</summary>
+    public string ReleaseRowLabel =>
+        !HasReleaseSwitch || InstalledChannel is not null || _state != ServerInstallState.Installed
+            ? "Release"
+            : string.IsNullOrWhiteSpace(_branch) ? "Release: unknown" : $"Release: {_branch!.Trim()}";
+
+    public string ReleaseGroupHelpText =>
+        $"Installed: {InstalledReleaseText}. Choosing a release switches {RailProductName} after you confirm.";
+
+    /// <summary>The channel the Update action keeps: the installed release, never a guessed default.</summary>
+    public ServerBranchChannel? UpdateTargetChannel => HasReleaseSwitch ? InstalledChannel : SelectedBranchChannel;
+
+    internal static string ToReleaseName(ServerBranchChannel channel) =>
+        ServerManagementService.ToBranchDisplayName(ServerManagementService.ToBranchChoice(channel));
+
+    internal Task RequestReleaseSwitchAsync(ServerBranchChannel target) =>
+        _switchRelease is null ? Task.CompletedTask : _switchRelease(this, target);
 
     public AsyncRelayCommand InstallCommand { get; }
 
@@ -158,6 +225,12 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         && !_isConflictingOperationRunning;
 
     /// <summary>
+    /// Update keeps the installed release, so it needs that release to be Main or Beta. A custom or
+    /// unreported branch is left for an explicit release switch instead of being moved to Main.
+    /// </summary>
+    public bool CanUpdateInstalledRelease => CanUpdate && UpdateTargetChannel is not null;
+
+    /// <summary>
     /// True only when the last version check compared the installed version against the selected
     /// branch and found the branch ahead. It is never inferred from the status colour, because the
     /// same yellow also covers an unknown or missing version. Every other state - checking,
@@ -166,7 +239,7 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     /// </summary>
     public bool IsUpdateAvailable =>
         _isVersionUpdateAvailable
-        && CanUpdate
+        && CanUpdateInstalledRelease
         && string.IsNullOrWhiteSpace(_errorText);
 
     /// <summary>A product with anything on disk can be purged; a clean absence cannot.</summary>
@@ -319,13 +392,19 @@ public sealed class ServerManagerItemViewModel : ObservableObject
                 return $"{UpdateActionName} is unavailable until {RailProductName} is installed.";
             }
 
-            var release = ServerManagementService.ToBranchDisplayName(SelectedBranch);
+            if (UpdateTargetChannel is not { } target)
+            {
+                return $"{UpdateActionName} is unavailable because {RailProductName} is on {InstalledReleaseText}. " +
+                       "Choose Main or Beta to switch releases.";
+            }
+
+            var release = ToReleaseName(target);
             var lead = IsUpdateAvailable
-                ? $"Update Available for {RailProductName} on the selected {release} release. "
+                ? $"Update Available for {RailProductName} on the installed {release} release. "
                 : string.Empty;
 
             return lead +
-                   $"Update DwemerDistro and shared components first, then {DisplayName} on the selected {release} release. " +
+                   $"Update DwemerDistro and shared components first, then {DisplayName} on the installed {release} release. " +
                    "Other mods are left unchanged.";
         }
     }
@@ -359,6 +438,8 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         _root = status?.Root;
         _database = status?.Database;
         _branch = status?.Branch;
+        _productionBranch = status?.ProductionBranch;
+        _developmentBranch = status?.DevelopmentBranch;
         _version = status?.Version;
         _port = status?.Port;
         _errorText = null;
@@ -441,6 +522,41 @@ public sealed class ServerManagerItemViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Strict mapping for the installed release (current button and switch verification). When the
+    /// manager reports either branch name, only an exact match counts, so a legacy alias such as
+    /// "unstable" or a stale "main" never verifies against conflicting authoritative metadata.
+    /// Without any reported name it falls back to the legacy aliases.
+    /// </summary>
+    internal static ServerBranchChannel? MapInstalledBranchToChannel(
+        string? branch,
+        string? productionBranch,
+        string? developmentBranch)
+    {
+        if (string.IsNullOrWhiteSpace(productionBranch) && string.IsNullOrWhiteSpace(developmentBranch))
+        {
+            return MapBranchToChannel(branch, null, null);
+        }
+
+        var normalized = branch?.Trim();
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(productionBranch) &&
+            string.Equals(normalized, productionBranch.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(productionBranch.Trim(), "reign", StringComparison.OrdinalIgnoreCase)
+                ? ServerBranchChannel.Reign : ServerBranchChannel.Main;
+        }
+
+        return !string.IsNullOrWhiteSpace(developmentBranch) &&
+               string.Equals(normalized, developmentBranch.Trim(), StringComparison.OrdinalIgnoreCase)
+            ? ServerBranchChannel.Dev
+            : null;
+    }
+
+    /// <summary>
     /// Chooses the visible branch entry from the checked-out branch, preferring the exact
     /// production/development names the manager reported for this product.
     /// </summary>
@@ -506,9 +622,73 @@ public sealed class ServerManagerItemViewModel : ObservableObject
         OnPropertyChanged(nameof(LocationSummary));
         OnPropertyChanged(nameof(AccessibleStatusHelpText));
         OnPropertyChanged(nameof(UpdateActionHelpText));
+        OnPropertyChanged(nameof(CanUpdateInstalledRelease));
+        OnPropertyChanged(nameof(InstalledChannel));
+        OnPropertyChanged(nameof(InstalledReleaseText));
+        OnPropertyChanged(nameof(ReleaseRowLabel));
+        OnPropertyChanged(nameof(ReleaseGroupHelpText));
+        foreach (var option in ReleaseOptions)
+        {
+            option.Refresh();
+        }
+
         InstallCommand.RaiseCanExecuteChanged();
         UpdateCommand.RaiseCanExecuteChanged();
         RepairCommand.RaiseCanExecuteChanged();
         UninstallCommand.RaiseCanExecuteChanged();
+    }
+}
+
+/// <summary>
+/// One Main or Beta button on an installed product's Update row. It is current only when status
+/// reports that release checked out, so a target is never shown as installed before it is.
+/// </summary>
+public sealed class ReleaseOptionViewModel : ObservableObject
+{
+    private readonly ServerManagerItemViewModel _owner;
+
+    internal ReleaseOptionViewModel(ServerManagerItemViewModel owner, ServerBranchChannel channel)
+    {
+        _owner = owner;
+        Channel = channel;
+        DisplayName = ServerManagerItemViewModel.ToReleaseName(channel);
+        SwitchCommand = new AsyncRelayCommand(() => _owner.RequestReleaseSwitchAsync(Channel), () => CanSwitch);
+    }
+
+    public ServerBranchChannel Channel { get; }
+
+    /// <summary>"Main" or "Beta".</summary>
+    public string DisplayName { get; }
+
+    public bool IsCurrent => _owner.InstalledChannel == Channel;
+
+    public bool CanSwitch => _owner.CanUpdate && !IsCurrent;
+
+    /// <summary>Switches the installed release after one confirmation. Inert for the current release.</summary>
+    public AsyncRelayCommand SwitchCommand { get; }
+
+    public string AccessibleName => $"{DisplayName} release";
+
+    public string HelpText
+    {
+        get
+        {
+            if (IsCurrent)
+            {
+                return $"Current release. {_owner.RailProductName} is on {DisplayName}.";
+            }
+
+            return _owner.CanUpdate
+                ? $"Switch {_owner.RailProductName} to {DisplayName}. Asks for confirmation first."
+                : $"Switching to {DisplayName} is unavailable until {_owner.RailProductName} is installed and no other operation is running.";
+        }
+    }
+
+    internal void Refresh()
+    {
+        OnPropertyChanged(nameof(IsCurrent));
+        OnPropertyChanged(nameof(CanSwitch));
+        OnPropertyChanged(nameof(HelpText));
+        SwitchCommand.RaiseCanExecuteChanged();
     }
 }

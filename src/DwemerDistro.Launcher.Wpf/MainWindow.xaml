@@ -1024,12 +1024,13 @@
                                                     <Grid Style="{StaticResource GameCenter.ModAction.ReleaseRow}">
                                                         <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                         <TextBlock Text="&#xE8EC;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="{DynamicResource GameCenter.TextMuted}" VerticalAlignment="Center" />
-                                                        <TextBlock Grid.Column="1" Text="Release" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center" />
-                                                        <ListBox Grid.Column="2" ItemsSource="{Binding HerikaManager.Branches}" SelectedItem="{Binding HerikaManager.SelectedBranch}"
-                                                                 Style="{StaticResource GameCenter.ModAction.ReleaseSelector}" Margin="8,4,0,4"
-                                                                 IsEnabled="{Binding HerikaManager.CanUseInstalledFeatures}"
-                                                                 AutomationProperties.Name="CHIM update release"
-                                                                 AutomationProperties.HelpText="Release used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
+                                                        <TextBlock Grid.Column="1" Text="{Binding HerikaManager.ReleaseRowLabel}" ToolTip="{Binding HerikaManager.ReleaseRowLabel}" TextTrimming="CharacterEllipsis" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center" />
+                                                        <!-- Installed release switch: buttons, not a selection, so only click/Enter/Space asks to switch. -->
+                                                        <ItemsControl Grid.Column="2" ItemsSource="{Binding HerikaManager.ReleaseOptions}"
+                                                                      Style="{StaticResource GameCenter.ModAction.ReleaseSwitch}" Margin="8,4,0,4"
+                                                                      IsEnabled="{Binding HerikaManager.CanUseInstalledFeatures}"
+                                                                      AutomationProperties.Name="CHIM release"
+                                                                      AutomationProperties.HelpText="{Binding HerikaManager.ReleaseGroupHelpText}" />
                                                     </Grid>
                                                     <Border Style="{StaticResource GameCenter.ModAction.RowSeparator}" />
                                                     <Button DataContext="{Binding HerikaManager}"
@@ -1341,12 +1342,13 @@
                                                     <Grid Style="{StaticResource GameCenter.ModAction.ReleaseRow}">
                                                         <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                         <TextBlock Text="&#xE8EC;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="{DynamicResource GameCenter.TextMuted}" VerticalAlignment="Center" />
-                                                        <TextBlock Grid.Column="1" Text="Release" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center" />
-                                                        <ListBox Grid.Column="2" ItemsSource="{Binding StobeManager.Branches}" SelectedItem="{Binding StobeManager.SelectedBranch}"
-                                                                 Style="{StaticResource GameCenter.ModAction.ReleaseSelector}" Margin="8,4,0,4"
-                                                                 IsEnabled="{Binding StobeManager.CanUseInstalledFeatures}"
-                                                                 AutomationProperties.Name="STOBE update release"
-                                                                 AutomationProperties.HelpText="Release used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
+                                                        <TextBlock Grid.Column="1" Text="{Binding StobeManager.ReleaseRowLabel}" ToolTip="{Binding StobeManager.ReleaseRowLabel}" TextTrimming="CharacterEllipsis" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center" />
+                                                        <!-- Installed release switch: buttons, not a selection, so only click/Enter/Space asks to switch. -->
+                                                        <ItemsControl Grid.Column="2" ItemsSource="{Binding StobeManager.ReleaseOptions}"
+                                                                      Style="{StaticResource GameCenter.ModAction.ReleaseSwitch}" Margin="8,4,0,4"
+                                                                      IsEnabled="{Binding StobeManager.CanUseInstalledFeatures}"
+                                                                      AutomationProperties.Name="STOBE release"
+                                                                      AutomationProperties.HelpText="{Binding StobeManager.ReleaseGroupHelpText}" />
                                                     </Grid>
                                                     <Border Style="{StaticResource GameCenter.ModAction.RowSeparator}" />
                                                     <Button DataContext="{Binding StobeManager}"
@@ -1494,12 +1496,13 @@
                                                     <Grid Style="{StaticResource GameCenter.ModAction.ReleaseRow}">
                                                         <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                         <TextBlock Text="&#xE8EC;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="{DynamicResource GameCenter.TextMuted}" VerticalAlignment="Center" />
-                                                        <TextBlock Grid.Column="1" Text="Release" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center" />
-                                                        <ListBox Grid.Column="2" ItemsSource="{Binding DialecticManager.Branches}" SelectedItem="{Binding DialecticManager.SelectedBranch}"
-                                                                 Style="{StaticResource GameCenter.ModAction.ReleaseSelector}" Margin="8,4,0,4"
-                                                                 IsEnabled="{Binding DialecticManager.CanUseInstalledFeatures}"
-                                                                 AutomationProperties.Name="Dialectic update release"
-                                                                 AutomationProperties.HelpText="Release used the next time this mod updates. Unavailable while another server, component, or system operation is running." />
+                                                        <TextBlock Grid.Column="1" Text="{Binding DialecticManager.ReleaseRowLabel}" ToolTip="{Binding DialecticManager.ReleaseRowLabel}" TextTrimming="CharacterEllipsis" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource GameCenter.Text}" VerticalAlignment="Center" />
+                                                        <!-- Installed release switch: buttons, not a selection, so only click/Enter/Space asks to switch. -->
+                                                        <ItemsControl Grid.Column="2" ItemsSource="{Binding DialecticManager.ReleaseOptions}"
+                                                                      Style="{StaticResource GameCenter.ModAction.ReleaseSwitch}" Margin="8,4,0,4"
+                                                                      IsEnabled="{Binding DialecticManager.CanUseInstalledFeatures}"
+                                                                      AutomationProperties.Name="Dialectic release"
+                                                                      AutomationProperties.HelpText="{Binding DialecticManager.ReleaseGroupHelpText}" />
                                                     </Grid>
                                                     <Border Style="{StaticResource GameCenter.ModAction.RowSeparator}" />
                                                     <Button DataContext="{Binding DialecticManager}"

@@ -1365,11 +1365,13 @@ try
         },
         _ => Task.CompletedTask,
         _ => Task.CompletedTask);
+    // Update keeps the installed release, so the fixture reports one (STOBE's production branch).
     individualUpdateItem.ApplyStatus(stobeStatus with
     {
         State = ServerInstallState.Installed,
         RepositoryState = ServerRepositoryState.Managed,
-        DatabasePresent = true
+        DatabasePresent = true,
+        Branch = "stobe"
     });
     individualUpdateItem.UpdateCommand.Execute(null);
     await individualUpdateInvoked.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -1416,7 +1418,8 @@ try
     {
         State = ServerInstallState.Installed,
         RepositoryState = ServerRepositoryState.Managed,
-        DatabasePresent = true
+        DatabasePresent = true,
+        Branch = "stobe"
     });
 
     var lorkhanItem = new ServerManagerItemViewModel(ServerProduct.Lorkhan, "LORKHAN",
@@ -1471,6 +1474,137 @@ try
            && ServerManagerItemViewModel.MapBranchToChannel("feature/x", "aiagent", "dev") is null
            && ServerManagerItemViewModel.MapBranchToChannel(null, "aiagent", "dev") is null,
         "Branch mapping must prefer the manager's reported branch names and leave anything unknown alone.");
+    Assert(ServerManagerItemViewModel.MapBranchToChannel("aiagent", "main", "dev") == ServerBranchChannel.Main
+           && ServerManagerItemViewModel.MapBranchToChannel("aiagent", null, null) == ServerBranchChannel.Main
+           && ServerManagerItemViewModel.MapBranchToChannel("aiagent", "main", "aiagent") == ServerBranchChannel.Dev,
+        "aiagent is a known Main alias, but the manager's reported production/development names win.");
+
+    // --- Confirmed release switch -----------------------------------------------------------
+
+    var switchRequests = new List<ServerBranchChannel>();
+    var switchItem = new ServerManagerItemViewModel(ServerProduct.Herika, "CHIM",
+        _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask, _ => Task.CompletedTask,
+        (_, target) => { switchRequests.Add(target); return Task.CompletedTask; });
+    var installedChim = herikaStatus with { Branch = "aiagent", ProductionBranch = "aiagent", DevelopmentBranch = "dev" };
+    switchItem.ApplyStatus(installedChim);
+    switchItem.ApplyStatus(installedChim with { Branch = "dev" });
+    switchItem.ApplyStatus(installedChim);
+    switchItem.SelectedBranch = "Dev";
+    switchItem.ApplyVersionStatus("aiagent | 01-01-2026 | 1.2.3", "LimeGreen", false);
+    Assert(switchRequests.Count == 0,
+        "Status refreshes, a staged branch and version checks must never start a release switch.");
+    Assert(switchItem.InstalledChannel == ServerBranchChannel.Main
+           && switchItem.ReleaseOptions.Select(option => option.DisplayName).SequenceEqual(["Main", "Beta"])
+           && switchItem.ReleaseOptions[0].IsCurrent && !switchItem.ReleaseOptions[1].IsCurrent
+           && !switchItem.ReleaseOptions[0].SwitchCommand.CanExecute(null)
+           && switchItem.ReleaseOptions[1].SwitchCommand.CanExecute(null)
+           && switchItem.UpdateTargetChannel == ServerBranchChannel.Main
+           && switchItem.ReleaseOptions[1].HelpText.Contains("Asks for confirmation first", StringComparison.Ordinal),
+        "Installed Main is current and inert, Beta asks first, and Update keeps Main even with Dev staged.");
+    switchItem.ReleaseOptions[0].SwitchCommand.Execute(null);
+    switchItem.ReleaseOptions[1].SwitchCommand.Execute(null);
+    Assert(switchRequests.SequenceEqual([ServerBranchChannel.Dev]),
+        "Only activating a non-current release asks to switch, and only once.");
+
+    switchItem.ApplyStatus(installedChim with { Branch = "feature/x" });
+    Assert(switchItem.InstalledChannel is null
+           && switchItem.ReleaseOptions.All(option => !option.IsCurrent && option.SwitchCommand.CanExecute(null))
+           && !switchItem.UpdateCommand.CanExecute(null)
+           && switchItem.UpdateActionHelpText.Contains("custom branch 'feature/x'", StringComparison.Ordinal)
+           && switchItem.ReleaseRowLabel == "Release: feature/x",
+        "A custom branch marks no release current and is never updated as Main; both releases can be chosen.");
+    switchItem.ApplyStatus(installedChim with { Branch = null });
+    Assert(switchItem.InstalledChannel is null && !switchItem.UpdateCommand.CanExecute(null)
+           && switchItem.ReleaseRowLabel == "Release: unknown",
+        "An unreported branch is shown as unknown rather than defaulting to Main.");
+    switchItem.ApplyStatus(installedChim with { Branch = "unstable" });
+    Assert(switchItem.InstalledChannel is null && switchItem.ReleaseRowLabel == "Release: unstable"
+           && MainWindowViewModel.EvaluateReleaseSwitch(true, true, switchItem.InstalledChannel, ServerBranchChannel.Dev)
+               == MainWindowViewModel.ReleaseSwitchResult.NotApplied
+           && ServerManagerItemViewModel.MapBranchToChannel("unstable", "aiagent", "dev") == ServerBranchChannel.Dev,
+        "With development_branch=dev declared, 'unstable' is a custom branch and cannot verify Beta; legacy selection mapping is unchanged.");
+    switchItem.ApplyStatus(installedChim with { Branch = "main" });
+    Assert(switchItem.InstalledChannel is null
+           && MainWindowViewModel.EvaluateReleaseSwitch(true, true, switchItem.InstalledChannel, ServerBranchChannel.Main)
+               == MainWindowViewModel.ReleaseSwitchResult.NotApplied
+           && ServerManagerItemViewModel.MapInstalledBranchToChannel("aiagent", "main", "dev") is null
+           && ServerManagerItemViewModel.MapInstalledBranchToChannel("main", null, "dev") is null,
+        "A stale Main alias that conflicts with the reported production branch cannot verify Main.");
+    switchItem.ApplyStatus(installedChim with { DevelopmentBranch = null });
+    Assert(switchItem.InstalledChannel == ServerBranchChannel.Main
+           && MainWindowViewModel.EvaluateReleaseSwitch(true, true, switchItem.InstalledChannel, ServerBranchChannel.Main)
+               == MainWindowViewModel.ReleaseSwitchResult.Verified
+           && ServerManagerItemViewModel.MapInstalledBranchToChannel("aiagent", null, null) == ServerBranchChannel.Main
+           && ServerManagerItemViewModel.MapInstalledBranchToChannel("unstable", null, null) == ServerBranchChannel.Dev,
+        "aiagent with production_branch=aiagent stays Main; aliases still apply when no branch names are reported.");
+    switchItem.ApplyStatus(installedChim);
+    switchItem.IsConflictingOperationRunning = true;
+    Assert(switchItem.ReleaseOptions.All(option => !option.SwitchCommand.CanExecute(null)),
+        "No release switch may start while another operation is running.");
+    switchItem.IsConflictingOperationRunning = false;
+    Assert(reignItem.ReleaseOptions.Count == 0 && lorkhanItem.ReleaseOptions.Count == 0
+           && reignItem.UpdateTargetChannel == ServerBranchChannel.Dev,
+        "Dev-only Reign and Lorkhan get no release switch and still update on Dev.");
+
+    var switchCopy = MainWindowViewModel.BuildReleaseSwitchContent("CHIM", ServerBranchChannel.Dev, false);
+    var forcedSwitchCopy = MainWindowViewModel.BuildReleaseSwitchContent("CHIM", ServerBranchChannel.Dev, true);
+    Assert(switchCopy.Title == "Switch CHIM to Beta?" && switchCopy.ConfirmButtonText == "Switch to Beta"
+           && switchCopy.IsActionConfirmation && !switchCopy.IsConfirmation
+           && switchCopy.Intro == "This updates CHIM and shared components. Keep the launcher open until it finishes."
+           && forcedSwitchCopy.Intro!.EndsWith("\n\n" + MainWindowViewModel.ForceGitUpdatesUpdateWarning, StringComparison.Ordinal)
+           && !forcedSwitchCopy.ToPlainText().Contains("Are you sure", StringComparison.Ordinal)
+           && MainWindowViewModel.BuildReleaseSwitchContent("STOBE", ServerBranchChannel.Main, false).ConfirmButtonText == "Switch to Main",
+        "The release switch warning uses the approved copy and appends the Force Updates warning only when on.");
+    Assert(switchCopy is { IsDestructiveAction: false, IsWarning: true }
+           && forcedSwitchCopy is { IsDestructiveAction: true, IsWarning: false },
+        "A plain release switch is a primary action; only Force Updates makes it read as destructive.");
+
+    // Fakes stand in for the dialog, the system-first update and the status re-read.
+    async Task<(MainWindowViewModel.ReleaseSwitchResult Result, int Confirms, int Runs, bool? Force)> RunSwitch(
+        bool confirm, bool? ran, string? branchAfter, bool statusKnown = true)
+    {
+        switchItem.ApplyStatus(installedChim);
+        var confirms = 0;
+        var runs = 0;
+        bool? force = null;
+        var result = await MainWindowViewModel.SwitchInstalledReleaseAsync(switchItem, ServerBranchChannel.Dev, true,
+            _ => { confirms++; return confirm; },
+            (updates, forced) =>
+            {
+                runs++;
+                force = forced;
+                Assert(updates.Count == 1 && updates[0].Product == switchItem && updates[0].Branch == ServerBranchChannel.Dev,
+                    "A release switch updates exactly the confirmed product on the confirmed target.");
+                return Task.FromResult(ran);
+            },
+            () =>
+            {
+                if (statusKnown) switchItem.ApplyStatus(installedChim with { Branch = branchAfter });
+                return Task.FromResult(statusKnown);
+            });
+        return (result, confirms, runs, force);
+    }
+
+    var canceledSwitch = await RunSwitch(confirm: false, ran: true, branchAfter: "dev");
+    Assert(canceledSwitch is { Result: MainWindowViewModel.ReleaseSwitchResult.Canceled, Confirms: 1, Runs: 0 }
+           && switchItem.InstalledChannel == ServerBranchChannel.Main,
+        "Cancel runs nothing and leaves the installed release as it was.");
+    var verifiedSwitch = await RunSwitch(confirm: true, ran: true, branchAfter: "dev");
+    Assert(verifiedSwitch is { Result: MainWindowViewModel.ReleaseSwitchResult.Verified, Confirms: 1, Runs: 1, Force: true },
+        "A confirmed switch asks once, passes the captured Force Updates setting, and is verified by status.");
+    Assert((await RunSwitch(confirm: true, ran: true, branchAfter: "aiagent")).Result == MainWindowViewModel.ReleaseSwitchResult.NotApplied,
+        "A successful exit with the old branch still checked out must be reported as not switched.");
+    Assert((await RunSwitch(confirm: true, ran: false, branchAfter: "dev")).Result == MainWindowViewModel.ReleaseSwitchResult.SwitchedWithErrors
+           && (await RunSwitch(confirm: true, ran: false, branchAfter: "aiagent")).Result == MainWindowViewModel.ReleaseSwitchResult.NotApplied,
+        "A failed run is reported honestly whether or not the branch moved.");
+    Assert((await RunSwitch(confirm: true, ran: true, branchAfter: "dev", statusKnown: false)).Result == MainWindowViewModel.ReleaseSwitchResult.Unconfirmed
+           && switchItem.InstalledChannel == ServerBranchChannel.Main,
+        "When status cannot be re-read, the target is never shown as installed.");
+    var notStartedSwitch = await RunSwitch(confirm: true, ran: null, branchAfter: "dev");
+    Assert(notStartedSwitch is { Result: MainWindowViewModel.ReleaseSwitchResult.NotStarted, Runs: 1 }
+           && switchItem.InstalledChannel == ServerBranchChannel.Main,
+        "A gate that stops the update before it runs is reported as not started.");
+    switchItem.ApplyStatus(installedChim);
 
     // A status callback can arrive while the confirmation dialog pumps the UI dispatcher.
     foreach (var status in new[] { herikaStatus, stobeStatus, dialecticStatus })

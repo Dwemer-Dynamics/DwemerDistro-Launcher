@@ -1965,15 +1965,16 @@ echo "CHIM-MCP installed and enabled."
     /// <summary>
     /// Keeps one operation lock across the shared system update and the mod that asked for it. Each
     /// mod's own Update button is the only caller: a single product update stays a single product
-    /// update, so status is never re-read to pull other mods into the run.
+    /// update, so status is never re-read to pull other mods into the run. Returns null when a gate
+    /// stopped it before anything ran, otherwise whether the batch succeeded.
     /// </summary>
-    private async Task RunModUpdatesAsync(
+    private async Task<bool?> RunModUpdatesAsync(
         IReadOnlyList<(ServerManagerItemViewModel Product, ServerBranchChannel Branch)> productsToUpdate,
         bool forceGitUpdates)
     {
         if (IsServerStarting || !CanRunUpdateOperation())
         {
-            return;
+            return null;
         }
 
         // Status can refresh while a confirmation dialog pumps the dispatcher. An empty selection is
@@ -2075,6 +2076,8 @@ echo "CHIM-MCP installed and enabled."
             completion.TrySetResult(batchSucceeded);
             CompleteUpdateOperation();
         }
+
+        return batchSucceeded;
     }
 
     internal void SetComponentsOperationInProgress(bool value)

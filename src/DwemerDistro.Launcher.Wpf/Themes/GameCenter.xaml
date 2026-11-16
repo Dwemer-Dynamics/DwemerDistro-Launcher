@@ -34,6 +34,8 @@
     <SolidColorBrush x:Key="GameCenter.SuccessPressed" Color="#23602C" />
     <!-- Hover and pressed outline on green fills, so green never carries an orange edge. -->
     <SolidColorBrush x:Key="GameCenter.SuccessEdge" Color="#7FD88A" />
+    <!-- Static glow behind a confirmed-update row; the SuccessHover green as a Color for effects. -->
+    <Color x:Key="GameCenter.SuccessGlowColor">#3E914A</Color>
     <SolidColorBrush x:Key="GameCenter.Danger" Color="#B31717" />
     <SolidColorBrush x:Key="GameCenter.DangerHover" Color="#4C1212" />
     <SolidColorBrush x:Key="GameCenter.DangerPressed" Color="#340C0C" />
@@ -1165,9 +1167,10 @@
         </Setter>
     </Style>
 
-    <!-- Update row. Its DataContext is the mod's ServerManagerItemViewModel. Copper glyph, bolder
-         label and an "Available" tag only when IsUpdateAvailable confirms the selected release is
-         ahead; every other state (current, unknown, busy, failed) stays the quiet row. -->
+    <!-- Update row, shared by every mod. Its DataContext is the mod's ServerManagerItemViewModel. A
+         green fill, static glow, bolder label and an "Available" tag only when IsUpdateAvailable confirms
+         the selected release is ahead and the row is enabled; every other state (current, unknown, busy,
+         failed, disabled) stays the quiet row. -->
     <Style x:Key="GameCenter.ModAction.UpdateRow" TargetType="Button" BasedOn="{StaticResource GameCenter.ModAction.Row}">
         <Setter Property="Tag" Value="&#xE777;" />
         <Setter Property="ContentTemplate">
@@ -1179,9 +1182,10 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{Binding}" />
+                        <!-- Only shown on the green row, so it sits on green: darker green fill, light green edge. -->
                         <Border x:Name="Available" Grid.Column="1" Margin="8,0,0,0" Padding="7,1" CornerRadius="8"
-                                BorderThickness="1" BorderBrush="{DynamicResource GameCenter.CopperEdge}"
-                                Background="{DynamicResource GameCenter.CopperTint}" Visibility="Collapsed">
+                                BorderThickness="1" BorderBrush="{DynamicResource GameCenter.SuccessEdge}"
+                                Background="{DynamicResource GameCenter.SuccessPressed}" Visibility="Collapsed">
                             <TextBlock Text="Available" FontSize="11" />
                         </Border>
                     </Grid>
@@ -1189,15 +1193,65 @@
                         <DataTrigger Binding="{Binding DataContext.IsUpdateAvailable, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" Value="True">
                             <Setter TargetName="Available" Property="Visibility" Value="Visible" />
                         </DataTrigger>
+                        <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                            <Setter TargetName="Available" Property="Background" Value="Transparent" />
+                            <Setter TargetName="Available" Property="BorderBrush"
+                                    Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+                        </DataTrigger>
                     </DataTemplate.Triggers>
                 </DataTemplate>
             </Setter.Value>
         </Setter>
+        <!-- Confirmed update, enabled: filled green with a soft static glow (no animation). The base
+             row is transparent, so the fill must be set here or the row would only change its glyph.
+             IsUpdateAvailable is already false while busy, failed, unknown or current. -->
         <Style.Triggers>
-            <DataTrigger Binding="{Binding IsUpdateAvailable}" Value="True">
-                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.CopperStrong}" />
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="False" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.Success}" />
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource GameCenter.Text}" />
                 <Setter Property="FontWeight" Value="Bold" />
-            </DataTrigger>
+                <Setter Property="Effect">
+                    <Setter.Value>
+                        <DropShadowEffect Color="{StaticResource GameCenter.SuccessGlowColor}" ShadowDepth="0" BlurRadius="10" Opacity="0.6" />
+                    </Setter.Value>
+                </Setter>
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="False" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessHover}" />
+            </MultiDataTrigger>
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding IsPressed, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="False" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource GameCenter.SuccessPressed}" />
+            </MultiDataTrigger>
+            <!-- High contrast: system highlight colours instead of green, and no glow. -->
+            <MultiDataTrigger>
+                <MultiDataTrigger.Conditions>
+                    <Condition Binding="{Binding IsUpdateAvailable}" Value="True" />
+                    <Condition Binding="{Binding IsEnabled, RelativeSource={RelativeSource Self}}" Value="True" />
+                    <Condition Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True" />
+                </MultiDataTrigger.Conditions>
+                <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+                <Setter Property="FontWeight" Value="Bold" />
+            </MultiDataTrigger>
         </Style.Triggers>
     </Style>
 
@@ -1298,6 +1352,98 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListBox">
+                    <Border x:Name="Track" Background="#1A1A1A" CornerRadius="8" Padding="2" SnapsToDevicePixels="True">
+                        <ItemsPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Track" Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Installed Update row: the same segmented look, but each segment is a Button bound to a
+         ReleaseOptionViewModel. Buttons have no selection, so Tab, arrows and status refreshes never
+         switch anything; only click, Enter or Space runs SwitchCommand, which asks first. The current
+         release keeps the selected look and is inert (its command cannot execute), not faded. -->
+    <Style x:Key="GameCenter.ModAction.ReleaseSwitchButton" TargetType="Button">
+        <Setter Property="Command" Value="{Binding SwitchCommand}" />
+        <Setter Property="Content" Value="{Binding DisplayName}" />
+        <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+        <Setter Property="AutomationProperties.HelpText" Value="{Binding HelpText}" />
+        <Setter Property="ToolTip" Value="{Binding HelpText}" />
+        <Setter Property="ToolTipService.ShowOnDisabled" Value="True" />
+        <Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="MinWidth" Value="52" />
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border x:Name="Segment" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <TextBlock Text="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                                       FontWeight="{TemplateBinding FontWeight}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <Border x:Name="FocusRing" Margin="1" CornerRadius="5" BorderThickness="1"
+                                BorderBrush="{DynamicResource GameCenter.Focus}"
+                                Visibility="Collapsed" IsHitTestVisible="False" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+                            <Setter TargetName="Segment" Property="Background" Value="#262626" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Segment" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </Trigger>
+                        <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                            <Setter TargetName="Segment" Property="Background" Value="{DynamicResource GameCenter.PanelHover}" />
+                            <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                            <Setter Property="Cursor" Value="Arrow" />
+                        </DataTrigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="GameCenter.ModAction.ReleaseSwitch" TargetType="ItemsControl">
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="ItemTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <Button Style="{StaticResource GameCenter.ModAction.ReleaseSwitchButton}" />
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="ItemsPanel">
+            <Setter.Value>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ItemsControl">
                     <Border x:Name="Track" Background="#1A1A1A" CornerRadius="8" Padding="2" SnapsToDevicePixels="True">
                         <ItemsPresenter />
                     </Border>

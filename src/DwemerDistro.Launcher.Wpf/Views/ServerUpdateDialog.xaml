@@ -99,7 +99,8 @@
                            FontSize="11"
                            FontWeight="Bold"
                            Margin="0,12,0,4" />
-                <Border Background="#191919"
+                <Border x:Name="DetailsBorder"
+                        Background="#191919"
                         BorderBrush="{DynamicResource GameCenter.Border}"
                         BorderThickness="1"
                         CornerRadius="4">
