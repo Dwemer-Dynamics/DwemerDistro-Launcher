@@ -401,6 +401,104 @@ try
     Assert(ThrowsArgumentException(() => DiagnosticProtocolRegistrationService.BuildOpenCommand("invalid\"path.exe")),
         "The diagnostic protocol must reject an executable path that could alter its registered command.");
 
+// Website "Open in DwemerDistro" links use their own scheme and only name a repository to preview.
+Assert(ModLinkProtocolRegistrationService.BuildOpenCommand(@"C:\Program Files\DwemerDistro\DwemerDistro.exe")
+           == "\"C:\\Program Files\\DwemerDistro\\DwemerDistro.exe\" --open-mod \"%1\"",
+    "The mod link protocol must open the launcher with --open-mod, never the diagnostics command.");
+Assert(ModLinkRequest.Scheme != DiagnosticProtocolRegistrationService.Scheme,
+    "Mod links must not reuse the diagnostics scheme, whose registered command ignores its URI.");
+Assert(ThrowsArgumentException(() => ModLinkProtocolRegistrationService.BuildOpenCommand("invalid\"path.exe")),
+    "The mod link protocol must reject an executable path that could alter its registered command.");
+foreach (var (link, expected) in new (string, string)[]
+         {
+             ("dwemerdistro-mod:open?repo=owner/name", "owner/name"),
+             ("DwemerDistro-Mod:open?repo=Some-Owner/My.Mod_2", "Some-Owner/My.Mod_2"),
+             ("dwemerdistro-mod:open?repo=owner/name/", "owner/name"),
+         })
+{
+    Assert(ModLinkRequest.TryParse(link, out var parsed) && parsed == expected, $"Mod link must parse: {link}");
+}
+foreach (var link in new[]
+         {
+             "", "dwemerdistro-mod:", "dwemerdistro-mod:open", "dwemerdistro-mod:open?repo=",
+             "dwemerdistro-mod:open?repo=owner", "dwemerdistro-mod:open?repo=owner/", "dwemerdistro-mod:open?repo=/name",
+             "dwemerdistro-mod:Open?repo=owner/name", "dwemerdistro-mod:open?Repo=owner/name",
+             "dwemerdistro-mod://open?repo=owner/name", "dwemerdistro-mod:install?repo=owner/name",
+             "dwemerdistro-mod:open?repo=owner/name&tag=v1", "dwemerdistro-mod:open?repo=owner/name#x",
+             "dwemerdistro-mod:open?repo=owner/name?x", "dwemerdistro-mod:open?repo=owner%2Fname",
+             "dwemerdistro-mod:open?repo=owner/na%6De", "dwemerdistro-mod:open?repo=owner/../name",
+             "dwemerdistro-mod:open?repo=owner/..", "dwemerdistro-mod:open?repo=owner/.", "dwemerdistro-mod:open?repo=owner/name.git",
+             "dwemerdistro-mod:open?repo=owner/name//", "dwemerdistro-mod:open?repo=owner/name/extra",
+             "dwemerdistro-mod:open?repo=-owner/name", "dwemerdistro-mod:open?repo=owner-/name",
+             "dwemerdistro-mod:open?repo=own_er/name", "dwemerdistro-mod:open?repo=owner/na me",
+             "dwemerdistro-mod:open?repo=owner\\name", "dwemerdistro-mod:open?repo=owner/name\n",
+             " dwemerdistro-mod:open?repo=owner/name", "dwemerdistro-mod:open?repo=owner/name ",
+             "dwemerdistro-mod:open?repo=https://github.com/owner/name", "dwemerdistro:open?repo=owner/name",
+             "dwemerdistro-mod:open?repo=" + new string('a', 40) + "/name",
+             "dwemerdistro-mod:open?repo=owner/" + new string('a', 101),
+             "dwemerdistro-mod:open?repo=owner/" + new string('a', ModLinkRequest.MaximumLinkLength),
+         })
+{
+    Assert(!ModLinkRequest.TryParse(link, out var refused) && refused.Length == 0, $"Mod link must be refused: {link}");
+}
+Assert(ModLinkRequest.TryGetFromArguments(["--open-mod", "dwemerdistro-mod:open?repo=owner/name"], out var argumentRepository)
+           && argumentRepository == "owner/name",
+    "A mod link start must take its repository from exactly --open-mod <link>.");
+Assert(!ModLinkRequest.TryGetFromArguments(["--open-mod", "dwemerdistro-mod:open?repo=owner/name", "--download-diagnostics"], out _)
+       && ModLinkRequest.IsOpenRequest(["--open-mod", "x", "--download-diagnostics"]),
+    "Extra arguments refuse the link while still marking the start as a mod link, so diagnostics never run from it.");
+Assert(!ModLinkRequest.IsOpenRequest(["--download-diagnostics", "dwemerdistro://report"]),
+    "A diagnostics start must stay a diagnostics start.");
+
+var modLinkExe = @"C:\Games\DwemerDistro\DwemerDistro.exe";
+var candidateExe = @"D:\candidate\DwemerDistro.exe";
+Assert(ModLinkProtocolRegistrationService.Decide(candidateExe, null, null, _ => true)
+       == ModLinkProtocolRegistrationService.Decision.Register, "An unregistered mod link is claimed.");
+Assert(ModLinkProtocolRegistrationService.Decide(modLinkExe, ModLinkProtocolRegistrationService.BuildOpenCommand(modLinkExe), null, _ => true)
+       == ModLinkProtocolRegistrationService.Decision.Register, "A launcher refreshes its own mod link registration.");
+Assert(ModLinkProtocolRegistrationService.Decide(candidateExe, ModLinkProtocolRegistrationService.BuildOpenCommand(modLinkExe), null, _ => true)
+       == ModLinkProtocolRegistrationService.Decision.KeepExisting,
+    "A candidate build from another folder must not take over an installed launcher's mod link.");
+Assert(ModLinkProtocolRegistrationService.Decide(candidateExe, ModLinkProtocolRegistrationService.BuildOpenCommand(modLinkExe), null, _ => false)
+       == ModLinkProtocolRegistrationService.Decision.Register, "A mod link left by a removed launcher is claimed.");
+Assert(ModLinkProtocolRegistrationService.Decide(candidateExe, ModLinkProtocolRegistrationService.BuildOpenCommand(modLinkExe), "TAKEOVER", _ => true)
+       == ModLinkProtocolRegistrationService.Decision.Register
+       && ModLinkProtocolRegistrationService.Decide(candidateExe, null, "off", _ => true)
+       == ModLinkProtocolRegistrationService.Decision.Skip,
+    "The mod link registration setting must allow an explicit takeover or opt-out.");
+
+var modLinkRoot = Path.Combine(Path.GetTempPath(), "dwemerdistro-mod-links-" + Guid.NewGuid().ToString("N"));
+try
+{
+    var pendingPath = ModLinkHandoff.PendingPath(modLinkRoot, @"Local\DwemerDistro.Launcher.0123456789ABCDEF");
+    Assert(Path.GetFileName(pendingPath) == "pending-0123456789ABCDEF.json", "The mod link hand-off must be scoped to its installation.");
+    var handoffNow = DateTimeOffset.UtcNow;
+    Assert(ModLinkHandoff.TryClaim(pendingPath, handoffNow) is null, "No pending mod link means nothing to preview.");
+    ModLinkHandoff.Write(pendingPath, "owner/name", handoffNow);
+    Assert(ModLinkHandoff.TryClaim(pendingPath, handoffNow.AddSeconds(2)) == "owner/name"
+           && ModLinkHandoff.TryClaim(pendingPath, handoffNow.AddSeconds(2)) is null
+           && Directory.GetFiles(modLinkRoot).Length == 0,
+        "A handed-over mod link must be consumed exactly once and leave no files.");
+    ModLinkHandoff.Write(pendingPath, "owner/first", handoffNow);
+    ModLinkHandoff.Write(pendingPath, "owner/second", handoffNow);
+    Assert(ModLinkHandoff.TryClaim(pendingPath, handoffNow) == "owner/second", "The newest handed-over mod link wins.");
+    ModLinkHandoff.Write(pendingPath, "owner/name", handoffNow);
+    Assert(ModLinkHandoff.TryClaim(pendingPath, handoffNow + ModLinkHandoff.MaximumAge + TimeSpan.FromSeconds(1)) is null
+           && !File.Exists(pendingPath), "A stale mod link hand-off must be discarded, not previewed later.");
+    File.WriteAllText(pendingPath, "{\"Repo\":\"owner/../x\",\"CreatedUtc\":\"" + handoffNow.UtcDateTime.ToString("O") + "\"}");
+    Assert(ModLinkHandoff.TryClaim(pendingPath, handoffNow) is null && !File.Exists(pendingPath),
+        "A hand-off file is validated again before it is previewed.");
+    File.WriteAllText(pendingPath, new string(' ', 600));
+    Assert(ModLinkHandoff.TryClaim(pendingPath, handoffNow) is null && !File.Exists(pendingPath),
+        "An oversized mod link hand-off must be refused.");
+    Assert(ThrowsArgumentException(() => ModLinkHandoff.Write(pendingPath, "owner/../x", handoffNow)),
+        "Only a validated repository may be handed to the running launcher.");
+}
+finally
+{
+    if (Directory.Exists(modLinkRoot)) Directory.Delete(modLinkRoot, recursive: true);
+}
+
     var setupServiceType = typeof(DistroSetupService);
     var privateStatic = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
     var cudaInstallCommand = (string)setupServiceType.GetField("CudaInstallCommand", privateStatic)!
