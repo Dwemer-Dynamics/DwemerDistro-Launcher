@@ -1032,11 +1032,13 @@ public partial class MainWindow : Window
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
     {
         var source = (HwndSource)PresentationSource.FromVisual(this);
-        source.AddHook(ConstrainMaximizedWindowToWorkArea);
+        source.AddHook(ConstrainWindowToWorkArea);
     }
 
-    // Supply the active monitor work area so custom chrome never covers its taskbar.
-    private static IntPtr ConstrainMaximizedWindowToWorkArea(
+    // Supply the active monitor work area so custom chrome never covers its taskbar. Handling the
+    // message skips WPF's own MinWidth/MinHeight enforcement, so apply the minimum here in device
+    // pixels, capped to the work area so maximize still fits when the scaled minimum is larger.
+    private IntPtr ConstrainWindowToWorkArea(
         IntPtr hwnd,
         int message,
         IntPtr wParam,
@@ -1063,11 +1065,17 @@ public partial class MainWindow : Window
             return IntPtr.Zero;
         }
 
+        var workWidth = monitorInfo.WorkArea.Right - monitorInfo.WorkArea.Left;
+        var workHeight = monitorInfo.WorkArea.Bottom - monitorInfo.WorkArea.Top;
+        var dpi = GetDpiForWindow(hwnd);
+        var scale = dpi > 0 ? dpi / 96.0 : VisualTreeHelper.GetDpi(this).DpiScaleX;
         var minMaxInfo = Marshal.PtrToStructure<MinMaxInfo>(lParam);
         minMaxInfo.MaxPosition.X = monitorInfo.WorkArea.Left - monitorInfo.MonitorArea.Left;
         minMaxInfo.MaxPosition.Y = monitorInfo.WorkArea.Top - monitorInfo.MonitorArea.Top;
-        minMaxInfo.MaxSize.X = monitorInfo.WorkArea.Right - monitorInfo.WorkArea.Left;
-        minMaxInfo.MaxSize.Y = monitorInfo.WorkArea.Bottom - monitorInfo.WorkArea.Top;
+        minMaxInfo.MaxSize.X = workWidth;
+        minMaxInfo.MaxSize.Y = workHeight;
+        minMaxInfo.MinTrackSize.X = Math.Min((int)Math.Ceiling(MinWidth * scale), workWidth);
+        minMaxInfo.MinTrackSize.Y = Math.Min((int)Math.Ceiling(MinHeight * scale), workHeight);
         Marshal.StructureToPtr(minMaxInfo, lParam, false);
         handled = true;
         return IntPtr.Zero;
@@ -1079,6 +1087,9 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo monitorInfo);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint
