@@ -73,7 +73,7 @@
                                        Foreground="{DynamicResource GameCenter.TextMuted}" Opacity="0.75" FontSize="12" />
                             <TextBlock x:Name="DescriptionText" Text="Select a mod to see what it adds to your game." Margin="0,16,0,20" FontSize="14" />
                             <WrapPanel>
-                                <Button x:Name="InstallButton" Content="Install server" Style="{StaticResource GameCenter.PrimaryButton}"
+                                <Button x:Name="InstallButton" Content="Install server" Style="{StaticResource GameCenter.SuccessButton}"
                                         IsEnabled="False" Click="Install_Click" Height="40" MinWidth="160" />
                                 <Button x:Name="DownloadButton" Content="Download mod release" Style="{StaticResource GameCenter.PrimaryButton}"
                                         Visibility="Collapsed" Click="Download_Click" Height="40" MinWidth="180" />
@@ -86,7 +86,7 @@
                         <TextBlock x:Name="CompatibilityText" FontSize="13" Margin="0,8,0,0" />
                         <WrapPanel Margin="0,16,0,0">
                             <Button x:Name="SourceButton" Content="Mod page" IsEnabled="False" Margin="0,0,6,6" Click="Source_Click" />
-                            <Button x:Name="NotesButton" Content="What's new" IsEnabled="False" Margin="0,0,6,6" Click="Notes_Click" />
+                            <Button x:Name="NotesButton" Content="Changelog" IsEnabled="False" Margin="0,0,6,6" Click="Notes_Click" />
                         </WrapPanel>
                     </StackPanel>
                 </StackPanel>

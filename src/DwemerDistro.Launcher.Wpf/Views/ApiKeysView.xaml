@@ -4,6 +4,7 @@
  <UserControl.Resources>
   <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
   <Style TargetType="Button" BasedOn="{StaticResource GameCenter.Button}"><Setter Property="Padding" Value="10,5"/><Setter Property="Margin" Value="0,2,6,2"/></Style>
+  <Style x:Key="ApiKeys.SaveButton" TargetType="Button" BasedOn="{StaticResource GameCenter.SuccessButton}"><Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="{DynamicResource GameCenter.PanelRaised}"/><Setter Property="BorderBrush" Value="{DynamicResource GameCenter.BorderStrong}"/><Setter Property="Foreground" Value="{DynamicResource GameCenter.TextMuted}"/></Trigger></Style.Triggers></Style>
   <DataTemplate x:Key="FilterItem"><TextBlock Text="{Binding}" Foreground="Black"/></DataTemplate>
   <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="#363636"/><Setter Property="Foreground" Value="White"/><Setter Property="Padding" Value="8,7"/><Setter Property="BorderThickness" Value="0"/></Style>
   <Style TargetType="DataGridCell"><Setter Property="BorderThickness" Value="0"/><Setter Property="VerticalContentAlignment" Value="Center"/><Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#41432E"/><Setter Property="Foreground" Value="White"/></Trigger></Style.Triggers></Style>
@@ -30,7 +31,7 @@
      </Grid></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
     <DataGridTemplateColumn Header="" Width="62"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="Test" Tag="{Binding}" Click="TestRow_Click" IsEnabled="{Binding CanTest}" ToolTip="{Binding TestHint}" ToolTipService.ShowOnDisabled="True" Margin="2,0" Padding="6,3" MinHeight="28" VerticalAlignment="Center" AutomationProperties.Name="Test saved API key"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
     <DataGridTemplateColumn Header="" Width="65"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button VerticalAlignment="Center" Content="{Binding RevealLabel}" Tag="{Binding}" Click="RevealRow_Click" IsEnabled="{Binding CanShow}" Margin="2,0" Padding="6,3" AutomationProperties.Name="Show or hide current API key"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-    <DataGridTemplateColumn Header="" Width="75"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button VerticalAlignment="Center" Content="Save" Tag="{Binding}" Click="SaveRow_Click" MinHeight="28" Margin="2,0,4,0" Padding="8,3" IsEnabled="{Binding CanSave}" AutomationProperties.Name="{Binding SaveName}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+    <DataGridTemplateColumn Header="" Width="75"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Style="{StaticResource ApiKeys.SaveButton}" VerticalAlignment="Center" Content="Save" Tag="{Binding}" Click="SaveRow_Click" MinHeight="28" Margin="2,0,4,0" Padding="8,3" IsEnabled="{Binding CanSave}" AutomationProperties.Name="{Binding SaveName}"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
    </DataGrid.Columns>
   </DataGrid>
   <TextBlock x:Name="Status" Grid.Row="3" Foreground="#CCCCCC" Margin="0,10,0,0" AutomationProperties.LiveSetting="Polite"/>
