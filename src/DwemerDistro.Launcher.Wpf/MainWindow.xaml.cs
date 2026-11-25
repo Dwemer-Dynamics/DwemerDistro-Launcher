@@ -63,6 +63,9 @@ public partial class MainWindow : Window
     private StartupUpdateNoticeWindow? _startupUpdateNotice;
     // The open notice only says a Debian 13 upgrade can be started, so a failure notice may take its place.
     private bool _startupUpdateNoticeIsOffer;
+    // A website mod link waits here until startup and its first-time setup check have finished; the newest one wins.
+    private string? _pendingModLinkRepository;
+    private bool _modLinksReady;
 
     public MainWindow()
     {
@@ -94,16 +97,65 @@ public partial class MainWindow : Window
             ApplyConsoleLayout();
             ApplyHighContrastState();
             await _viewModel.InitializeAsync().ConfigureAwait(true);
-            _ = _viewModel.RunFirstRunSetupStartupCheckAsync();
+            _ = OpenModLinksAfterStartupCheckAsync(_viewModel.RunFirstRunSetupStartupCheckAsync());
         }
         catch (Exception ex)
         {
             LauncherLogService.Startup("Main window initialization failed.", ex);
+            _ = OpenModLinksAfterStartupCheckAsync(Task.CompletedTask);
             MessageBox.Show(
                 $"Launcher startup hit an error but stayed open.\n\n{ex.Message}\n\nDetails were written to:\n{LauncherLogService.StartupLogPath}",
                 "DwemerDistro Launcher",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>
+    /// Shows a website link's Community Mod preview once the launcher is ready. Preview only: it reads the release from
+    /// GitHub, never starts the distro, and installs nothing until Install server is pressed.
+    /// </summary>
+    internal void QueueCommunityModPreview(string repository)
+    {
+        _pendingModLinkRepository = repository;
+        if (_modLinksReady) _ = OpenPendingModLinkAsync();
+    }
+
+    private async Task OpenModLinksAfterStartupCheckAsync(Task startupCheck)
+    {
+        try
+        {
+            await startupCheck.ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            // The check reports its own failures; a link can still be previewed without it.
+            LauncherLogService.Startup($"Mod links waited for a startup check that ended with {ex.GetType().Name}.");
+        }
+
+        _modLinksReady = true;
+        await OpenPendingModLinkAsync().ConfigureAwait(true);
+    }
+
+    private async Task OpenPendingModLinkAsync()
+    {
+        if (_pendingModLinkRepository is not { } repository || _shutdownStarted) return;
+        _pendingModLinkRepository = null;
+        try
+        {
+            if (_viewModel.CommunityModLinkBlockedMessage(repository) is { } blocked)
+            {
+                MessageBox.Show(this, blocked, "Community mods", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            LibraryNavButton.IsChecked = true;
+            await _viewModel.OpenCommunityModLinkAsync(repository).ConfigureAwait(true);
+        }
+        catch (Exception error)
+        {
+            LauncherLogService.Startup("Mod link preview failed.", error);
+            MessageBox.Show(this, error.Message, "Community mods", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

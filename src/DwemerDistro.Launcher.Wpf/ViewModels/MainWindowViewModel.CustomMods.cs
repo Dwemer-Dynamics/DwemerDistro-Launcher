@@ -698,7 +698,27 @@ public sealed partial class MainWindowViewModel
         }
     }
 
-    public async Task BrowseCommunityModsAsync(string? repository = null)
+    /// <summary>
+    /// Why a website link cannot show its preview now, or null. A running custom mod install, update, or other change
+    /// keeps its view; the link is not queued, so it never replaces that work later either.
+    /// </summary>
+    internal string? CommunityModLinkBlockedMessage(string repository) =>
+        _isCustomModMutationInProgress || CommunityDetails?.IsInstalling == true
+            ? $"A custom mod change is still running. Finish it, then open {repository} from the website again."
+            : null;
+
+    /// <summary>
+    /// Opens Mods &gt; Custom mods on the Community Mod preview for a validated <c>owner/name</c>. The preview reads the
+    /// release from GitHub; whether its server is installed is only asked of a distro that is already running.
+    /// </summary>
+    internal async Task OpenCommunityModLinkAsync(string repository)
+    {
+        if (CommunityModLinkBlockedMessage(repository) is not null) return;
+        IsCustomModsView = true;
+        await BrowseCommunityModsAsync(ModLinkRequest.ToRepositoryUrl(repository), startStoppedDistro: false).ConfigureAwait(true);
+    }
+
+    public async Task BrowseCommunityModsAsync(string? repository = null, bool startStoppedDistro = true)
     {
         if (_isCustomModMutationInProgress) return;
         IsBrowsingCustomMods = true;
@@ -715,7 +735,12 @@ public sealed partial class MainWindowViewModel
         }, () => RefreshCustomModsAsync(checkHealth: false), async (release, cancellation) =>
         {
             if (!TryBeginPassiveDistroActivity()) throw new IOException(CustomModsMaintenanceMessage);
-            try { return await service.IsServerInstalledAsync(release, cancellation); }
+            try
+            {
+                // `wsl -l --running` never boots the distro; an unknown server shows Install server, which checks again.
+                if (!startStoppedDistro && !await _wsl.DistroRunningAsync(cancellation)) return false;
+                return await service.IsServerInstalledAsync(release, cancellation);
+            }
             finally { EndPassiveDistroActivity(); }
         });
         details.BackRequested += (_, _) => IsBrowsingCustomMods = true;

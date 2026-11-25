@@ -17,6 +17,7 @@ public partial class App : Application
     private Mutex? _instanceMutex;
     private bool _ownsInstanceMutex;
     private InstanceActivationChannel? _activationChannel;
+    private string? _modLinkHandoffPath;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -33,8 +34,33 @@ public partial class App : Application
             LauncherLogService.Startup("Diagnostic browser protocol registration failed.", ex);
         }
 
+        try
+        {
+            ModLinkProtocolRegistrationService.EnsureRegistered();
+        }
+        catch (Exception ex)
+        {
+            LauncherLogService.Startup("Mod link protocol registration failed.", ex);
+        }
+
+        // A mod link start never runs another startup mode, even when its link is refused.
+        var openModLink = ModLinkRequest.IsOpenRequest(e.Args);
+        string? modLinkRepository = null;
+        if (openModLink)
+        {
+            if (ModLinkRequest.TryGetFromArguments(e.Args, out var repository))
+            {
+                modLinkRepository = repository;
+                LauncherLogService.Startup($"Mod link start asks to preview {repository}.");
+            }
+            else
+            {
+                LauncherLogService.Startup("Mod link start ignored a link that is not dwemerdistro-mod:open?repo=owner/name.");
+            }
+        }
+
         var downloadDiagnostics = e.Args.Contains("--download-diagnostics", StringComparer.OrdinalIgnoreCase);
-        if (downloadDiagnostics || e.Args.Contains("--generate-diagnostics", StringComparer.OrdinalIgnoreCase))
+        if (!openModLink && (downloadDiagnostics || e.Args.Contains("--generate-diagnostics", StringComparer.OrdinalIgnoreCase)))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             var openOutputFolder = e.Args.Contains("--open-output-folder", StringComparer.OrdinalIgnoreCase);
@@ -45,11 +71,16 @@ public partial class App : Application
         var mutexName = BuildInstallScopedMutexName();
         _instanceMutex = new Mutex(initiallyOwned: true, mutexName, out _ownsInstanceMutex);
         var activationName = InstanceActivationChannel.BuildName(mutexName);
+        _modLinkHandoffPath = ModLinkHandoff.PendingPath(ModLinkHandoff.DefaultDirectory, mutexName);
         if (!_ownsInstanceMutex)
         {
             // Bring the running launcher forward; only one that cannot be reached (an older build) gets the message.
-            if (await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.FromSeconds(3),
-                    InstanceActivationChannel.AllowForegroundToRunningInstance))
+            // A mod link is left for it only once a listener is found, so an unreachable launcher never finds it later.
+            if (await InstanceActivationChannel.TrySignalAsync(activationName, TimeSpan.FromSeconds(3), () =>
+                {
+                    if (modLinkRepository is not null) TryWriteModLinkHandoff(modLinkRepository);
+                    InstanceActivationChannel.AllowForegroundToRunningInstance();
+                }))
             {
                 LauncherLogService.Startup($"Launcher startup handed over to the instance that owns '{mutexName}'.");
             }
@@ -74,8 +105,12 @@ public partial class App : Application
         // This mostly static launcher avoids a large per-process D3D allocation by rendering in software.
         System.Windows.Media.RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
 
+        // A request left by a start that this launcher, now the owner, never received is not for it.
+        TryClaimModLinkHandoff();
+
         var window = new MainWindow();
         MainWindow = window;
+        if (modLinkRepository is not null) window.QueueCommunityModPreview(modLinkRepository);
         window.Show();
         _activationChannel = InstanceActivationChannel.Listen(activationName, () => Dispatcher.BeginInvoke(ActivateMainWindow));
     }
@@ -83,7 +118,9 @@ public partial class App : Application
     /// <summary>Another start from this installation asked for the launcher: show and restore the window it already has.</summary>
     private void ActivateMainWindow()
     {
-        if (MainWindow is not { } window)
+        // Claimed before anything else, so a request is consumed by the activation it was signalled for, or by none.
+        var modLinkRepository = TryClaimModLinkHandoff();
+        if (MainWindow is not MainWindow window)
         {
             return;
         }
@@ -95,6 +132,36 @@ public partial class App : Application
 
         window.Show();
         window.Activate();
+        if (modLinkRepository is not null) window.QueueCommunityModPreview(modLinkRepository);
+    }
+
+    private void TryWriteModLinkHandoff(string repository)
+    {
+        if (_modLinkHandoffPath is null) return;
+        try
+        {
+            ModLinkHandoff.Write(_modLinkHandoffPath, repository, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            LauncherLogService.Startup("Mod link could not be handed to the running launcher.", ex);
+        }
+    }
+
+    private string? TryClaimModLinkHandoff()
+    {
+        if (_modLinkHandoffPath is null) return null;
+        try
+        {
+            var repository = ModLinkHandoff.TryClaim(_modLinkHandoffPath, DateTimeOffset.UtcNow);
+            if (repository is not null) LauncherLogService.Startup($"Mod link handed over to preview {repository}.");
+            return repository;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            LauncherLogService.Startup("Mod link hand-off could not be read.", ex);
+            return null;
+        }
     }
 
     // Runs diagnostic collection without opening the launcher window or taking its instance mutex.
