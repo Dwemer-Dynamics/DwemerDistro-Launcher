@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
@@ -281,5 +283,219 @@ inventory('/var/www/html')
             }
         }
         return fields.Count == 0 ? "[no recognized address override]" : string.Join("; ", fields.Select(field => $"{field.Key}={field.Value}"));
+    }
+
+    // Offline Chevo export. Paths and arguments are fixed; filenames from the document are never opened or executed.
+    internal const string ChevoManagedPhp = "/opt/chevo-runtime/php-8.4.27/bin/php";
+    internal const string ChevoDiagnosticsScript = "/opt/chevo/bin/chevo-diagnostics.php";
+    internal const string ChevoExportArgument = "export";
+    internal const int ChevoExportMaxBytes = 1024 * 1024;
+    internal const int ChevoExportTimeoutSeconds = 15;
+
+    internal static readonly string[] ChevoExportFileNames =
+    [
+        "chim.log",
+        "service.log",
+        "output_to_plugin.log",
+        "output_from_llm.log",
+        "stt.log",
+        "vision.log",
+        "php-errors.log",
+        "php-fpm.log",
+        "apache-error.log",
+        "apache-access.log"
+    ];
+
+    internal static string ChevoExportShell()
+    {
+        var limit = (ChevoExportMaxBytes + 1).ToString(CultureInfo.InvariantCulture);
+        return "set -o pipefail\n" +
+            "php_bin=" + ChevoManagedPhp + "\n" +
+            "if [ ! -x \"$php_bin\" ]; then if [ -x /usr/bin/php ]; then php_bin=/usr/bin/php; " +
+            "else echo CHEVO_DIAG_STATUS=missing-php; exit 127; fi; fi\n" +
+            "script=/srv/chevo/current/bin/chevo-diagnostics.php\n" +
+            "if [ ! -e \"$script\" ]; then script=" + ChevoDiagnosticsScript + "; fi\n" +
+            "if [ ! -e \"$script\" ]; then echo CHEVO_DIAG_STATUS=missing-script; exit 44; fi\n" +
+            "if [ -L \"$script\" ] || [ ! -f \"$script\" ]; then echo CHEVO_DIAG_STATUS=refused-script; exit 45; fi\n" +
+            "if [ \"$php_bin\" = " + ChevoManagedPhp + " ]; then echo CHEVO_DIAG_STATUS=php:managed; else echo CHEVO_DIAG_STATUS=php:php; fi\n" +
+            "timeout --signal=TERM --kill-after=1 " + ChevoExportTimeoutSeconds.ToString(CultureInfo.InvariantCulture) +
+            " /usr/sbin/runuser -u www-data -- \"$php_bin\" \"$script\" " + ChevoExportArgument +
+            " 2>/dev/null | head -c " + limit + "\n";
+    }
+
+    internal static void AppendChevoExport(List<string> lines, CollectionSummary summary, string standardOutput, bool commandSucceeded, int maxLines)
+    {
+        var newline = standardOutput.IndexOf('\n');
+        var status = (newline >= 0 ? standardOutput[..newline] : standardOutput).Trim();
+        var body = newline >= 0 ? standardOutput[(newline + 1)..] : "";
+        if (status == "CHEVO_DIAG_STATUS=missing-script")
+        {
+            lines.Add("[not installed] Chevo diagnostics exporter is not present in the managed or standalone chevo install.");
+            summary.MissingLogs.Add("Chevo diagnostics");
+            return;
+        }
+        if (status == "CHEVO_DIAG_STATUS=missing-php")
+        {
+            lines.Add("[unavailable] Managed PHP and php are not available.");
+            summary.Problems.Add("Chevo diagnostics: PHP runtime unavailable");
+            return;
+        }
+        if (status == "CHEVO_DIAG_STATUS=refused-script")
+        {
+            lines.Add("[unavailable] Chevo diagnostics exporter is not a regular file at the fixed path.");
+            summary.Problems.Add("Chevo diagnostics: exporter path refused");
+            return;
+        }
+        if (status is not ("CHEVO_DIAG_STATUS=php:managed" or "CHEVO_DIAG_STATUS=php:php"))
+        {
+            lines.Add("[unavailable] Chevo diagnostics export did not start with the launcher status line.");
+            summary.Problems.Add("Chevo diagnostics: unexpected export output");
+            return;
+        }
+
+        lines.Add(status == "CHEVO_DIAG_STATUS=php:managed"
+            ? "PHP: " + ChevoManagedPhp
+            : "PHP: php");
+        if (Encoding.UTF8.GetByteCount(body) > ChevoExportMaxBytes)
+        {
+            lines.Add("[truncated] Chevo diagnostics export exceeded 1 MiB and was not parsed.");
+            summary.Truncated.Add("Chevo diagnostics");
+            summary.Problems.Add("Chevo diagnostics: export exceeded size limit");
+            return;
+        }
+        if (!commandSucceeded)
+        {
+            lines.Add("[unavailable] Chevo diagnostics export command failed.");
+            summary.Problems.Add("Chevo diagnostics: export command failed");
+            return;
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(body.Trim(), new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Disallow,
+                AllowTrailingCommas = false,
+                MaxDepth = 5
+            });
+        }
+        catch (JsonException)
+        {
+            lines.Add("[invalid] Chevo diagnostics export was not a JSON document.");
+            summary.Problems.Add("Chevo diagnostics: export JSON invalid");
+            return;
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("manifest", out var manifest) || manifest.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Object)
+            {
+                lines.Add("[invalid] Chevo diagnostics export is missing manifest or files.");
+                summary.Problems.Add("Chevo diagnostics: export shape invalid");
+                return;
+            }
+
+            if (ReadChevoSchemaVersion(manifest) != "1")
+            {
+                lines.Add("[invalid] Unsupported Chevo diagnostics manifest.");
+                summary.Problems.Add("Chevo diagnostics: unsupported schema");
+                return;
+            }
+            lines.Add("schema_version: 1");
+            lines.Add("build: " + ReadChevoToken(manifest, "build"));
+            lines.Add("from_utc: " + ReadChevoTimestamp(manifest, "from_utc"));
+            lines.Add("to_utc: " + ReadChevoTimestamp(manifest, "to_utc"));
+            AppendChevoSources(lines, summary, manifest);
+
+            var included = 0;
+            foreach (var name in ChevoExportFileNames)
+            {
+                if (!files.TryGetProperty(name, out var payload)) continue;
+                lines.Add($"--- Start of Chevo {name} ---");
+                if (payload.ValueKind != JsonValueKind.String)
+                {
+                    lines.Add("[unavailable] Chevo export entry was not text.");
+                    summary.Problems.Add("Chevo " + name + ": export entry was not text");
+                }
+                else
+                {
+                    included++;
+                    AppendChevoFileText(lines, summary, name, payload.GetString() ?? "", maxLines);
+                }
+                lines.Add($"--- End of Chevo {name} ---");
+            }
+            if (included == 0)
+            {
+                lines.Add("[not included] Chevo export contained none of the allowlisted diagnostic files.");
+                summary.MissingLogs.Add("Chevo diagnostic files");
+            }
+        }
+    }
+
+    private static string ReadChevoSchemaVersion(JsonElement manifest)
+    {
+        if (!manifest.TryGetProperty("schema_version", out var value) || value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var schema) || schema != 1)
+            return "[invalid or missing]";
+        return schema.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string ReadChevoToken(JsonElement manifest, string name)
+    {
+        if (!manifest.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+            return "[invalid or missing]";
+        var text = value.GetString() ?? "";
+        return Regex.IsMatch(text, @"^[A-Za-z0-9][A-Za-z0-9._+-]{0,79}\z", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
+            ? text : "[invalid or missing]";
+    }
+
+    private static string ReadChevoTimestamp(JsonElement manifest, string name)
+    {
+        if (!manifest.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+            return "[invalid or missing]";
+        var text = value.GetString() ?? "";
+        return DateTimeOffset.TryParseExact(text, ["yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'"], CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out _)
+            ? text : "[invalid or missing]";
+    }
+
+    private static void AppendChevoSources(List<string> lines, CollectionSummary summary, JsonElement manifest)
+    {
+        if (!manifest.TryGetProperty("sources", out var sources) || sources.ValueKind != JsonValueKind.Object)
+        {
+            lines.Add("sources: [invalid or missing]");
+            return;
+        }
+        foreach (var name in ChevoExportFileNames)
+        {
+            if (!sources.TryGetProperty(name, out var source) || source.ValueKind != JsonValueKind.Object) continue;
+            var count = source.TryGetProperty("count", out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var entries) && entries is >= 0 and <= 200
+                ? entries.ToString(CultureInfo.InvariantCulture) : "unknown";
+            var unavailable = source.TryGetProperty("unavailable", out var reason) && reason.ValueKind == JsonValueKind.String;
+            var truncated = source.TryGetProperty("truncated", out var flag) && flag.ValueKind == JsonValueKind.True;
+            lines.Add($"{name}: {count} entries" + (unavailable ? " [unavailable]" : "") + (truncated ? " [truncated]" : ""));
+            if (unavailable) summary.MissingLogs.Add("Chevo " + name);
+            if (truncated) summary.Truncated.Add("Chevo " + name);
+        }
+    }
+
+    private static void AppendChevoFileText(List<string> lines, CollectionSummary summary, string name, string text, int maxLines)
+    {
+        var chars = text.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            if (chars[i] is '\n' or '\t' or '\r') continue;
+            if (char.IsControl(chars[i])) chars[i] = ' ';
+        }
+        var plain = new string(chars).Replace("\r", "", StringComparison.Ordinal).TrimEnd('\n');
+        var rows = plain.Length == 0 ? Array.Empty<string>() : plain.Split('\n');
+        if (rows.Length > maxLines)
+        {
+            summary.Truncated.Add("Chevo " + name);
+            lines.Add($"[truncated] Showing up to the last {maxLines.ToString(CultureInfo.InvariantCulture)} lines.");
+        }
+        lines.Add(rows.Length == 0 ? "[empty]" : Sanitize(string.Join(Environment.NewLine, rows.TakeLast(Math.Max(maxLines, 0)))));
     }
 }

@@ -275,6 +275,35 @@ try
         "Malformed host overrides must not leak user information.");
     Assert(!DiagnosticEvidenceService.Sanitize("https://user:private@example.com/api?key=hidden\npassword=hidden").Contains("hidden"),
         "New evidence must redact credential assignments and URL queries.");
+    var chevoShell = DiagnosticEvidenceService.ChevoExportShell();
+    Assert(chevoShell.Contains("/usr/sbin/runuser -u www-data -- \"$php_bin\" \"$script\" export 2>/dev/null", StringComparison.Ordinal)
+           && chevoShell.Contains(DiagnosticEvidenceService.ChevoManagedPhp, StringComparison.Ordinal)
+           && chevoShell.Contains("php_bin=/usr/bin/php", StringComparison.Ordinal)
+           && !chevoShell.Contains("http", StringComparison.OrdinalIgnoreCase)
+           && !chevoShell.Contains("2>&1", StringComparison.Ordinal),
+        "Chevo export must call the fixed script with export, prefer managed PHP, and discard stderr.");
+    var chevoReport = new List<string>();
+    var chevoSummary = new DiagnosticEvidenceService.CollectionSummary();
+    var chevoDocument = "CHEVO_DIAG_STATUS=php:managed\n" +
+        "{\"manifest\":{\"schema_version\":1,\"build\":\"2026.11.27\",\"from_utc\":\"2026-11-27T00:00:00Z\",\"to_utc\":\"2026-11-27T01:00:00Z\",\"sources\":{\"chim.log\":{\"count\":2,\"truncated\":true,\"unavailable\":null},\"/opt/secret\":{}}},\"files\":{\"chim.log\":\"https://user:secret@127.0.0.1/log?token=hidden\\nkept password=hidden\",\"../events.jsonl\":\"SECRETPATH\",\"events.lock\":\"SECRETLOCK\"},\"stderr\":\"SECRETERR\"}\n";
+    DiagnosticEvidenceService.AppendChevoExport(chevoReport, chevoSummary, chevoDocument, true, 2);
+    var chevoText = string.Join("\n", chevoReport);
+    Assert(chevoText.Contains("schema_version: 1", StringComparison.Ordinal)
+           && chevoText.Contains("chim.log: 2 entries [truncated]", StringComparison.Ordinal)
+           && chevoText.Contains("kept", StringComparison.Ordinal)
+           && !chevoText.Contains("hidden") && !chevoText.Contains("secret")
+           && !chevoText.Contains("SECRETPATH") && !chevoText.Contains("SECRETLOCK") && !chevoText.Contains("SECRETERR")
+           && !chevoText.Contains("/opt/secret", StringComparison.Ordinal)
+           && chevoSummary.Problems.Count == 0,
+        "Chevo export must keep allowlisted text, redact secrets, and ignore extra JSON names.");
+    var chevoRefused = new List<string>();
+    DiagnosticEvidenceService.AppendChevoExport(chevoRefused, new DiagnosticEvidenceService.CollectionSummary(), "password=hidden\n{\"files\":{}}\n", false, 2);
+    Assert(!string.Join("\n", chevoRefused).Contains("hidden") && !string.Join("\n", chevoRefused).Contains("files"),
+        "Unexpected Chevo output must not be copied into the report.");
+    var chevoMissing = new DiagnosticEvidenceService.CollectionSummary();
+    DiagnosticEvidenceService.AppendChevoExport([], chevoMissing, "CHEVO_DIAG_STATUS=missing-script\n", false, 2);
+    Assert(chevoMissing.MissingLogs.Contains("Chevo diagnostics") && chevoMissing.Problems.Count == 0,
+        "A missing Chevo exporter is optional and is not a collection failure.");
     Assert(DiagnosticEvidenceService.ProbeTcpAsync("8.8.8.8", 443, CancellationToken.None).GetAwaiter().GetResult().StartsWith("[not probed]"),
         "Diagnostics must not probe public endpoints.");
     var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
