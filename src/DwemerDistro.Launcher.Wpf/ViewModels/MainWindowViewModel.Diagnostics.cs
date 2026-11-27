@@ -230,4 +230,46 @@ public sealed partial class MainWindowViewModel
         catch (Exception ex) { lines.Add($"[unavailable] Update/install evidence: {ex.GetType().Name}"); summary.Problems.Add("Update/install evidence failed: " + ex.GetType().Name); }
         finally { EndPassiveDistroActivity(); lines.Add(""); }
     }
+
+    // Reads Chevo's fixed offline exporter. Stderr is discarded by the shell and is not added here.
+    private async Task AddChevoDiagnosticsAsync(List<string> lines, DiagnosticEvidenceService.CollectionSummary summary)
+    {
+        lines.Add("Chevo Diagnostics");
+        lines.Add("Offline export from the installed Chevo runtime. This does not open a web page or start a stopped distro.");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ownsActivity = TryBeginPassiveDistroActivity();
+        if (!ownsActivity)
+        {
+            lines.Add("[skipped] Critical distro maintenance is running.");
+            summary.Problems.Add("Chevo diagnostics skipped during critical distro maintenance");
+            lines.Add("");
+            return;
+        }
+        try
+        {
+            if (!await _wsl.DistroRunningAsync(timeout.Token).ConfigureAwait(false))
+            {
+                lines.Add("[unavailable] Distro is stopped or missing; Chevo export did not start it.");
+                summary.Problems.Add("Chevo diagnostics: distro stopped or missing");
+                return;
+            }
+            var result = await _wsl.RunBashAsync(
+                DiagnosticEvidenceService.ChevoExportShell(),
+                user: "root",
+                loginShell: false,
+                cancellationToken: timeout.Token).ConfigureAwait(false);
+            DiagnosticEvidenceService.AppendChevoExport(lines, summary, result.StandardOutput, result.Succeeded, MaxConsoleLines);
+        }
+        catch (OperationCanceledException)
+        {
+            lines.Add("[timeout] Chevo diagnostics exceeded its 20-second budget.");
+            summary.Problems.Add("Chevo diagnostics timed out");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"[unavailable] Chevo diagnostics: {ex.GetType().Name}");
+            summary.Problems.Add("Chevo diagnostics failed: " + ex.GetType().Name);
+        }
+        finally { EndPassiveDistroActivity(); lines.Add(""); }
+    }
 }

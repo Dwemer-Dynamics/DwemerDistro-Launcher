@@ -3572,6 +3572,7 @@ echo "CHIM-MCP installed and enabled."
 
         await AddPermissionDiagnosticsAsync(lines, summary).ConfigureAwait(false);
         await AddLogDiagnosticsAsync(lines, summary).ConfigureAwait(false);
+        await AddChevoDiagnosticsAsync(lines, summary).ConfigureAwait(false);
         await AddDatabaseSchemaDiagnosticsAsync(lines, summary).ConfigureAwait(false);
         await AddConnectorDiagnosticsAsync(lines, summary).ConfigureAwait(false);
 
