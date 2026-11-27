@@ -39,7 +39,7 @@ public sealed record GameProfile(
                 "pack://application:,,,/Assets/GameCenter/stobe-hero.jpg",
                 "pack://application:,,,/Assets/GameCenter/stobe-rail.jpg"),
             new GameProfile(
-                "REIGN", "REIGN (Closed Alpha)", "Mount & Blade II: Bannerlord",
+                "REIGN", "REIGN", "Mount & Blade II: Bannerlord",
                 "Character conversations, relationships, and persistent memories across Calradia.",
                 "pack://application:,,,/Assets/ReignLogo.png",
                 "pack://application:,,,/Assets/ReignLogo.png")
