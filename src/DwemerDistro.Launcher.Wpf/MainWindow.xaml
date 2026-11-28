@@ -1740,7 +1740,7 @@
                                         <!-- Auto height: some outcomes are shown only here, so the status wraps in full. -->
                                         <Grid Margin="0,8,0,10">
                                             <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="34" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                            <TextBlock Grid.Row="0" Text="{Binding EchoesStatusText}" Foreground="{Binding EchoesStatusColor}"
+                                            <TextBlock x:Name="EchoesStatusTextBlock" Grid.Row="0" Text="{Binding EchoesStatusText}" Foreground="{Binding EchoesStatusColor}"
                                                        TextWrapping="Wrap"
                                                        AutomationProperties.Name="Mirthwood: Echoes status"
                                                        AutomationProperties.HelpText="{Binding EchoesStatusText}"

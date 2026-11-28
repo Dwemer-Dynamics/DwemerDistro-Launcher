@@ -467,13 +467,35 @@ public sealed class MirthwoodEchoesService(ProcessRunner processRunner, WslServi
         }
 
         response.EnsureSuccessStatusCode();
-        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
-        if (bytes.Length > MetadataLimit)
+        return SelectRelease(await ReadReleaseListAsync(response.Content, cancellationToken).ConfigureAwait(false), channel);
+    }
+
+    /// <summary>
+    /// Reads the release list without ever holding more than the 4 MiB limit, whether or not the
+    /// response states its length, and whatever length it states.
+    /// </summary>
+    internal static async Task<byte[]> ReadReleaseListAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength > MetadataLimit)
         {
             throw new InvalidDataException("The release list is too large.");
         }
 
-        return SelectRelease(bytes, channel);
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var output = new MemoryStream();
+        var buffer = new byte[81920];
+        int read;
+        while ((read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            if (output.Length + read > MetadataLimit)
+            {
+                throw new InvalidDataException("The release list is too large.");
+            }
+
+            output.Write(buffer, 0, read);
+        }
+
+        return output.ToArray();
     }
 
     /// <summary>

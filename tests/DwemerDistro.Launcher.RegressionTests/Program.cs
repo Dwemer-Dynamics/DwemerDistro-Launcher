@@ -659,6 +659,26 @@ try
                && MirthwoodEchoesService.ParseTag("v99999999999.0.0", EchoesChannel.Main) is null,
             "Echoes tags must be exact: vX.Y.Z for Main and vX.Y.Z-beta.N (N from 1) for Beta.");
 
+        // The release list is capped at 4 MiB while it is read, whatever Content-Length says or omits.
+        static async Task<bool> EchoesListRefused(HttpContent content)
+        {
+            try { await MirthwoodEchoesService.ReadReleaseListAsync(content, CancellationToken.None); return false; }
+            catch (InvalidDataException) { return true; }
+        }
+        var oversizedList = new byte[4 * 1024 * 1024 + 1];
+        var unstatedLength = new StreamContent(new MemoryStream(oversizedList));
+        unstatedLength.Headers.ContentLength = null;
+        var understatedLength = new StreamContent(new MemoryStream(oversizedList));
+        understatedLength.Headers.ContentLength = 10;
+        var overstatedLength = new StreamContent(new MemoryStream(echoesList));
+        overstatedLength.Headers.ContentLength = 4 * 1024 * 1024 + 1;
+        var exactLimit = new StreamContent(new MemoryStream(new byte[4 * 1024 * 1024]));
+        exactLimit.Headers.ContentLength = null;
+        Assert(await EchoesListRefused(unstatedLength) && await EchoesListRefused(understatedLength) && await EchoesListRefused(overstatedLength)
+               && (await MirthwoodEchoesService.ReadReleaseListAsync(exactLimit, CancellationToken.None)).Length == 4 * 1024 * 1024
+               && (await MirthwoodEchoesService.ReadReleaseListAsync(new ByteArrayContent(echoesList), CancellationToken.None)).SequenceEqual(echoesList),
+            "The Echoes release list must be refused past 4 MiB even when its length is missing or wrong, and read whole within it.");
+
         Assert(MirthwoodEchoesService.ParseLinuxPrerequisites("ECHOES_PREREQUISITES_CHECKED\n", "Distro").Count == 0
                && MirthwoodEchoesService.ParseLinuxPrerequisites("", "Distro").Count == 1
                && MirthwoodEchoesService.ParseLinuxPrerequisites("MISSING aspnetcore-10\nMISSING visudo\nECHOES_PREREQUISITES_CHECKED\n", "Distro") is { Count: 2 } missingEchoes

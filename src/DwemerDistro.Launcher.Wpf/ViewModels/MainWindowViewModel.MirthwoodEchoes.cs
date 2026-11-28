@@ -321,6 +321,11 @@ public sealed partial class MainWindowViewModel
                     MessageBoxButton.OK, MessageBoxImage.Information);
             }
         }
+        catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+        {
+            // The launcher is closing and cancelled the check on purpose; that is not a failure to report.
+            LauncherLogService.Operation("Mirthwood: Echoes prerequisite check cancelled by launcher shutdown");
+        }
         finally
         {
             EndEchoesOperation();
@@ -522,6 +527,12 @@ public sealed partial class MainWindowViewModel
             SetInstalledEchoesBranch(package.Channel);
             reported = true;
             AppendLog($"{EchoesTitle} {packageLabel} is installed. Open it from here or the desktop shortcut.{Environment.NewLine}", "green");
+        }
+        catch (OperationCanceledException) when (_shutdownCts.IsCancellationRequested)
+        {
+            // The launcher is closing and cancelled the check, download or extraction on purpose: no failure dialog.
+            reported = true;
+            LauncherLogService.Operation("Mirthwood: Echoes install cancelled by launcher shutdown");
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or HttpRequestException or JsonException
                                        or UnauthorizedAccessException or InvalidOperationException or Win32Exception
