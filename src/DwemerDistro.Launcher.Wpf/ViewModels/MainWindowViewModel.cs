@@ -277,6 +277,7 @@ echo "CHIM-MCP installed and enabled."
         OpenServerFolderCommand = new RelayCommand(OpenServerFolder, CanAccessDistro);
         OpenFirstRunSetupCommand = new RelayCommand(OpenFirstRunSetupWindow, CanWriteDistro);
         InitializeLmStudioCommands();
+        InitializeMirthwoodEchoes();
         SaveDashboardAutoOpenCommand = new AsyncRelayCommand(SaveDashboardAutoOpenAsync, () => _isDashboardAutoOpenReady && CanAccessDistro());
         ConfirmForceGitUpdatesCommand = new RelayCommand(ConfirmForceGitUpdates);
         // Webpage and rollback are meaningless for a product that is not installed.
@@ -830,7 +831,13 @@ echo "CHIM-MCP installed and enabled."
     public GameProfile SelectedGame
     {
         get => _selectedGame;
-        set => SetProperty(ref _selectedGame, value);
+        set
+        {
+            if (SetProperty(ref _selectedGame, value) && value?.Key == "ECHOES")
+            {
+                OnEchoesSelected();
+            }
+        }
     }
 
     public AsyncRelayCommand StartServerCommand { get; }
@@ -2197,6 +2204,7 @@ echo "CHIM-MCP installed and enabled."
         OnPropertyChanged(nameof(UpdateSystemHelpText));
         // Custom mod actions share these gates through IsComponentInteractionEnabled.
         RaiseCustomModCommandStates();
+        RaiseEchoesCommandStates();
     }
 
     private void RaiseDistroAccessCommandStates()

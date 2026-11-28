@@ -690,6 +690,7 @@ public partial class MainWindow : Window
         StobeDetails.Visibility = key == "STOBE" ? Visibility.Visible : Visibility.Collapsed;
         DialecticDetails.Visibility = key == "DIALECTIC" ? Visibility.Visible : Visibility.Collapsed;
         ReignDetails.Visibility = key == "REIGN" ? Visibility.Visible : Visibility.Collapsed;
+        EchoesDetails.Visibility = key == "ECHOES" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ToggleConsoleButton_Click(object sender, RoutedEventArgs e)

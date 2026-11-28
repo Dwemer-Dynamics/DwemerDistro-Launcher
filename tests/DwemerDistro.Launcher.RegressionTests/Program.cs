@@ -577,10 +577,122 @@ try
     }
 
     var gameCatalog = GameProfile.CreateCatalog();
-    Assert(gameCatalog.Count == 5 && gameCatalog.Select(game => game.Key).Distinct().Count() == 5,
-        "The launcher rail must expose five unique game profiles, including LORKHAN and Reign.");
-    Assert(gameCatalog.Select(game => game.Key).SequenceEqual(["CHIM", "LORKHAN", "DIALECTIC", "STOBE", "REIGN"]),
+    Assert(gameCatalog.Count == 6 && gameCatalog.Select(game => game.Key).Distinct().Count() == 6,
+        "The launcher rail must expose six unique game profiles, including LORKHAN, Reign and Mirthwood: Echoes.");
+    Assert(gameCatalog.Select(game => game.Key).SequenceEqual(["CHIM", "LORKHAN", "DIALECTIC", "STOBE", "REIGN", "ECHOES"]),
         "The game rail must use the dashboard product order.");
+    Assert(ServerManagementService.TryParseGameKey("ECHOES") is null,
+        "Mirthwood: Echoes installs through its own companion, never through ddistro_server or Quickstart.");
+
+    // --- Mirthwood: Echoes package, release and companion handling ---------------------------
+    {
+        var echoesPackage = new EchoesPackage(@"C:\Echoes\pkg", "0.9.0");
+        var installerArgs = MirthwoodEchoesService.BuildInstallerArguments(echoesPackage, LauncherConstants.DistroName, @"D:\Steam\steamapps\common\Mirthwood");
+        Assert(installerArgs.SkipWhile(arg => arg != "-Distro").Skip(1).First() == LauncherConstants.DistroName
+               && installerArgs.SkipWhile(arg => arg != "-Package").Skip(1).First() == @"C:\Echoes\pkg"
+               && installerArgs.SkipWhile(arg => arg != "-File").Skip(1).First() == @"C:\Echoes\pkg\Update-Server.ps1"
+               && !installerArgs.Contains("ReignServer"),
+            "The Echoes updater must always target the launcher's own distro, never its ReignServer default.");
+        Assert(MirthwoodEchoesService.IsSafeEntryName("launcher/Mirthwood.Echoes.Play.exe")
+               && MirthwoodEchoesService.IsSafeEntryName("app/bundle/.doorstop_version")
+               && MirthwoodEchoesService.IsSafeEntryName("pkg/app/")
+               && !MirthwoodEchoesService.IsSafeEntryName("../evil.ps1")
+               && !MirthwoodEchoesService.IsSafeEntryName("app/../../evil.ps1")
+               && !MirthwoodEchoesService.IsSafeEntryName("/etc/passwd")
+               && !MirthwoodEchoesService.IsSafeEntryName(@"app\evil.dll")
+               && !MirthwoodEchoesService.IsSafeEntryName("C:/evil.dll")
+               && !MirthwoodEchoesService.IsSafeEntryName("app/CON.txt"),
+            "Echoes package entries must stay inside the staging folder.");
+
+        static byte[] EchoesReleaseJson(bool draft, string assetName, string url) => System.Text.Encoding.UTF8.GetBytes(
+            $$"""{"tag_name":"v0.9.0","draft":{{(draft ? "true" : "false")}},"prerelease":false,"assets":[{"name":"{{assetName}}","size":1234,"browser_download_url":"{{url}}","digest":"sha256:{{new string('a', 64)}}"}]}""");
+        const string echoesAsset = "Mirthwood-Echoes-Server-0.9.0.zip";
+        const string echoesUrl = MirthwoodEchoesService.ReleaseDownloadPrefix + "v0.9.0/" + echoesAsset;
+        var published = MirthwoodEchoesService.ParseRelease(EchoesReleaseJson(false, echoesAsset, echoesUrl));
+        Assert(published is { Version: "0.9.0", Size: 1234 } && published.Sha256 == new string('a', 64)
+               && MirthwoodEchoesService.ParseRelease(EchoesReleaseJson(true, echoesAsset, echoesUrl)) is null
+               && MirthwoodEchoesService.ParseRelease(EchoesReleaseJson(false, "Other.zip", echoesUrl)) is null,
+            "Only a published release carrying the versioned server package is offered; drafts read as no release.");
+        var redirectedRefused = false;
+        try { MirthwoodEchoesService.ParseRelease(EchoesReleaseJson(false, echoesAsset, "https://example.com/" + echoesAsset)); }
+        catch (InvalidDataException) { redirectedRefused = true; }
+        Assert(redirectedRefused, "An Echoes release asset outside the repository's download path must be refused.");
+
+        Assert(MirthwoodEchoesService.ParseLinuxPrerequisites("ECHOES_PREREQUISITES_CHECKED\n", "Distro").Count == 0
+               && MirthwoodEchoesService.ParseLinuxPrerequisites("", "Distro").Count == 1
+               && MirthwoodEchoesService.ParseLinuxPrerequisites("MISSING aspnetcore-10\nMISSING visudo\nECHOES_PREREQUISITES_CHECKED\n", "Distro") is { Count: 2 } missingEchoes
+               && missingEchoes[0].Contains("ASP.NET Core Runtime", StringComparison.Ordinal)
+               && missingEchoes[1].Contains("'visudo'", StringComparison.Ordinal),
+            "Missing Echoes distro prerequisites must be reported as actionable messages, and an unchecked distro must not pass.");
+        Assert(!MirthwoodEchoesService.LinuxPrerequisiteScript.Contains('\r')
+               && MirthwoodEchoesService.ParseLinuxPrerequisites(new CommandResult(0, "ECHOES_PREREQUISITES_CHECKED\n", ""), "Distro").Count == 0
+               && MirthwoodEchoesService.ParseLinuxPrerequisites(new CommandResult(1, "ECHOES_PREREQUISITES_CHECKED\n", "E\0r\0r\0o\0r\0 boom\n"), "Distro") is [var failedProbe]
+               && failedProbe.Contains("exit code 1: Error boom", StringComparison.Ordinal)
+               && MirthwoodEchoesService.DescribeProbeFailure(new string('x', 5000)).Length <= 301,
+            "A failed Echoes distro probe must never pass, even with its sentinel, and its diagnostics must stay bounded; the probe script must be LF-only.");
+        Assert(MainWindowViewModel.FindEchoesOwnerConflict([], LauncherConstants.DistroName) is null
+               && MainWindowViewModel.FindEchoesOwnerConflict([LauncherConstants.DistroName.ToLowerInvariant()], LauncherConstants.DistroName) is null
+               && MainWindowViewModel.FindEchoesOwnerConflict([LauncherConstants.DistroName, null], LauncherConstants.DistroName) == MainWindowViewModel.EchoesOwnerConflict.Unknown
+               && MainWindowViewModel.FindEchoesOwnerConflict([" "], LauncherConstants.DistroName) == MainWindowViewModel.EchoesOwnerConflict.Unknown
+               && MainWindowViewModel.FindEchoesOwnerConflict(["ReignServer"], LauncherConstants.DistroName) == MainWindowViewModel.EchoesOwnerConflict.OtherDistro,
+            "Opening Echoes must fail closed when an open companion's distro is unknown or different.");
+
+        var echoesRoot = Path.Combine(Path.GetTempPath(), "ddistro-echoes-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var play = Path.Combine(echoesRoot, "Play");
+            foreach (var (generation, distro) in new[] { ("AAAAAAAAAAAAAAAAAAAAAAAA", "ReignServer"), ("BBBBBBBBBBBBBBBBBBBBBBBB", LauncherConstants.DistroName), ("not-a-generation", LauncherConstants.DistroName) })
+            {
+                Directory.CreateDirectory(Path.Combine(play, generation));
+                File.WriteAllText(Path.Combine(play, generation, "Mirthwood.Echoes.Play.exe"), "");
+                File.WriteAllText(Path.Combine(play, generation, "distro.txt"), distro);
+            }
+
+            var echoesScan = MirthwoodEchoesService.ScanCompanions(LauncherConstants.DistroName, play);
+            var otherScan = MirthwoodEchoesService.ScanCompanions("SomeOtherDistro", play);
+            Assert(echoesScan.Match?.Directory.EndsWith("BBBBBBBBBBBBBBBBBBBBBBBB", StringComparison.Ordinal) == true && echoesScan.OtherDistro is null
+                   && otherScan.Match is null && otherScan.OtherDistro is not null,
+                "Only an installer generation whose distro.txt names this distro is opened; another distro's companion is reported, not launched.");
+
+            var traversalZip = Path.Combine(echoesRoot, "traversal.zip");
+            using (var zip = System.IO.Compression.ZipFile.Open(traversalZip, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                using var writer = new StreamWriter(zip.CreateEntry("../outside.txt").Open());
+                writer.Write("x");
+            }
+
+            var traversalRefused = false;
+            try { MirthwoodEchoesService.ExtractPackage(traversalZip, Path.Combine(echoesRoot, "stage-a")); }
+            catch (InvalidDataException) { traversalRefused = true; }
+            Assert(traversalRefused && !File.Exists(Path.Combine(echoesRoot, "outside.txt")), "A traversal entry must stop the Echoes extraction.");
+
+            var packageZip = Path.Combine(echoesRoot, "package.zip");
+            using (var zip = System.IO.Compression.ZipFile.Open(packageZip, System.IO.Compression.ZipArchiveMode.Create))
+            {
+                foreach (var file in MirthwoodEchoesService.RequiredPackageFiles)
+                {
+                    using var writer = new StreamWriter(zip.CreateEntry("Mirthwood-Echoes-Server/" + file).Open());
+                    writer.Write(file.EndsWith("manifest.json", StringComparison.Ordinal)
+                        ? """{"id":"mirthwood-echoes","name":"Mirthwood: Echoes","version":"0.9.0","files":[]}"""
+                        : "x");
+                }
+            }
+
+            var extracted = MirthwoodEchoesService.ExtractPackage(packageZip, Path.Combine(echoesRoot, "stage-b"));
+            Assert(extracted.Version == "0.9.0" && extracted.Root.EndsWith("Mirthwood-Echoes-Server", StringComparison.Ordinal),
+                "A package inside one top-level folder must validate by layout and manifest identity.");
+            File.WriteAllText(Path.Combine(extracted.Root, "app", "bundle", "manifest.json"),
+                """{"id":"mirthwood-echoes","name":"Mirthwood Echoes","version":"0.9.0"}""");
+            var identityRefused = false;
+            try { MirthwoodEchoesService.ValidatePackage(extracted.Root); }
+            catch (InvalidDataException) { identityRefused = true; }
+            Assert(identityRefused, "A package whose manifest does not name Mirthwood: Echoes exactly must be refused.");
+        }
+        finally
+        {
+            if (Directory.Exists(echoesRoot)) Directory.Delete(echoesRoot, true);
+        }
+    }
     Assert(ServerManagementService.ToProductToken(ServerProduct.Lorkhan) == "lorkhan"
            && ServerManagementService.ParseProduct("lorkhan") == ServerProduct.Lorkhan
            && ServerManagementService.ToBranchToken(ServerBranchChannel.Unstable) == "unstable"
@@ -660,18 +772,20 @@ try
            && MainWindowViewModel.ResolveServerWebPageUrl("STOBE") == "http://127.0.0.1:8083/StobeServer/ui/"
            && MainWindowViewModel.ResolveServerWebPageUrl("DIALECTIC") == "http://127.0.0.1:8088/DialecticServer/ui/",
         "Each mod webpage button must open that product's local web UI, not its Nexus page.");
-    Assert(gameCatalog.All(game => MainWindowViewModel.ResolveServerWebPageUrl(game.Key) is not null),
-        "Every game profile on the rail must resolve to a webpage URL.");
+    Assert(gameCatalog.Where(game => game.Key != "ECHOES").All(game => MainWindowViewModel.ResolveServerWebPageUrl(game.Key) is not null),
+        "Every server-managed game profile on the rail must resolve to a webpage URL.");
+    Assert(MainWindowViewModel.ResolveServerWebPageUrl("ECHOES") is null && MainWindowViewModel.ResolveNexusPageUrl("ECHOES") is null,
+        "Mirthwood: Echoes opens only through its companion window: no browser webpage and no Nexus page.");
     Assert(MainWindowViewModel.ResolveNexusPageUrl("CHIM") == "https://www.nexusmods.com/skyrimspecialedition/mods/126330?tab=files"
            && MainWindowViewModel.ResolveNexusPageUrl("STOBE") == "https://www.nexusmods.com/kenshi/mods/1891?tab=files"
            && MainWindowViewModel.ResolveNexusPageUrl("DIALECTIC") == "https://www.nexusmods.com/newvegas/mods/99233?tab=files",
         "Each Nexus button must open that mod's own Nexus page.");
-    Assert(gameCatalog.Where(game => game.Key is not ("REIGN" or "LORKHAN")).All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null)
+    Assert(gameCatalog.Where(game => game.Key is not ("REIGN" or "LORKHAN" or "ECHOES")).All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key) is not null)
            && MainWindowViewModel.ResolveNexusPageUrl("REIGN") is null,
         "Only mods with a configured Nexus page expose that external action.");
     Assert(MainWindowViewModel.ResolveNexusPageUrl("UNKNOWN") is null,
         "An unknown product must resolve to no Nexus page rather than another mod's page.");
-    Assert(gameCatalog.Where(game => game.Key is not ("REIGN" or "LORKHAN")).All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
+    Assert(gameCatalog.Where(game => game.Key is not ("REIGN" or "LORKHAN" or "ECHOES")).All(game => MainWindowViewModel.ResolveNexusPageUrl(game.Key)!
             .StartsWith("https://www.nexusmods.com/", StringComparison.Ordinal)),
         "A Nexus button must open an external page, never a local server URL.");
     Assert(MainWindowViewModel.IsServerWebPageResponseUsable(HttpStatusCode.OK)
@@ -1233,8 +1347,8 @@ try
            && ServerManagementService.TryParseGameKey("UNKNOWN") is null,
         "Rail keys must map onto managed products, and an unmanaged key must map to nothing.");
 
-    Assert(gameCatalog.All(game => ServerManagementService.TryParseGameKey(game.Key) is not null),
-        "Every rail product must be manageable, so all three icons keep working actions.");
+    Assert(gameCatalog.Where(game => game.Key != "ECHOES").All(game => ServerManagementService.TryParseGameKey(game.Key) is not null),
+        "Every server rail product must be manageable, so its icon keeps working actions; Echoes has its own companion actions.");
 
     // --- Mods page state mapping ------------------------------------------------------------
 

@@ -914,7 +914,17 @@
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <Grid Grid.Row="0" Background="#151515">
+                            <Grid Grid.Row="0">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Background" Value="#151515" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="ECHOES">
+                                                <Setter Property="Background" Value="{DynamicResource GameCenter.Brand.EchoesInk}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
                                 <Image x:Name="HeroArt" Source="{Binding SelectedGame.HeroImageSource}" Stretch="Uniform"
                                        AutomationProperties.Name="{Binding SelectedGame.Name, StringFormat={}{0} artwork}" />
                                 <Border x:Name="HeroHighContrastFallback" Visibility="Collapsed"
@@ -1714,6 +1724,89 @@
                                                     <Button Content="Uninstall Reign…" Command="{Binding ReignManager.UninstallCommand}" Style="{StaticResource GameCenter.ModAction.DangerRow}"
                                                             AutomationProperties.Name="Uninstall Reign"
                                                             AutomationProperties.HelpText="Remove the installed server. Its database, settings, memories, and previous runtimes are retained. Asks for a typed confirmation first." />
+                                                </StackPanel>
+                                            </HeaderedContentControl>
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <!-- Mirthwood: Echoes installs through its own package installer and runs from its Windows
+                                         companion, which starts its server while the window is open and stops it on minimise or
+                                         close. Nothing here starts or stops that server. -->
+                                    <StackPanel x:Name="EchoesDetails" Visibility="Collapsed">
+                                        <TextBlock Text="Windows companion" Style="{StaticResource GameCenter.Caption}" FontWeight="SemiBold" />
+                                        <!-- Auto height: some outcomes are shown only here, so the status wraps in full. -->
+                                        <Grid Margin="0,8,0,10">
+                                            <Grid.RowDefinitions><RowDefinition Height="Auto" MinHeight="34" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                            <TextBlock Grid.Row="0" Text="{Binding EchoesStatusText}" Foreground="{Binding EchoesStatusColor}"
+                                                       TextWrapping="Wrap"
+                                                       AutomationProperties.Name="Mirthwood: Echoes status"
+                                                       AutomationProperties.HelpText="{Binding EchoesStatusText}"
+                                                       AutomationProperties.LiveSetting="Polite" />
+                                            <ProgressBar Grid.Row="1" Height="6" Margin="0,6,0,6" VerticalAlignment="Top"
+                                                         IsIndeterminate="{Binding IsEchoesBusy}"
+                                                         Background="#151515" BorderThickness="0"
+                                                         Foreground="{DynamicResource GameCenter.CopperStrong}"
+                                                         IsTabStop="False" Focusable="False"
+                                                         AutomationProperties.Name="Mirthwood: Echoes operation progress">
+                                                <ProgressBar.Style>
+                                                    <Style TargetType="ProgressBar">
+                                                        <Setter Property="Opacity" Value="0" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsEchoesBusy}" Value="True">
+                                                                <Setter Property="Opacity" Value="1" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </ProgressBar.Style>
+                                            </ProgressBar>
+                                        </Grid>
+                                        <!-- Not installed: the published release first, then a package already on this PC. -->
+                                        <StackPanel Visibility="{Binding ShowEchoesInstallActions, Converter={StaticResource BoolToVisibility}}">
+                                            <Button Content="Install Mirthwood: Echoes" Command="{Binding InstallEchoesReleaseCommand}" Tag="&#xE896;"
+                                                    Style="{StaticResource GameCenter.ModAction.OpenButton}"
+                                                    AutomationProperties.Name="Install Mirthwood: Echoes"
+                                                    AutomationProperties.HelpText="Check prerequisites, then download and install the latest published Mirthwood: Echoes package into DwemerDistro." />
+                                            <HeaderedContentControl Header="Install" Style="{StaticResource GameCenter.ModAction.RowGroup}">
+                                                <StackPanel>
+                                                    <Button Content="Install from package…" Command="{Binding InstallEchoesPackageCommand}" Tag="&#xE8B7;"
+                                                            Style="{StaticResource GameCenter.ModAction.Row}"
+                                                            AutomationProperties.Name="Install Mirthwood: Echoes from package"
+                                                            AutomationProperties.HelpText="Choose a Mirthwood-Echoes-Server ZIP or the Update-Server.ps1 file in an extracted package, then install it into DwemerDistro." />
+                                                    <Border Style="{StaticResource GameCenter.ModAction.RowSeparator}" />
+                                                    <Button Content="Check prerequisites" Command="{Binding CheckEchoesPrerequisitesCommand}" Tag="&#xE9D9;"
+                                                            Style="{StaticResource GameCenter.ModAction.Row}"
+                                                            AutomationProperties.Name="Check Mirthwood: Echoes prerequisites"
+                                                            AutomationProperties.HelpText="Check Steam, the Windows runtimes and the DwemerDistro runtime Mirthwood: Echoes needs. Nothing is installed or changed." />
+                                                </StackPanel>
+                                            </HeaderedContentControl>
+                                        </StackPanel>
+
+                                        <!-- Installed: open the companion, then update from a release or a package. -->
+                                        <StackPanel Visibility="{Binding ShowEchoesInstalledActions, Converter={StaticResource BoolToVisibility}}">
+                                            <Button Content="Open Mirthwood: Echoes" Command="{Binding OpenEchoesCommand}"
+                                                    Style="{StaticResource GameCenter.ModAction.GoOpenButton}"
+                                                    AutomationProperties.Name="Open Mirthwood: Echoes"
+                                                    AutomationProperties.HelpText="Open the Mirthwood: Echoes companion window, or bring it forward if it is already open. The window starts its server and stops it when minimised or closed." />
+                                            <TextBlock Text="Keep the companion window open while you play. Minimising or closing it stops Echoes."
+                                                       Style="{StaticResource GameCenter.Caption}" Margin="2,8,2,0" />
+                                            <HeaderedContentControl Header="Update" Style="{StaticResource GameCenter.ModAction.RowGroup}">
+                                                <StackPanel>
+                                                    <Button Content="Update from latest release" Command="{Binding InstallEchoesReleaseCommand}" Tag="&#xE896;"
+                                                            Style="{StaticResource GameCenter.ModAction.Row}"
+                                                            AutomationProperties.Name="Update Mirthwood: Echoes from latest release"
+                                                            AutomationProperties.HelpText="Download the latest published Mirthwood: Echoes package and install it. Saves, settings and other mods are kept." />
+                                                    <Border Style="{StaticResource GameCenter.ModAction.RowSeparator}" />
+                                                    <Button Content="Install from package…" Command="{Binding InstallEchoesPackageCommand}" Tag="&#xE8B7;"
+                                                            Style="{StaticResource GameCenter.ModAction.Row}"
+                                                            AutomationProperties.Name="Install Mirthwood: Echoes from package"
+                                                            AutomationProperties.HelpText="Choose a Mirthwood-Echoes-Server ZIP or the Update-Server.ps1 file in an extracted package, then install it into DwemerDistro." />
+                                                </StackPanel>
+                                            </HeaderedContentControl>
+                                            <HeaderedContentControl Header="Manage" Style="{StaticResource GameCenter.ModAction.RowGroup}">
+                                                <StackPanel>
+                                                    <Button Content="Check prerequisites" Command="{Binding CheckEchoesPrerequisitesCommand}" Tag="&#xE9D9;"
+                                                            Style="{StaticResource GameCenter.ModAction.Row}"
+                                                            AutomationProperties.Name="Check Mirthwood: Echoes prerequisites"
+                                                            AutomationProperties.HelpText="Check Steam, the Windows runtimes and the DwemerDistro runtime Mirthwood: Echoes needs. Nothing is installed or changed." />
                                                 </StackPanel>
                                             </HeaderedContentControl>
                                         </StackPanel>

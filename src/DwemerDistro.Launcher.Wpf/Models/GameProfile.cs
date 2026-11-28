@@ -50,7 +50,14 @@ public sealed record GameProfile(
                 "Character conversations, relationships, and persistent memories across Calradia.",
                 "pack://application:,,,/Assets/ReignLogo.png",
                 "pack://application:,,,/Assets/ReignLogo.png",
-                "pack://application:,,,/Assets/GameCenter/reign-icon.png")
+                "pack://application:,,,/Assets/GameCenter/reign-icon.png"),
+            // Installed and opened through its own Windows companion, not ddistro_server.
+            new GameProfile(
+                "ECHOES", "Mirthwood: Echoes", "Mirthwood",
+                "Remembered conversations and voiced replies with Mirthwood's residents.",
+                "pack://application:,,,/Assets/GameCenter/echoes-hero.jpg",
+                "pack://application:,,,/Assets/GameCenter/echoes-rail.jpg",
+                "pack://application:,,,/Assets/GameCenter/echoes-icon.png")
         };
     }
 }

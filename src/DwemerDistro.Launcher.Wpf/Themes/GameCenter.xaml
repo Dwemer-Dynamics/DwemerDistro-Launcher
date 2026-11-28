@@ -64,6 +64,11 @@
     <SolidColorBrush x:Key="GameCenter.Brand.DialecticSoft" Color="#805814" />
     <SolidColorBrush x:Key="GameCenter.Brand.DialecticTint" Color="#403521" />
     <SolidColorBrush x:Key="GameCenter.Brand.DialecticTintPressed" Color="#312A1D" />
+    <!-- Mirthwood: Echoes uses its own palette only where the shared panel is product-specific:
+         the parchment title and the ink backdrop behind its artwork. Woodland and brass live in that
+         artwork; the action controls keep the shared copper and green states. -->
+    <SolidColorBrush x:Key="GameCenter.Brand.EchoesParchment" Color="#EEE9D9" />
+    <SolidColorBrush x:Key="GameCenter.Brand.EchoesInk" Color="#292D24" />
 
     <Style TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
@@ -160,7 +165,14 @@
                 <Setter Property="FontFamily" Value="{StaticResource GameCenter.Font.Dialectic}" />
                 <Setter Property="FontWeight" Value="Normal" />
             </DataTrigger>
+            <!-- Palatino Linotype ships with Windows; Georgia covers a system without it. -->
+            <DataTrigger Binding="{Binding SelectedGame.Key}" Value="ECHOES">
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Brand.EchoesParchment}" />
+                <Setter Property="FontFamily" Value="Palatino Linotype, Georgia" />
+                <Setter Property="FontWeight" Value="Normal" />
+            </DataTrigger>
             <DataTrigger Binding="{Binding Source={x:Static SystemParameters.HighContrast}}" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource GameCenter.Text}" />
                 <Setter Property="FontFamily" Value="Segoe UI" />
                 <Setter Property="FontWeight" Value="SemiBold" />
             </DataTrigger>
