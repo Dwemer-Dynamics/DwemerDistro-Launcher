@@ -17,14 +17,14 @@ namespace DwemerDistro.Launcher.Wpf.ViewModels;
 public sealed partial class MainWindowViewModel
 {
     private const string EchoesTitle = MirthwoodEchoesService.ProductName;
-    private const string EchoesNoPublishedReleaseText =
-        "No published Mirthwood: Echoes package is available yet. Use Install from package… with a package you were given.";
 
     private MirthwoodEchoesService _echoesService = null!;
     private EchoesCompanion? _echoesCompanion;
     private bool _isEchoesBusy;
     private string _echoesStatusText = "Checking...";
     private string _echoesStatusColor = ServerManagerItemViewModel.CheckingColor;
+    private string _selectedEchoesBranch = "Main";
+    private bool _echoesBranchChosen;
 
     public RelayCommand OpenEchoesCommand { get; private set; } = null!;
     public AsyncRelayCommand InstallEchoesReleaseCommand { get; private set; } = null!;
@@ -50,10 +50,48 @@ public sealed partial class MainWindowViewModel
         {
             if (SetProperty(ref _isEchoesBusy, value))
             {
+                OnPropertyChanged(nameof(CanChooseEchoesRelease));
                 RaiseEchoesCommandStates();
             }
         }
     }
+
+    /// <summary>The release choice is locked while an Echoes operation runs, so its channel cannot change mid-install.</summary>
+    public bool CanChooseEchoesRelease => !IsEchoesBusy;
+
+    /// <summary>The release choices, as for the other Main/Beta servers: "Dev" is shown and announced as "Beta".</summary>
+    public IReadOnlyList<string> EchoesBranches { get; } = ["Main", "Dev"];
+
+    /// <summary>
+    /// The channel the release install and update use. It starts at the installed companion's channel
+    /// (Main when none or unknown) and then stays as chosen; it never changes on its own to find a release.
+    /// </summary>
+    public string SelectedEchoesBranch
+    {
+        get => _selectedEchoesBranch;
+        set
+        {
+            // A binding echoing the current value is not a choice; only a real change stops following the install.
+            if (SetProperty(ref _selectedEchoesBranch, value == "Dev" ? "Dev" : "Main"))
+            {
+                _echoesBranchChosen = true;
+                RaiseEchoesReleaseText();
+            }
+        }
+    }
+
+    internal EchoesChannel SelectedEchoesChannel => ToEchoesChannel(_selectedEchoesBranch);
+
+    internal static EchoesChannel ToEchoesChannel(string? branch) => branch == "Dev" ? EchoesChannel.Beta : EchoesChannel.Main;
+
+    internal static string ToEchoesBranch(EchoesChannel channel) => channel == EchoesChannel.Beta ? "Dev" : "Main";
+
+    /// <summary>The installed panel's release action, naming the selected channel.</summary>
+    public string EchoesReleaseActionText => $"Update ECHOEs to latest {MirthwoodEchoesService.ChannelLabel(SelectedEchoesChannel)}";
+
+    public string EchoesReleaseHelpText => SelectedEchoesChannel == EchoesChannel.Beta
+        ? "Download the newest published Beta prerelease of Mirthwood: Echoes and install it. Main releases are not used. Saves, settings and other mods are kept."
+        : "Download the newest published Main release of Mirthwood: Echoes and install it. Beta prereleases are not used. Saves, settings and other mods are kept.";
 
     public bool IsEchoesInstalled => _echoesCompanion is not null;
 
@@ -126,8 +164,12 @@ public sealed partial class MainWindowViewModel
 
         if (scan.Match is { } companion)
         {
-            var version = companion.Version is null ? string.Empty : $" {companion.Version}";
-            SetEchoesStatus($"Installed{version}", "LimeGreen");
+            if (!_echoesBranchChosen && companion.Channel is { } installedChannel)
+            {
+                SetInstalledEchoesBranch(installedChannel);
+            }
+
+            SetEchoesStatus(DescribeInstalledEchoes(companion), "LimeGreen");
         }
         else if (scan.OtherDistro is { } other)
         {
@@ -139,6 +181,35 @@ public sealed partial class MainWindowViewModel
             SetEchoesStatus("Not installed", ServerManagerItemViewModel.NotInstalledColor);
         }
     }
+
+    /// <summary>"Installed 0.9.0 (Main)", "Installed 0.9.0-beta.2 (Beta)", or "Installed" when the version is unreadable.</summary>
+    internal static string DescribeInstalledEchoes(EchoesCompanion companion) =>
+        DescribeEchoesRelease(companion) is { } release ? $"Installed {release}" : "Installed";
+
+    /// <summary>"0.9.0 (Main)" or "0.9.0-beta.2 (Beta)"; null when the companion's version is unreadable.</summary>
+    internal static string? DescribeEchoesRelease(EchoesCompanion companion) =>
+        companion is { Release: { } release, Channel: { } channel }
+            ? $"{release} ({MirthwoodEchoesService.ChannelLabel(channel)})"
+            : null;
+
+    /// <summary>Follows the installed channel without counting as the user's own choice.</summary>
+    private void SetInstalledEchoesBranch(EchoesChannel channel)
+    {
+        if (SetProperty(ref _selectedEchoesBranch, ToEchoesBranch(channel), nameof(SelectedEchoesBranch)))
+        {
+            RaiseEchoesReleaseText();
+        }
+    }
+
+    private void RaiseEchoesReleaseText()
+    {
+        OnPropertyChanged(nameof(EchoesReleaseActionText));
+        OnPropertyChanged(nameof(EchoesReleaseHelpText));
+    }
+
+    internal static string DescribeMissingEchoesRelease(EchoesChannel channel) => channel == EchoesChannel.Beta
+        ? "No published Beta release of Mirthwood: Echoes is available yet. Choose Main, or use Install from package… with a package you were given."
+        : "No published Main release of Mirthwood: Echoes is available yet. Choose Beta, or use Install from package… with a package you were given.";
 
     private bool BeginEchoesOperation()
     {
@@ -326,13 +397,18 @@ public sealed partial class MainWindowViewModel
         return dialog.ShowDialog() == true ? Path.GetFullPath(dialog.FileName) : null;
     }
 
-    private bool ConfirmEchoesInstall(string version, string gameDirectory)
+    private bool ConfirmEchoesInstall(EchoesChannel channel, string release, string gameDirectory)
     {
         var verb = IsEchoesInstalled ? "update" : "install";
+        var version = $"{release} ({MirthwoodEchoesService.ChannelLabel(channel)})";
         var runningNote = MirthwoodEchoesService.IsCompanionRunning()
             ? "\n\nThe companion window is open. Finish your session first; reopen it afterwards if it does not follow the update."
             : string.Empty;
+        var installedNote = _echoesCompanion is { } installed
+            ? $"Installed now: {DescribeEchoesRelease(installed) ?? "unknown version"}.\n\n"
+            : string.Empty;
         return MessageBox.Show(
+            installedNote +
             $"This will {verb} {EchoesTitle} {version} using its own installer:\n\n" +
             $"• the Echoes server, its PostgreSQL database and its systemd service inside {_wsl.DistroName}\n" +
             "• the Windows companion and the Mirthwood: Echoes desktop shortcut\n" +
@@ -374,24 +450,28 @@ public sealed partial class MainWindowViewModel
             EchoesPackage package;
             if (fromRelease)
             {
-                SetEchoesStatus("Looking for a published release...", ServerManagerItemViewModel.BusyColor);
-                var release = await MirthwoodEchoesService.GetLatestReleaseAsync(_httpClient, _shutdownCts.Token).ConfigureAwait(true);
+                // The channel is fixed when the operation starts; a missing release never falls back to the other one.
+                var channel = SelectedEchoesChannel;
+                var label = MirthwoodEchoesService.ChannelLabel(channel);
+                SetEchoesStatus($"Looking for a published {label} release...", ServerManagerItemViewModel.BusyColor);
+                var release = await MirthwoodEchoesService.GetReleaseAsync(_httpClient, channel, _shutdownCts.Token).ConfigureAwait(true);
                 if (release is null)
                 {
-                    SetEchoesStatus("No published release yet. Use Install from package…", ServerManagerItemViewModel.NotInstalledColor);
-                    AppendLog(EchoesNoPublishedReleaseText + Environment.NewLine, "yellow");
-                    MessageBox.Show(EchoesNoPublishedReleaseText, EchoesTitle, MessageBoxButton.OK, MessageBoxImage.Information);
+                    var missing = DescribeMissingEchoesRelease(channel);
+                    SetEchoesStatus($"No published {label} release yet.", ServerManagerItemViewModel.NotInstalledColor);
+                    AppendLog(missing + Environment.NewLine, "yellow");
+                    MessageBox.Show(missing, EchoesTitle, MessageBoxButton.OK, MessageBoxImage.Information);
                     reported = true;
                     return;
                 }
 
-                if (!ConfirmEchoesInstall(release.Version, gameDirectory))
+                if (!ConfirmEchoesInstall(release.Channel, release.Release, gameDirectory))
                 {
                     return;
                 }
 
                 staging = MirthwoodEchoesService.CreateStagingDirectory();
-                SetEchoesStatus($"Downloading {release.Version}...", ServerManagerItemViewModel.BusyColor);
+                SetEchoesStatus($"Downloading {release.Release} ({label})...", ServerManagerItemViewModel.BusyColor);
                 AppendLog($"Downloading {release.AssetName}...{Environment.NewLine}");
                 // The release download can take minutes; the shared 15-second client would cut it off.
                 using var downloadClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(30) };
@@ -399,10 +479,7 @@ public sealed partial class MainWindowViewModel
                 SetEchoesStatus("Checking the package...", ServerManagerItemViewModel.BusyColor);
                 var stagingFolder = Path.Combine(staging, "package");
                 package = await Task.Run(() => MirthwoodEchoesService.ExtractPackage(archive, stagingFolder, _shutdownCts.Token)).ConfigureAwait(true);
-                if (package.Version != release.Version)
-                {
-                    throw new InvalidDataException("The downloaded package version differs from its release.");
-                }
+                MirthwoodEchoesService.CheckPackageMatchesRelease(package, release);
             }
             else
             {
@@ -418,15 +495,16 @@ public sealed partial class MainWindowViewModel
                     package = MirthwoodEchoesService.ValidatePackage(Path.GetDirectoryName(selected)!);
                 }
 
-                if (!ConfirmEchoesInstall(package.Version, gameDirectory))
+                if (!ConfirmEchoesInstall(package.Channel, package.Release, gameDirectory))
                 {
                     return;
                 }
             }
 
-            SetEchoesStatus($"Installing {package.Version}...", ServerManagerItemViewModel.BusyColor);
-            AppendLog($"Installing {EchoesTitle} {package.Version} into {_wsl.DistroName}...{Environment.NewLine}");
-            LauncherLogService.Operation($"START Mirthwood: Echoes installer {package.Version}; distro {_wsl.DistroName}");
+            var packageLabel = $"{package.Release} ({MirthwoodEchoesService.ChannelLabel(package.Channel)})";
+            SetEchoesStatus($"Installing {packageLabel}...", ServerManagerItemViewModel.BusyColor);
+            AppendLog($"Installing {EchoesTitle} {packageLabel} into {_wsl.DistroName}...{Environment.NewLine}");
+            LauncherLogService.Operation($"START Mirthwood: Echoes installer {packageLabel}; distro {_wsl.DistroName}");
             var result = await _echoesService.RunInstallerAsync(package, gameDirectory, line => AppendLog(line), _shutdownCts.Token)
                 .ConfigureAwait(true);
             LauncherLogService.Operation($"END Mirthwood: Echoes installer; exit code {result.ExitCode}");
@@ -441,8 +519,9 @@ public sealed partial class MainWindowViewModel
                 throw new IOException($"The installer finished, but no companion for {_wsl.DistroName} was found.");
             }
 
+            SetInstalledEchoesBranch(package.Channel);
             reported = true;
-            AppendLog($"{EchoesTitle} {package.Version} is installed. Open it from here or the desktop shortcut.{Environment.NewLine}", "green");
+            AppendLog($"{EchoesTitle} {packageLabel} is installed. Open it from here or the desktop shortcut.{Environment.NewLine}", "green");
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or HttpRequestException or JsonException
                                        or UnauthorizedAccessException or InvalidOperationException or Win32Exception

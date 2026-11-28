@@ -11,24 +11,39 @@ using Microsoft.Win32;
 
 namespace DwemerDistro.Launcher.Wpf.Services;
 
-/// <summary>An installed Windows companion generation whose distro.txt names this launcher's distro.</summary>
-public sealed record EchoesCompanion(string Directory, string Executable, string? Version);
+/// <summary>
+/// Echoes release channels, as for the other Dwemer servers: Main is the production branch
+/// (mirthwood-echoes, tag vX.Y.Z) and Beta is dev (a prerelease tagged vX.Y.Z-beta.N).
+/// </summary>
+public enum EchoesChannel { Main, Beta }
+
+/// <summary>
+/// An installed Windows companion generation whose distro.txt names this launcher's distro.
+/// Release is its product version: X.Y.Z, X.Y.Z-beta.N, or null when unreadable.
+/// </summary>
+public sealed record EchoesCompanion(string Directory, string Executable, string? Release)
+{
+    public EchoesChannel? Channel => Release is null ? null : MirthwoodEchoesService.ChannelOfRelease(Release);
+}
 
 /// <summary>Result of scanning the companion folder. OtherDistro is set only when no generation matches.</summary>
 public sealed record EchoesCompanionScan(EchoesCompanion? Match, string? OtherDistro);
 
-/// <summary>A validated Mirthwood: Echoes server package folder (the one Update-Server.ps1 installs from).</summary>
-public sealed record EchoesPackage(string Root, string Version);
+/// <summary>
+/// A validated Mirthwood: Echoes server package folder (the one Update-Server.ps1 installs from).
+/// Version is the numeric module version; Release adds the Beta label (X.Y.Z-beta.N).
+/// </summary>
+public sealed record EchoesPackage(string Root, string Version, EchoesChannel Channel, string Release);
 
-/// <summary>A published (never draft) GitHub release carrying the server package asset.</summary>
-public sealed record EchoesRelease(string Tag, string Version, string AssetName, string DownloadUrl, long Size, string? Sha256);
+/// <summary>A published (never draft) GitHub release of one channel carrying its server package asset.</summary>
+public sealed record EchoesRelease(EchoesChannel Channel, string Tag, string Version, string Release, string AssetName, string DownloadUrl, long Size, string? Sha256);
 
 /// <summary>
 /// Installs Mirthwood: Echoes through its own package installer and opens its Windows companion.
 /// The companion owns the Echoes services: it starts them while its window is open and stops them on
 /// minimise or close, so nothing here ever starts or stops <c>mirthwood-echoes.service</c> itself.
-/// Release discovery reads only the public latest-release endpoint, so a draft release is never seen
-/// and no credentials are involved.
+/// Release discovery reads only the public, unauthenticated release list, which never includes drafts;
+/// drafts are filtered again anyway and no credentials are involved.
 /// </summary>
 public sealed class MirthwoodEchoesService(ProcessRunner processRunner, WslService wsl)
 {
@@ -38,7 +53,7 @@ public sealed class MirthwoodEchoesService(ProcessRunner processRunner, WslServi
     internal const string GameExecutable = "Mirthwood.exe";
     internal const string CompanionExecutable = "Mirthwood.Echoes.Play.exe";
     internal const string CompanionProcessName = "Mirthwood.Echoes.Play";
-    internal const string LatestReleaseApiUrl = "https://api.github.com/repos/Dwemer-Dynamics/mirthwood-echoes/releases/latest";
+    internal const string ReleasesApiUrl = "https://api.github.com/repos/Dwemer-Dynamics/mirthwood-echoes/releases?per_page=100";
     internal const string ReleaseDownloadPrefix = "https://github.com/Dwemer-Dynamics/mirthwood-echoes/releases/download/";
     internal const string DotNetDownloadUrl = "https://dotnet.microsoft.com/download/dotnet/10.0";
     internal const string WebView2DownloadUrl = "https://developer.microsoft.com/microsoft-edge/webview2/";
@@ -49,8 +64,10 @@ public sealed class MirthwoodEchoesService(ProcessRunner processRunner, WslServi
     private const string WebView2ClientKey = @"Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
 
     private static readonly Regex GenerationPattern = new("^[0-9A-F]{24}$", RegexOptions.CultureInvariant);
-    private static readonly Regex VersionPattern = new(@"^\d+\.\d+\.\d+$", RegexOptions.CultureInvariant);
-    private static readonly Regex TagPattern = new(@"^v?(\d+\.\d+\.\d+)$", RegexOptions.CultureInvariant);
+    private static readonly Regex VersionPattern = new(@"^[0-9]+\.[0-9]+\.[0-9]+\z", RegexOptions.CultureInvariant);
+    private static readonly Regex MainTagPattern = new(@"^v([0-9]+)\.([0-9]+)\.([0-9]+)\z", RegexOptions.CultureInvariant);
+    private static readonly Regex BetaTagPattern = new(@"^v([0-9]+)\.([0-9]+)\.([0-9]+)-beta\.([1-9][0-9]*)\z", RegexOptions.CultureInvariant);
+    private static readonly Regex ReleasePattern = new(@"^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?\z", RegexOptions.CultureInvariant);
     private static readonly Regex ReservedName = new("^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\..*)?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     /// <summary>Files Update-Server.ps1 and install-service.sh require, relative to the package root.</summary>
@@ -201,11 +218,22 @@ public sealed class MirthwoodEchoesService(ProcessRunner processRunner, WslServi
         using var _ = Process.Start(startInfo) ?? throw new InvalidOperationException("Windows did not start the Mirthwood: Echoes companion.");
     }
 
-    private static string? ReadVersion(string executable)
+    /// <summary>The companion's product version: X.Y.Z for Main, X.Y.Z-beta.N for Beta (build metadata dropped).</summary>
+    private static string? ReadVersion(string executable) =>
+        NormalizeRelease(FileVersionInfo.GetVersionInfo(executable).ProductVersion);
+
+    internal static string? NormalizeRelease(string? productVersion)
     {
-        var version = FileVersionInfo.GetVersionInfo(executable).ProductVersion?.Split('+')[0].Trim();
-        return version is not null && VersionPattern.IsMatch(version) ? version : null;
+        var release = productVersion?.Split('+')[0].Trim();
+        return release is not null && ReleasePattern.IsMatch(release) ? release : null;
     }
+
+    /// <summary>Beta labels carry "-beta.N"; every other valid release is Main.</summary>
+    internal static EchoesChannel ChannelOfRelease(string release) =>
+        release.Contains("-beta.", StringComparison.Ordinal) ? EchoesChannel.Beta : EchoesChannel.Main;
+
+    /// <summary>"Main" or "Beta", as the other Dwemer servers name their releases.</summary>
+    public static string ChannelLabel(EchoesChannel channel) => channel == EchoesChannel.Beta ? "Beta" : "Main";
 
     // --- Windows prerequisites --------------------------------------------------------------
 
@@ -419,12 +447,12 @@ public sealed class MirthwoodEchoesService(ProcessRunner processRunner, WslServi
     // --- Published release ------------------------------------------------------------------
 
     /// <summary>
-    /// The latest published release with a server package, or null when the repository has none. GitHub's
-    /// latest endpoint never returns drafts or prereleases; both are re-checked anyway.
+    /// The newest published release of <paramref name="channel"/>, or null when that channel has none.
+    /// The public release list never includes drafts; a channel never falls back to the other one.
     /// </summary>
-    public static async Task<EchoesRelease?> GetLatestReleaseAsync(HttpClient http, CancellationToken cancellationToken = default)
+    public static async Task<EchoesRelease?> GetReleaseAsync(HttpClient http, EchoesChannel channel, CancellationToken cancellationToken = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseApiUrl);
+        using var request = new HttpRequestMessage(HttpMethod.Get, ReleasesApiUrl);
         request.Headers.UserAgent.ParseAdd("DwemerDistro-Launcher/" + LauncherConstants.LauncherVersion);
         request.Headers.Accept.ParseAdd("application/vnd.github+json");
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
@@ -442,70 +470,115 @@ public sealed class MirthwoodEchoesService(ProcessRunner processRunner, WslServi
         var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
         if (bytes.Length > MetadataLimit)
         {
-            throw new InvalidDataException("The release description is too large.");
+            throw new InvalidDataException("The release list is too large.");
         }
 
-        return ParseRelease(bytes);
+        return SelectRelease(bytes, channel);
     }
 
-    internal static EchoesRelease? ParseRelease(byte[] json)
+    /// <summary>
+    /// Picks the highest version of the channel from a release list. Main takes published, non-prerelease
+    /// vX.Y.Z tags; Beta takes published prereleases tagged vX.Y.Z-beta.N. Drafts, other tags and
+    /// releases whose prerelease flag disagrees with their tag are ignored. The chosen release must carry
+    /// Mirthwood-Echoes-Server-&lt;release&gt;.zip; it is never swapped for an older one that does.
+    /// </summary>
+    internal static EchoesRelease? SelectRelease(byte[] json, EchoesChannel channel)
     {
         using var document = JsonDocument.Parse(json);
-        var root = document.RootElement;
-        if (root.TryGetProperty("draft", out var draft) && draft.ValueKind != JsonValueKind.False ||
-            root.TryGetProperty("prerelease", out var prerelease) && prerelease.ValueKind != JsonValueKind.False)
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
         {
-            return null;
+            throw new InvalidDataException("GitHub returned an unexpected release list.");
         }
 
-        var tag = root.TryGetProperty("tag_name", out var tagValue) && tagValue.ValueKind == JsonValueKind.String ? tagValue.GetString()! : string.Empty;
-        var tagMatch = TagPattern.Match(tag);
-        if (!tagMatch.Success)
+        JsonElement? best = null;
+        (int, int, int, int) bestOrder = default;
+        foreach (var candidate in document.RootElement.EnumerateArray())
         {
-            throw new InvalidDataException("The latest Mirthwood: Echoes release has an unsupported tag.");
-        }
-
-        var version = tagMatch.Groups[1].Value;
-        var expectedName = $"Mirthwood-Echoes-Server-{version}.zip";
-        if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
-        {
-            return null;
-        }
-
-        foreach (var asset in assets.EnumerateArray())
-        {
-            if (!asset.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String || name.GetString() != expectedName)
+            if (candidate.ValueKind != JsonValueKind.Object ||
+                !candidate.TryGetProperty("draft", out var draft) || draft.ValueKind != JsonValueKind.False ||
+                !candidate.TryGetProperty("prerelease", out var prerelease) ||
+                prerelease.ValueKind != (channel == EchoesChannel.Beta ? JsonValueKind.True : JsonValueKind.False) ||
+                ReadString(candidate, "tag_name") is not { } tag ||
+                ParseTag(tag, channel) is not { } order)
             {
                 continue;
             }
 
-            var url = asset.TryGetProperty("browser_download_url", out var urlValue) && urlValue.ValueKind == JsonValueKind.String ? urlValue.GetString() : null;
-            if (url != ReleaseDownloadPrefix + tag + "/" + expectedName)
+            if (best is null || order.CompareTo(bestOrder) > 0)
             {
-                throw new InvalidDataException("The Mirthwood: Echoes release asset has an unexpected download address.");
+                best = candidate;
+                bestOrder = order;
             }
-
-            var size = asset.TryGetProperty("size", out var sizeValue) && sizeValue.TryGetInt64(out var parsedSize) ? parsedSize : 0;
-            if (size <= 0 || size > DownloadLimit)
-            {
-                throw new InvalidDataException("The Mirthwood: Echoes release asset has an invalid size.");
-            }
-
-            string? sha256 = null;
-            if (asset.TryGetProperty("digest", out var digest) && digest.ValueKind == JsonValueKind.String &&
-                digest.GetString() is { } digestText && digestText.StartsWith("sha256:", StringComparison.Ordinal))
-            {
-                sha256 = digestText["sha256:".Length..].ToLowerInvariant();
-                if (!Regex.IsMatch(sha256, "^[a-f0-9]{64}$", RegexOptions.CultureInvariant))
-                {
-                    throw new InvalidDataException("The Mirthwood: Echoes release asset has an invalid checksum.");
-                }
-            }
-
-            return new EchoesRelease(tag, version, expectedName, url, size, sha256);
         }
 
-        return null;
+        return best is { } release ? ReadRelease(release, channel) : null;
+    }
+
+    /// <summary>The numeric sort key of a channel tag (Main uses 0 for the Beta number), or null.</summary>
+    internal static (int, int, int, int)? ParseTag(string tag, EchoesChannel channel)
+    {
+        var match = (channel == EchoesChannel.Beta ? BetaTagPattern : MainTagPattern).Match(tag);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var parts = new int[4];
+        for (var index = 1; index < match.Groups.Count; index++)
+        {
+            if (!int.TryParse(match.Groups[index].Value, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out parts[index - 1]))
+            {
+                return null;
+            }
+        }
+
+        return (parts[0], parts[1], parts[2], parts[3]);
+    }
+
+    private static EchoesRelease ReadRelease(JsonElement root, EchoesChannel channel)
+    {
+        var tag = ReadString(root, "tag_name")!;
+        var release = tag[1..];
+        var version = channel == EchoesChannel.Beta ? release[..release.IndexOf('-')] : release;
+        var label = ChannelLabel(channel);
+        var expectedName = $"Mirthwood-Echoes-Server-{release}.zip";
+        if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var asset in assets.EnumerateArray())
+            {
+                if (ReadString(asset, "name") != expectedName)
+                {
+                    continue;
+                }
+
+                var url = ReadString(asset, "browser_download_url");
+                if (url != ReleaseDownloadPrefix + tag + "/" + expectedName)
+                {
+                    throw new InvalidDataException($"The Mirthwood: Echoes {label} release asset has an unexpected download address.");
+                }
+
+                var size = asset.TryGetProperty("size", out var sizeValue) && sizeValue.TryGetInt64(out var parsedSize) ? parsedSize : 0;
+                if (size <= 0 || size > DownloadLimit)
+                {
+                    throw new InvalidDataException($"The Mirthwood: Echoes {label} release asset has an invalid size.");
+                }
+
+                string? sha256 = null;
+                if (ReadString(asset, "digest") is { } digestText && digestText.StartsWith("sha256:", StringComparison.Ordinal))
+                {
+                    sha256 = digestText["sha256:".Length..].ToLowerInvariant();
+                    if (!Regex.IsMatch(sha256, "^[a-f0-9]{64}$", RegexOptions.CultureInvariant))
+                    {
+                        throw new InvalidDataException($"The Mirthwood: Echoes {label} release asset has an invalid checksum.");
+                    }
+                }
+
+                return new EchoesRelease(channel, tag, version, release, expectedName, url, size, sha256);
+            }
+        }
+
+        throw new InvalidDataException($"The newest {label} release, {tag}, has no {expectedName} package yet. Try again later.");
     }
 
     /// <summary>Downloads the release asset from GitHub hosts only, checking its size and published digest.</summary>
@@ -764,7 +837,46 @@ public sealed class MirthwoodEchoesService(ProcessRunner processRunner, WslServi
             throw new InvalidDataException("The Mirthwood: Echoes package has an invalid version.");
         }
 
-        return new EchoesPackage(root, version);
+        var channel = ParsePackageChannel(manifest.RootElement, version)
+            ?? throw new InvalidDataException("The Mirthwood: Echoes package has an invalid release channel or label.");
+        return new EchoesPackage(root, version, channel.Channel, channel.Release);
+    }
+
+    /// <summary>
+    /// The manifest's channel and release label, matching Update-Server.ps1 and the Echoes validator.
+    /// Packages from before release channels (0.9.0) carry neither and are Main releases of their
+    /// version. A field that is present must be a string; anything inconsistent is null.
+    /// </summary>
+    internal static (EchoesChannel Channel, string Release)? ParsePackageChannel(JsonElement manifest, string version)
+    {
+        string? Field(string name) => manifest.TryGetProperty(name, out var value)
+            ? value.ValueKind == JsonValueKind.String ? value.GetString() : "\0"
+            : null;
+
+        var channel = Field("channel") ?? "main";
+        var release = Field("release") ?? version;
+        return channel switch
+        {
+            "main" when release == version => (EchoesChannel.Main, release),
+            "beta" when release.StartsWith(version + "-beta.", StringComparison.Ordinal) &&
+                        BetaTagPattern.IsMatch("v" + release) => (EchoesChannel.Beta, release),
+            _ => null
+        };
+    }
+
+    /// <summary>A downloaded package must be exactly the selected release: same version, channel and label.</summary>
+    internal static void CheckPackageMatchesRelease(EchoesPackage package, EchoesRelease release)
+    {
+        if (package.Channel != release.Channel)
+        {
+            throw new InvalidDataException(
+                $"The downloaded package is a {ChannelLabel(package.Channel)} build, but the {ChannelLabel(release.Channel)} release {release.Tag} was selected. Nothing was installed.");
+        }
+
+        if (package.Version != release.Version || package.Release != release.Release)
+        {
+            throw new InvalidDataException($"The downloaded package version {package.Release} differs from its release {release.Tag}. Nothing was installed.");
+        }
     }
 
     // --- Installer --------------------------------------------------------------------------
