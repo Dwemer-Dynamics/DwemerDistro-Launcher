@@ -152,6 +152,18 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Closing cancels the Echoes check, download or installer; a killed installer can leave its service half set up.
+        if (_viewModel.IsEchoesBusy)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                "Mirthwood: Echoes is still being checked, downloaded or installed. Wait for it to finish before closing the launcher.",
+                "Dwemer Distro",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
         if (_viewModel.IsAssistantLiveChangeInProgress)
         {
             e.Cancel = true;
@@ -331,6 +343,20 @@ public partial class MainWindow : Window
                 {
                     var peer = UIElementAutomationPeer.FromElement(ConnectionDetailsStatusTextBlock)
                                ?? UIElementAutomationPeer.CreatePeerForElement(ConnectionDetailsStatusTextBlock);
+                    peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+                }
+            });
+        }
+
+        // As for Connection Details: LiveSetting alone does not speak, so each Echoes status is raised while it is on screen.
+        if (e.PropertyName == nameof(MainWindowViewModel.EchoesStatusText))
+        {
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (EchoesStatusTextBlock.IsVisible && AutomationPeer.ListenerExists(AutomationEvents.LiveRegionChanged))
+                {
+                    var peer = UIElementAutomationPeer.FromElement(EchoesStatusTextBlock)
+                               ?? UIElementAutomationPeer.CreatePeerForElement(EchoesStatusTextBlock);
                     peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
                 }
             });
@@ -690,6 +716,7 @@ public partial class MainWindow : Window
         StobeDetails.Visibility = key == "STOBE" ? Visibility.Visible : Visibility.Collapsed;
         DialecticDetails.Visibility = key == "DIALECTIC" ? Visibility.Visible : Visibility.Collapsed;
         ReignDetails.Visibility = key == "REIGN" ? Visibility.Visible : Visibility.Collapsed;
+        EchoesDetails.Visibility = key == "ECHOES" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ToggleConsoleButton_Click(object sender, RoutedEventArgs e)
